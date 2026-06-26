@@ -146,6 +146,17 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             },
         );
 
+        for &address in FEN::EXTRA_CHEATCODE_ADDRESSES {
+            backend.insert_account_info(
+                address,
+                revm::state::AccountInfo {
+                    code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
+                    code_hash: keccak256(address),
+                    ..Default::default()
+                },
+            );
+        }
+
         Self {
             backend: Arc::new(backend),
             evm_env,

@@ -426,7 +426,13 @@ impl<N: Network> EthApi<N> {
                     }
                 })
                 .unwrap_or_default(),
-            network: self.backend.is_tempo().then(|| "tempo".to_string()),
+            network: if self.backend.is_tempo() {
+                Some("tempo".to_string())
+            } else if self.backend.is_monad() {
+                Some("monad".to_string())
+            } else {
+                None
+            },
         })
     }
 

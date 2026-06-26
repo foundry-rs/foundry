@@ -4,11 +4,13 @@ use crate::{
     FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
+    constants::MONAD_CHEATCODE_ADDRESS,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
 };
+use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
@@ -33,11 +35,13 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_revm::TempoHaltReason;
 
 pub mod eth;
+pub mod monad;
 #[cfg(feature = "optimism")]
 pub mod op;
 pub mod tempo;
 
 pub use eth::*;
+pub use monad::*;
 #[cfg(feature = "optimism")]
 pub use op::*;
 pub use tempo::*;
@@ -58,6 +62,13 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
             ReceiptResponse: FoundryReceiptResponse,
         >;
     type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
+
+    /// Additional network-specific cheatcode contract addresses.
+    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
+
+    fn is_extra_cheatcode_address(address: Address) -> bool {
+        Self::EXTRA_CHEATCODE_ADDRESSES.contains(&address)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -72,6 +83,15 @@ pub struct TempoEvmNetwork;
 impl FoundryEvmNetwork for TempoEvmNetwork {
     type Network = TempoNetwork;
     type EvmFactory = TempoEvmFactory;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MonadEvmNetwork;
+impl FoundryEvmNetwork for MonadEvmNetwork {
+    type Network = Ethereum;
+    type EvmFactory = MonadEvmFactory;
+
+    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[MONAD_CHEATCODE_ADDRESS];
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].

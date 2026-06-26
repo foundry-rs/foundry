@@ -1,10 +1,11 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::DerefMut};
 
 use alloy_consensus::Typed2718;
 pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
+use monad_revm::{MonadCfgEnv, MonadChainContext, MonadJournal};
 #[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
 use revm::{
@@ -418,7 +419,7 @@ pub trait FoundryContextExt:
     ContextTr<
         Block: FoundryBlock + Clone,
         Tx: FoundryTransaction + Clone,
-        Cfg = CfgEnv<Self::Spec>,
+        Cfg: Cfg<Spec = Self::Spec> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>,
         Journal: JournalExt,
     >
 {
@@ -436,8 +437,19 @@ pub trait FoundryContextExt:
     /// Mutable reference to the configuration environment.
     fn cfg_mut(&mut self) -> &mut Self::Cfg;
 
+    /// Reference to the underlying [`CfgEnv`].
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec>;
+
+    /// Mutable reference to the underlying [`CfgEnv`].
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec>;
+
     /// Mutable reference to the db and the journal inner.
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState);
+
+    /// Sets the spec and refreshes gas params for the concrete EVM family.
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        self.cfg_env_mut().set_spec_and_mainnet_gas_params(spec);
+    }
 
     /// Sets block environment.
     fn set_block(&mut self, block: Self::Block) {
@@ -461,7 +473,7 @@ pub trait FoundryContextExt:
 
     /// Sets EVM environment.
     fn set_evm(&mut self, evm_env: EvmEnv<Self::Spec, Self::Block>) {
-        *self.cfg_mut() = evm_env.cfg_env;
+        *self.cfg_mut() = evm_env.cfg_env.into();
         *self.block_mut() = evm_env.block_env;
     }
 
@@ -472,7 +484,7 @@ pub trait FoundryContextExt:
 
     /// Cloned EVM environment (Cfg + Block).
     fn evm_clone(&self) -> EvmEnv<Self::Spec, Self::Block> {
-        EvmEnv::new(self.cfg().clone(), self.block().clone())
+        EvmEnv::new(self.cfg().clone().into(), self.block().clone())
     }
 }
 
@@ -498,8 +510,53 @@ impl<
         &mut self.cfg
     }
 
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        &self.cfg
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec> {
+        &mut self.cfg
+    }
+
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
         (&mut self.journaled_state.database, &mut self.journaled_state.inner)
+    }
+}
+
+impl<DB: Database> FoundryContextExt
+    for Context<BlockEnv, TxEnv, MonadCfgEnv, DB, MonadJournal<DB>, MonadChainContext>
+{
+    type Spec = <Self::Cfg as Cfg>::Spec;
+
+    fn block_mut(&mut self) -> &mut Self::Block {
+        &mut self.block
+    }
+
+    fn tx_mut(&mut self) -> &mut Self::Tx {
+        &mut self.tx
+    }
+
+    fn cfg_mut(&mut self) -> &mut Self::Cfg {
+        &mut self.cfg
+    }
+
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        self.cfg.inner()
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec> {
+        self.cfg.inner_mut()
+    }
+
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        let mut cfg = self.cfg.clone().into_inner();
+        cfg.spec = spec;
+        self.cfg = MonadCfgEnv::from(cfg);
+    }
+
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
+        let journal: &mut Journal<DB> = self.journaled_state.deref_mut();
+        (&mut journal.database, &mut journal.inner)
     }
 }
 
@@ -780,11 +837,13 @@ mod tests {
     use super::*;
     use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
+    use alloy_monad_evm::MonadEvmFactory;
     use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
     use alloy_primitives::Signature;
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
     use foundry_evm_hardforks::TempoHardfork;
+    use monad_revm::MonadHardfork;
     use revm::database::EmptyDB;
     use tempo_alloy::primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
@@ -807,6 +866,32 @@ mod tests {
         // Test EVM Context Cfg mutation
         evm.ctx_mut().cfg_mut().spec = SpecId::AMSTERDAM;
         assert_eq!(evm.ctx().cfg().spec, SpecId::AMSTERDAM);
+
+        // Round-trip test to ensure no issues with cloning and setting tx_env and evm_env
+        let tx_env = evm.ctx().tx_clone();
+        evm.ctx_mut().set_tx(tx_env);
+        let evm_env = evm.ctx().evm_clone();
+        evm.ctx_mut().set_evm(evm_env);
+    }
+
+    #[test]
+    fn monad_evm_foundry_context_ext_implementation() {
+        let mut evm = MonadEvmFactory::default().create_evm(
+            EmptyDB::default(),
+            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default()),
+        );
+
+        // Test EVM Context Block mutation
+        evm.ctx_mut().block_mut().set_number(U256::from(123));
+        assert_eq!(evm.ctx().block().number(), U256::from(123));
+
+        // Test EVM Context Tx mutation
+        evm.ctx_mut().tx_mut().set_nonce(99);
+        assert_eq!(evm.ctx().tx().nonce(), 99);
+
+        // Test EVM Context Cfg mutation
+        evm.ctx_mut().cfg_mut().spec = MonadHardfork::MonadEight;
+        assert_eq!(evm.ctx().cfg().spec, MonadHardfork::MonadEight);
 
         // Round-trip test to ensure no issues with cloning and setting tx_env and evm_env
         let tx_env = evm.ctx().tx_clone();

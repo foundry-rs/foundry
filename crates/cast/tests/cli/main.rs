@@ -3,7 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::{TransactionBuilder, TransactionResponse};
+use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{
@@ -14,6 +14,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
+use foundry_evm::hardfork::MonadHardfork;
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -35,6 +36,10 @@ mod erc20;
 mod keychain;
 mod selectors;
 mod tempo;
+
+const MONAD_RESERVE_BALANCE_ADDRESS: Address =
+    address!("0x0000000000000000000000000000000000001001");
+const MONAD_DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
 
 casttest!(print_short_version, |_prj, cmd| {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"
@@ -4680,6 +4685,57 @@ Transaction successfully executed.
 "#]]);
     }
 );
+
+casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
+    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let (_api, handle) = anvil::spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
+    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    let output = cmd
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &endpoint,
+            "--trace",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("Traces:"), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] false"), "{output}");
+});
+
+casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
+    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let (_api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(MONAD_RESERVE_BALANCE_ADDRESS)
+        .with_input(MONAD_DIPPED_INTO_RESERVE_SELECTOR);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+
+    let endpoint = handle.http_endpoint();
+    let tx_hash = receipt.transaction_hash.to_string();
+    let output = cmd
+        .args(["run", &tx_hash, "--rpc-url", &endpoint, "--quick"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("Transaction successfully executed."), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] false"), "{output}");
+});
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>

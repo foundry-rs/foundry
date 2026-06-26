@@ -12,6 +12,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
+use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::DecodedCallTrace;
 
 sol! {
@@ -95,6 +96,13 @@ pub(super) fn is_known_precompile(
         .map(|id| Chain::from_id(id).is_tempo())
         .unwrap_or_else(|| tempo_hardfork.is_some());
     if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
+        return true;
+    }
+    // Monad precompiles (only on Monad chains).
+    if chain_id.is_some_and(|id| {
+        matches!(Chain::from_id(id).named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
+    }) && matches!(address, STAKING_ADDRESS | RESERVE_BALANCE_ADDRESS)
+    {
         return true;
     }
     // Celo transfer precompile (only on Celo chains).

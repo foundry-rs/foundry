@@ -111,6 +111,9 @@ allow-git = [
     # Tempo
     "https://github.com/tempoxyz/tempo",
     "https://github.com/tempoxyz/mpp-rs",
+    # Monad
+    "https://github.com/category-labs/alloy-monad-evm",
+    "https://github.com/category-labs/monad-revm",
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
     "https://github.com/paradigmxyz/reth-core",

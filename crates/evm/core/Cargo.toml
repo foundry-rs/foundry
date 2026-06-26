@@ -36,6 +36,7 @@ alloy-primitives = { workspace = true, features = [
 alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
+alloy-monad-evm.workspace = true
 alloy-op-evm = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
@@ -54,6 +55,7 @@ revm = { workspace = true, features = [
     "blst",
 ] }
 revm-inspectors.workspace = true
+monad-revm.workspace = true
 op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }

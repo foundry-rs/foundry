@@ -52,7 +52,7 @@ use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -374,6 +374,10 @@ impl ScriptArgs {
             .await;
         }
 
+        if evm_opts.networks.is_monad() {
+            return self.run_generic_script::<MonadEvmNetwork>(config, evm_opts).await;
+        }
+
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
             return Box::pin(self.run_generic_script::<OpEvmNetwork>(config, evm_opts)).await;
@@ -654,6 +658,20 @@ impl ScriptArgs {
         }
 
         Ok(())
+    }
+
+    fn contract_size_limits(&self) -> ContractSizeLimits {
+        self.evm
+            .env
+            .code_size_limit
+            .map(ContractSizeLimits::with_runtime_limit)
+            .or_else(|| {
+                self.evm
+                    .networks
+                    .contract_size_limits()
+                    .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
+            })
+            .unwrap_or_default()
     }
 
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.

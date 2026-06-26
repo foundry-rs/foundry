@@ -600,6 +600,19 @@ mod tests {
     }
 
     #[test]
+    fn ensure_loaded_session_network_matches_rejects_monad_on_default_network() {
+        let current = config_with_network(None);
+        let loaded = config_with_network(Some("monad"));
+
+        let err = ensure_loaded_session_network_matches(&current, &loaded, "43").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Chisel session `43` was saved for network `monad`, but the current network is \
+             `ethereum`. Rerun with `--network monad` to load it."
+        );
+    }
+
+    #[test]
     fn ensure_loaded_session_network_matches_accepts_same_network() {
         let current = config_with_network(Some("tempo"));
         let loaded = config_with_network(Some("tempo"));

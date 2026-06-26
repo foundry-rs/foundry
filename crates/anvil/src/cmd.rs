@@ -14,7 +14,7 @@ use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
 #[cfg(feature = "optimism")]
 use foundry_evm::hardfork::OpHardfork;
-use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
+use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork, MonadHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -913,6 +913,10 @@ fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHa
     }
     if networks.is_tempo() {
         Ok(TempoHardfork::from_str(hf)?.into())
+    } else if networks.is_monad() {
+        Ok(MonadHardfork::from_str(hf)
+            .map_err(|err| eyre::eyre!("unknown monad hardfork '{hf}': {err:?}"))?
+            .into())
     } else {
         Ok(EthereumHardfork::from_str(hf)?.into())
     }
@@ -1035,6 +1039,24 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    fn can_parse_monad_hardfork() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(MonadHardfork::MonadNine.into()));
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    fn monad_uses_monad_default_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, None);
+        assert_eq!(config.get_hardfork(), MonadHardfork::default().into());
+        assert!(config.networks.is_monad());
     }
 
     #[test]

@@ -95,6 +95,9 @@ pub fn initialize(target: &Path) {
                 .expect("failed to checkout forge-std");
             assert!(output.status.success(), "{output:#?}");
 
+            // Sync foundry.lock with the pinned forge-std revision after the manual checkout.
+            cmd.forge_fuse().arg("install").assert_success();
+
             // Build the project.
             cmd.forge_fuse().arg("build").assert_success();
 

@@ -22,7 +22,7 @@ use anvil_core::{
     types::{ReorgOptions, TransactionData},
 };
 use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm::hardfork::{EthereumHardfork, MonadHardfork};
 
 use std::{
     str::FromStr,
@@ -1303,6 +1303,41 @@ async fn can_get_node_info_tempo_t1() {
             fork_retry_backoff: None,
         },
         network: Some("tempo".to_string()),
+    };
+
+    assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_monad() {
+    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadEight.into()));
+    let (api, handle) = spawn(config).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+
+    let expected_node_info = NodeInfo {
+        current_block_number: 0_u64,
+        current_block_timestamp: 1,
+        current_block_hash: block.header.hash,
+        hard_fork: "MonadEight".to_string(),
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: U256::from_str("0x3b9aca00").unwrap().to(),
+            chain_id: 31337,
+            gas_limit: 30_000_000,
+            gas_price: U256::from_str("0x77359400").unwrap().to(),
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+        network: Some("monad".to_string()),
     };
 
     assert_eq!(node_info, expected_node_info);

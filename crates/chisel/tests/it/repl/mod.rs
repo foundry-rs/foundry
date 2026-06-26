@@ -165,6 +165,14 @@ repl_test!(
     }
 );
 
+repl_test!(eval_monad_network_option_runs, "--network monad eval uint256(block.chainid)", |repl| {
+    repl.expect("Decimal: 31337");
+});
+
+repl_test!(eval_monad_chain_id_option_runs, "--chain 143 eval uint256(block.chainid)", |repl| {
+    repl.expect("Decimal: 143");
+});
+
 // Issue #4938: Test memory/stack dumps with assembly.
 repl_test!(assembly_memory_dump, |repl| {
     let input = r#"

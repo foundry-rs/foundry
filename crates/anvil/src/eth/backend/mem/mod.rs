@@ -53,6 +53,7 @@ use alloy_evm::{
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
+use alloy_monad_evm::{MonadContext, MonadEvmFactory};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -116,6 +117,7 @@ use foundry_primitives::{
     FoundryTxReceipt,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
+use monad_revm::{MonadCfgEnv, MonadHardfork, instructions::monad_gas_params};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
 #[cfg(feature = "optimism")]
@@ -138,22 +140,28 @@ struct OpCallDepositInfo;
 /// `optimism` feature is enabled.
 #[cfg(feature = "optimism")]
 pub trait BackendInspector<DB: Database>:
-    Inspector<EthEvmContext<DB>> + Inspector<OpEvmContext<DB>> + Inspector<TempoContext<DB>>
+    Inspector<EthEvmContext<DB>>
+    + Inspector<OpEvmContext<DB>>
+    + Inspector<TempoContext<DB>>
+    + Inspector<MonadContext<DB>>
 {
 }
 #[cfg(feature = "optimism")]
 impl<DB: Database, T> BackendInspector<DB> for T where
-    T: Inspector<EthEvmContext<DB>> + Inspector<OpEvmContext<DB>> + Inspector<TempoContext<DB>>
+    T: Inspector<EthEvmContext<DB>>
+        + Inspector<OpEvmContext<DB>>
+        + Inspector<TempoContext<DB>>
+        + Inspector<MonadContext<DB>>
 {
 }
 #[cfg(not(feature = "optimism"))]
 pub trait BackendInspector<DB: Database>:
-    Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>>
+    Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>> + Inspector<MonadContext<DB>>
 {
 }
 #[cfg(not(feature = "optimism"))]
 impl<DB: Database, T> BackendInspector<DB> for T where
-    T: Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>>
+    T: Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>> + Inspector<MonadContext<DB>>
 {
 }
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -571,6 +579,11 @@ impl<N: Network> Backend<N> {
         self.networks.is_tempo()
     }
 
+    /// Returns true if Monad network mode is active
+    pub const fn is_monad(&self) -> bool {
+        self.networks.is_monad()
+    }
+
     /// Returns the active hardfork.
     pub fn hardfork(&self) -> FoundryHardfork {
         if let Some(hardfork) =
@@ -701,10 +714,33 @@ impl<N: Network> Backend<N> {
         PoolTxGasConfig {
             disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
             tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-            tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
+            tx_gas_limit_cap_resolved: self.tx_gas_limit_cap(evm_env),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
         }
+    }
+
+    fn monad_cfg_env(&self, evm_env: &EvmEnv) -> Option<MonadCfgEnv> {
+        if !self.is_monad() {
+            return None;
+        }
+
+        let hardfork = MonadHardfork::from(self.hardfork());
+        Some(MonadCfgEnv::from(
+            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+        ))
+    }
+
+    fn tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> u64 {
+        self.monad_cfg_env(evm_env)
+            .map(|cfg| cfg.tx_gas_limit_cap())
+            .unwrap_or_else(|| evm_env.cfg_env.tx_gas_limit_cap())
+    }
+
+    fn max_initcode_size(&self, evm_env: &EvmEnv) -> usize {
+        self.monad_cfg_env(evm_env)
+            .map(|cfg| cfg.max_initcode_size())
+            .unwrap_or_else(|| evm_env.cfg_env.max_initcode_size())
     }
 
     /// Returns the block gas limit
@@ -1226,6 +1262,8 @@ impl<N: Network> Backend<N> {
         let _ = op_deposit;
         if self.is_tempo() {
             self.transact_tempo_with_inspector_ref(db, evm_env, inspector, TempoTxEnv::from(tx_env))
+        } else if self.is_monad() {
+            self.transact_monad_with_inspector_ref(db, evm_env, inspector, tx_env)
         } else {
             self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)
         }
@@ -1289,7 +1327,11 @@ impl<N: Network> Backend<N> {
         let tx_env: TxEnv =
             FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
         let base = tx_env.clone();
-        let result = self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)?;
+        let result = if self.is_monad() {
+            self.transact_monad_with_inspector_ref(db, evm_env, inspector, tx_env)?
+        } else {
+            self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)?
+        };
         Ok((result, base))
     }
 
@@ -1325,6 +1367,33 @@ impl<N: Network> Backend<N> {
             }),
             state: result.state,
         })
+    }
+
+    /// Monad path of [`Backend::transact_with_inspector_ref`].
+    fn transact_monad_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
+        let hardfork = MonadHardfork::from(self.hardfork());
+        let monad_env = EvmEnv::new(
+            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+            evm_env.block_env.clone(),
+        );
+        let mut evm = MonadEvmFactory::default().create_evm_with_inspector(
+            WrapDatabaseRef(db),
+            monad_env,
+            inspector,
+        );
+        self.inject_precompiles(evm.precompiles_mut());
+        Ok(evm.transact(tx_env)?)
     }
 
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
@@ -1390,6 +1459,18 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
+            run!(evm)
+        } else if self.is_monad() {
+            let hardfork = MonadHardfork::from(self.hardfork());
+            let monad_env = EvmEnv::new(
+                evm_env
+                    .cfg_env
+                    .clone()
+                    .with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+                evm_env.block_env.clone(),
+            );
+            let mut evm =
+                MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
             run!(evm)
         } else {
             let mut evm =
@@ -4512,6 +4593,10 @@ where
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
+        if self.is_monad() && tx.is_eip4844() {
+            return Err(InvalidTransactionError::MonadBlobTransactionUnsupported);
+        }
+
         // EIP-4844 structural validation
         if evm_env.cfg_env.spec >= SpecId::CANCUN && tx.is_eip4844() {
             // Heavy (blob validation) checks
@@ -4547,7 +4632,7 @@ where
                 .cfg_env
                 .limit_contract_code_size
                 .map(|limit| limit.saturating_mul(2))
-                .unwrap_or(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+                .unwrap_or_else(|| self.max_initcode_size(evm_env));
             if tx.input().len() > max_initcode_size {
                 return Err(InvalidTransactionError::MaxInitCodeSizeExceeded);
             }
@@ -4573,11 +4658,11 @@ where
 
             // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
             if evm_env.cfg_env.tx_gas_limit_cap.is_none()
-                && tx.gas_limit() > evm_env.cfg_env().tx_gas_limit_cap()
+                && tx.gas_limit() > self.tx_gas_limit_cap(evm_env)
             {
                 debug!(target: "backend", "[{:?}] gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
-                    detail: String::from("tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+                    detail: String::from("tx.gas_limit > resolved tx gas limit cap"),
                 }));
             }
 

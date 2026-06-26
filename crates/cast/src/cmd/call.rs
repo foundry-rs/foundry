@@ -40,7 +40,7 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -302,6 +302,10 @@ impl CallArgs {
 
         if evm_opts.networks.is_tempo() {
             return self.run_with_network::<TempoEvmNetwork>().await;
+        }
+
+        if evm_opts.networks.is_monad() {
+            return self.run_with_network::<MonadEvmNetwork>().await;
         }
 
         #[cfg(feature = "optimism")]

@@ -2,7 +2,10 @@
 
 use crate::{
     FoundryBlock, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
-    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
+    constants::{
+        CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, MONAD_CHEATCODE_ADDRESS,
+        TEST_CONTRACT_ADDRESS,
+    },
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
         FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
@@ -66,8 +69,8 @@ pub type LocalForkId = U256;
 type ForkLookupIndex = usize;
 
 /// All accounts that will have persistent storage across fork swaps.
-const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
-    [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
+const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 4] =
+    [CHEATCODE_ADDRESS, MONAD_CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, CALLER];
 
 /// `bytes32("failed")`, as a storage slot key into [`CHEATCODE_ADDRESS`].
 ///

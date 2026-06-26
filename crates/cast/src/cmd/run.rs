@@ -37,7 +37,7 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -137,6 +137,10 @@ impl RunArgs {
 
         if evm_opts.networks.is_tempo() {
             return self.run_with_evm::<TempoEvmNetwork>().await;
+        }
+
+        if evm_opts.networks.is_monad() {
+            return self.run_with_evm::<MonadEvmNetwork>().await;
         }
 
         #[cfg(feature = "optimism")]

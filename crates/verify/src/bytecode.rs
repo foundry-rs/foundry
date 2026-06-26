@@ -39,7 +39,9 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         FoundryBlock as _, FoundryTransaction as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        evm::{
+            EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+        },
     },
     executors::EvmError,
 };
@@ -182,7 +184,19 @@ impl VerifyBytecodeArgs {
             NetworkVariant::Tempo => {
                 self.run_with_network_and_config::<TempoEvmNetwork>(config).await
             }
+            NetworkVariant::Monad => {
+                self.run_with_network_and_config::<MonadEvmNetwork>(config).await
+            }
         }
+    }
+
+    /// Run the `verify-bytecode` command with the selected EVM network implementation.
+    pub async fn run_with_network<FEN>(self) -> Result<()>
+    where
+        FEN: FoundryEvmNetwork,
+    {
+        let config = self.load_config()?;
+        self.run_with_network_and_config::<FEN>(config).await
     }
 
     async fn run_with_network_and_config<FEN>(mut self, config: Config) -> Result<()>
@@ -635,7 +649,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn can_parse_network() {
+    fn can_parse_tempo_network() {
         let args = VerifyBytecodeArgs::parse_from([
             "foundry-cli",
             "0x0000000000000000000000000000000000000000",
@@ -648,7 +662,20 @@ mod tests {
     }
 
     #[test]
-    fn configured_network_uses_config_network() {
+    fn can_parse_monad_network() {
+        let args = VerifyBytecodeArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--network",
+            "monad",
+        ]);
+
+        assert_eq!(args.network, Some(NetworkVariant::Monad));
+    }
+
+    #[test]
+    fn configured_network_uses_tempo_config_network() {
         let config = Config { networks: NetworkVariant::Tempo.into(), ..Default::default() };
 
         assert_eq!(
@@ -658,8 +685,18 @@ mod tests {
     }
 
     #[test]
+    fn configured_network_uses_monad_config_network() {
+        let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
+
+        assert_eq!(
+            VerifyBytecodeArgs::configured_network(None, &config),
+            Some(NetworkVariant::Monad)
+        );
+    }
+
+    #[test]
     fn configured_network_prefers_cli_network() {
-        let config = Config { networks: NetworkVariant::Tempo.into(), ..Default::default() };
+        let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
 
         assert_eq!(
             VerifyBytecodeArgs::configured_network(Some(NetworkVariant::Ethereum), &config),

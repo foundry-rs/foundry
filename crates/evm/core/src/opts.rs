@@ -142,18 +142,22 @@ impl EvmOpts {
         #[cfg(not(feature = "optimism"))]
         let already_op = false;
         if !self.networks.is_tempo()
+            && !self.networks.is_monad()
             && !already_op
             && let Some(ref fork_url) = self.fork_url
             && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(fork_url)
             && let Ok(chain_id) = provider.get_chain_id().await
         {
-            // If Anvil's chain, request anvil_nodeInfo to determine if the network is Tempo.
+            // If Anvil's chain, request anvil_nodeInfo to determine the enabled network.
             if chain_id == NamedChain::AnvilHardhat as u64 {
                 if let Ok(node_info) =
                     provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await
-                    && node_info.network.is_some_and(|network| network == "tempo")
                 {
-                    self.networks = NetworkConfigs::with_tempo();
+                    match node_info.network.as_deref() {
+                        Some("tempo") => self.networks = NetworkConfigs::with_tempo(),
+                        Some("monad") => self.networks = NetworkConfigs::with_monad(),
+                        _ => {}
+                    }
                 }
             } else {
                 self.networks = self.networks.with_chain_id(chain_id);
@@ -513,6 +517,37 @@ mod tests {
 
         // Should still be tempo, the early-return guard skips the RPC call.
         assert!(evm_opts.networks.is_tempo());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn infer_network_monad_anvil_via_node_info() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(handle.http_endpoint());
+        // Networks not set -> should query anvil_nodeInfo to discover Monad.
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+
+        evm_opts.infer_network_from_fork().await;
+
+        assert!(evm_opts.networks.is_monad(), "should detect Monad via anvil_nodeInfo");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn infer_network_monad_anvil_skips_rpc_when_already_set() {
+        // Use a URL that would fail if any RPC call were attempted (connection refused).
+        // This proves the early-return guard prevents all network requests.
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some("http://127.0.0.1:1".to_string());
+        // Explicitly set Monad before calling infer (simulates network config).
+        evm_opts.networks = NetworkConfigs::with_monad();
+
+        evm_opts.infer_network_from_fork().await;
+
+        // Should still be Monad, the early-return guard skips the RPC call.
+        assert!(evm_opts.networks.is_monad());
     }
 
     #[tokio::test(flavor = "multi_thread")]

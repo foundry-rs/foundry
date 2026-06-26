@@ -9,7 +9,7 @@ use foundry_config::Config;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
-    core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    core::evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork},
     opts::EvmOpts,
 };
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
@@ -61,6 +61,10 @@ pub async fn run_command(args: Chisel) -> Result<()> {
 
     if evm_opts.networks.is_tempo() {
         return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
+    }
+
+    if evm_opts.networks.is_monad() {
+        return run_command_with_network::<MonadEvmNetwork>(args, config, evm_opts).await;
     }
 
     #[cfg(feature = "optimism")]

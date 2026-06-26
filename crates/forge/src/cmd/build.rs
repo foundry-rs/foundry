@@ -170,12 +170,7 @@ impl BuildArgs {
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
-            .size_limits(
-                config
-                    .code_size_limit
-                    .map(ContractSizeLimits::with_runtime_limit)
-                    .unwrap_or_default(),
-            )
+            .size_limits(contract_size_limits(&config))
             .bail(!format_json && !machine_mode);
         if machine_mode {
             compiler = compiler.quiet(true);
@@ -433,6 +428,19 @@ impl BuildArgs {
             }
         }
     }
+}
+
+fn contract_size_limits(config: &Config) -> ContractSizeLimits {
+    config
+        .code_size_limit
+        .map(ContractSizeLimits::with_runtime_limit)
+        .or_else(|| {
+            config
+                .networks
+                .contract_size_limits()
+                .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
+        })
+        .unwrap_or_default()
 }
 
 /// Stable payload emitted in the `forge build` envelope under `--machine`.

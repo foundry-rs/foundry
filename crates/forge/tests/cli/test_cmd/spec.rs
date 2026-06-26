@@ -181,6 +181,48 @@ Traces:
 "#]]);
 });
 
+forgetest_init!(test_set_evm_version_monad_hardfork, |prj, cmd| {
+    prj.add_test(
+        "MonadEvmVersion.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+    function setEvmVersion(string calldata evm) external;
+}
+
+contract MonadEvmVersionTest is Test {
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+    address constant CLZ_TARGET = address(uint160(0x0c17));
+
+    function test_set_monad_evm_version() public {
+        vm.etch(CLZ_TARGET, hex"60011e60005260206000f3");
+
+        evm.setEvmVersion("MonadEight");
+        assertEq(evm.getEvmVersion(), "monadeight");
+        (bool ok,) = CLZ_TARGET.staticcall(hex"");
+        assertFalse(ok, "CLZ should be unavailable on MonadEight");
+
+        evm.setEvmVersion("MonadNine");
+        assertEq(evm.getEvmVersion(), "monadnine");
+        bytes memory output;
+        (ok, output) = CLZ_TARGET.staticcall(hex"");
+        assertTrue(ok, "CLZ should be available on MonadNine");
+        assertEq(abi.decode(output, (uint256)), 255);
+
+        evm.setEvmVersion("monad:MonadEight");
+        assertEq(evm.getEvmVersion(), "monadeight");
+        (ok,) = CLZ_TARGET.staticcall(hex"");
+        assertFalse(ok, "CLZ should be disabled after switching back to MonadEight");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
+});
+
 forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());

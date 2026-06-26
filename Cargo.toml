@@ -520,6 +520,17 @@ tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7" }
 
+# Monad
+alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", branch = "foundry-revm-41-compat", default-features = false, features = [
+    "std",
+    "memory_limit",
+] }
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "foundry-revm-41-compat", default-features = false, features = [
+    "std",
+    "serde",
+    "memory_limit",
+] }
+
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
 # testing
@@ -531,6 +542,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "foundry-revm-41-compat" }
+
+# https://github.com/rust-cli/rexpect/pull/106
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 ## Temporary dependency on foundry-rs/foundry-core#94 until foundry-compilers is released.
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "39f19b016c2ba793b24255bda83bd3822c8cb525" }
 

@@ -35,6 +35,7 @@ revm-inspectors.workspace = true
 
 tempo-contracts.workspace = true
 tempo-precompiles.workspace = true
+monad-revm.workspace = true
 
 async-trait.workspace = true
 eyre.workspace = true

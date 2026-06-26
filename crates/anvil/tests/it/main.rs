@@ -13,6 +13,7 @@ mod ipc;
 mod logs;
 #[cfg(feature = "cli")]
 mod machine;
+mod monad;
 #[cfg(feature = "optimism")]
 mod optimism;
 mod otterscan;
