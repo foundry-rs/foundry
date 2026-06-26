@@ -1061,9 +1061,12 @@ impl Cheatcode for getStorageSlotsCall {
                 )
             })?;
             let num_slots = num_bytes.div_ceil(U256::from(32));
+            let num_slots = usize::try_from(num_slots).map_err(|_| {
+                fmt_err!("number_of_bytes {} exceeds host usize", storage_type.number_of_bytes)
+            })?;
 
             // Start from 1 since base slot is already added
-            for i in 1..num_slots.to::<usize>() {
+            for i in 1..num_slots {
                 slots.push(slot + U256::from(i));
             }
         }
@@ -1078,7 +1081,9 @@ impl Cheatcode for getStorageSlotsCall {
                 if length_byte & 1 == 1 {
                     // Calculate data slots for long bytes/string
                     let length: U256 = value.data >> 1;
-                    let num_data_slots = length.to::<usize>().div_ceil(32);
+                    let length = usize::try_from(length)
+                        .map_err(|_| fmt_err!("long bytes/string length exceeds host usize"))?;
+                    let num_data_slots = length.div_ceil(32);
                     let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
 
                     for i in 0..num_data_slots {
@@ -1808,7 +1813,7 @@ const fn is_long_string(slot_value: U256) -> bool {
 
 fn long_string_length(slot_value: U256) -> Option<usize> {
     let length: U256 = (slot_value - U256::ONE) >> 1;
-    (length <= U256::from(TIP20_MAX_LOGO_URI_BYTES)).then(|| length.to::<usize>())
+    usize::try_from(length).ok().filter(|length| *length <= TIP20_MAX_LOGO_URI_BYTES)
 }
 
 const fn string_chunks(byte_length: usize) -> usize {
