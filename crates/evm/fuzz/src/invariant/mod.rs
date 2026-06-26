@@ -4,7 +4,7 @@ use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::{Ref, RefCell},
+    cell::{Cell, Ref, RefCell},
     collections::BTreeMap,
     fmt,
     rc::Rc,
@@ -42,6 +42,8 @@ pub struct FuzzRunIdentifiedContracts {
     targets: Rc<RefCell<TargetedContracts>>,
     /// Flat cache of all currently fuzzable target functions.
     fuzzed_functions: Rc<RefCell<Vec<FuzzedFunction>>>,
+    /// Generation counter for cached fuzzed functions.
+    fuzzed_functions_generation: Rc<Cell<u64>>,
     /// Whether target contracts are updatable or not.
     pub is_updatable: bool,
     artifact_matches: DynamicTargetArtifactMatchCache,
@@ -54,6 +56,7 @@ impl FuzzRunIdentifiedContracts {
         Self {
             targets: Rc::new(RefCell::new(targets)),
             fuzzed_functions: Rc::new(RefCell::new(fuzzed_functions)),
+            fuzzed_functions_generation: Rc::new(Cell::new(0)),
             is_updatable,
             artifact_matches: Rc::new(RefCell::new(HashMap::default())),
         }
@@ -69,12 +72,18 @@ impl FuzzRunIdentifiedContracts {
         Ref::map(self.fuzzed_functions.borrow(), Vec::as_slice)
     }
 
+    /// Returns the current fuzzed-functions generation.
+    pub fn fuzzed_functions_generation(&self) -> u64 {
+        self.fuzzed_functions_generation.get()
+    }
+
     fn refresh_fuzzed_functions(&self) {
         let fuzzed_functions = {
             let targets = self.targets.borrow();
             Self::flatten_fuzzed_functions(&targets)
         };
         *self.fuzzed_functions.borrow_mut() = fuzzed_functions;
+        self.fuzzed_functions_generation.set(self.fuzzed_functions_generation.get() + 1);
     }
 
     fn flatten_fuzzed_functions(targets: &TargetedContracts) -> Vec<FuzzedFunction> {
@@ -888,6 +897,7 @@ mod tests {
             .map(|(address, function)| (*address, function.selector()))
             .collect::<Vec<_>>();
         assert_eq!(initial, vec![(existing, Function::parse("existing()").unwrap().selector())]);
+        assert_eq!(identified.fuzzed_functions_generation(), 0);
 
         let mut state_changeset = StateChangeset::default();
         state_changeset.insert(created, touched_account_with_code(runtime_code));
@@ -908,6 +918,7 @@ mod tests {
             .iter()
             .map(|(address, function)| (*address, function.selector()))
             .collect::<Vec<_>>();
+        assert_eq!(identified.fuzzed_functions_generation(), 1);
         assert_eq!(
             with_created,
             vec![
@@ -923,5 +934,6 @@ mod tests {
             .map(|(address, function)| (*address, function.selector()))
             .collect::<Vec<_>>();
         assert_eq!(cleared, initial);
+        assert_eq!(identified.fuzzed_functions_generation(), 2);
     }
 }
