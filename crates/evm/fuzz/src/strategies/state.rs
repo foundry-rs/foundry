@@ -20,7 +20,7 @@ use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
-use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc, sync::Arc};
+use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
@@ -310,7 +310,8 @@ impl FuzzDictionary {
             // Insert storage values.
             if self.config.include_storage {
                 // Sort storage values before inserting to ensure deterministic dictionary.
-                let values = account.storage.iter().collect::<BTreeMap<_, _>>();
+                let mut values = account.storage.iter().collect::<Vec<_>>();
+                values.sort_unstable_by_key(|(slot, _)| **slot);
                 for (slot, value) in values {
                     self.insert_storage_value(slot, value, None, None);
                 }
