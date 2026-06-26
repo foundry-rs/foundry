@@ -16,6 +16,7 @@ use crate::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
+        speedscope,
     },
 };
 use alloy_primitives::U256;
@@ -71,6 +72,7 @@ use std::{
 };
 use yansi::Paint;
 
+mod evm_profile_server;
 mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
@@ -81,6 +83,14 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
+
+/// Output format for EVM execution profiles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum EvmProfileFormat {
+    /// Speedscope format, opens in speedscope.app.
+    #[default]
+    Speedscope,
+}
 
 /// CLI mirror of `foundry_evm::executors::ShowmapDomain`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -145,7 +155,7 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "evm_profile", "decode_internal", "rerun"])]
     debug: bool,
 
     /// Debugger layout to use.
@@ -165,6 +175,27 @@ pub struct TestArgs {
     /// called (execution order) and how much gas it consumes at each point in the timeline.
     #[arg(long, conflicts_with = "flamegraph")]
     flamechart: bool,
+
+    /// Generate an execution profile for a single test.
+    ///
+    /// Creates a profile where each EVM call is recorded with gas consumption.
+    /// Opens the profile in speedscope.app unless `--no-open` is passed.
+    /// Implies `--decode-internal`.
+    #[arg(
+        long,
+        value_name = "FORMAT",
+        num_args = 0..=1,
+        default_missing_value = "speedscope",
+        value_enum,
+        conflicts_with_all = ["flamegraph", "flamechart"]
+    )]
+    evm_profile: Option<EvmProfileFormat>,
+
+    /// Don't open the profile in the browser (for `--evm-profile`).
+    ///
+    /// The profile is saved to disk without starting the local viewer server.
+    #[arg(long, requires = "evm_profile")]
+    no_open: bool,
 
     /// Identify internal functions in traces.
     ///
@@ -512,7 +543,7 @@ pub struct TestArgs {
         value_name = "DIR",
         value_hint = ValueHint::DirPath,
         help_heading = "Showmap replay",
-        conflicts_with_all = ["debug", "flamegraph", "flamechart", "rerun", "fuzz_input_file", "gas_report"],
+        conflicts_with_all = ["debug", "flamegraph", "flamechart", "evm_profile", "rerun", "fuzz_input_file", "gas_report"],
     )]
     pub showmap_out: Option<PathBuf>,
 
@@ -887,6 +918,9 @@ impl TestArgs {
             if self.flamechart {
                 conflicts.push("--flamechart");
             }
+            if self.evm_profile.is_some() {
+                conflicts.push("--evm-profile");
+            }
             if self.junit {
                 conflicts.push("--junit");
             }
@@ -926,14 +960,19 @@ impl TestArgs {
         // Create test options from general project settings and compiler output.
         execution.should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
+        let profile_format = self.evm_profile;
 
         // Determine executor verbosity.
-        if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
+        if (self.gas_report && evm_opts.verbosity < 3)
+            || self.flamegraph
+            || self.flamechart
+            || profile_format.is_some()
+        {
             evm_opts.verbosity = 3;
         }
 
-        // Enable internal tracing for more informative flamegraph.
-        if should_draw && !self.decode_internal {
+        // Enable internal tracing for more informative flamegraph/profile.
+        if (should_draw || profile_format.is_some()) && !self.decode_internal {
             self.decode_internal = true;
         }
 
@@ -1088,6 +1127,55 @@ impl TestArgs {
             if let Err(e) = opener::open(&file_name) {
                 sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
             }
+        }
+
+        if profile_format.is_some() {
+            let (profile_json, test_name_trimmed, contract) = {
+                let decoder = outcome.last_run_decoder.clone().unwrap();
+                let (suite_name, test_name, test_result) = outcome
+                    .results
+                    .iter_mut()
+                    .find_map(|(suite_name, suite)| {
+                        suite.test_results.iter_mut().next().map(|(test_name, result)| {
+                            (suite_name.as_str(), test_name.as_str(), result)
+                        })
+                    })
+                    .unwrap();
+
+                let (_, arena) = test_result
+                    .traces
+                    .iter_mut()
+                    .find(|(kind, _)| *kind == TraceKind::Execution)
+                    .unwrap();
+
+                // Decode traces.
+                decode_trace_arena(arena, &decoder).await;
+
+                // Build profile.
+                let contract = suite_name.split(':').next_back().unwrap();
+                let test_name_trimmed = test_name.trim_end_matches("()");
+
+                let profile = speedscope::builder::build(
+                    arena,
+                    test_name_trimmed,
+                    contract,
+                    self.evm.isolate,
+                );
+                (serde_json::to_vec(&profile)?, test_name_trimmed.to_string(), contract.to_string())
+            };
+
+            // Write profile to file.
+            let profile_path = format!("cache/evm_profile_{contract}_{test_name_trimmed}.json");
+            fs::write(&profile_path, &profile_json)?;
+
+            sh_println!("Profile saved to {profile_path}")?;
+
+            if self.no_open {
+                return Ok(outcome);
+            }
+
+            // Serve the profile via local HTTP server and optionally open in browser.
+            evm_profile_server::serve_and_open(profile_json, &test_name_trimmed, &contract).await?;
         }
 
         if execution.should_debug {
@@ -1386,6 +1474,7 @@ impl TestArgs {
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(execution.should_debug)
             .set_decode_internal(execution.decode_internal)
+            .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
@@ -1478,11 +1567,15 @@ impl TestArgs {
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
-        if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
+        if num_filtered != 1
+            && (self.debug || self.flamegraph || self.flamechart || self.evm_profile.is_some())
+        {
             let action = if self.flamegraph {
                 "generate a flamegraph"
             } else if self.flamechart {
                 "generate a flamechart"
+            } else if self.evm_profile.is_some() {
+                "generate an EVM profile"
             } else {
                 "run the debugger"
             };
@@ -1617,7 +1710,8 @@ impl TestArgs {
                 || self.gas_report
                 || self.debug
                 || self.flamegraph
-                || self.flamechart;
+                || self.flamechart
+                || self.evm_profile.is_some();
 
             // Print suite header.
             if !silent {

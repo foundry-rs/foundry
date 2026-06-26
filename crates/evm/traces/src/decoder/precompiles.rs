@@ -55,7 +55,7 @@ interface Precompiles {
 }
 use Precompiles::*;
 
-pub(super) fn is_known_precompile(
+pub(crate) fn is_known_precompile(
     address: Address,
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,

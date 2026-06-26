@@ -421,6 +421,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
     pub decode_internal: InternalTraceMode,
+    /// Whether to record every opcode step without debugger snapshots.
+    pub record_all_steps: bool,
     /// Whether to enable call isolation.
     pub isolation: bool,
     /// Whether to exit early on test failure or if test run interrupted.
@@ -452,6 +454,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         // self.line_coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
+        // self.record_all_steps = N/A;
 
         // TODO: self.evm_opts
         self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
@@ -521,6 +524,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         TraceRequirements::default()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
+            .with_all_steps(self.record_all_steps)
             .with_verbosity(self.evm_opts.verbosity)
     }
 }
@@ -544,6 +548,8 @@ pub struct MultiContractRunnerBuilder {
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
     pub decode_internal: InternalTraceMode,
+    /// Whether to record every opcode step without debugger snapshots.
+    pub record_all_steps: bool,
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Whether to exit early on test failure.
@@ -567,6 +573,7 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
+            record_all_steps: Default::default(),
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
@@ -614,6 +621,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
+        self
+    }
+
+    pub const fn set_record_all_steps(mut self, enable: bool) -> Self {
+        self.record_all_steps = enable;
         self
     }
 
@@ -764,6 +776,7 @@ impl MultiContractRunnerBuilder {
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
+                record_all_steps: self.record_all_steps,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),

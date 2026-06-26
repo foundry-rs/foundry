@@ -1,6 +1,7 @@
 //! Core test functionality tests
 
 use foundry_test_utils::str;
+use serde_json::Value;
 
 forgetest_init!(failing_test_after_failed_setup, |prj, cmd| {
     prj.add_test(
@@ -96,6 +97,31 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
+});
+
+forgetest_init!(evm_profile_no_open_writes_profile_and_exits, |prj, cmd| {
+    prj.add_test(
+        "EvmProfileNoOpen.t.sol",
+        r#"
+contract EvmProfileNoOpenTest {
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testProfile", "--evm-profile", "--no-open"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Profile saved to cache/evm_profile_EvmProfileNoOpenTest_testProfile.json
+
+"#]]);
+
+    let profile_path = prj.root().join("cache/evm_profile_EvmProfileNoOpenTest_testProfile.json");
+    let profile: Value = serde_json::from_str(&std::fs::read_to_string(profile_path).unwrap())
+        .expect("profile should be valid JSON");
+    assert_eq!(profile["exporter"], "foundry");
+    assert_eq!(profile["profiles"][0]["type"], "evented");
 });
 
 forgetest_init!(payment_failure, |prj, cmd| {

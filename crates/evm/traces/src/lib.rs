@@ -53,6 +53,8 @@ pub use debug::DebugTraceIdentifier;
 
 pub mod folded_stack_trace;
 
+pub mod speedscope;
+
 pub mod backtrace;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
@@ -500,6 +502,7 @@ impl TraceRequirements {
         match verbosity {
             0..3 => self,
             3..=4 => self.with_calls(true),
+            _ if matches!(self.steps, StepRecording::All) => self.with_calls(true),
             _ => self.with_state_changes(true),
         }
     }
@@ -741,7 +744,11 @@ mod tests {
 
     #[test]
     fn requirements_all_steps_avoid_debug_snapshots() {
-        let cfg = TraceRequirements::default().with_all_steps(true).into_config().unwrap();
+        let cfg = TraceRequirements::default()
+            .with_all_steps(true)
+            .with_verbosity(5)
+            .into_config()
+            .unwrap();
 
         assert!(cfg.record_steps, "all steps must record opcode steps");
         assert!(cfg.record_opcodes_filter.is_none(), "all steps must record every opcode step");
