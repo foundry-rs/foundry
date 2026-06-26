@@ -118,34 +118,7 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn with_tempo_hardfork(mut self, hardfork: Option<TempoHardfork>) -> Self {
         self.decoder.tempo_hardfork = hardfork;
-        if hardfork.is_some_and(|hardfork| hardfork.is_t3()) {
-            self.decoder
-                .labels
-                .entry(ADDRESS_REGISTRY_ADDRESS)
-                .or_insert_with(|| "AddressRegistry".to_string());
-            self.decoder
-                .labels
-                .entry(SIGNATURE_VERIFIER_ADDRESS)
-                .or_insert_with(|| "SignatureVerifier".to_string());
-        }
-        if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
-            self.decoder
-                .labels
-                .entry(TIP20_CHANNEL_RESERVE_ADDRESS)
-                .or_insert_with(|| "TIP20ChannelReserve".to_string());
-        }
-        if hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
-            self.decoder
-                .labels
-                .entry(RECEIVE_POLICY_GUARD_ADDRESS)
-                .or_insert_with(|| "ReceivePolicyGuard".to_string());
-        }
-        if hardfork.is_some_and(|hardfork| hardfork.is_t7()) {
-            self.decoder
-                .labels
-                .entry(STORAGE_CREDITS_ADDRESS)
-                .or_insert_with(|| "StorageCredits".to_string());
-        }
+        insert_tempo_hardfork_labels(&mut self.decoder.labels, hardfork);
         self
     }
 
@@ -160,6 +133,29 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn build(self) -> CallTraceDecoder {
         self.decoder
+    }
+}
+
+fn insert_label(labels: &mut HashMap<Address, String>, address: Address, label: &'static str) {
+    labels.entry(address).or_insert_with(|| label.to_string());
+}
+
+fn insert_tempo_hardfork_labels(
+    labels: &mut HashMap<Address, String>,
+    hardfork: Option<TempoHardfork>,
+) {
+    if hardfork.is_some_and(|hardfork| hardfork.is_t3()) {
+        insert_label(labels, ADDRESS_REGISTRY_ADDRESS, "AddressRegistry");
+        insert_label(labels, SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier");
+    }
+    if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
+        insert_label(labels, TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve");
+    }
+    if hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
+        insert_label(labels, RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard");
+    }
+    if hardfork.is_some_and(|hardfork| hardfork.is_t7()) {
+        insert_label(labels, STORAGE_CREDITS_ADDRESS, "StorageCredits");
     }
 }
 
@@ -345,6 +341,7 @@ impl CallTraceDecoder {
         let default_labels = &Self::new().labels;
         if self.labels.len() > default_labels.len() {
             self.labels.clone_from(default_labels);
+            insert_tempo_hardfork_labels(&mut self.labels, self.tempo_hardfork);
         }
 
         self.receive_contracts.clear();
@@ -2067,6 +2064,24 @@ mod tests {
             .build();
 
         assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
+    }
+
+    #[test]
+    fn test_clear_addresses_preserves_tempo_hardfork_labels() {
+        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+        let transient = address!("0x0000000000000000000000000000000000000123");
+        let mut decoder =
+            CallTraceDecoderBuilder::new().with_tempo_hardfork(Some(TempoHardfork::T5)).build();
+        decoder.labels.insert(transient, "Transient".to_string());
+
+        decoder.clear_addresses();
+
+        assert_eq!(
+            decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert!(!decoder.labels.contains_key(&transient));
     }
 
     #[tokio::test]

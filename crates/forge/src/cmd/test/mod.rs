@@ -19,6 +19,7 @@ use crate::{
         identifier::SignaturesIdentifier,
     },
 };
+use alloy_chains::Chain;
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
@@ -42,7 +43,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
+    Config, ExecutionSpec, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map, Value},
@@ -1633,7 +1634,7 @@ impl TestArgs {
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
-        let remote_chain =
+        let remote_chain: Option<Chain> =
             if runner.fork.is_some() { runner.tx_env.chain_id().map(Into::into) } else { None };
         let known_contracts = runner.known_contracts.clone();
 
@@ -1643,7 +1644,12 @@ impl TestArgs {
         // In multi-pass mode the per-pass summary is suppressed; the merged summary is
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
-        let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
+        let tempo_hardfork =
+            runner.tcfg.spec_id.evm_version_name().parse::<TempoHardfork>().ok().or_else(|| {
+                remote_chain
+                    .is_some_and(|chain| chain.is_tempo())
+                    .then(|| config.evm_spec_id::<TempoHardfork>())
+            });
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -1670,10 +1676,7 @@ impl TestArgs {
             .with_label_disabled(self.disable_labels)
             .with_verbosity(verbosity)
             .with_chain_id(remote_chain.map(|c| c.id()))
-            .with_tempo_hardfork(
-                (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
-                    .then(|| config.evm_spec_id::<TempoHardfork>()),
-            );
+            .with_tempo_hardfork(tempo_hardfork);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =
