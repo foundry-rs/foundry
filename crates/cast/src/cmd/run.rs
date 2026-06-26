@@ -216,12 +216,7 @@ impl RunArgs {
         let mut parent_beacon_block_root = None;
         if let Some(block) = &block {
             evm_env.block_env = block_env_from_header(block.header());
-
-            let spec_id = (*evm_env.cfg_env.spec()).into();
-
-            if spec_id.is_enabled_in(SpecId::CANCUN) {
-                parent_beacon_block_root = block.header().parent_beacon_block_root();
-            }
+            parent_beacon_block_root = block.header().parent_beacon_block_root();
 
             // Resolve the correct spec for the block using the same approach as reth: walk
             // known chain activation conditions to find the latest active fork. Falls back
@@ -265,11 +260,15 @@ impl RunArgs {
             None,
         )?;
 
-        if let Some(parent_beacon_block_root) = parent_beacon_block_root {
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
+
+        let spec_id = (*evm_env.cfg_env.spec()).into();
+
+        if spec_id.is_enabled_in(SpecId::CANCUN)
+            && let Some(parent_beacon_block_root) = parent_beacon_block_root
+        {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
-
-        evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
         // Set the state to the moment right before the transaction.
         //
