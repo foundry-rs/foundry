@@ -199,7 +199,7 @@ impl SymbolicExecutor {
             }
         }
         for mock in &state.call_mocks {
-            let Some(mock_value) = mock.value else { continue };
+            let Some(mock_value) = mock.value() else { continue };
             if self
                 .call_mock_match_constraints(
                     state,
@@ -258,16 +258,12 @@ impl SymbolicExecutor {
         calldata: &[SymExpr],
     ) -> Result<bool, SymbolicError> {
         let function_mocks = state.function_mocks.clone();
-        for mock in function_mocks.iter().rev().cloned() {
-            if mock.data.len() != calldata.len() {
+        for mock in function_mocks.iter().rev() {
+            if mock.calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) = function_mock_match_condition(
-                &mock,
-                callee,
-                calldata,
-                "symbolic vm.mockFunction calldata",
-            )?
+            let Some(condition) =
+                mock.match_condition(callee, calldata, "symbolic vm.mockFunction calldata")?
             else {
                 continue;
             };
@@ -282,16 +278,12 @@ impl SymbolicExecutor {
             }
         }
 
-        for mock in function_mocks.iter().rev().cloned() {
-            if mock.data.len() != 4 {
+        for mock in function_mocks.iter().rev() {
+            if mock.calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) = function_mock_match_condition(
-                &mock,
-                callee,
-                calldata,
-                "symbolic vm.mockFunction selector",
-            )?
+            let Some(condition) =
+                mock.match_condition(callee, calldata, "symbolic vm.mockFunction selector")?
             else {
                 continue;
             };
@@ -365,7 +357,8 @@ impl SymbolicExecutor {
 
         let mut mocks = state.call_mocks.iter().cloned().enumerate().collect::<Vec<_>>();
         mocks.sort_by_key(|(idx, mock)| {
-            (std::cmp::Reverse(mock.data.len()), std::cmp::Reverse(mock.value.is_some()), *idx)
+            let (len, has_value) = mock.specificity();
+            (std::cmp::Reverse(len), std::cmp::Reverse(has_value), *idx)
         });
 
         for (_, mock) in mocks {
@@ -406,7 +399,7 @@ impl SymbolicExecutor {
             else {
                 continue;
             };
-            let specificity = (mock.data.len(), mock.value.is_some());
+            let specificity = mock.specificity();
             if best.as_ref().is_none_or(
                 |(_, best_specificity, _): &(usize, (usize, bool), Vec<SymBoolExpr>)| {
                     specificity > *best_specificity
@@ -467,39 +460,31 @@ impl SymbolicExecutor {
         calldata: &[SymExpr],
     ) -> Result<Option<Address>, SymbolicError> {
         for mock in state.function_mocks.iter().rev().cloned() {
-            if mock.data.len() != calldata.len() {
+            if mock.calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) = function_mock_match_condition(
-                &mock,
-                callee,
-                calldata,
-                "symbolic vm.mockFunction calldata",
-            )?
+            let Some(condition) =
+                mock.match_condition(callee, calldata, "symbolic vm.mockFunction calldata")?
             else {
                 continue;
             };
             if let Some(constraints) = self.constraints_for_condition(state, condition)? {
                 state.constraints = constraints;
-                return Ok(Some(mock.target));
+                return Ok(Some(mock.target()));
             }
         }
         for mock in state.function_mocks.iter().rev().cloned() {
-            if mock.data.len() != 4 {
+            if mock.calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) = function_mock_match_condition(
-                &mock,
-                callee,
-                calldata,
-                "symbolic vm.mockFunction selector",
-            )?
+            let Some(condition) =
+                mock.match_condition(callee, calldata, "symbolic vm.mockFunction selector")?
             else {
                 continue;
             };
             if let Some(constraints) = self.constraints_for_condition(state, condition)? {
                 state.constraints = constraints;
-                return Ok(Some(mock.target));
+                return Ok(Some(mock.target()));
             }
         }
         Ok(None)
@@ -554,18 +539,7 @@ impl SymbolicExecutor {
         value: Option<U256>,
         calldata: &[SymExpr],
     ) -> Result<Option<SymBoolExpr>, SymbolicError> {
-        if !mock.static_parts_match(value) {
-            return Ok(None);
-        }
-        let Some(data_condition) =
-            calldata_prefix_condition(calldata, &mock.data, "symbolic mocked call calldata")?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(SymBoolExpr::and(vec![
-            address_match_condition(&mock.callee, callee),
-            data_condition,
-        ])))
+        mock.match_condition(callee, value, calldata)
     }
 
     /// Returns whether `expected_revert_matches` holds.
@@ -893,9 +867,10 @@ impl SymbolicExecutor {
                 if !matches!(kind, CallKind::DelegateCall) {
                     let _ = state.prank_for_next_call();
                 }
-                state.return_data = mock.return_data;
+                let (return_data, reverts) = mock.into_parts();
+                state.return_data = return_data;
                 state.copy_call_output_offset(out_offset, &out_size)?;
-                state.stack.push(SymExpr::constant(U256::from(!mock.reverts)))?;
+                state.stack.push(SymExpr::constant(U256::from(!reverts)))?;
                 return Ok(StepOutcome::Continue);
             }
         }

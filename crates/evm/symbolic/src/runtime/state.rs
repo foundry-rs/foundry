@@ -800,16 +800,54 @@ impl ExpectedCall {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CallMock {
-    pub(crate) callee: SymExpr,
-    pub(crate) value: Option<U256>,
-    pub(crate) data: Arc<[SymExpr]>,
-    pub(crate) returns: Vec<SymReturnData>,
-    pub(crate) reverts: bool,
-    pub(crate) calls: usize,
+    callee: SymExpr,
+    value: Option<U256>,
+    data: Arc<[SymExpr]>,
+    returns: Vec<SymReturnData>,
+    reverts: bool,
+    calls: usize,
 }
 
 impl CallMock {
-    pub(crate) fn static_parts_match(&self, value: Option<U256>) -> bool {
+    pub(crate) fn new(
+        callee: SymExpr,
+        value: Option<U256>,
+        data: Vec<SymExpr>,
+        returns: Vec<SymReturnData>,
+        reverts: bool,
+    ) -> Self {
+        Self { callee, value, data: data.into(), returns, reverts, calls: 0 }
+    }
+
+    pub(crate) const fn value(&self) -> Option<U256> {
+        self.value
+    }
+
+    pub(crate) fn specificity(&self) -> (usize, bool) {
+        (self.data.len(), self.value.is_some())
+    }
+
+    pub(crate) fn match_condition(
+        &self,
+        callee: Address,
+        value: Option<U256>,
+        calldata: &[SymExpr],
+    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
+        if !self.static_parts_match(value) {
+            return Ok(None);
+        }
+        let Some(data_condition) =
+            calldata_prefix_condition(calldata, &self.data, "symbolic mocked call calldata")?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(SymBoolExpr::and(vec![
+            address_match_condition(&self.callee, callee),
+            data_condition,
+        ])))
+    }
+
+    fn static_parts_match(&self, value: Option<U256>) -> bool {
         self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
     }
 
@@ -825,15 +863,58 @@ impl CallMock {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CallMockOutcome {
-    pub(crate) return_data: SymReturnData,
-    pub(crate) reverts: bool,
+    return_data: SymReturnData,
+    reverts: bool,
+}
+
+impl CallMockOutcome {
+    pub(crate) fn into_parts(self) -> (SymReturnData, bool) {
+        (self.return_data, self.reverts)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FunctionMock {
-    pub(crate) callee: SymExpr,
-    pub(crate) target: Address,
-    pub(crate) data: Arc<[SymExpr]>,
+    callee: SymExpr,
+    target: Address,
+    data: Arc<[SymExpr]>,
+}
+
+impl FunctionMock {
+    pub(crate) fn new(callee: SymExpr, target: Address, data: Vec<SymExpr>) -> Self {
+        Self { callee, target, data: data.into() }
+    }
+
+    pub(crate) fn matches_definition(&self, callee: &SymExpr, data: &[SymExpr]) -> bool {
+        self.callee == *callee && self.data.as_ref() == data
+    }
+
+    pub(crate) const fn set_target(&mut self, target: Address) {
+        self.target = target;
+    }
+
+    pub(crate) fn calldata_len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub(crate) const fn target(&self) -> Address {
+        self.target
+    }
+
+    pub(crate) fn match_condition(
+        &self,
+        callee: Address,
+        calldata: &[SymExpr],
+        reason: &'static str,
+    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
+        let Some(data_condition) = calldata_prefix_condition(calldata, &self.data, reason)? else {
+            return Ok(None);
+        };
+        Ok(Some(SymBoolExpr::and(vec![
+            address_match_condition(&self.callee, callee),
+            data_condition,
+        ])))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

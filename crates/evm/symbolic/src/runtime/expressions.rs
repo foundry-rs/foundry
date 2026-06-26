@@ -479,18 +479,6 @@ pub(crate) fn calldata_prefix_condition(
     Ok(Some(SymBoolExpr::and(conditions)))
 }
 
-pub(crate) fn function_mock_match_condition(
-    mock: &FunctionMock,
-    callee: Address,
-    calldata: &[SymExpr],
-    reason: &'static str,
-) -> Result<Option<SymBoolExpr>, SymbolicError> {
-    let Some(data_condition) = calldata_prefix_condition(calldata, &mock.data, reason)? else {
-        return Ok(None);
-    };
-    Ok(Some(SymBoolExpr::and(vec![address_match_condition(&mock.callee, callee), data_condition])))
-}
-
 pub(crate) trait SymExprSliceExt {
     fn eval<M: SymbolicModelLookup + ?Sized>(&self, model: &M) -> Result<Vec<u8>, SymbolicError>;
 }

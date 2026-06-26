@@ -449,14 +449,7 @@ impl SymbolicExecutor {
         returns: Vec<SymReturnData>,
         reverts: bool,
     ) -> CheatcodeOutcome {
-        state.call_mocks.push(CallMock {
-            callee,
-            value,
-            data: data.into(),
-            returns,
-            reverts,
-            calls: 0,
-        });
+        state.call_mocks.push(CallMock::new(callee, value, data, returns, reverts));
         CheatcodeOutcome::Continue(Vec::new())
     }
 
@@ -467,14 +460,12 @@ impl SymbolicExecutor {
         target: Address,
         data: Vec<SymExpr>,
     ) -> CheatcodeOutcome {
-        if let Some(mock) = state
-            .function_mocks
-            .iter_mut()
-            .find(|mock| mock.callee == callee && mock.data.as_ref() == data.as_slice())
+        if let Some(mock) =
+            state.function_mocks.iter_mut().find(|mock| mock.matches_definition(&callee, &data))
         {
-            mock.target = target;
+            mock.set_target(target);
         } else {
-            state.function_mocks.push(FunctionMock { callee, target, data: data.into() });
+            state.function_mocks.push(FunctionMock::new(callee, target, data));
         }
         CheatcodeOutcome::Continue(Vec::new())
     }
