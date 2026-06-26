@@ -598,8 +598,8 @@ impl SmtLibSubprocessSolver {
 /// Returns a structural key for normalized solver cache lookups.
 fn constraint_cache_key(constraints: &[SymBoolExpr]) -> Vec<SymBoolExpr> {
     let mut key = Vec::with_capacity(constraints.len());
-    for constraint in constraints.iter().cloned().map(cache_key_bool) {
-        collect_cache_key_conjunct(constraint, &mut key);
+    for constraint in constraints.iter().cloned() {
+        constraint.cache_key().push_cache_key_conjuncts(&mut key);
     }
     key.sort();
     key.dedup();
@@ -634,106 +634,107 @@ fn sorted_bool_exprs_are_subset(subset: &[SymBoolExpr], superset: &[SymBoolExpr]
     true
 }
 
-/// Returns a conservative canonical boolean expression for cache-key equality.
-fn cache_key_bool(expr: SymBoolExpr) -> SymBoolExpr {
-    expr.fold(&mut cache_key_bool_node)
-}
+impl SymBoolExpr {
+    fn cache_key(self) -> Self {
+        self.fold(&mut Self::cache_key_node)
+    }
 
-fn cache_key_bool_node(expr: SymBoolExpr) -> SymBoolExpr {
-    match expr.into_kind() {
-        SymBoolExprKind::Not(value) => value.not(),
-        SymBoolExprKind::And(values) => {
-            let mut conjuncts = Vec::new();
-            for value in values.iter().cloned() {
-                collect_cache_key_conjunct(value, &mut conjuncts);
+    fn cache_key_node(expr: Self) -> Self {
+        match expr.into_kind() {
+            SymBoolExprKind::Not(value) => value.not(),
+            SymBoolExprKind::And(values) => {
+                let mut conjuncts = Vec::new();
+                for value in values.iter().cloned() {
+                    value.push_cache_key_conjuncts(&mut conjuncts);
+                }
+                conjuncts.sort();
+                conjuncts.dedup();
+                Self::and(conjuncts)
             }
-            conjuncts.sort();
-            conjuncts.dedup();
-            SymBoolExpr::and(conjuncts)
+            SymBoolExprKind::Eq(left, right) => {
+                let left = left.cache_key();
+                let right = right.cache_key();
+                if left <= right { Self::eq(left, right) } else { Self::eq(right, left) }
+            }
+            SymBoolExprKind::Cmp(op, left, right) => {
+                Self::cache_key_cmp(op, left.cache_key(), right.cache_key())
+            }
+            SymBoolExprKind::Const(value) => Self::constant(value),
         }
-        SymBoolExprKind::Eq(left, right) => {
-            let left = cache_key_expr(left);
-            let right = cache_key_expr(right);
-            if left <= right { SymBoolExpr::eq(left, right) } else { SymBoolExpr::eq(right, left) }
+    }
+
+    fn push_cache_key_conjuncts(self, out: &mut Vec<Self>) {
+        match self.kind() {
+            SymBoolExprKind::Const(true) => {}
+            SymBoolExprKind::And(values) => {
+                for value in values.iter().cloned() {
+                    value.push_cache_key_conjuncts(out);
+                }
+            }
+            _ => out.push(self),
         }
-        SymBoolExprKind::Cmp(op, left, right) => {
-            cache_key_cmp(op, cache_key_expr(left), cache_key_expr(right))
+    }
+
+    fn cache_key_cmp(op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> Self {
+        match op {
+            SymBoolExprOp::Ugt => Self::cmp(SymBoolExprOp::Ult, right, left),
+            SymBoolExprOp::Uge => Self::cmp(SymBoolExprOp::Ule, right, left),
+            SymBoolExprOp::Sgt => Self::cmp(SymBoolExprOp::Slt, right, left),
+            SymBoolExprOp::Ult | SymBoolExprOp::Ule | SymBoolExprOp::Slt => {
+                Self::cmp(op, left, right)
+            }
         }
-        SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
     }
 }
 
-/// Collects cache-key conjuncts, flattening conjunctions because path constraints are conjunctive.
-fn collect_cache_key_conjunct(expr: SymBoolExpr, out: &mut Vec<SymBoolExpr>) {
-    match expr.kind() {
-        SymBoolExprKind::Const(true) => {}
-        SymBoolExprKind::And(values) => {
-            for value in values.iter().cloned() {
-                collect_cache_key_conjunct(value, out);
+impl SymExpr {
+    fn cache_key(self) -> Self {
+        self.fold(&mut Self::cache_key_node)
+    }
+
+    fn cache_key_node(expr: Self) -> Self {
+        match expr.kind() {
+            SymExprKind::Op(op, left, right) => {
+                if op.is_commutative() && right < left {
+                    let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
+                    Self::op(op, right, left)
+                } else {
+                    expr
+                }
             }
+            SymExprKind::AddMod { left, right, .. } => {
+                if right < left {
+                    let SymExprKind::AddMod { left, right, modulus } = expr.into_kind() else {
+                        unreachable!()
+                    };
+                    Self::addmod(right, left, modulus)
+                } else {
+                    expr
+                }
+            }
+            SymExprKind::MulMod { left, right, .. } => {
+                if right < left {
+                    let SymExprKind::MulMod { left, right, modulus } = expr.into_kind() else {
+                        unreachable!()
+                    };
+                    Self::mulmod(right, left, modulus)
+                } else {
+                    expr
+                }
+            }
+            SymExprKind::Ite(_, _, _) => {
+                let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
+                Self::ite(cond.cache_key(), left, right)
+            }
+            _ => expr,
         }
-        _ => out.push(expr),
     }
 }
 
-/// Returns a conservative canonical comparison for cache-key equality.
-fn cache_key_cmp(op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> SymBoolExpr {
-    match op {
-        SymBoolExprOp::Ugt => SymBoolExpr::cmp(SymBoolExprOp::Ult, right, left),
-        SymBoolExprOp::Uge => SymBoolExpr::cmp(SymBoolExprOp::Ule, right, left),
-        SymBoolExprOp::Sgt => SymBoolExpr::cmp(SymBoolExprOp::Slt, right, left),
-        SymBoolExprOp::Ult | SymBoolExprOp::Ule | SymBoolExprOp::Slt => {
-            SymBoolExpr::cmp(op, left, right)
-        }
+impl SymExprOp {
+    const fn is_commutative(self) -> bool {
+        matches!(self, Self::Add | Self::Mul | Self::And | Self::Or | Self::Xor)
     }
-}
-
-/// Returns a conservative canonical word expression for cache-key equality.
-fn cache_key_expr(expr: SymExpr) -> SymExpr {
-    expr.fold(&mut cache_key_expr_node)
-}
-
-fn cache_key_expr_node(expr: SymExpr) -> SymExpr {
-    match expr.kind() {
-        SymExprKind::Op(op, left, right) => {
-            if expr_op_is_commutative(*op) && right < left {
-                let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
-                SymExpr::op(op, right, left)
-            } else {
-                expr
-            }
-        }
-        SymExprKind::AddMod { left, right, .. } => {
-            if right < left {
-                let SymExprKind::AddMod { left, right, modulus } = expr.into_kind() else {
-                    unreachable!()
-                };
-                SymExpr::addmod(right, left, modulus)
-            } else {
-                expr
-            }
-        }
-        SymExprKind::MulMod { left, right, .. } => {
-            if right < left {
-                let SymExprKind::MulMod { left, right, modulus } = expr.into_kind() else {
-                    unreachable!()
-                };
-                SymExpr::mulmod(right, left, modulus)
-            } else {
-                expr
-            }
-        }
-        SymExprKind::Ite(_, _, _) => {
-            let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
-            SymExpr::ite(cache_key_bool(cond), left, right)
-        }
-        _ => expr,
-    }
-}
-
-/// Returns whether a word operation is safe to reorder for cache-key equality.
-const fn expr_op_is_commutative(op: SymExprOp) -> bool {
-    matches!(op, SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor)
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
