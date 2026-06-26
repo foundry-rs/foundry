@@ -2,13 +2,12 @@ use super::*;
 
 impl SymBoolExpr {
     pub(crate) fn contains_hard_arith(&self) -> bool {
-        self.visit(&mut |expr| match expr.kind() {
-            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right)
-                if left.contains_hard_arith() || right.contains_hard_arith() =>
-            {
+        self.visit_exprs(&mut |expr| {
+            if is_hard_arith_node(expr) {
                 ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
             }
-            _ => ControlFlow::Continue(()),
         })
         .is_break()
     }
@@ -26,35 +25,16 @@ impl SymBoolExpr {
 }
 
 impl SymExpr {
+    #[cfg(test)]
     pub(crate) fn contains_hard_arith(&self) -> bool {
-        match self.kind() {
-            SymExprKind::Const(_)
-            | SymExprKind::Var(_)
-            | SymExprKind::GasLeft(_)
-            | SymExprKind::Keccak { .. }
-            | SymExprKind::Hash { .. } => false,
-            SymExprKind::Not(value) => value.contains_hard_arith(),
-            SymExprKind::Op(SymExprOp::Mul, left, right) => {
-                left.contains_var() && right.contains_var()
+        self.visit(&mut |expr| {
+            if is_hard_arith_node(expr) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
             }
-            SymExprKind::Op(
-                SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
-                left,
-                right,
-            ) => left.contains_var() || right.contains_var(),
-            SymExprKind::AddMod { left, right, modulus }
-            | SymExprKind::MulMod { left, right, modulus } => {
-                left.contains_var() || right.contains_var() || modulus.contains_var()
-            }
-            SymExprKind::Op(_, left, right) => {
-                left.contains_hard_arith() || right.contains_hard_arith()
-            }
-            SymExprKind::Ite(cond, left, right) => {
-                cond.contains_hard_arith()
-                    || left.contains_hard_arith()
-                    || right.contains_hard_arith()
-            }
-        }
+        })
+        .is_break()
     }
 
     fn contains_var(&self) -> bool {
@@ -69,6 +49,22 @@ impl SymExpr {
             }
         })
         .is_break()
+    }
+}
+
+fn is_hard_arith_node(expr: &SymExpr) -> bool {
+    match expr.kind() {
+        SymExprKind::Op(SymExprOp::Mul, left, right) => left.contains_var() && right.contains_var(),
+        SymExprKind::Op(
+            SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
+            left,
+            right,
+        ) => left.contains_var() || right.contains_var(),
+        SymExprKind::AddMod { left, right, modulus }
+        | SymExprKind::MulMod { left, right, modulus } => {
+            left.contains_var() || right.contains_var() || modulus.contains_var()
+        }
+        _ => false,
     }
 }
 

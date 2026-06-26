@@ -1694,26 +1694,6 @@ impl SymBoolExpr {
         })
     }
 
-    /// Visits this boolean expression and all child boolean expressions.
-    pub(crate) fn visit<B>(
-        &self,
-        visitor: &mut impl FnMut(&Self) -> ControlFlow<B>,
-    ) -> ControlFlow<B> {
-        visitor(self)?;
-        match self.kind() {
-            SymBoolExprKind::Const(_)
-            | SymBoolExprKind::Eq(_, _)
-            | SymBoolExprKind::Cmp(_, _, _) => {}
-            SymBoolExprKind::Not(value) => value.visit(visitor)?,
-            SymBoolExprKind::And(values) => {
-                for value in values.iter() {
-                    value.visit(visitor)?;
-                }
-            }
-        }
-        ControlFlow::Continue(())
-    }
-
     /// Visits all word expressions contained in this boolean expression.
     pub(crate) fn visit_exprs<B>(
         &self,
