@@ -17,7 +17,7 @@ use foundry_common::{sh_err, sh_println};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
-/// Serves a profile on a local HTTP server and optionally opens it in the browser.
+/// Serves a profile on a local HTTP server and opens it in the browser.
 ///
 /// Takes the already-serialized profile JSON bytes.
 /// The server runs until Ctrl+C is pressed.
@@ -25,7 +25,6 @@ pub async fn serve_and_open(
     profile_json: Vec<u8>,
     test_name: &str,
     contract_name: &str,
-    no_open: bool,
 ) -> Result<()> {
     let token = generate_token();
 
@@ -56,13 +55,9 @@ pub async fn serve_and_open(
 
     sh_println!("Profile server running at http://127.0.0.1:{port}")?;
 
-    if no_open {
-        sh_println!("View in speedscope: {viewer_url}")?;
-    } else {
-        sh_println!("Opening speedscope: {viewer_url}")?;
-        if let Err(e) = opener::open(&viewer_url) {
-            sh_err!("Failed to open browser: {e}")?;
-        }
+    sh_println!("Opening speedscope: {viewer_url}")?;
+    if let Err(e) = opener::open(&viewer_url) {
+        sh_err!("Failed to open browser: {e}")?;
     }
 
     sh_println!("\nPress Ctrl+C to stop the server.")?;

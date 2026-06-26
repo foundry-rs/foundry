@@ -392,6 +392,10 @@ pub enum TraceMode {
     ///
     /// Same as `JumpSimple`, but tracks memory snapshots as well.
     Jump,
+    /// Call trace with complete steps tracing, without debugger snapshots.
+    ///
+    /// Used by EVM profile generation, which needs every opcode step's gas cost.
+    AllSteps,
     /// Call trace with complete steps tracing.
     ///
     /// Used by debugger.
@@ -424,6 +428,10 @@ impl TraceMode {
         matches!(self, Self::Jump)
     }
 
+    pub const fn is_all_steps(self) -> bool {
+        matches!(self, Self::AllSteps)
+    }
+
     pub const fn record_state_diff(self) -> bool {
         matches!(self, Self::RecordStateDiff)
     }
@@ -440,6 +448,10 @@ impl TraceMode {
         std::cmp::max(self, mode.into())
     }
 
+    pub fn with_all_steps(self, yes: bool) -> Self {
+        if yes && !self.is_debug() { std::cmp::max(self, Self::AllSteps) } else { self }
+    }
+
     pub fn with_state_changes(self, yes: bool) -> Self {
         if yes && !self.is_debug() { std::cmp::max(self, Self::RecordStateDiff) } else { self }
     }
@@ -450,7 +462,7 @@ impl TraceMode {
             3..=4 => std::cmp::max(self, Self::Call),
             // Enable step recording and state diff recording when verbosity is 5 or higher.
             // This includes backtraces (JUMP/JUMPDEST steps) and storage changes.
-            _ if self.is_debug() => self,
+            _ if self.is_debug() || self.is_all_steps() => self,
             _ => std::cmp::max(self, Self::RecordStateDiff),
         }
     }
@@ -467,8 +479,8 @@ impl TraceMode {
             let effective = if self.record_state_diff() { Self::Steps } else { self };
             TracingInspectorConfig {
                 record_steps: self >= Self::Steps,
-                record_memory_snapshots: effective >= Self::Jump,
-                record_stack_snapshots: if effective > Self::Steps {
+                record_memory_snapshots: effective >= Self::Jump && !effective.is_all_steps(),
+                record_stack_snapshots: if effective > Self::Steps && !effective.is_all_steps() {
                     StackSnapshotType::Full
                 } else {
                     StackSnapshotType::None
@@ -477,7 +489,7 @@ impl TraceMode {
                 record_state_diff,
                 record_returndata_snapshots: effective.is_debug(),
                 // State diff needs all opcodes recorded to capture SLOAD/SSTORE.
-                record_opcodes_filter: if record_state_diff {
+                record_opcodes_filter: if record_state_diff || effective.is_all_steps() {
                     None
                 } else {
                     (effective.is_steps() || effective.is_jump() || effective.is_jump_simple())
@@ -599,5 +611,24 @@ mod tests {
         assert!(cfg.record_immediate_bytes, "Debug must record immediate bytes");
         assert!(cfg.record_opcodes_filter.is_none(), "Debug must record all opcodes (no filter)");
         assert!(cfg.record_state_diff, "Debug should record storage accesses for the debugger");
+    }
+
+    #[test]
+    fn config_all_steps_avoids_debug_snapshots() {
+        let mode = TraceMode::None.with_all_steps(true).with_verbosity(5);
+        assert_eq!(mode, TraceMode::AllSteps);
+
+        let cfg = mode.into_config().unwrap();
+        assert!(cfg.record_steps, "AllSteps must record opcode steps");
+        assert!(cfg.record_opcodes_filter.is_none(), "AllSteps must record every opcode step");
+        assert!(!cfg.record_memory_snapshots, "AllSteps should not record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::None,
+            "AllSteps should not record stack snapshots"
+        );
+        assert!(!cfg.record_returndata_snapshots, "AllSteps should not record returndata");
+        assert!(!cfg.record_immediate_bytes, "AllSteps should not record immediate bytes");
+        assert!(!cfg.record_state_diff, "AllSteps should not record state diffs");
     }
 }

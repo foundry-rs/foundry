@@ -196,7 +196,7 @@ pub struct TestArgs {
 
     /// Don't open the profile in the browser (for `--evm-profile`).
     ///
-    /// The profile is still saved to disk and the server is started.
+    /// The profile is saved to disk without starting the local viewer server.
     #[arg(long, requires = "evm_profile")]
     no_open: bool,
 
@@ -1223,26 +1223,39 @@ impl TestArgs {
         }
 
         if profile_format.is_some() {
-            let (suite_name, test_name, mut test_result) =
-                outcome.remove_first().ok_or_eyre("no tests were executed")?;
+            let (profile_json, test_name_trimmed, contract) = {
+                let decoder = outcome.last_run_decoder.clone().unwrap();
+                let (suite_name, test_name, test_result) = outcome
+                    .results
+                    .iter_mut()
+                    .find_map(|(suite_name, suite)| {
+                        suite.test_results.iter_mut().next().map(|(test_name, result)| {
+                            (suite_name.as_str(), test_name.as_str(), result)
+                        })
+                    })
+                    .unwrap();
 
-            let (_, arena) = test_result
-                .traces
-                .iter_mut()
-                .find(|(kind, _)| *kind == TraceKind::Execution)
-                .unwrap();
+                let (_, arena) = test_result
+                    .traces
+                    .iter_mut()
+                    .find(|(kind, _)| *kind == TraceKind::Execution)
+                    .unwrap();
 
-            // Decode traces.
-            let decoder = outcome.last_run_decoder.as_ref().unwrap();
-            decode_trace_arena(arena, decoder).await;
+                // Decode traces.
+                decode_trace_arena(arena, &decoder).await;
 
-            // Build profile.
-            let contract = suite_name.split(':').next_back().unwrap();
-            let test_name_trimmed = test_name.trim_end_matches("()");
+                // Build profile.
+                let contract = suite_name.split(':').next_back().unwrap();
+                let test_name_trimmed = test_name.trim_end_matches("()");
 
-            let profile =
-                speedscope::builder::build(arena, test_name_trimmed, contract, self.evm.isolate);
-            let profile_json = serde_json::to_vec(&profile)?;
+                let profile = speedscope::builder::build(
+                    arena,
+                    test_name_trimmed,
+                    contract,
+                    self.evm.isolate,
+                );
+                (serde_json::to_vec(&profile)?, test_name_trimmed.to_string(), contract.to_string())
+            };
 
             // Write profile to file.
             let profile_path = format!("cache/evm_profile_{contract}_{test_name_trimmed}.json");
@@ -1250,14 +1263,12 @@ impl TestArgs {
 
             sh_println!("Profile saved to {profile_path}")?;
 
+            if self.no_open {
+                return Ok(outcome);
+            }
+
             // Serve the profile via local HTTP server and optionally open in browser.
-            evm_profile_server::serve_and_open(
-                profile_json,
-                test_name_trimmed,
-                contract,
-                self.no_open,
-            )
-            .await?;
+            evm_profile_server::serve_and_open(profile_json, &test_name_trimmed, &contract).await?;
         }
 
         if execution.should_debug {
@@ -1549,8 +1560,9 @@ impl TestArgs {
         let config = Arc::new(config);
         let showmap = self.showmap_config();
         let runner = MultiContractRunnerBuilder::new(config.clone())
-            .set_debug(execution.should_debug || self.evm_profile.is_some())
+            .set_debug(execution.should_debug)
             .set_decode_internal(execution.decode_internal)
+            .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
