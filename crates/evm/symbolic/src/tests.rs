@@ -13,7 +13,7 @@ fn empty_state() -> PathState {
 
 /// Regression coverage for `add_words`.
 fn add_words(left: SymWord, right: SymWord) -> SymWord {
-    SymWord::Expr(expr_add(left.into_expr(), right.into_expr()))
+    SymWord::expr(expr_add(left.into_expr(), right.into_expr()))
 }
 
 /// Regression coverage for `precompile_address`.
@@ -143,7 +143,7 @@ fn exp_helper_uses_evm_operand_order() {
 fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
     let mut state = empty_state();
     state.stack.push(SymWord::Concrete(U256::from(16))).unwrap();
-    state.stack.push(SymWord::Expr(Expr::var("base"))).unwrap();
+    state.stack.push(SymWord::expr(Expr::var("base"))).unwrap();
 
     state.exp_word().unwrap();
 
@@ -158,7 +158,7 @@ fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
 /// Regression coverage for `exp_helper_expands_bounded_symbolic_exponent`.
 fn exp_helper_expands_bounded_symbolic_exponent() {
     let mut state = empty_state();
-    let exponent = SymWord::Expr(Expr::var("exponent"));
+    let exponent = SymWord::expr(Expr::var("exponent"));
     state.constraints.push(BoolExpr::cmp(
         BoolExprOp::Ule,
         exponent.clone().into_expr(),
@@ -181,7 +181,7 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
 fn shift_helpers_accept_symbolic_amounts() {
     let mut shl = empty_state();
     shl.stack.push(SymWord::Concrete(U256::from(1))).unwrap();
-    shl.stack.push(SymWord::Expr(Expr::var("shift"))).unwrap();
+    shl.stack.push(SymWord::expr(Expr::var("shift"))).unwrap();
     shl.shift_word(ShiftKind::Shl).unwrap();
     let shifted = shl.stack.pop().unwrap();
 
@@ -196,7 +196,7 @@ fn shift_helpers_accept_symbolic_amounts() {
 
     let mut shr = empty_state();
     shr.stack.push(SymWord::Concrete(U256::from(1) << 255)).unwrap();
-    shr.stack.push(SymWord::Expr(Expr::var("shift"))).unwrap();
+    shr.stack.push(SymWord::expr(Expr::var("shift"))).unwrap();
     shr.shift_word(ShiftKind::Shr).unwrap();
     let shifted = shr.stack.pop().unwrap();
 
@@ -211,7 +211,7 @@ fn shift_helpers_accept_symbolic_amounts() {
 
     let mut sar = empty_state();
     sar.stack.push(SymWord::Concrete(U256::MAX)).unwrap();
-    sar.stack.push(SymWord::Expr(Expr::var("shift"))).unwrap();
+    sar.stack.push(SymWord::expr(Expr::var("shift"))).unwrap();
     sar.shift_word(ShiftKind::Sar).unwrap();
     let shifted = sar.stack.pop().unwrap();
 
@@ -225,8 +225,8 @@ fn shift_helpers_accept_symbolic_amounts() {
 /// Regression coverage for `symbolic_division_guards_zero_divisor`.
 fn symbolic_division_guards_zero_divisor() {
     let mut state = empty_state();
-    state.stack.push(SymWord::Expr(Expr::var("den"))).unwrap();
-    state.stack.push(SymWord::Expr(Expr::var("num"))).unwrap();
+    state.stack.push(SymWord::expr(Expr::var("den"))).unwrap();
+    state.stack.push(SymWord::expr(Expr::var("num"))).unwrap();
 
     state
         .bin_word_div_zero_guard(|a, b| if b.is_zero() { U256::ZERO } else { a / b }, ExprOp::UDiv)
@@ -234,7 +234,7 @@ fn symbolic_division_guards_zero_divisor() {
 
     assert_eq!(
         state.stack.pop().unwrap(),
-        SymWord::Expr(Expr::ite(
+        SymWord::expr(Expr::ite(
             BoolExpr::eq(Expr::var("den"), Expr::Const(U256::ZERO)),
             Expr::Const(U256::ZERO),
             Expr::op(ExprOp::UDiv, Expr::var("num"), Expr::var("den")),
@@ -246,8 +246,8 @@ fn symbolic_division_guards_zero_divisor() {
 /// Regression coverage for `symbolic_byte_extracts_with_concrete_index`.
 fn symbolic_byte_extracts_with_concrete_index() {
     assert_eq!(
-        byte_word(U256::from(0), SymWord::Expr(Expr::var("word"))),
-        SymWord::Expr(Expr::op(
+        byte_word(U256::from(0), SymWord::expr(Expr::var("word"))),
+        SymWord::expr(Expr::op(
             ExprOp::And,
             Expr::op(ExprOp::Shr, Expr::var("word"), Expr::Const(U256::from(248))),
             Expr::Const(U256::from(0xff))
@@ -259,7 +259,7 @@ fn symbolic_byte_extracts_with_concrete_index() {
 /// Regression coverage for `symbolic_byte_extracts_with_symbolic_index`.
 fn symbolic_byte_extracts_with_symbolic_index() {
     let word = U256::from_be_bytes(core::array::from_fn::<_, 32, _>(|idx| idx as u8));
-    let byte = byte_word_dynamic(SymWord::Expr(Expr::var("index")), SymWord::Concrete(word));
+    let byte = byte_word_dynamic(SymWord::expr(Expr::var("index")), SymWord::Concrete(word));
 
     let in_range = BTreeMap::from([("index".to_string(), U256::from(9))]);
     assert_eq!(model_word(&byte, &in_range).unwrap(), U256::from(9));
@@ -272,7 +272,7 @@ fn symbolic_byte_extracts_with_symbolic_index() {
 /// Regression coverage for `symbolic_signextend_accepts_symbolic_index`.
 fn symbolic_signextend_accepts_symbolic_index() {
     let value = SymWord::Concrete(U256::from(0x80));
-    let extended = signextend_word_dynamic(SymWord::Expr(Expr::var("index")), value);
+    let extended = signextend_word_dynamic(SymWord::expr(Expr::var("index")), value);
 
     let zero_index = BTreeMap::from([("index".to_string(), U256::ZERO)]);
     assert_eq!(model_word(&extended, &zero_index).unwrap(), U256::MAX - U256::from(0x7f));
@@ -285,7 +285,7 @@ fn symbolic_signextend_accepts_symbolic_index() {
 /// Regression coverage for `symbolic_byte_preserves_concrete_packed_selector_bytes`.
 fn symbolic_byte_preserves_concrete_packed_selector_bytes() {
     let selector = U256::from(0x12345678);
-    let packed = SymWord::Expr(Expr::op(
+    let packed = SymWord::expr(Expr::op(
         ExprOp::Or,
         Expr::op(ExprOp::Shl, Expr::Const(selector), Expr::Const(U256::from(224))),
         Expr::op(ExprOp::Shr, Expr::var("arg"), Expr::Const(U256::from(32))),
@@ -301,9 +301,9 @@ fn symbolic_byte_preserves_concrete_packed_selector_bytes() {
 /// Regression coverage for `word_reassembly_preserves_split_symbolic_word`.
 fn word_reassembly_preserves_split_symbolic_word() {
     let original = Expr::op(ExprOp::Add, Expr::var("value"), Expr::Const(U256::from(1)));
-    let bytes = word_bytes(SymWord::Expr(original.clone()));
+    let bytes = word_bytes(SymWord::expr(original.clone()));
 
-    assert_eq!(word_from_bytes(bytes), SymWord::Expr(original));
+    assert_eq!(word_from_bytes(bytes), SymWord::expr(original));
 }
 
 #[test]
@@ -313,13 +313,13 @@ fn symbolic_address_aliases_match_abi_encoded_address_words() {
     let masked =
         Expr::op(ExprOp::And, source.clone(), Expr::Const((U256::from(1) << 160) - U256::from(1)));
     let mut encoded = vec![SymWord::zero(); 12];
-    encoded.extend((12..32).map(|idx| byte_word(U256::from(idx), SymWord::Expr(masked.clone()))));
+    encoded.extend((12..32).map(|idx| byte_word(U256::from(idx), SymWord::expr(masked.clone()))));
     let reassembled = word_from_bytes(encoded).into_expr();
 
     assert!(address_expr_equivalent(&source, &reassembled));
     assert_eq!(
-        symbolic_address_key(&SymWord::Expr(source)),
-        symbolic_address_key(&SymWord::Expr(reassembled))
+        symbolic_address_key(&SymWord::expr(source)),
+        symbolic_address_key(&SymWord::expr(reassembled))
     );
 }
 
@@ -408,7 +408,7 @@ fn dynamic_calldata_encodes_bounded_bytes() {
 fn calldata_load_accepts_symbolic_offsets() {
     let calldata =
         SymCalldata::new((0u8..40).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect());
-    let loaded = calldata.load_word(SymWord::Expr(Expr::var("offset"))).unwrap();
+    let loaded = calldata.load_word(SymWord::expr(Expr::var("offset"))).unwrap();
     let expected = word_from_bytes((1u8..33).map(|idx| SymWord::Concrete(U256::from(idx + 1))));
 
     assert_eq!(
@@ -434,7 +434,7 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
             SymWord::Concrete(U256::from(0xdd)),
         ],
     );
-    let size = SymWord::Expr(Expr::var("size"));
+    let size = SymWord::expr(Expr::var("size"));
     let bounded_size = BoundedCopySize::Symbolic { size, max_size: 4 };
     let input = call_input_from_memory(&memory, SymWord::Concrete(U256::ZERO), &bounded_size);
     let calldata = calldata_from_call_input(input, &bounded_size);
@@ -475,7 +475,7 @@ fn memory_copies_symbolic_calldata_offset() {
         SymCalldata::new((0u8..40).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect());
     let mut memory = SymMemory::default();
 
-    memory.copy_calldata_offset(0, SymWord::Expr(Expr::var("offset")), 2, &calldata).unwrap();
+    memory.copy_calldata_offset(0, SymWord::expr(Expr::var("offset")), 2, &calldata).unwrap();
     let word = memory.load_word(0).unwrap();
 
     let mut expected = [0u8; 32];
@@ -502,7 +502,7 @@ fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
         .copy_calldata_symbolic_size(
             SymWord::Concrete(U256::ZERO),
             SymWord::Concrete(U256::ZERO),
-            SymWord::Expr(Expr::var("size")),
+            SymWord::expr(Expr::var("size")),
             4,
             &calldata,
         )
@@ -522,7 +522,7 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
     memory.store_bytes(0, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
     memory.copy_symbolic_size(
         0,
-        SymWord::Expr(Expr::var("size")),
+        SymWord::expr(Expr::var("size")),
         (0u8..4).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect(),
     );
 
@@ -541,7 +541,7 @@ fn memory_reads_symbolic_size_with_zero_guarded_tail() {
 
     let bytes = memory.read_bytes_symbolic_size(
         SymWord::Concrete(U256::from(32)),
-        SymWord::Expr(Expr::var("size")),
+        SymWord::expr(Expr::var("size")),
         4,
     );
 
@@ -563,7 +563,7 @@ fn memory_copies_symbolic_memory_size_with_guarded_tail() {
         .copy_memory_symbolic_size(
             SymWord::Concrete(U256::ZERO),
             SymWord::Concrete(U256::from(32)),
-            SymWord::Expr(Expr::var("size")),
+            SymWord::expr(Expr::var("size")),
             4,
         )
         .unwrap();
@@ -584,9 +584,9 @@ fn memory_copies_symbolic_size_to_symbolic_dest() {
 
     memory
         .copy_memory_symbolic_size(
-            SymWord::Expr(Expr::var("dest")),
+            SymWord::expr(Expr::var("dest")),
             SymWord::Concrete(U256::from(0x20)),
-            SymWord::Expr(Expr::var("size")),
+            SymWord::expr(Expr::var("size")),
             4,
         )
         .unwrap();
@@ -609,7 +609,7 @@ fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
         .copy_return_data_symbolic_size(
             SymWord::Concrete(U256::ZERO),
             SymWord::Concrete(U256::ZERO),
-            SymWord::Expr(Expr::var("size")),
+            SymWord::expr(Expr::var("size")),
             4,
             &return_data,
         )
@@ -626,7 +626,7 @@ fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
 /// Regression coverage for `returndata_reads_symbolic_offset`.
 fn returndata_reads_symbolic_offset() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
-    let bytes = return_data.read_bytes_offset(SymWord::Expr(Expr::var("offset")), 2);
+    let bytes = return_data.read_bytes_offset(SymWord::expr(Expr::var("offset")), 2);
 
     let offset_one = BTreeMap::from([("offset".to_string(), U256::from(1))]);
     assert_eq!(model_bytes(&bytes, &offset_one).unwrap(), vec![2, 3]);
@@ -647,7 +647,7 @@ fn memory_return_data_accepts_symbolic_size() {
     let return_data = memory
         .return_data_symbolic_size(
             SymWord::Concrete(U256::ZERO),
-            SymWord::Expr(Expr::var("len")),
+            SymWord::expr(Expr::var("len")),
             4,
         )
         .unwrap();
@@ -663,7 +663,7 @@ fn memory_return_data_accepts_symbolic_size() {
 fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
     let return_data = SymReturnData::from_symbolic_bytes_with_len(
         vec![1, 2, 3, 4].into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect(),
-        SymWord::Expr(Expr::var("len")),
+        SymWord::expr(Expr::var("len")),
     );
     let mut memory = SymMemory::default();
     memory.store_bytes(0, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
@@ -701,7 +701,7 @@ fn nested_dynamic_calldata_uses_preorder_lengths() {
 /// Regression coverage for `memory_round_trips_symbolic_words_as_bytes`.
 fn memory_round_trips_symbolic_words_as_bytes() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::var("word"));
+    let value = SymWord::expr(Expr::var("word"));
 
     memory.store_word(7, value.clone());
 
@@ -716,10 +716,10 @@ fn memory_round_trips_symbolic_words_as_bytes() {
 /// Regression coverage for `memory_load_accepts_symbolic_offsets`.
 fn memory_load_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::var("word"));
+    let value = SymWord::expr(Expr::var("word"));
 
     memory.store_word(7, value);
-    let loaded = memory.load_word_offset(SymWord::Expr(Expr::var("offset"))).unwrap();
+    let loaded = memory.load_word_offset(SymWord::expr(Expr::var("offset"))).unwrap();
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
@@ -738,9 +738,9 @@ fn memory_load_accepts_symbolic_offsets() {
 /// Regression coverage for `memory_store_word_accepts_symbolic_offsets`.
 fn memory_store_word_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::var("word"));
+    let value = SymWord::expr(Expr::var("word"));
 
-    memory.store_word_offset(SymWord::Expr(Expr::var("offset")), value);
+    memory.store_word_offset(SymWord::expr(Expr::var("offset")), value);
     let loaded = memory.load_word(7).unwrap();
 
     let matching = BTreeMap::from([
@@ -764,7 +764,7 @@ fn memory_size_tracks_concrete_and_symbolic_extents() {
     memory.store_word(7, SymWord::Concrete(U256::from(0x55)));
     assert_eq!(memory.size_word(), SymWord::Concrete(U256::from(64)));
 
-    memory.store_word_offset(SymWord::Expr(Expr::var("offset")), SymWord::Expr(Expr::var("word")));
+    memory.store_word_offset(SymWord::expr(Expr::var("offset")), SymWord::expr(Expr::var("word")));
     let size = memory.size_word();
 
     let below_concrete = BTreeMap::from([
@@ -785,7 +785,7 @@ fn memory_size_tracks_concrete_and_symbolic_extents() {
 fn memory_concrete_write_overrides_older_symbolic_write() {
     let mut memory = SymMemory::default();
 
-    memory.store_word_offset(SymWord::Expr(Expr::var("offset")), SymWord::Expr(Expr::var("word")));
+    memory.store_word_offset(SymWord::expr(Expr::var("offset")), SymWord::expr(Expr::var("word")));
     memory.store_word(7, SymWord::Concrete(U256::from(0x55)));
     let loaded = memory.load_word(7).unwrap();
 
@@ -802,11 +802,11 @@ fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
     let mut memory = SymMemory::default();
 
     memory.store_byte_offset(
-        SymWord::Expr(Expr::var("write_offset")),
-        SymWord::Expr(Expr::var("byte")),
+        SymWord::expr(Expr::var("write_offset")),
+        SymWord::expr(Expr::var("byte")),
     );
     memory.store_byte(5, SymWord::Concrete(U256::from(0x55)));
-    let loaded = memory.byte_dynamic_with_delta(Expr::var("read_offset"), 0);
+    let loaded = memory.byte_dynamic_with_delta(&Expr::var("read_offset"), 0);
 
     let model = BTreeMap::from([
         ("write_offset".to_string(), U256::from(5)),
@@ -821,7 +821,7 @@ fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
 fn memory_store_byte_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
 
-    memory.store_byte_offset(SymWord::Expr(Expr::var("offset")), SymWord::Expr(Expr::var("byte")));
+    memory.store_byte_offset(SymWord::expr(Expr::var("offset")), SymWord::expr(Expr::var("byte")));
     let loaded = memory.byte(0x80);
 
     let matching = BTreeMap::from([
@@ -841,10 +841,10 @@ fn memory_store_byte_accepts_symbolic_offsets() {
 /// Regression coverage for `memory_read_bytes_accepts_symbolic_offsets`.
 fn memory_read_bytes_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::var("word"));
+    let value = SymWord::expr(Expr::var("word"));
 
     memory.store_word(7, value);
-    let loaded = word_from_bytes(memory.read_bytes_offset(SymWord::Expr(Expr::var("offset")), 32));
+    let loaded = word_from_bytes(memory.read_bytes_offset(SymWord::expr(Expr::var("offset")), 32));
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
@@ -863,10 +863,10 @@ fn memory_read_bytes_accepts_symbolic_offsets() {
 /// Regression coverage for `memory_return_data_accepts_symbolic_offsets`.
 fn memory_return_data_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::var("word"));
+    let value = SymWord::expr(Expr::var("word"));
 
     memory.store_word(7, value);
-    let return_data = memory.return_data(SymWord::Expr(Expr::var("offset")), 32).unwrap();
+    let return_data = memory.return_data(SymWord::expr(Expr::var("offset")), 32).unwrap();
     let loaded = return_data.load_word(0).unwrap();
 
     let model = BTreeMap::from([
@@ -880,10 +880,10 @@ fn memory_return_data_accepts_symbolic_offsets() {
 /// Regression coverage for `memory_copy_accepts_symbolic_source_offsets`.
 fn memory_copy_accepts_symbolic_source_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::var("word"));
+    let value = SymWord::expr(Expr::var("word"));
 
     memory.store_word(7, value);
-    memory.copy_memory_offset(64, SymWord::Expr(Expr::var("src")), 32).unwrap();
+    memory.copy_memory_offset(64, SymWord::expr(Expr::var("src")), 32).unwrap();
     let loaded = memory.load_word(64).unwrap();
 
     let model = BTreeMap::from([
@@ -897,12 +897,12 @@ fn memory_copy_accepts_symbolic_source_offsets() {
 /// Regression coverage for `memory_copy_accepts_symbolic_destination_offsets`.
 fn memory_copy_accepts_symbolic_destination_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::var("word"));
+    let value = SymWord::expr(Expr::var("word"));
 
     memory.store_word(7, value);
     memory
         .copy_memory_to_offset(
-            SymWord::Expr(Expr::var("dest")),
+            SymWord::expr(Expr::var("dest")),
             SymWord::Concrete(U256::from(7)),
             32,
         )
@@ -927,11 +927,11 @@ fn memory_copy_accepts_symbolic_destination_offsets() {
 fn memory_call_output_accepts_symbolic_destination_offsets() {
     let mut memory = SymMemory::default();
     let return_data =
-        SymReturnData::from_symbolic_bytes(word_bytes(SymWord::Expr(Expr::var("word"))));
+        SymReturnData::from_symbolic_bytes(word_bytes(SymWord::expr(Expr::var("word"))));
 
     memory
         .copy_call_output_offset(
-            SymWord::Expr(Expr::var("dest")),
+            SymWord::expr(Expr::var("dest")),
             &BoundedCopySize::Concrete(32),
             &return_data,
         )
@@ -955,7 +955,7 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
     memory
         .copy_call_output_offset(
             SymWord::Concrete(U256::ZERO),
-            &BoundedCopySize::Symbolic { size: SymWord::Expr(Expr::var("size")), max_size: 4 },
+            &BoundedCopySize::Symbolic { size: SymWord::expr(Expr::var("size")), max_size: 4 },
             &return_data,
         )
         .unwrap();
@@ -976,8 +976,8 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
 
     memory
         .copy_call_output_offset(
-            SymWord::Expr(Expr::var("dest")),
-            &BoundedCopySize::Symbolic { size: SymWord::Expr(Expr::var("size")), max_size: 4 },
+            SymWord::expr(Expr::var("dest")),
+            &BoundedCopySize::Symbolic { size: SymWord::expr(Expr::var("size")), max_size: 4 },
             &return_data,
         )
         .unwrap();
@@ -994,14 +994,14 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
 fn memory_call_output_accepts_symbolic_destination_and_return_len() {
     let return_data = SymReturnData::from_symbolic_bytes_with_len(
         vec![1, 2, 3, 4].into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect(),
-        SymWord::Expr(Expr::var("len")),
+        SymWord::expr(Expr::var("len")),
     );
     let mut memory = SymMemory::default();
     memory.store_bytes(0x80, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
 
     memory
         .copy_call_output_offset(
-            SymWord::Expr(Expr::var("dest")),
+            SymWord::expr(Expr::var("dest")),
             &BoundedCopySize::Concrete(4),
             &return_data,
         )
@@ -1033,7 +1033,7 @@ fn create_address_helpers_match_alloy_primitives() {
 fn compute_create2_cheatcode_helper_matches_create2_terms() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let salt = SymWord::Expr(Expr::var("salt"));
+    let salt = SymWord::expr(Expr::var("salt"));
     let initcode = vec![opcode::STOP];
     let initcode_hash = SymWord::Concrete(U256::from_be_bytes(keccak256(&initcode).0));
 
@@ -1055,8 +1055,8 @@ fn compute_create2_cheatcode_helper_matches_create2_terms() {
 fn compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let salt = SymWord::Expr(Expr::var("salt"));
-    let initcode_hash = SymWord::Expr(Expr::var("initcode_hash"));
+    let salt = SymWord::expr(Expr::var("salt"));
+    let initcode_hash = SymWord::expr(Expr::var("initcode_hash"));
 
     let first = compute_create2_address_word(
         &mut state,
@@ -1074,9 +1074,11 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash() {
     .unwrap();
 
     assert_eq!(first, second);
-    assert!(
-        matches!(first, SymWord::Expr(Expr::Var(name)) if name.starts_with("create2_address_"))
-    );
+    assert!(matches!(
+        first,
+        SymWord::Expr(expr)
+            if matches!(expr.as_ref(), Expr::Var(name) if name.starts_with("create2_address_"))
+    ));
 }
 
 #[test]
@@ -1084,7 +1086,7 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash() {
 fn compute_create_cheatcode_helper_accepts_symbolic_nonce() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let nonce = SymWord::Expr(Expr::var("nonce"));
+    let nonce = SymWord::expr(Expr::var("nonce"));
 
     let first = compute_create_address_word(
         &mut state,
@@ -1097,7 +1099,11 @@ fn compute_create_cheatcode_helper_accepts_symbolic_nonce() {
             .unwrap();
 
     assert_eq!(first, second);
-    assert!(matches!(first, SymWord::Expr(Expr::Var(name)) if name.starts_with("create_address_")));
+    assert!(matches!(
+        first,
+        SymWord::Expr(expr)
+            if matches!(expr.as_ref(), Expr::Var(name) if name.starts_with("create_address_"))
+    ));
 }
 
 #[test]
@@ -1105,8 +1111,8 @@ fn compute_create_cheatcode_helper_accepts_symbolic_nonce() {
 fn compute_create_cheatcode_helper_accepts_symbolic_deployer() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let deployer = SymWord::Expr(Expr::var("deployer"));
-    let nonce = SymWord::Expr(Expr::var("nonce"));
+    let deployer = SymWord::expr(Expr::var("deployer"));
+    let nonce = SymWord::expr(Expr::var("nonce"));
 
     let first = compute_create_address_word(&mut state, deployer.clone(), nonce.clone())
         .expect("symbolic deployer is supported");
@@ -1114,7 +1120,11 @@ fn compute_create_cheatcode_helper_accepts_symbolic_deployer() {
         .expect("symbolic deployer is supported");
 
     assert_eq!(first, second);
-    assert!(matches!(first, SymWord::Expr(Expr::Var(name)) if name.starts_with("create_address_")));
+    assert!(matches!(
+        first,
+        SymWord::Expr(expr)
+            if matches!(expr.as_ref(), Expr::Var(name) if name.starts_with("create_address_"))
+    ));
 }
 
 #[test]
@@ -1122,9 +1132,9 @@ fn compute_create_cheatcode_helper_accepts_symbolic_deployer() {
 fn compute_create2_cheatcode_helper_accepts_symbolic_deployer() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let deployer = SymWord::Expr(Expr::var("deployer"));
-    let salt = SymWord::Expr(Expr::var("salt"));
-    let initcode_hash = SymWord::Expr(Expr::var("initcode_hash"));
+    let deployer = SymWord::expr(Expr::var("deployer"));
+    let salt = SymWord::expr(Expr::var("salt"));
+    let initcode_hash = SymWord::expr(Expr::var("initcode_hash"));
 
     let first = compute_create2_address_word(
         &mut state,
@@ -1137,9 +1147,11 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_deployer() {
         .expect("symbolic deployer is supported");
 
     assert_eq!(first, second);
-    assert!(
-        matches!(first, SymWord::Expr(Expr::Var(name)) if name.starts_with("create2_address_"))
-    );
+    assert!(matches!(
+        first,
+        SymWord::Expr(expr)
+            if matches!(expr.as_ref(), Expr::Var(name) if name.starts_with("create2_address_"))
+    ));
 }
 
 #[test]
@@ -1171,9 +1183,9 @@ fn recorded_logs_return_data_matches_abi_encoding() {
 fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
     let emitter = Address::from([0x33; 20]);
     let log = SymbolicLog {
-        topics: vec![SymWord::Expr(Expr::var("topic"))].into(),
+        topics: vec![SymWord::expr(Expr::var("topic"))].into(),
         data_len: SymWord::Concrete(U256::from(2)),
-        data: vec![SymWord::Concrete(U256::from(0x12)), SymWord::Expr(Expr::var("byte"))].into(),
+        data: vec![SymWord::Concrete(U256::from(0x12)), SymWord::expr(Expr::var("byte"))].into(),
         emitter,
     };
 
@@ -1199,7 +1211,7 @@ fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
 /// Regression coverage for `abi_bytes_encoding_accepts_symbolic_length`.
 fn abi_bytes_encoding_accepts_symbolic_length() {
     let encoded = encode_packed_bytes_with_len(
-        SymWord::Expr(Expr::var("len")),
+        SymWord::expr(Expr::var("len")),
         &[
             SymWord::Concrete(U256::from(0x22)),
             SymWord::Concrete(U256::from(0x33)),
@@ -1218,9 +1230,9 @@ fn abi_bytes_encoding_accepts_symbolic_length() {
 /// Regression coverage for `symbolic_world_resolves_symbolic_create2_address_aliases`.
 fn symbolic_world_resolves_symbolic_create2_address_aliases() {
     let mut world = SymbolicWorld::default();
-    let word = SymWord::Expr(Expr::var("create2_address"));
+    let word = SymWord::expr(Expr::var("create2_address"));
     let address = world.symbolic_address_slot(word.clone());
-    let masked = SymWord::Expr(Expr::op(
+    let masked = SymWord::expr(Expr::op(
         ExprOp::And,
         word.clone().into_expr(),
         Expr::Const((U256::from(1) << 160) - U256::from(1)),
@@ -1237,7 +1249,7 @@ fn symbolic_world_resolves_symbolic_create2_address_aliases() {
 fn symbolic_create2_accepts_symbolic_salt() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let salt = SymWord::Expr(Expr::var("salt"));
+    let salt = SymWord::expr(Expr::var("salt"));
     let initcode = SymCode::concrete(vec![opcode::STOP]);
 
     let (word, address) = create2_address_word(&mut state, creator, salt, &initcode).unwrap();
@@ -1251,11 +1263,11 @@ fn symbolic_create2_accepts_symbolic_salt() {
 #[test]
 /// Regression coverage for `symbolic_return_data_can_be_installed_as_runtime_code`.
 fn symbolic_return_data_can_be_installed_as_runtime_code() {
-    let data = SymReturnData::from_symbolic_bytes(vec![SymWord::Expr(Expr::var("runtime_byte"))]);
+    let data = SymReturnData::from_symbolic_bytes(vec![SymWord::expr(Expr::var("runtime_byte"))]);
 
     let code = data.to_code().unwrap();
 
-    assert_eq!(code.read_bytes(0, 1), vec![SymWord::Expr(Expr::var("runtime_byte"))]);
+    assert_eq!(code.read_bytes(0, 1), vec![SymWord::expr(Expr::var("runtime_byte"))]);
 }
 
 #[test]
@@ -1263,7 +1275,7 @@ fn symbolic_return_data_can_be_installed_as_runtime_code() {
 fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
     let data = SymReturnData::from_symbolic_bytes_with_len(
         vec![SymWord::Concrete(U256::from(opcode::STOP))],
-        SymWord::Expr(Expr::var("runtime_len")),
+        SymWord::expr(Expr::var("runtime_len")),
     );
 
     assert!(matches!(
@@ -1291,13 +1303,13 @@ fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
     let mut memory = SymMemory::default();
     let initcode = SymCode::from_symbolic_bytes(vec![
         SymWord::Concrete(U256::from(opcode::STOP)),
-        SymWord::Expr(Expr::var("constructor_arg_byte")),
+        SymWord::expr(Expr::var("constructor_arg_byte")),
     ]);
 
     memory.copy_symbolic(0, initcode.read_bytes(0, 2));
 
     assert_eq!(memory.byte(0), SymWord::Concrete(U256::from(opcode::STOP)));
-    assert_eq!(memory.byte(1), SymWord::Expr(Expr::var("constructor_arg_byte")));
+    assert_eq!(memory.byte(1), SymWord::expr(Expr::var("constructor_arg_byte")));
 }
 
 #[test]
@@ -1308,7 +1320,7 @@ fn symbolic_codecopy_accepts_symbolic_offsets() {
     );
     let mut memory = SymMemory::default();
 
-    memory.copy_symbolic(0, code.read_bytes_offset(SymWord::Expr(Expr::var("offset")), 2));
+    memory.copy_symbolic(0, code.read_bytes_offset(SymWord::expr(Expr::var("offset")), 2));
     let word = memory.load_word(0).unwrap();
 
     let mut expected = [0u8; 32];
@@ -1330,9 +1342,9 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
 
     memory.copy_symbolic(
         7,
-        vec![SymWord::Concrete(U256::from(opcode::STOP)), SymWord::Expr(Expr::var("arg"))],
+        vec![SymWord::Concrete(U256::from(opcode::STOP)), SymWord::expr(Expr::var("arg"))],
     );
-    let initcode = SymCode::from_memory_offset(&memory, SymWord::Expr(Expr::var("offset")), 2);
+    let initcode = SymCode::from_memory_offset(&memory, SymWord::expr(Expr::var("offset")), 2);
     let word = word_from_bytes(
         initcode.read_bytes(0, 2).into_iter().chain(std::iter::repeat_with(SymWord::zero).take(30)),
     );
@@ -1351,7 +1363,7 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
 /// Regression coverage for `path_state_extracts_constrained_symbolic_usize`.
 fn path_state_extracts_constrained_symbolic_usize() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
-    let offset = SymWord::Expr(Expr::var("offset"));
+    let offset = SymWord::expr(Expr::var("offset"));
 
     state.constraints.push(BoolExpr::eq(offset.clone().into_expr(), Expr::Const(U256::from(7))));
 
@@ -1362,7 +1374,7 @@ fn path_state_extracts_constrained_symbolic_usize() {
 /// Regression coverage for `path_state_extracts_symbolic_usize_upper_bound`.
 fn path_state_extracts_symbolic_usize_upper_bound() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
-    let size = SymWord::Expr(Expr::var("size"));
+    let size = SymWord::expr(Expr::var("size"));
 
     state.constraints.push(BoolExpr::cmp(
         BoolExprOp::Ult,
@@ -1377,7 +1389,7 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 /// Regression coverage for `path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word`.
 fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
-    let offset = SymWord::Expr(Expr::var("offset"));
+    let offset = SymWord::expr(Expr::var("offset"));
     let offset_expr = offset.clone().into_expr();
     let mask = Expr::Const(U256::from(0xffff));
 
@@ -1411,12 +1423,12 @@ fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
 /// Regression coverage for `path_state_evaluates_compound_constrained_symbolic_word`.
 fn path_state_evaluates_compound_constrained_symbolic_word() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
-    let value = SymWord::Expr(Expr::var("value"));
+    let value = SymWord::expr(Expr::var("value"));
     state
         .constraints
         .push(BoolExpr::eq(value.clone().into_expr(), Expr::Const(U256::from(0xbeef))));
 
-    let encoded_word = SymWord::Expr(Expr::op(
+    let encoded_word = SymWord::expr(Expr::op(
         ExprOp::Or,
         Expr::Const(U256::ZERO),
         Expr::op(ExprOp::And, value.into_expr(), Expr::Const(U256::from(u64::MAX))),
@@ -1430,8 +1442,8 @@ fn path_state_evaluates_compound_constrained_symbolic_word() {
 fn symbolic_push_data_reconstructs_symbolic_word() {
     let code = SymCode::from_symbolic_bytes(vec![
         SymWord::Concrete(U256::from(opcode::PUSH2)),
-        SymWord::Expr(Expr::var("immutable_hi")),
-        SymWord::Expr(Expr::var("immutable_lo")),
+        SymWord::expr(Expr::var("immutable_hi")),
+        SymWord::expr(Expr::var("immutable_lo")),
     ]);
 
     let word = word_from_bytes(
@@ -1445,7 +1457,7 @@ fn symbolic_push_data_reconstructs_symbolic_word() {
 /// Regression coverage for `abi_bytes_return_encodes_symbolic_bytes`.
 fn abi_bytes_return_encodes_symbolic_bytes() {
     let ret = abi_bytes_return(vec![
-        SymWord::Expr(Expr::var("calldata_byte_0")),
+        SymWord::expr(Expr::var("calldata_byte_0")),
         SymWord::Concrete(U256::from(0x42)),
     ]);
 
@@ -1457,7 +1469,7 @@ fn abi_bytes_return_encodes_symbolic_bytes() {
         word_from_bytes((32..64).map(|idx| ret.byte(idx))),
         SymWord::Concrete(U256::from(2))
     );
-    assert_eq!(ret.byte(64), SymWord::Expr(Expr::var("calldata_byte_0")));
+    assert_eq!(ret.byte(64), SymWord::expr(Expr::var("calldata_byte_0")));
     assert_eq!(ret.byte(65), SymWord::Concrete(U256::from(0x42)));
 }
 
@@ -1465,44 +1477,47 @@ fn abi_bytes_return_encodes_symbolic_bytes() {
 /// Regression coverage for `abi_bytes_return_can_encode_symbolic_length`.
 fn abi_bytes_return_can_encode_symbolic_length() {
     let ret = abi_bytes_return_with_len(
-        SymWord::Expr(Expr::var("len")),
-        vec![SymWord::Expr(Expr::var("byte_0")), SymWord::Expr(Expr::var("byte_1"))],
+        SymWord::expr(Expr::var("len")),
+        vec![SymWord::expr(Expr::var("byte_0")), SymWord::expr(Expr::var("byte_1"))],
     );
 
     assert_eq!(
         word_from_bytes((0..32).map(|idx| ret.byte(idx))),
         SymWord::Concrete(U256::from(32))
     );
-    assert_eq!(word_from_bytes((32..64).map(|idx| ret.byte(idx))), SymWord::Expr(Expr::var("len")));
-    assert_eq!(ret.byte(64), SymWord::Expr(Expr::var("byte_0")));
-    assert_eq!(ret.byte(65), SymWord::Expr(Expr::var("byte_1")));
+    assert_eq!(word_from_bytes((32..64).map(|idx| ret.byte(idx))), SymWord::expr(Expr::var("len")));
+    assert_eq!(ret.byte(64), SymWord::expr(Expr::var("byte_0")));
+    assert_eq!(ret.byte(65), SymWord::expr(Expr::var("byte_1")));
 }
 
 #[test]
 /// Regression coverage for `symbolic_keccak_is_deterministic_for_same_symbolic_bytes`.
 fn symbolic_keccak_is_deterministic_for_same_symbolic_bytes() {
-    let bytes = word_bytes(SymWord::Expr(Expr::var("slot_key")));
+    let bytes = word_bytes(SymWord::expr(Expr::var("slot_key")));
 
     let first = keccak_word(bytes.clone());
     let second = keccak_word(bytes);
 
     assert_eq!(first, second);
-    assert!(matches!(first, SymWord::Expr(Expr::Keccak(_))));
+    assert!(matches!(first, SymWord::Expr(expr) if matches!(expr.as_ref(), Expr::Keccak(_))));
 }
 
 #[test]
 /// Regression coverage for `symbolic_keccak_tracks_symbolic_length`.
 fn symbolic_keccak_tracks_symbolic_length() {
     let bytes = vec![
-        SymWord::Expr(Expr::var("byte_0")),
-        SymWord::Expr(Expr::var("byte_1")),
+        SymWord::expr(Expr::var("byte_0")),
+        SymWord::expr(Expr::var("byte_1")),
         SymWord::zero(),
     ];
-    let len = SymWord::Expr(Expr::var("len"));
+    let len = SymWord::expr(Expr::var("len"));
 
     let word = keccak_word_with_len(bytes, len);
 
-    let SymWord::Expr(Expr::Keccak(hash)) = word else {
+    let SymWord::Expr(expr) = word else {
+        panic!("expected symbolic keccak term");
+    };
+    let Expr::Keccak(hash) = expr.as_ref() else {
         panic!("expected symbolic keccak term");
     };
     assert_eq!(hash.len(), &Expr::var("len"));
@@ -1514,7 +1529,7 @@ fn symbolic_keccak_tracks_symbolic_length() {
 fn model_word_computes_symbolic_keccak_from_model() {
     let owner = Address::from([0x11; 20]);
     let slot = U256::from(1);
-    let mut bytes = word_bytes(SymWord::Expr(Expr::var("owner")));
+    let mut bytes = word_bytes(SymWord::expr(Expr::var("owner")));
     bytes.extend(word_bytes(SymWord::Concrete(slot)));
     let word = keccak_word(bytes);
 
@@ -1530,7 +1545,7 @@ fn model_word_computes_symbolic_keccak_from_model() {
 #[test]
 /// Regression coverage for `symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input`.
 fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
-    let input = vec![SymWord::Expr(Expr::var("input_0")), SymWord::Expr(Expr::var("input_1"))];
+    let input = vec![SymWord::expr(Expr::var("input_0")), SymWord::expr(Expr::var("input_1"))];
 
     let input_len = SymWord::Concrete(U256::from(input.len()));
     let sha = execute_symbolic_precompile(
@@ -1554,7 +1569,11 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
 
     assert_eq!(sha.len(), 32);
     assert_eq!(sha_word, sha_again_word);
-    assert!(matches!(sha_word, SymWord::Expr(Expr::Hash(hash)) if hash.algorithm() == "sha256"));
+    assert!(matches!(
+        sha_word,
+        SymWord::Expr(expr)
+            if matches!(expr.as_ref(), Expr::Hash(hash) if hash.algorithm() == "sha256")
+    ));
 
     let ecrecover = execute_symbolic_precompile(
         precompile_address(1),
@@ -1612,7 +1631,7 @@ fn identity_precompile_preserves_symbolic_input_len() {
         SymWord::Concrete(U256::from(3)),
         SymWord::Concrete(U256::from(4)),
     ];
-    let input_len = SymWord::Expr(Expr::var("size"));
+    let input_len = SymWord::expr(Expr::var("size"));
     let return_data = execute_symbolic_precompile(
         precompile_address(4),
         input,
@@ -1635,7 +1654,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     modexp_input[31] = SymWord::Concrete(U256::from(1));
     modexp_input[63] = SymWord::Concrete(U256::from(1));
     modexp_input[95] = SymWord::Concrete(U256::from(1));
-    modexp_input[96] = SymWord::Expr(Expr::var("base"));
+    modexp_input[96] = SymWord::expr(Expr::var("base"));
     modexp_input[97] = SymWord::Concrete(U256::from(5));
     modexp_input[98] = SymWord::Concrete(U256::from(13));
 
@@ -1658,7 +1677,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     assert_eq!(modexp.len(), 1);
     assert_eq!(modexp.byte(0), modexp_again.byte(0));
 
-    let mut blake_input = vec![SymWord::Expr(Expr::var("blake_input")); 213];
+    let mut blake_input = vec![SymWord::expr(Expr::var("blake_input")); 213];
     blake_input[212] = SymWord::zero();
     let blake = execute_symbolic_precompile(
         precompile_address(9),
@@ -1674,7 +1693,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
 #[test]
 /// Regression coverage for `validity_sensitive_symbolic_precompiles_report_incomplete`.
 fn validity_sensitive_symbolic_precompiles_report_incomplete() {
-    let bn_input = vec![SymWord::Expr(Expr::var("point")); 128];
+    let bn_input = vec![SymWord::expr(Expr::var("point")); 128];
     let err = execute_symbolic_precompile(
         precompile_address(6),
         bn_input,
@@ -1687,7 +1706,7 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
         SymbolicError::Unsupported("symbolic bn254 precompile validity not modeled")
     ));
 
-    let blake_input = vec![SymWord::Expr(Expr::var("blake_input")); 213];
+    let blake_input = vec![SymWord::expr(Expr::var("blake_input")); 213];
     let err = execute_symbolic_precompile(
         precompile_address(9),
         blake_input,
@@ -1705,8 +1724,8 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
 /// Regression coverage for `symbolic_storage_read_after_write_accepts_symbolic_keys`.
 fn symbolic_storage_read_after_write_accepts_symbolic_keys() {
     let address = Address::from([0x11; 20]);
-    let key = SymWord::Expr(Expr::var("slot"));
-    let value = SymWord::Expr(Expr::var("value"));
+    let key = SymWord::expr(Expr::var("slot"));
+    let value = SymWord::expr(Expr::var("value"));
     let writes = vec![StorageWrite::new(address, key.clone(), value.clone())];
 
     assert_eq!(read_storage_writes(&writes, address, key, SymWord::zero()), value);
@@ -1716,14 +1735,14 @@ fn symbolic_storage_read_after_write_accepts_symbolic_keys() {
 /// Regression coverage for `symbolic_storage_uses_conditional_value_for_maybe_equal_key`.
 fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
     let address = Address::from([0x11; 20]);
-    let write_key = SymWord::Expr(Expr::var("write_slot"));
-    let read_key = SymWord::Expr(Expr::var("read_slot"));
-    let value = SymWord::Expr(Expr::var("value"));
+    let write_key = SymWord::expr(Expr::var("write_slot"));
+    let read_key = SymWord::expr(Expr::var("read_slot"));
+    let value = SymWord::expr(Expr::var("value"));
     let writes = vec![StorageWrite::new(address, write_key.clone(), value.clone())];
 
     assert_eq!(
         read_storage_writes(&writes, address, read_key.clone(), SymWord::zero()),
-        SymWord::Expr(Expr::ite(
+        SymWord::expr(Expr::ite(
             BoolExpr::eq(read_key.into_expr(), write_key.into_expr()),
             value.into_expr(),
             Expr::Const(U256::ZERO),
@@ -1734,10 +1753,10 @@ fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
 #[test]
 /// Regression coverage for `symbolic_storage_key_equality_decomposes_keccak_offsets`.
 fn symbolic_storage_key_equality_decomposes_keccak_offsets() {
-    let owner = SymWord::Expr(Expr::var("owner"));
+    let owner = SymWord::expr(Expr::var("owner"));
     let base = keccak_word(word_bytes(owner));
-    let left = add_words(base.clone(), SymWord::Expr(Expr::var("left_index")));
-    let right = add_words(base, SymWord::Expr(Expr::var("right_index")));
+    let left = add_words(base.clone(), SymWord::expr(Expr::var("left_index")));
+    let right = add_words(base, SymWord::expr(Expr::var("right_index")));
 
     assert_eq!(
         storage_key_eq(left, right),
@@ -1748,9 +1767,9 @@ fn symbolic_storage_key_equality_decomposes_keccak_offsets() {
 #[test]
 /// Regression coverage for `symbolic_storage_key_equality_expands_distinct_keccak_bases`.
 fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
-    let left_base = keccak_word(vec![SymWord::Expr(Expr::var("left_owner"))]);
-    let right_base = keccak_word(vec![SymWord::Expr(Expr::var("right_owner"))]);
-    let index = SymWord::Expr(Expr::var("index"));
+    let left_base = keccak_word(vec![SymWord::expr(Expr::var("left_owner"))]);
+    let right_base = keccak_word(vec![SymWord::expr(Expr::var("right_owner"))]);
+    let index = SymWord::expr(Expr::var("index"));
 
     let condition =
         storage_key_eq(add_words(left_base, index.clone()), add_words(right_base, index));
@@ -1761,7 +1780,7 @@ fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
 #[test]
 /// Regression coverage for `symbolic_storage_key_equality_rejects_concrete_plain_slot_alias`.
 fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
-    let owner = SymWord::Expr(Expr::var("owner"));
+    let owner = SymWord::expr(Expr::var("owner"));
     let layout_key = add_words(keccak_word(word_bytes(owner)), SymWord::Concrete(U256::ZERO));
 
     assert_eq!(storage_key_eq(layout_key, SymWord::Concrete(U256::ZERO)), BoolExpr::Const(false));
@@ -1770,9 +1789,9 @@ fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
 #[test]
 /// Regression coverage for `nested_mapping_key_does_not_alias_plain_mapping_key_under_model`.
 fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
-    let owner = SymWord::Expr(Expr::var("owner"));
-    let spender = SymWord::Expr(Expr::var("spender"));
-    let recipient = SymWord::Expr(Expr::var("recipient"));
+    let owner = SymWord::expr(Expr::var("owner"));
+    let spender = SymWord::expr(Expr::var("spender"));
+    let recipient = SymWord::expr(Expr::var("recipient"));
 
     let mut balance_key_bytes = word_bytes(recipient);
     balance_key_bytes.extend(word_bytes(SymWord::Concrete(U256::ZERO)));
@@ -1904,8 +1923,8 @@ fn calldata_variant_expansion_respects_path_width() {
 /// Regression coverage for `symbolic_signextend_uses_sign_bit_ite`.
 fn symbolic_signextend_uses_sign_bit_ite() {
     assert_eq!(
-        signextend_word(U256::ZERO, SymWord::Expr(Expr::var("word"))),
-        SymWord::Expr(Expr::ite(
+        signextend_word(U256::ZERO, SymWord::expr(Expr::var("word"))),
+        SymWord::expr(Expr::ite(
             BoolExpr::eq(
                 Expr::op(ExprOp::And, Expr::var("word"), Expr::Const(U256::from(0x80))),
                 Expr::Const(U256::ZERO),
@@ -2227,7 +2246,7 @@ fn solver_normalizes_erc4626_style_share_zero_predicate() {
 fn solver_rebuilds_word_from_extracted_byte_terms() {
     let masked = Expr::op(ExprOp::And, Expr::var("word"), Expr::Const(U256::from(u64::MAX)));
     let rebuilt = normalize_expr_for_solver(
-        word_from_bytes(word_bytes(SymWord::Expr(masked.clone()))).into_expr(),
+        word_from_bytes(word_bytes(SymWord::expr(masked.clone()))).into_expr(),
     );
 
     assert_eq!(rebuilt, normalize_expr_for_solver(masked));

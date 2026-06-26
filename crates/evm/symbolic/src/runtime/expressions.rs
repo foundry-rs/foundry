@@ -913,7 +913,7 @@ pub(crate) fn eval_bool_expr(
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum SymWord {
     Concrete(U256),
-    Expr(Expr),
+    Expr(Arc<Expr>),
 }
 
 impl SymWord {
@@ -926,7 +926,7 @@ impl SymWord {
     pub(crate) fn from_expr(expr: Expr) -> Self {
         match expr {
             Expr::Const(value) => Self::Concrete(value),
-            expr => Self::Expr(expr),
+            expr => Self::Expr(Arc::new(expr)),
         }
     }
 
@@ -944,15 +944,15 @@ impl SymWord {
     }
 
     /// Returns whether this word is exactly the opaque `GAS` / `gasleft()` value.
-    pub(crate) const fn is_raw_gasleft(&self) -> bool {
-        matches!(self, Self::Expr(Expr::GasLeft(_)))
+    pub(crate) fn is_raw_gasleft(&self) -> bool {
+        matches!(self, Self::Expr(expr) if matches!(expr.as_ref(), Expr::GasLeft(_)))
     }
 
     /// Implements the `into_expr` symbolic expression helper.
     pub(crate) fn into_expr(self) -> Expr {
         match self {
             Self::Concrete(value) => Expr::Const(value),
-            Self::Expr(expr) => expr,
+            Self::Expr(expr) => Arc::unwrap_or_clone(expr),
         }
     }
 
@@ -980,19 +980,21 @@ impl SymWord {
     pub(crate) fn into_zero_bool(self) -> BoolExpr {
         match self {
             Self::Concrete(value) => BoolExpr::Const(value.is_zero()),
-            Self::Expr(Expr::Ite(cond, then_expr, else_expr))
-                if then_expr.as_ref() == &Expr::Const(U256::from(1))
-                    && else_expr.as_ref() == &Expr::Const(U256::ZERO) =>
-            {
-                Arc::unwrap_or_clone(cond).not()
-            }
-            Self::Expr(Expr::Ite(cond, then_expr, else_expr))
-                if then_expr.as_ref() == &Expr::Const(U256::ZERO)
-                    && else_expr.as_ref() == &Expr::Const(U256::from(1)) =>
-            {
-                Arc::unwrap_or_clone(cond)
-            }
-            value => BoolExpr::eq(value.into_expr(), Expr::Const(U256::ZERO)),
+            Self::Expr(expr) => match Arc::unwrap_or_clone(expr) {
+                Expr::Ite(cond, then_expr, else_expr)
+                    if then_expr.as_ref() == &Expr::Const(U256::from(1))
+                        && else_expr.as_ref() == &Expr::Const(U256::ZERO) =>
+                {
+                    Arc::unwrap_or_clone(cond).not()
+                }
+                Expr::Ite(cond, then_expr, else_expr)
+                    if then_expr.as_ref() == &Expr::Const(U256::ZERO)
+                        && else_expr.as_ref() == &Expr::Const(U256::from(1)) =>
+                {
+                    Arc::unwrap_or_clone(cond)
+                }
+                expr => BoolExpr::eq(expr, Expr::Const(U256::ZERO)),
+            },
         }
     }
 

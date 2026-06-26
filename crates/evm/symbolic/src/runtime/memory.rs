@@ -101,7 +101,9 @@ impl SymMemory {
                 self.store_word(offset.to::<usize>(), value);
             }
             SymWord::Concrete(_) => {}
-            SymWord::Expr(offset) => self.store_symbolic_bytes(offset, word_bytes(value)),
+            SymWord::Expr(offset) => {
+                self.store_symbolic_bytes(Arc::unwrap_or_clone(offset), word_bytes(value));
+            }
         }
     }
 
@@ -117,7 +119,9 @@ impl SymMemory {
                 self.store_byte(offset.to::<usize>(), value);
             }
             SymWord::Concrete(_) => {}
-            SymWord::Expr(offset) => self.store_symbolic_bytes(offset, vec![low_byte(value)]),
+            SymWord::Expr(offset) => {
+                self.store_symbolic_bytes(Arc::unwrap_or_clone(offset), vec![low_byte(value)]);
+            }
         }
     }
 
@@ -155,7 +159,7 @@ impl SymMemory {
                 self.store_bytes(offset.to::<usize>(), bytes);
             }
             SymWord::Concrete(_) => {}
-            SymWord::Expr(offset) => self.store_symbolic_bytes(offset, bytes),
+            SymWord::Expr(offset) => self.store_symbolic_bytes(Arc::unwrap_or_clone(offset), bytes),
         }
     }
 
@@ -174,7 +178,7 @@ impl SymMemory {
                 self.load_word(offset.to::<usize>())
             }
             SymWord::Expr(offset) => {
-                Ok(word_from_bytes(self.read_bytes_offset(SymWord::expr(offset), 32)))
+                Ok(word_from_bytes(self.read_bytes_offset(SymWord::Expr(offset), 32)))
             }
         }
     }
@@ -212,7 +216,7 @@ impl SymMemory {
                 self.read_bytes(offset.to::<usize>(), size)
             }
             SymWord::Expr(offset) => {
-                (0..size).map(|idx| self.byte_dynamic_with_delta(offset.clone(), idx)).collect()
+                (0..size).map(|idx| self.byte_dynamic_with_delta(&offset, idx)).collect()
             }
         }
     }
@@ -268,7 +272,7 @@ impl SymMemory {
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
-    pub(crate) fn byte_dynamic_with_delta(&self, offset: Expr, delta: usize) -> SymWord {
+    pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
         let mut result = Expr::Const(U256::ZERO);
         for candidate in (delta..self.size).rev() {
             let (byte, base_epoch) = self.base_byte(candidate);
@@ -358,11 +362,11 @@ impl SymMemory {
                     .into_iter()
                     .enumerate()
                     .map(|(idx, source)| {
-                        let existing = self.byte_dynamic_with_delta(dest.clone(), idx);
+                        let existing = self.byte_dynamic_with_delta(&dest, idx);
                         symbolic_copy_size_byte(idx, &size, source, existing)
                     })
                     .collect();
-                self.store_symbolic_bytes(dest, bytes);
+                self.store_symbolic_bytes(Arc::unwrap_or_clone(dest), bytes);
             }
         }
         Ok(())
@@ -416,9 +420,7 @@ impl SymMemory {
             SymWord::Expr(offset) => {
                 self.store_bytes_offset(
                     dest,
-                    (0..size)
-                        .map(|idx| calldata.byte_dynamic_with_delta(offset.clone(), idx))
-                        .collect(),
+                    (0..size).map(|idx| calldata.byte_dynamic_with_delta(&offset, idx)).collect(),
                 );
                 Ok(())
             }
@@ -446,9 +448,9 @@ impl SymMemory {
                     })
                     .collect()
             }
-            SymWord::Expr(offset) => (0..max_size)
-                .map(|idx| calldata.byte_dynamic_with_delta(offset.clone(), idx))
-                .collect(),
+            SymWord::Expr(offset) => {
+                (0..max_size).map(|idx| calldata.byte_dynamic_with_delta(&offset, idx)).collect()
+            }
         };
         self.copy_symbolic_size_offset(dest, size, bytes)
     }
@@ -594,7 +596,7 @@ impl SymMemory {
                 self.byte(dest.to::<usize>() + idx)
             }
             SymWord::Concrete(_) => SymWord::zero(),
-            SymWord::Expr(dest) => self.byte_dynamic_with_delta(dest.clone(), idx),
+            SymWord::Expr(dest) => self.byte_dynamic_with_delta(dest, idx),
         }
     }
 
@@ -756,11 +758,13 @@ impl SymCode {
         match self.bytes.get(pc) {
             None => Ok(GuardedOpcode::End),
             Some(SymWord::Concrete(value)) => Ok(GuardedOpcode::Concrete(value.to::<u8>())),
-            Some(SymWord::Expr(Expr::Ite(condition, then_expr, else_expr))) if matches!(else_expr.as_ref(), Expr::Const(value) if value.is_zero()) => {
+            Some(SymWord::Expr(expr)) if matches!(expr.as_ref(), Expr::Ite(_, _, else_expr) if matches!(else_expr.as_ref(), Expr::Const(value) if value.is_zero())) =>
+            {
+                let Expr::Ite(condition, then_expr, _) = expr.as_ref() else { unreachable!() };
                 match then_expr.as_ref() {
                     Expr::Const(value) if value.is_zero() => Ok(GuardedOpcode::Concrete(0)),
                     Expr::Const(value) => Ok(GuardedOpcode::SymbolicSize {
-                        condition: (**condition).clone(),
+                        condition: condition.as_ref().clone(),
                         opcode: value.to::<u8>(),
                     }),
                     _ => Err(SymbolicError::Unsupported("symbolic bytecode opcode")),
@@ -813,13 +817,13 @@ impl SymCode {
                 self.read_bytes(offset.to::<usize>(), size)
             }
             SymWord::Expr(offset) => {
-                (0..size).map(|idx| self.byte_dynamic_with_delta(offset.clone(), idx)).collect()
+                (0..size).map(|idx| self.byte_dynamic_with_delta(&offset, idx)).collect()
             }
         }
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
-    pub(crate) fn byte_dynamic_with_delta(&self, offset: Expr, delta: usize) -> SymWord {
+    pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
         let mut result = Expr::Const(U256::ZERO);
         for candidate in (delta..self.len()).rev() {
             result = Expr::ite(
@@ -911,13 +915,13 @@ impl SymReturnData {
                 (0..size).map(|idx| self.byte(offset + idx)).collect()
             }
             SymWord::Expr(offset) => {
-                (0..size).map(|idx| self.byte_dynamic_with_delta(offset.clone(), idx)).collect()
+                (0..size).map(|idx| self.byte_dynamic_with_delta(&offset, idx)).collect()
             }
         }
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
-    pub(crate) fn byte_dynamic_with_delta(&self, offset: Expr, delta: usize) -> SymWord {
+    pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
         let mut result = Expr::Const(U256::ZERO);
         for candidate in (delta..self.len()).rev() {
             result = Expr::ite(

@@ -1697,7 +1697,7 @@ fn word_eq_condition(word: &SymWord, value: usize) -> BoolExpr {
     let value = U256::from(value);
     match word {
         SymWord::Concrete(word) => BoolExpr::Const(*word == value),
-        SymWord::Expr(word) => BoolExpr::eq(word.clone(), Expr::Const(value)),
+        SymWord::Expr(word) => BoolExpr::eq(word.as_ref().clone(), Expr::Const(value)),
     }
 }
 

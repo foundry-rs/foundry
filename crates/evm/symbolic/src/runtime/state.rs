@@ -501,10 +501,10 @@ impl PathState {
     }
 
     /// Implements the `fresh_gasleft` symbolic state helper.
-    pub(crate) const fn fresh_gasleft(&mut self) -> SymWord {
+    pub(crate) fn fresh_gasleft(&mut self) -> SymWord {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymWord::Expr(Expr::GasLeft(id))
+        SymWord::expr(Expr::GasLeft(id))
     }
 
     /// Implements the `fresh_bounded_uint` symbolic state helper.
@@ -1761,7 +1761,7 @@ impl SymbolicBlock {
             SymWord::Concrete(block_number) => {
                 return self.block_hash(executor, block_number);
             }
-            SymWord::Expr(block_number) => block_number,
+            SymWord::Expr(block_number) => Arc::unwrap_or_clone(block_number),
         };
 
         let current = self.number.clone().into_concrete("symbolic BLOCKHASH current number")?;

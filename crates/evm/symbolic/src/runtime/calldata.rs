@@ -37,7 +37,7 @@ impl SymCalldata {
                 }
                 self.load(offset.to::<usize>())
             }
-            SymWord::Expr(offset) => self.load_dynamic(offset),
+            SymWord::Expr(offset) => self.load_dynamic(&offset),
         }
     }
 
@@ -52,7 +52,7 @@ impl SymCalldata {
     }
 
     /// Returns the `load_dynamic` symbolic calldata helper result.
-    pub(crate) fn load_dynamic(&self, offset: Expr) -> Result<SymWord, SymbolicError> {
+    pub(crate) fn load_dynamic(&self, offset: &Expr) -> Result<SymWord, SymbolicError> {
         let mut result = Expr::Const(U256::ZERO);
         for candidate in (0..self.size).rev() {
             result = Expr::ite(
@@ -65,7 +65,7 @@ impl SymCalldata {
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic calldata helper result.
-    pub(crate) fn byte_dynamic_with_delta(&self, offset: Expr, delta: usize) -> SymWord {
+    pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
         let mut result = Expr::Const(U256::ZERO);
         for candidate in (delta..self.size).rev() {
             result = Expr::ite(
