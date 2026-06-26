@@ -167,8 +167,11 @@ impl PathState {
     }
 
     pub(crate) fn constrained_usize(&self, word: &SymExpr) -> Option<usize> {
-        let value = self.constrained_word(word)?;
-        usize::try_from(value).ok()
+        self.constrained_usize_checked(word).and_then(Result::ok)
+    }
+
+    pub(crate) fn constrained_usize_checked(&self, word: &SymExpr) -> Option<Result<usize, U256>> {
+        self.constrained_word(word).map(|value| usize::try_from(value).map_err(|_| value))
     }
 
     pub(crate) fn upper_bound_usize(&self, word: &SymExpr) -> Option<usize> {

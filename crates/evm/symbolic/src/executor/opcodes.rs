@@ -133,12 +133,12 @@ impl SymbolicExecutor {
             opcode::KECCAK256 => {
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
-                match state.constrained_usize(&size) {
-                    Some(size) => {
+                match state.constrained_usize_checked(&size) {
+                    Some(Ok(size)) => {
                         let bytes = state.memory.read_bytes_offset(offset, size);
                         state.stack.push(keccak_word(bytes))?;
                     }
-                    None if state.constrained_word(&size).is_some() => {
+                    Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
                     }
                     None => {
@@ -206,12 +206,12 @@ impl SymbolicExecutor {
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
-                match state.constrained_usize(&size) {
-                    Some(size) => {
+                match state.constrained_usize_checked(&size) {
+                    Some(Ok(size)) => {
                         let bytes = state.extcode_bytes_word(executor, target, offset, size)?;
                         state.memory.copy_symbolic_offset(dest, bytes);
                     }
-                    None if state.constrained_word(&size).is_some() => {
+                    Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
                     }
                     None => {
@@ -249,14 +249,14 @@ impl SymbolicExecutor {
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
-                match state.constrained_usize(&size) {
-                    Some(size) => {
+                match state.constrained_usize_checked(&size) {
+                    Some(Ok(size)) => {
                         if size != 0 {
                             let calldata = state.calldata.clone();
                             state.memory.copy_calldata_to_offset(dest, offset, size, &calldata)?;
                         }
                     }
-                    None if state.constrained_word(&size).is_some() => {
+                    Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
                     }
                     None => {
@@ -289,13 +289,13 @@ impl SymbolicExecutor {
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
-                match state.constrained_usize(&size) {
-                    Some(size) => {
+                match state.constrained_usize_checked(&size) {
+                    Some(Ok(size)) => {
                         state
                             .memory
                             .copy_symbolic_offset(dest, code.read_bytes_offset(offset, size));
                     }
-                    None if state.constrained_word(&size).is_some() => {
+                    Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
                     }
                     None => {
@@ -330,8 +330,8 @@ impl SymbolicExecutor {
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
-                match state.constrained_usize(&size) {
-                    Some(size) => {
+                match state.constrained_usize_checked(&size) {
+                    Some(Ok(size)) => {
                         if !self.assume_returndata_copy_in_bounds(
                             state,
                             offset.clone(),
@@ -341,7 +341,7 @@ impl SymbolicExecutor {
                         }
                         state.copy_return_data_to_offset(dest, offset, size)?;
                     }
-                    None if state.constrained_word(&size).is_some() => {
+                    Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
                     }
                     None => {
@@ -495,11 +495,11 @@ impl SymbolicExecutor {
                 let dest = state.stack.pop()?;
                 let src = state.stack.pop()?;
                 let size = state.stack.pop()?;
-                match state.constrained_usize(&size) {
-                    Some(size) => {
+                match state.constrained_usize_checked(&size) {
+                    Some(Ok(size)) => {
                         state.memory.copy_memory_to_offset(dest, src, size)?;
                     }
-                    None if state.constrained_word(&size).is_some() => {
+                    Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
                     }
                     None => {
@@ -633,12 +633,12 @@ impl SymbolicExecutor {
                 if size.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
-                let (data_len, data) = match state.constrained_usize(&size) {
-                    Some(size) => (
+                let (data_len, data) = match state.constrained_usize_checked(&size) {
+                    Some(Ok(size)) => (
                         SymExpr::constant(U256::from(size)),
                         state.memory.read_bytes_offset(offset, size),
                     ),
-                    None if state.constrained_word(&size).is_some() => {
+                    Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
                     }
                     None => {
@@ -715,8 +715,8 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
-        match state.constrained_usize(&size) {
-            Some(size) => {
+        match state.constrained_usize_checked(&size) {
+            Some(Ok(size)) => {
                 state.return_data = state.memory.return_data(offset.clone(), size)?;
                 if is_revert {
                     Ok(self.classify_revert(state, offset, size))
@@ -724,7 +724,7 @@ impl SymbolicExecutor {
                     Ok(StepOutcome::Halt)
                 }
             }
-            None if state.constrained_word(&size).is_some() => Ok(StepOutcome::Revert),
+            Some(Err(_)) => Ok(StepOutcome::Revert),
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
                 let max_size = state

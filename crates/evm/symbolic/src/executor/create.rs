@@ -17,9 +17,9 @@ impl SymbolicExecutor {
         let value = state.stack.pop()?;
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
-        let size = match state.constrained_usize(&size) {
-            Some(size) => BoundedCopySize::Concrete(size),
-            None if state.constrained_word(&size).is_some() => {
+        let size = match state.constrained_usize_checked(&size) {
+            Some(Ok(size)) => BoundedCopySize::Concrete(size),
+            Some(Err(_)) => {
                 state.return_data = SymReturnData::default();
                 state.stack.push(SymExpr::zero())?;
                 return Ok(StepOutcome::Continue);

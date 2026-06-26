@@ -33,9 +33,9 @@ impl SymbolicExecutor {
         ensure_word_not_gasleft(&in_offset)?;
         let in_size = state.stack.pop()?;
         ensure_word_not_gasleft(&in_size)?;
-        let in_size = match state.constrained_usize(&in_size) {
-            Some(size) => BoundedCopySize::Concrete(size),
-            None if state.constrained_word(&in_size).is_some() => {
+        let in_size = match state.constrained_usize_checked(&in_size) {
+            Some(Ok(size)) => BoundedCopySize::Concrete(size),
+            Some(Err(_)) => {
                 return Ok(StepOutcome::Revert);
             }
             None => {
@@ -59,9 +59,9 @@ impl SymbolicExecutor {
         ensure_word_not_gasleft(&out_offset)?;
         let out_size = state.stack.pop()?;
         ensure_word_not_gasleft(&out_size)?;
-        let out_size = match state.constrained_usize(&out_size) {
-            Some(size) => BoundedCopySize::Concrete(size),
-            None if state.constrained_word(&out_size).is_some() => {
+        let out_size = match state.constrained_usize_checked(&out_size) {
+            Some(Ok(size)) => BoundedCopySize::Concrete(size),
+            Some(Err(_)) => {
                 return Ok(StepOutcome::Revert);
             }
             None => {
