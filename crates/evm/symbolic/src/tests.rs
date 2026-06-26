@@ -1,6 +1,5 @@
 use super::{abi::*, runtime::*, *};
 
-/// Regression coverage for `empty_state`.
 fn empty_state() -> PathState {
     PathState::new(
         Address::ZERO,
@@ -11,12 +10,10 @@ fn empty_state() -> PathState {
     )
 }
 
-/// Regression coverage for `add_words`.
 fn add_words(left: SymExpr, right: SymExpr) -> SymExpr {
     SymExpr::op(SymExprOp::Add, left, right)
 }
 
-/// Regression coverage for `precompile_address`.
 fn precompile_address(index: u8) -> Address {
     let mut bytes = [0u8; 20];
     bytes[19] = index;
@@ -24,7 +21,6 @@ fn precompile_address(index: u8) -> Address {
 }
 
 #[test]
-/// Regression coverage for `precompile_number_for_spec`.
 fn precompile_number_respects_active_spec() {
     for number in 1..=4 {
         assert_eq!(
@@ -49,7 +45,6 @@ fn precompile_number_respects_active_spec() {
 }
 
 #[test]
-/// Regression coverage for `pop_worklist` respecting configured exploration order.
 fn pop_worklist_respects_exploration_order() {
     let mut bfs_worklist = VecDeque::from([1, 2, 3]);
     assert_eq!(
@@ -73,7 +68,6 @@ fn pop_worklist_respects_exploration_order() {
 }
 
 #[test]
-/// Regression coverage for local batches respecting configured exploration order.
 fn local_batches_respect_exploration_order() {
     let mut bfs_batch = VecDeque::from([1, 2, 3]);
     let mut bfs_worklist = VecDeque::from([10]);
@@ -103,7 +97,6 @@ fn local_batches_respect_exploration_order() {
 }
 
 #[test]
-/// Regression coverage for `binary_helpers_use_evm_operand_order`.
 fn binary_helpers_use_evm_operand_order() {
     let mut state = empty_state();
     state.stack.push(SymExpr::constant(U256::from(2))).unwrap();
@@ -115,7 +108,6 @@ fn binary_helpers_use_evm_operand_order() {
 }
 
 #[test]
-/// Regression coverage for `comparison_helpers_use_evm_operand_order`.
 fn comparison_helpers_use_evm_operand_order() {
     let mut state = empty_state();
     state.stack.push(SymExpr::constant(U256::from(2))).unwrap();
@@ -127,7 +119,6 @@ fn comparison_helpers_use_evm_operand_order() {
 }
 
 #[test]
-/// Regression coverage for `exp_helper_uses_evm_operand_order`.
 fn exp_helper_uses_evm_operand_order() {
     let mut state = empty_state();
     state.stack.push(SymExpr::constant(U256::ZERO)).unwrap();
@@ -139,7 +130,6 @@ fn exp_helper_uses_evm_operand_order() {
 }
 
 #[test]
-/// Regression coverage for `exp_helper_expands_symbolic_base_for_bounded_concrete_exponent`.
 fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
     let mut state = empty_state();
     state.stack.push(SymExpr::constant(U256::from(16))).unwrap();
@@ -155,7 +145,6 @@ fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
 }
 
 #[test]
-/// Regression coverage for `exp_helper_expands_bounded_symbolic_exponent`.
 fn exp_helper_expands_bounded_symbolic_exponent() {
     let mut state = empty_state();
     let exponent = SymExpr::var("exponent");
@@ -177,7 +166,6 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
 }
 
 #[test]
-/// Regression coverage for `shift_helpers_accept_symbolic_amounts`.
 fn shift_helpers_accept_symbolic_amounts() {
     let mut shl = empty_state();
     shl.stack.push(SymExpr::constant(U256::from(1))).unwrap();
@@ -222,7 +210,6 @@ fn shift_helpers_accept_symbolic_amounts() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_division_guards_zero_divisor`.
 fn symbolic_division_guards_zero_divisor() {
     let mut state = empty_state();
     state.stack.push(SymExpr::var("den")).unwrap();
@@ -241,7 +228,6 @@ fn symbolic_division_guards_zero_divisor() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_byte_extracts_with_concrete_index`.
 fn symbolic_byte_extracts_with_concrete_index() {
     assert_eq!(
         byte_word(U256::from(0), SymExpr::var("word")),
@@ -254,7 +240,6 @@ fn symbolic_byte_extracts_with_concrete_index() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_byte_extracts_with_symbolic_index`.
 fn symbolic_byte_extracts_with_symbolic_index() {
     let word = U256::from_be_bytes(core::array::from_fn::<_, 32, _>(|idx| idx as u8));
     let byte = byte_word_dynamic(SymExpr::var("index"), SymExpr::constant(word));
@@ -267,7 +252,6 @@ fn symbolic_byte_extracts_with_symbolic_index() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_signextend_accepts_symbolic_index`.
 fn symbolic_signextend_accepts_symbolic_index() {
     let value = SymExpr::constant(U256::from(0x80));
     let extended = signextend_word_dynamic(SymExpr::var("index"), value);
@@ -280,7 +264,6 @@ fn symbolic_signextend_accepts_symbolic_index() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_byte_preserves_concrete_packed_selector_bytes`.
 fn symbolic_byte_preserves_concrete_packed_selector_bytes() {
     let selector = U256::from(0x12345678);
     let packed = SymExpr::op(
@@ -300,7 +283,6 @@ fn symbolic_byte_preserves_concrete_packed_selector_bytes() {
 }
 
 #[test]
-/// Regression coverage for `word_reassembly_preserves_split_symbolic_word`.
 fn word_reassembly_preserves_split_symbolic_word() {
     let original =
         SymExpr::op(SymExprOp::Add, SymExpr::var("value"), SymExpr::constant(U256::from(1)));
@@ -310,7 +292,6 @@ fn word_reassembly_preserves_split_symbolic_word() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_address_aliases_match_abi_encoded_address_words`.
 fn symbolic_address_aliases_match_abi_encoded_address_words() {
     let source = SymExpr::var("beneficiary");
     let masked = SymExpr::op(
@@ -327,7 +308,6 @@ fn symbolic_address_aliases_match_abi_encoded_address_words() {
 }
 
 #[test]
-/// Regression coverage for `selector_shift_simplifies_to_concrete_word`.
 fn selector_shift_simplifies_to_concrete_word() {
     let selector = U256::from(0x12345678);
     let call_word = SymExpr::op(
@@ -345,7 +325,6 @@ fn selector_shift_simplifies_to_concrete_word() {
 }
 
 #[test]
-/// Regression coverage for `selector_equality_folds_known_word_expressions`.
 fn selector_equality_folds_known_word_expressions() {
     let selector = U256::from(0x12345678u32);
     let other = U256::from(0x9a8325a0u32);
@@ -371,7 +350,6 @@ fn selector_equality_folds_known_word_expressions() {
 }
 
 #[test]
-/// Regression coverage for `calldata_selector_load_simplifies_to_concrete_word`.
 fn calldata_selector_load_simplifies_to_concrete_word() {
     let function = Function::parse("check(bytes32)").unwrap();
     let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
@@ -387,7 +365,6 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
 }
 
 #[test]
-/// Regression coverage for `artifact_json_fallback_paths`.
 fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
     assert_eq!(
         artifact_json_fallback_paths("src/01_NomadZeroRoot.sol:NomadLike"),
@@ -404,7 +381,6 @@ fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
 }
 
 #[test]
-/// Regression coverage for `dynamic_calldata_encodes_bounded_bytes`.
 fn dynamic_calldata_encodes_bounded_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
@@ -424,7 +400,6 @@ fn dynamic_calldata_encodes_bounded_bytes() {
 }
 
 #[test]
-/// Regression coverage for `calldata_load_accepts_symbolic_offsets`.
 fn calldata_load_accepts_symbolic_offsets() {
     let calldata =
         SymCalldata::new((0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
@@ -442,7 +417,6 @@ fn calldata_load_accepts_symbolic_offsets() {
 }
 
 #[test]
-/// Regression coverage for `calldata_preserves_symbolic_size_for_call_frames`.
 fn calldata_preserves_symbolic_size_for_call_frames() {
     let mut memory = SymMemory::default();
     memory.copy_symbolic(
@@ -468,7 +442,6 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
 }
 
 #[test]
-/// Regression coverage for `memory_copies_unaligned_symbolic_calldata_bytes`.
 fn memory_copies_unaligned_symbolic_calldata_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
@@ -489,7 +462,6 @@ fn memory_copies_unaligned_symbolic_calldata_bytes() {
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_calldata_offset`.
 fn memory_copies_symbolic_calldata_offset() {
     let calldata =
         SymCalldata::new((0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
@@ -511,7 +483,6 @@ fn memory_copies_symbolic_calldata_offset() {
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_calldata_size_with_guarded_tail`.
 fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
     let calldata =
         SymCalldata::new((0u8..8).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
@@ -536,7 +507,6 @@ fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_bytecode_size_with_guarded_tail`.
 fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
     let mut memory = SymMemory::default();
     memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
@@ -554,7 +524,6 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
 }
 
 #[test]
-/// Regression coverage for `memory_reads_symbolic_size_with_zero_guarded_tail`.
 fn memory_reads_symbolic_size_with_zero_guarded_tail() {
     let mut memory = SymMemory::default();
     memory.store_bytes(32, (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
@@ -570,7 +539,6 @@ fn memory_reads_symbolic_size_with_zero_guarded_tail() {
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_memory_size_with_guarded_tail`.
 fn memory_copies_symbolic_memory_size_with_guarded_tail() {
     let mut memory = SymMemory::default();
     memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
@@ -593,7 +561,6 @@ fn memory_copies_symbolic_memory_size_with_guarded_tail() {
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_size_to_symbolic_dest`.
 fn memory_copies_symbolic_size_to_symbolic_dest() {
     let mut memory = SymMemory::default();
     memory.store_bytes(0x80, vec![SymExpr::constant(U256::from(0xaa)); 4]);
@@ -616,7 +583,6 @@ fn memory_copies_symbolic_size_to_symbolic_dest() {
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_returndata_size_with_guarded_tail`.
 fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
@@ -640,7 +606,6 @@ fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
 }
 
 #[test]
-/// Regression coverage for `returndata_reads_symbolic_offset`.
 fn returndata_reads_symbolic_offset() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
     let bytes = return_data.read_bytes_offset(SymExpr::var("offset"), 2);
@@ -653,7 +618,6 @@ fn returndata_reads_symbolic_offset() {
 }
 
 #[test]
-/// Regression coverage for `memory_return_data_accepts_symbolic_size`.
 fn memory_return_data_accepts_symbolic_size() {
     let mut memory = SymMemory::default();
     memory.store_bytes(
@@ -672,7 +636,6 @@ fn memory_return_data_accepts_symbolic_size() {
 }
 
 #[test]
-/// Regression coverage for `call_output_preserves_memory_beyond_symbolic_returndata_size`.
 fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
     let return_data = SymReturnData::from_symbolic_bytes_with_len(
         vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
@@ -697,7 +660,6 @@ fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
 }
 
 #[test]
-/// Regression coverage for `nested_dynamic_calldata_uses_preorder_lengths`.
 fn nested_dynamic_calldata_uses_preorder_lengths() {
     let function = Function::parse("check((uint256[],bytes))").unwrap();
     let config = SymbolicConfig { array_lengths: vec![2, 3], ..Default::default() };
@@ -711,7 +673,6 @@ fn nested_dynamic_calldata_uses_preorder_lengths() {
 }
 
 #[test]
-/// Regression coverage for `memory_round_trips_symbolic_words_as_bytes`.
 fn memory_round_trips_symbolic_words_as_bytes() {
     let mut memory = SymMemory::default();
     let value = SymExpr::var("word");
@@ -723,7 +684,6 @@ fn memory_round_trips_symbolic_words_as_bytes() {
 }
 
 #[test]
-/// Regression coverage for `memory_load_accepts_symbolic_offsets`.
 fn memory_load_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
     let value = SymExpr::var("word");
@@ -745,7 +705,6 @@ fn memory_load_accepts_symbolic_offsets() {
 }
 
 #[test]
-/// Regression coverage for `memory_store_word_accepts_symbolic_offsets`.
 fn memory_store_word_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
     let value = SymExpr::var("word");
@@ -767,7 +726,6 @@ fn memory_store_word_accepts_symbolic_offsets() {
 }
 
 #[test]
-/// Regression coverage for `memory_size_tracks_concrete_and_symbolic_extents`.
 fn memory_size_tracks_concrete_and_symbolic_extents() {
     let mut memory = SymMemory::default();
 
@@ -791,7 +749,6 @@ fn memory_size_tracks_concrete_and_symbolic_extents() {
 }
 
 #[test]
-/// Regression coverage for `memory_concrete_write_overrides_older_symbolic_write`.
 fn memory_concrete_write_overrides_older_symbolic_write() {
     let mut memory = SymMemory::default();
 
@@ -807,7 +764,6 @@ fn memory_concrete_write_overrides_older_symbolic_write() {
 }
 
 #[test]
-/// Regression coverage for `memory_dynamic_read_respects_concrete_overwrite_epoch`.
 fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
     let mut memory = SymMemory::default();
 
@@ -824,7 +780,6 @@ fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
 }
 
 #[test]
-/// Regression coverage for `memory_store_byte_accepts_symbolic_offsets`.
 fn memory_store_byte_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
 
@@ -845,7 +800,6 @@ fn memory_store_byte_accepts_symbolic_offsets() {
 }
 
 #[test]
-/// Regression coverage for `memory_read_bytes_accepts_symbolic_offsets`.
 fn memory_read_bytes_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
     let value = SymExpr::var("word");
@@ -867,7 +821,6 @@ fn memory_read_bytes_accepts_symbolic_offsets() {
 }
 
 #[test]
-/// Regression coverage for `memory_return_data_accepts_symbolic_offsets`.
 fn memory_return_data_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
     let value = SymExpr::var("word");
@@ -884,7 +837,6 @@ fn memory_return_data_accepts_symbolic_offsets() {
 }
 
 #[test]
-/// Regression coverage for `memory_copy_accepts_symbolic_source_offsets`.
 fn memory_copy_accepts_symbolic_source_offsets() {
     let mut memory = SymMemory::default();
     let value = SymExpr::var("word");
@@ -901,7 +853,6 @@ fn memory_copy_accepts_symbolic_source_offsets() {
 }
 
 #[test]
-/// Regression coverage for `memory_copy_accepts_symbolic_destination_offsets`.
 fn memory_copy_accepts_symbolic_destination_offsets() {
     let mut memory = SymMemory::default();
     let value = SymExpr::var("word");
@@ -926,7 +877,6 @@ fn memory_copy_accepts_symbolic_destination_offsets() {
 }
 
 #[test]
-/// Regression coverage for `memory_call_output_accepts_symbolic_destination_offsets`.
 fn memory_call_output_accepts_symbolic_destination_offsets() {
     let mut memory = SymMemory::default();
     let return_data = SymReturnData::from_symbolic_bytes(word_bytes(SymExpr::var("word")));
@@ -944,7 +894,6 @@ fn memory_call_output_accepts_symbolic_destination_offsets() {
 }
 
 #[test]
-/// Regression coverage for `memory_call_output_accepts_symbolic_size_with_guarded_tail`.
 fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
@@ -966,7 +915,6 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
 }
 
 #[test]
-/// Regression coverage for `memory_call_output_accepts_symbolic_destination_and_size`.
 fn memory_call_output_accepts_symbolic_destination_and_size() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
@@ -988,7 +936,6 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
 }
 
 #[test]
-/// Regression coverage for `memory_call_output_accepts_symbolic_destination_and_return_len`.
 fn memory_call_output_accepts_symbolic_destination_and_return_len() {
     let return_data = SymReturnData::from_symbolic_bytes_with_len(
         vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
@@ -1009,7 +956,6 @@ fn memory_call_output_accepts_symbolic_destination_and_return_len() {
 }
 
 #[test]
-/// Regression coverage for `create_address_helpers_match_alloy_primitives`.
 fn create_address_helpers_match_alloy_primitives() {
     let creator = Address::from([0x11; 20]);
     let initcode = vec![opcode::PUSH1, 0x00, opcode::PUSH1, 0x00, opcode::RETURN];
@@ -1023,7 +969,6 @@ fn create_address_helpers_match_alloy_primitives() {
 }
 
 #[test]
-/// Regression coverage for `compute_create2_cheatcode_helper_matches_create2_terms`.
 fn compute_create2_cheatcode_helper_matches_create2_terms() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
@@ -1045,7 +990,6 @@ fn compute_create2_cheatcode_helper_matches_create2_terms() {
 }
 
 #[test]
-/// Regression coverage for `compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash`.
 fn compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
@@ -1072,7 +1016,6 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash() {
 }
 
 #[test]
-/// Regression coverage for `compute_create_cheatcode_helper_accepts_symbolic_nonce`.
 fn compute_create_cheatcode_helper_accepts_symbolic_nonce() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
@@ -1093,7 +1036,6 @@ fn compute_create_cheatcode_helper_accepts_symbolic_nonce() {
 }
 
 #[test]
-/// Regression coverage for `compute_create_cheatcode_helper_accepts_symbolic_deployer`.
 fn compute_create_cheatcode_helper_accepts_symbolic_deployer() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
@@ -1110,7 +1052,6 @@ fn compute_create_cheatcode_helper_accepts_symbolic_deployer() {
 }
 
 #[test]
-/// Regression coverage for `compute_create2_cheatcode_helper_accepts_symbolic_deployer`.
 fn compute_create2_cheatcode_helper_accepts_symbolic_deployer() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
@@ -1133,7 +1074,6 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_deployer() {
 }
 
 #[test]
-/// Regression coverage for `recorded_logs_return_data_matches_abi_encoding`.
 fn recorded_logs_return_data_matches_abi_encoding() {
     let emitter = Address::from([0x33; 20]);
     let topic = B256::from([0x11; 32]);
@@ -1157,7 +1097,6 @@ fn recorded_logs_return_data_matches_abi_encoding() {
 }
 
 #[test]
-/// Regression coverage for `recorded_logs_json_return_data_accepts_symbolic_topics_and_data`.
 fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
     let emitter = Address::from([0x33; 20]);
     let log = SymbolicLog {
@@ -1186,7 +1125,6 @@ fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
 }
 
 #[test]
-/// Regression coverage for `abi_bytes_encoding_accepts_symbolic_length`.
 fn abi_bytes_encoding_accepts_symbolic_length() {
     let encoded = encode_packed_bytes_with_len(
         SymExpr::var("len"),
@@ -1205,7 +1143,6 @@ fn abi_bytes_encoding_accepts_symbolic_length() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_world_resolves_symbolic_create2_address_aliases`.
 fn symbolic_world_resolves_symbolic_create2_address_aliases() {
     let mut world = SymbolicWorld::default();
     let word = SymExpr::var("create2_address");
@@ -1223,7 +1160,6 @@ fn symbolic_world_resolves_symbolic_create2_address_aliases() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_create2_accepts_symbolic_salt`.
 fn symbolic_create2_accepts_symbolic_salt() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
@@ -1239,7 +1175,6 @@ fn symbolic_create2_accepts_symbolic_salt() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_return_data_can_be_installed_as_runtime_code`.
 fn symbolic_return_data_can_be_installed_as_runtime_code() {
     let data = SymReturnData::from_symbolic_bytes(vec![SymExpr::var("runtime_byte")]);
 
@@ -1249,7 +1184,6 @@ fn symbolic_return_data_can_be_installed_as_runtime_code() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_runtime_size_is_not_installed_as_concrete_code`.
 fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
     let data = SymReturnData::from_symbolic_bytes_with_len(
         vec![SymExpr::constant(U256::from(opcode::STOP))],
@@ -1263,7 +1197,6 @@ fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_world_tracks_created_code_and_nonce_overlay`.
 fn symbolic_world_tracks_created_code_and_nonce_overlay() {
     let created = Address::from([0x22; 20]);
     let mut world = SymbolicWorld::default();
@@ -1276,7 +1209,6 @@ fn symbolic_world_tracks_created_code_and_nonce_overlay() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_codecopy_preserves_symbolic_constructor_bytes`.
 fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
     let mut memory = SymMemory::default();
     let initcode = SymCode::from_symbolic_bytes(vec![
@@ -1291,7 +1223,6 @@ fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_codecopy_accepts_symbolic_offsets`.
 fn symbolic_codecopy_accepts_symbolic_offsets() {
     let code = SymCode::from_symbolic_bytes(
         (0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
@@ -1314,7 +1245,6 @@ fn symbolic_codecopy_accepts_symbolic_offsets() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_initcode_accepts_symbolic_memory_offsets`.
 fn symbolic_initcode_accepts_symbolic_memory_offsets() {
     let mut memory = SymMemory::default();
 
@@ -1335,7 +1265,6 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
 }
 
 #[test]
-/// Regression coverage for `path_state_extracts_constrained_symbolic_usize`.
 fn path_state_extracts_constrained_symbolic_usize() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
     let offset = SymExpr::var("offset");
@@ -1346,7 +1275,6 @@ fn path_state_extracts_constrained_symbolic_usize() {
 }
 
 #[test]
-/// Regression coverage for `path_state_extracts_symbolic_usize_upper_bound`.
 fn path_state_extracts_symbolic_usize_upper_bound() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
     let size = SymExpr::var("size");
@@ -1361,7 +1289,6 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 }
 
 #[test]
-/// Regression coverage for `path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word`.
 fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
     let offset = SymExpr::var("offset");
@@ -1401,7 +1328,6 @@ fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
 }
 
 #[test]
-/// Regression coverage for `path_state_evaluates_compound_constrained_symbolic_word`.
 fn path_state_evaluates_compound_constrained_symbolic_word() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
     let value = SymExpr::var("value");
@@ -1417,7 +1343,6 @@ fn path_state_evaluates_compound_constrained_symbolic_word() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_push_data_reconstructs_symbolic_word`.
 fn symbolic_push_data_reconstructs_symbolic_word() {
     let code = SymCode::from_symbolic_bytes(vec![
         SymExpr::constant(U256::from(opcode::PUSH2)),
@@ -1433,7 +1358,6 @@ fn symbolic_push_data_reconstructs_symbolic_word() {
 }
 
 #[test]
-/// Regression coverage for `abi_bytes_return_encodes_symbolic_bytes`.
 fn abi_bytes_return_encodes_symbolic_bytes() {
     let ret = abi_bytes_return(vec![
         SymExpr::var("calldata_byte_0"),
@@ -1453,7 +1377,6 @@ fn abi_bytes_return_encodes_symbolic_bytes() {
 }
 
 #[test]
-/// Regression coverage for `abi_bytes_return_can_encode_symbolic_length`.
 fn abi_bytes_return_can_encode_symbolic_length() {
     let ret = abi_bytes_return_with_len(
         SymExpr::var("len"),
@@ -1470,7 +1393,6 @@ fn abi_bytes_return_can_encode_symbolic_length() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_keccak_is_deterministic_for_same_symbolic_bytes`.
 fn symbolic_keccak_is_deterministic_for_same_symbolic_bytes() {
     let bytes = word_bytes(SymExpr::var("slot_key"));
 
@@ -1482,7 +1404,6 @@ fn symbolic_keccak_is_deterministic_for_same_symbolic_bytes() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_keccak_tracks_symbolic_length`.
 fn symbolic_keccak_tracks_symbolic_length() {
     let bytes = vec![SymExpr::var("byte_0"), SymExpr::var("byte_1"), SymExpr::zero()];
     let len = SymExpr::var("len");
@@ -1496,7 +1417,6 @@ fn symbolic_keccak_tracks_symbolic_length() {
 }
 
 #[test]
-/// Regression coverage for `sym_expr_eval_computes_symbolic_keccak_from_model`.
 fn sym_expr_eval_computes_symbolic_keccak_from_model() {
     let owner = Address::from([0x11; 20]);
     let slot = U256::from(1);
@@ -1514,7 +1434,6 @@ fn sym_expr_eval_computes_symbolic_keccak_from_model() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input`.
 fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     let input = vec![SymExpr::var("input_0"), SymExpr::var("input_1")];
 
@@ -1590,7 +1509,6 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
 }
 
 #[test]
-/// Regression coverage for `identity_precompile_preserves_symbolic_input_len`.
 fn identity_precompile_preserves_symbolic_input_len() {
     let input = vec![
         SymExpr::constant(U256::from(1)),
@@ -1615,7 +1533,6 @@ fn identity_precompile_preserves_symbolic_input_len() {
 }
 
 #[test]
-/// Regression coverage for `advanced_precompiles_accept_symbolic_payloads`.
 fn advanced_precompiles_accept_symbolic_payloads() {
     let mut modexp_input = vec![SymExpr::zero(); 99];
     modexp_input[31] = SymExpr::constant(U256::from(1));
@@ -1658,7 +1575,6 @@ fn advanced_precompiles_accept_symbolic_payloads() {
 }
 
 #[test]
-/// Regression coverage for `validity_sensitive_symbolic_precompiles_report_incomplete`.
 fn validity_sensitive_symbolic_precompiles_report_incomplete() {
     let bn_input = vec![SymExpr::var("point"); 128];
     let err = execute_symbolic_precompile(
@@ -1688,7 +1604,6 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_read_after_write_accepts_symbolic_keys`.
 fn symbolic_storage_read_after_write_accepts_symbolic_keys() {
     let address = Address::from([0x11; 20]);
     let key = SymExpr::var("slot");
@@ -1699,7 +1614,6 @@ fn symbolic_storage_read_after_write_accepts_symbolic_keys() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_uses_conditional_value_for_maybe_equal_key`.
 fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
     let address = Address::from([0x11; 20]);
     let write_key = SymExpr::var("write_slot");
@@ -1714,7 +1628,6 @@ fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_key_equality_decomposes_keccak_offsets`.
 fn symbolic_storage_key_equality_decomposes_keccak_offsets() {
     let owner = SymExpr::var("owner");
     let base = keccak_word(word_bytes(owner));
@@ -1728,7 +1641,6 @@ fn symbolic_storage_key_equality_decomposes_keccak_offsets() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_key_equality_expands_distinct_keccak_bases`.
 fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
     let left_base = keccak_word(vec![SymExpr::var("left_owner")]);
     let right_base = keccak_word(vec![SymExpr::var("right_owner")]);
@@ -1741,7 +1653,6 @@ fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_key_equality_rejects_concrete_plain_slot_alias`.
 fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
     let owner = SymExpr::var("owner");
     let layout_key = add_words(keccak_word(word_bytes(owner)), SymExpr::constant(U256::ZERO));
@@ -1753,7 +1664,6 @@ fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
 }
 
 #[test]
-/// Regression coverage for `nested_mapping_key_does_not_alias_plain_mapping_key_under_model`.
 fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
     let owner = SymExpr::var("owner");
     let spender = SymExpr::var("spender");
@@ -1784,7 +1694,6 @@ fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_world_snapshot_restores_overlay_state`.
 fn symbolic_world_snapshot_restores_overlay_state() {
     let address = Address::from([0x11; 20]);
     let mut world = SymbolicWorld::default();
@@ -1799,7 +1708,6 @@ fn symbolic_world_snapshot_restores_overlay_state() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_world_tracks_current_transaction_created_accounts`.
 fn symbolic_world_tracks_current_transaction_created_accounts() {
     let first = Address::from([0x11; 20]);
     let second = Address::from([0x22; 20]);
@@ -1821,7 +1729,6 @@ fn symbolic_world_tracks_current_transaction_created_accounts() {
 }
 
 #[test]
-/// Regression coverage for `extra_dynamic_lengths_are_rejected`.
 fn extra_dynamic_lengths_are_rejected() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![1, 2], ..Default::default() };
@@ -1832,7 +1739,6 @@ fn extra_dynamic_lengths_are_rejected() {
 }
 
 #[test]
-/// Regression coverage for `positional_dynamic_lengths_allow_shorter_expanded_variants`.
 fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
     let function = Function::parse("check(bytes[])").unwrap();
     let config = SymbolicConfig {
@@ -1855,7 +1761,6 @@ fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
 }
 
 #[test]
-/// Regression coverage for `extra_dynamic_lengths_are_rejected_after_expansion`.
 fn extra_dynamic_lengths_are_rejected_after_expansion() {
     let function = Function::parse("check(bytes[])").unwrap();
     let config = SymbolicConfig {
@@ -1870,7 +1775,6 @@ fn extra_dynamic_lengths_are_rejected_after_expansion() {
 }
 
 #[test]
-/// Regression coverage for `calldata_variant_expansion_respects_path_width`.
 fn calldata_variant_expansion_respects_path_width() {
     let function = Function::parse("check(bytes[])").unwrap();
     let config = SymbolicConfig {
@@ -1886,7 +1790,6 @@ fn calldata_variant_expansion_respects_path_width() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_signextend_uses_sign_bit_ite`.
 fn symbolic_signextend_uses_sign_bit_ite() {
     assert_eq!(
         signextend_word(U256::ZERO, SymExpr::var("word")),
@@ -1906,7 +1809,6 @@ fn symbolic_signextend_uses_sign_bit_ite() {
 }
 
 #[test]
-/// Regression coverage for `parse_smt_hex_model_values`.
 fn parse_smt_hex_model_values() {
     let output = "\
 sat
@@ -1922,7 +1824,6 @@ sat
 }
 
 #[test]
-/// Regression coverage for `parse_smt_binary_model_values`.
 fn parse_smt_binary_model_values() {
     let output = "\
 sat
@@ -1938,7 +1839,6 @@ sat
 }
 
 #[test]
-/// Regression coverage for `parse_model_rejects_oversized_bitvector_literals`.
 fn parse_model_rejects_oversized_bitvector_literals() {
     let output =
         format!("sat\n((define-fun calldata_0 () (_ BitVec 257) #b{}))\n", "1".repeat(257));
@@ -1949,7 +1849,6 @@ fn parse_model_rejects_oversized_bitvector_literals() {
 }
 
 #[test]
-/// Regression coverage for `validate_solver_model_output_rejects_unsatisfied_models`.
 fn validate_solver_model_output_rejects_unsatisfied_models() {
     let output = "\
 sat
@@ -1967,7 +1866,6 @@ sat
 }
 
 #[test]
-/// Regression coverage for `fallback_model_finds_wrapping_arithmetic_riddle_candidate`.
 fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
     let var = SymExpr::var("calldata_0");
     let msg_sender = U256::from_str_radix("1804c8ab1f12e6bbf3894d4083f33e07309d1f38", 16).unwrap();
@@ -1995,7 +1893,6 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
 }
 
 #[test]
-/// Regression coverage for exact arithmetic expression simplification.
 fn expression_op_simplifies_exact_arithmetic_identities() {
     let x = SymExpr::var("x");
 
@@ -2048,7 +1945,6 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
 }
 
 #[test]
-/// Regression coverage for reflexive comparison simplification.
 fn bool_comparison_folds_reflexive_operands() {
     let x = || SymExpr::var("x");
 
@@ -2061,7 +1957,6 @@ fn bool_comparison_folds_reflexive_operands() {
 }
 
 #[test]
-/// Regression coverage for unsigned min/max comparison simplification.
 fn bool_comparison_folds_unsigned_boundaries() {
     let x = || SymExpr::var("x");
 
@@ -2100,7 +1995,6 @@ fn bool_comparison_folds_unsigned_boundaries() {
 }
 
 #[test]
-/// Regression coverage for exact `ADDMOD`/`MULMOD` edge-case semantics.
 fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
     assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::ZERO), U256::ZERO);
     assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::ZERO), U256::ZERO);
@@ -2128,7 +2022,6 @@ fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
 }
 
 #[test]
-/// Regression coverage for exact modular arithmetic SMT emission widening intermediates.
 fn exact_modular_arithmetic_smt_widens_before_modulo() {
     let addmod =
         SymExpr::addmod(SymExpr::var("a"), SymExpr::constant(U256::from(2)), SymExpr::var("m"))
@@ -2144,7 +2037,6 @@ fn exact_modular_arithmetic_smt_widens_before_modulo() {
 }
 
 #[test]
-/// Regression coverage for rejecting old wrapping-intermediate false witnesses.
 fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
     let constraints = vec![SymBoolExpr::eq(
         SymExpr::addmod(
@@ -2162,7 +2054,6 @@ fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
 }
 
 #[test]
-/// Regression coverage for exact unsigned-division zero predicate normalization.
 fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
     let numerator = SymExpr::var("numerator");
     let denominator = SymExpr::var("denominator");
@@ -2191,7 +2082,6 @@ fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
 }
 
 #[test]
-/// Regression coverage for exact unsigned-division nonzero predicate normalization.
 fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
     let numerator = SymExpr::var("numerator");
     let denominator = SymExpr::var("denominator");
@@ -2220,7 +2110,6 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
 }
 
 #[test]
-/// Regression coverage for normalized constraint batches being compact and order-stable.
 fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     let x = SymExpr::var("x");
     let y = SymExpr::var("y");
@@ -2245,7 +2134,6 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
 }
 
 #[test]
-/// Regression coverage for ERC4626-style share predicates losing `bvudiv` before SMT.
 fn solver_normalizes_erc4626_style_share_zero_predicate() {
     let assets = SymExpr::var("assets");
     let supply = SymExpr::var("supply");
@@ -2261,7 +2149,6 @@ fn solver_normalizes_erc4626_style_share_zero_predicate() {
 }
 
 #[test]
-/// Regression coverage for rebuilding OR-ed extracted bytes before SMT emission.
 fn solver_rebuilds_word_from_extracted_byte_terms() {
     let masked =
         SymExpr::op(SymExprOp::And, SymExpr::var("word"), SymExpr::constant(U256::from(u64::MAX)));
@@ -2290,7 +2177,6 @@ fn checked_mul_guard_word(zero_operand: &SymExpr, expected: &SymExpr) -> SymExpr
 }
 
 #[test]
-/// Regression coverage for Solidity checked-mul guard tautology normalization.
 fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
     let a = SymExpr::op(SymExprOp::And, SymExpr::var("a"), SymExpr::constant(U256::from(u64::MAX)));
     let b = SymExpr::op(SymExprOp::And, SymExpr::var("b"), SymExpr::constant(U256::from(u64::MAX)));
@@ -2303,7 +2189,6 @@ fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
 }
 
 #[test]
-/// Regression coverage for path-bounded Solidity checked-mul guard tautology normalization.
 fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
     let a = SymExpr::var("a");
     let factor = SymExpr::constant(U256::from(1_000_000_000_000_000_000u128));
@@ -2324,7 +2209,6 @@ fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
 }
 
 #[test]
-/// Regression coverage for guarded self-division boolean tautology normalization.
 fn solver_normalizes_guarded_self_division_guard() {
     let a = SymExpr::var("a");
     let a_is_zero = SymBoolExpr::eq(a.clone(), SymExpr::constant(U256::ZERO));
@@ -2350,7 +2234,6 @@ fn solver_normalizes_guarded_self_division_guard() {
 }
 
 #[test]
-/// Regression coverage for guarded self-division word normalization.
 fn solver_normalizes_guarded_self_division_word() {
     let a = SymExpr::var("a");
     let a_is_zero = SymBoolExpr::eq(a.clone(), SymExpr::constant(U256::ZERO));
@@ -2378,7 +2261,6 @@ fn solver_normalizes_guarded_self_division_word() {
 }
 
 #[test]
-/// Regression coverage for preserving mirrored zero-guarded self-division semantics.
 fn solver_does_not_invert_guarded_zero_self_division() {
     let a = SymExpr::var("a");
     let a_is_zero = SymBoolExpr::eq(a.clone(), SymExpr::constant(U256::ZERO));
@@ -2396,7 +2278,6 @@ fn solver_does_not_invert_guarded_zero_self_division() {
 }
 
 #[test]
-/// Regression coverage for guarded self-division overflow-guard normalization.
 fn solver_normalizes_guarded_self_division_add_overflow_guard() {
     let a = SymExpr::var("a");
     let a_is_zero = SymBoolExpr::eq(a.clone(), SymExpr::constant(U256::ZERO));
@@ -2417,7 +2298,6 @@ fn solver_normalizes_guarded_self_division_add_overflow_guard() {
 }
 
 #[test]
-/// Regression coverage for checked-mul guards proven by normalized path bounds.
 fn solver_normalizes_checked_mul_guard_with_context_bound() {
     let a = SymExpr::var("a");
     let scale = SymExpr::constant(U256::from(1_000_000_000_000_000_000u128));
@@ -2432,7 +2312,6 @@ fn solver_normalizes_checked_mul_guard_with_context_bound() {
 }
 
 #[test]
-/// Regression coverage for preserving checked-mul guards without a useful path bound.
 fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
     let a = SymExpr::var("a");
     let scale = SymExpr::constant(U256::from(1_000_000_000_000_000_000u128));
@@ -2456,7 +2335,6 @@ fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
 }
 
 #[test]
-/// Regression coverage for preserving unbounded checked-mul overflow guards.
 fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
     let a = SymExpr::var("a");
     let b = SymExpr::var("b");
@@ -2471,7 +2349,6 @@ fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
 }
 
 #[test]
-/// Regression coverage for preserving path-bounded checked-mul guards with loose bounds.
 fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
     let a = SymExpr::var("a");
     let factor = SymExpr::constant(U256::from(2));
@@ -2490,7 +2367,6 @@ fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
 }
 
 #[test]
-/// Regression coverage for checked-add overflow guards over bounded expressions.
 fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
     let a = SymExpr::op(SymExprOp::And, SymExpr::var("a"), SymExpr::constant(U256::from(u64::MAX)));
     let b = SymExpr::op(
@@ -2518,7 +2394,6 @@ fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
 }
 
 #[test]
-/// Regression coverage for preserving unbounded checked-add overflow guards.
 fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
     let a = SymExpr::var("a");
     let b = SymExpr::var("b");
@@ -2534,7 +2409,6 @@ fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
 }
 
 #[test]
-/// Regression coverage for monotonic product contradictions over bounded operands.
 fn solver_detects_monotonic_product_contradiction() {
     let ink =
         SymExpr::op(SymExprOp::And, SymExpr::var("ink"), SymExpr::constant(U256::from(u64::MAX)));
@@ -2561,7 +2435,6 @@ fn solver_detects_monotonic_product_contradiction() {
 }
 
 #[test]
-/// Regression coverage for preserving satisfiable wrapping product inequalities.
 fn solver_does_not_prune_wrapping_product_inequality() {
     let ink = SymExpr::var("ink");
     let art = SymExpr::var("art");
@@ -2592,7 +2465,6 @@ fn solver_does_not_prune_wrapping_product_inequality() {
 }
 
 #[test]
-/// Regression coverage for detecting hard nonlinear arithmetic.
 fn hard_arithmetic_detection_flags_symbolic_mul_div_and_mod() {
     let x = SymExpr::var("x");
     let y = SymExpr::var("y");
@@ -2606,7 +2478,6 @@ fn hard_arithmetic_detection_flags_symbolic_mul_div_and_mod() {
 }
 
 #[test]
-/// Regression coverage for multi-variable hard arithmetic witness search.
 fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
     let first = SymExpr::var("first");
     let donation = SymExpr::var("donation");
@@ -2630,7 +2501,6 @@ fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
 }
 
 #[test]
-/// Regression coverage for MiniVat-style wrapping product witness search.
 fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
     let ink = SymExpr::var("ink");
     let art = SymExpr::var("art");
@@ -2655,7 +2525,6 @@ fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
 }
 
 #[test]
-/// Regression coverage for solver-hard exact `MULMOD` witness search.
 fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
     let a = SymExpr::var("a");
     let constraints = vec![
@@ -2673,7 +2542,6 @@ fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
 }
 
 #[test]
-/// Regression coverage for rejecting partial hard-arithmetic fallback models.
 fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
     let a = SymExpr::var("a");
     let b = SymExpr::var("b");
@@ -2695,7 +2563,6 @@ fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
 }
 
 #[test]
-/// Regression coverage for local hard arithmetic search avoiding unsupported hash symbols.
 fn hard_arithmetic_fallback_skips_symbolic_hashes() {
     let x = SymExpr::var("x");
     let hash = SymExpr::hash("hash", "sha256", vec![x.clone()]);
@@ -2708,7 +2575,6 @@ fn hard_arithmetic_fallback_skips_symbolic_hashes() {
 }
 
 #[test]
-/// Regression coverage for `concrete_dynamic_array_return_uses_raw_abi_encoding`.
 fn concrete_dynamic_array_return_uses_raw_abi_encoding() {
     let return_data = abi_concrete_value_return(DynSolValue::Array(vec![
         DynSolValue::Uint(U256::from(1), 256),
@@ -2727,7 +2593,6 @@ fn concrete_dynamic_array_return_uses_raw_abi_encoding() {
 }
 
 #[test]
-/// Regression coverage for `query_limit_is_enforced_before_spawning_solver`.
 fn query_limit_is_enforced_before_spawning_solver() {
     let mut solver = SmtLibSubprocessSolver::new(
         Ok(vec![SolverCommand::new(vec!["missing-z3".to_string()], false).unwrap()]),
@@ -2743,7 +2608,6 @@ fn query_limit_is_enforced_before_spawning_solver() {
 }
 
 #[test]
-/// Regression coverage for `known_solver_names_resolve_to_smtlib_commands`.
 fn known_solver_names_resolve_to_smtlib_commands() {
     for solver in BUILTIN_SYMBOLIC_SOLVERS {
         assert!(symbolic_solver_is_builtin(solver));
@@ -2788,7 +2652,6 @@ fn known_solver_names_resolve_to_smtlib_commands() {
 }
 
 #[test]
-/// Regression coverage for `solver_command_overrides_solver_name`.
 fn solver_command_overrides_solver_name() {
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "z3".to_string(),
@@ -2806,7 +2669,6 @@ fn solver_command_overrides_solver_name() {
 }
 
 #[test]
-/// Regression coverage for `split_solver_command_preserves_empty_quoted_args`.
 fn split_solver_command_preserves_empty_quoted_args() {
     let parts = split_solver_command(r#"custom-solver "" arg ''"#).unwrap();
 
@@ -2814,7 +2676,6 @@ fn split_solver_command_preserves_empty_quoted_args() {
 }
 
 #[test]
-/// Regression coverage for `split_solver_command_rejects_unterminated_double_quote`.
 fn split_solver_command_rejects_unterminated_double_quote() {
     let err = split_solver_command(r#"z3 "unterm"#).unwrap_err();
 
@@ -2826,7 +2687,6 @@ fn split_solver_command_rejects_unterminated_double_quote() {
 }
 
 #[test]
-/// Regression coverage for `split_solver_command_rejects_unterminated_single_quote`.
 fn split_solver_command_rejects_unterminated_single_quote() {
     let err = split_solver_command("z3 'unterm").unwrap_err();
 
@@ -2838,7 +2698,6 @@ fn split_solver_command_rejects_unterminated_single_quote() {
 }
 
 #[test]
-/// Regression coverage for `custom_solver_names_remain_z3_compatible`.
 fn custom_solver_names_remain_z3_compatible() {
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "/opt/solvers/z3-nightly".to_string(),
@@ -2853,7 +2712,6 @@ fn custom_solver_names_remain_z3_compatible() {
 }
 
 #[test]
-/// Regression coverage for `solver_portfolio_resolves_parallel_commands`.
 fn solver_portfolio_resolves_parallel_commands() {
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "z3".to_string(),
@@ -2879,7 +2737,6 @@ fn solver_portfolio_resolves_parallel_commands() {
 }
 
 #[test]
-/// Regression coverage for `solver_portfolio_availability_warning_reports_missing_entries`.
 fn solver_portfolio_availability_warning_reports_missing_entries() {
     let warning = symbolic_solver_portfolio_availability_warning(&SymbolicConfig {
         solver_portfolio: vec!["foundry-missing-symbolic-solver".to_string()],
@@ -2939,7 +2796,6 @@ fn counted_solver_invocations(marker: &Path) -> usize {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for hard-arithmetic `is_sat` fallback before SMT.
 fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let marker = portfolio_test_marker("hard-arith-is-sat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
@@ -2970,7 +2826,6 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for validated hard-arithmetic model results populating caches.
 fn model_uses_validated_hard_arithmetic_fallback_cache() {
     let marker = portfolio_test_marker("hard-arith-model-cache");
     let commands = vec![counted_solver_command(&marker, "unsat")];
@@ -3002,7 +2857,6 @@ fn model_uses_validated_hard_arithmetic_fallback_cache() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for hard-arithmetic `is_sat` preserving solver `unsat`.
 fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
     let marker = portfolio_test_marker("hard-arith-is-sat-unsat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
@@ -3029,7 +2883,6 @@ fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for normalized satisfiability query cache hits.
 fn sat_cache_reuses_normalized_is_sat_results() {
     let marker = portfolio_test_marker("sat-cache");
     let commands = vec![counted_solver_command(&marker, "sat")];
@@ -3060,7 +2913,6 @@ fn sat_cache_reuses_normalized_is_sat_results() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for nested canonical satisfiability query cache keys.
 fn sat_cache_reuses_nested_commutative_results() {
     let marker = portfolio_test_marker("sat-cache-canonical");
     let commands = vec![counted_solver_command(&marker, "sat")];
@@ -3095,7 +2947,6 @@ fn sat_cache_reuses_nested_commutative_results() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for duplicate conjuncts sharing satisfiability cache keys.
 fn sat_cache_deduplicates_repeated_constraints() {
     let marker = portfolio_test_marker("sat-cache-dedup");
     let commands = vec![counted_solver_command(&marker, "sat")];
@@ -3118,7 +2969,6 @@ fn sat_cache_deduplicates_repeated_constraints() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for nested duplicate conjuncts sharing satisfiability cache keys.
 fn sat_cache_deduplicates_nested_repeated_constraints() {
     let marker = portfolio_test_marker("sat-cache-nested-dedup");
     let commands = vec![counted_solver_command(&marker, "sat")];
@@ -3141,7 +2991,6 @@ fn sat_cache_deduplicates_nested_repeated_constraints() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for grouped conjunctions sharing satisfiability cache keys.
 fn sat_cache_flattens_grouped_conjunction_keys() {
     let marker = portfolio_test_marker("sat-cache-and-flatten");
     let commands = vec![counted_solver_command(&marker, "sat")];
@@ -3171,7 +3020,6 @@ fn sat_cache_flattens_grouped_conjunction_keys() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for comparison-direction canonical satisfiability cache keys.
 fn sat_cache_reuses_reversed_comparisons() {
     let marker = portfolio_test_marker("sat-cache-reversed-cmp");
     let commands = vec![counted_solver_command(&marker, "sat")];
@@ -3196,7 +3044,6 @@ fn sat_cache_reuses_reversed_comparisons() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for leaving unknown satisfiability results uncached.
 fn sat_cache_does_not_cache_unknown_results() {
     let marker = portfolio_test_marker("sat-cache-unknown");
     let commands = vec![counted_solver_command(&marker, "unknown")];
@@ -3216,7 +3063,6 @@ fn sat_cache_does_not_cache_unknown_results() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for normalized solver model cache hits.
 fn model_cache_reuses_normalized_model_results() {
     let marker = portfolio_test_marker("model-cache");
     let model_output = "sat\n\
@@ -3255,7 +3101,6 @@ fn model_cache_reuses_normalized_model_results() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for model queries populating the satisfiability cache.
 fn model_query_populates_sat_cache() {
     let marker = portfolio_test_marker("model-cache-sat");
     let model_output = "sat\n\
@@ -3279,7 +3124,6 @@ fn model_query_populates_sat_cache() {
 }
 
 #[test]
-/// Regression coverage for direct contradictions avoiding SMT calls.
 fn direct_contradiction_is_sat_short_circuits_locally() {
     let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
     let constraint = SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)));
@@ -3295,7 +3139,6 @@ fn direct_contradiction_is_sat_short_circuits_locally() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for reusing cached unsat subsets without another SMT query.
 fn is_sat_reuses_cached_unsat_subset() {
     let marker = portfolio_test_marker("unsat-subset-cache");
     let commands = vec![counted_solver_command(&marker, "unsat")];
@@ -3317,7 +3160,6 @@ fn is_sat_reuses_cached_unsat_subset() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for not generalizing cached sat subsets to stricter constraints.
 fn is_sat_does_not_reuse_cached_sat_subset() {
     let marker = portfolio_test_marker("sat-subset-cache");
     let commands = vec![counted_solver_command(&marker, "sat")];
@@ -3342,7 +3184,6 @@ fn is_sat_does_not_reuse_cached_sat_subset() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for satisfiability cache unsat results short-circuiting model queries.
 fn model_short_circuits_when_sat_cache_proved_unsat() {
     let marker = portfolio_test_marker("model-cache-unsat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
@@ -3366,7 +3207,6 @@ fn model_short_circuits_when_sat_cache_proved_unsat() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for `portfolio_sat_beats_early_unsat`.
 fn portfolio_sat_beats_early_unsat() {
     let commands = vec![
         SolverCommand::new(
@@ -3396,7 +3236,6 @@ fn portfolio_sat_beats_early_unsat() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for adaptive portfolio scheduling promoting recent winners.
 fn portfolio_scheduler_promotes_recent_sat_winner() {
     let marker = portfolio_test_marker("adaptive-slow-leader");
     let marker_arg = marker.display().to_string();
@@ -3438,7 +3277,6 @@ fn portfolio_scheduler_promotes_recent_sat_winner() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for adaptive portfolio scheduling promoting unsat winners.
 fn portfolio_scheduler_promotes_recent_unsat_winner() {
     let commands = vec![
         SolverCommand::new(
@@ -3479,7 +3317,6 @@ fn portfolio_scheduler_promotes_recent_unsat_winner() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for adaptive portfolio scheduling penalizing invalid models.
 fn portfolio_scheduler_penalizes_invalid_models() {
     let marker = portfolio_test_marker("adaptive-invalid-model");
     let marker_arg = marker.display().to_string();
@@ -3532,7 +3369,6 @@ fn portfolio_scheduler_penalizes_invalid_models() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for `run_solver_commands` staged portfolio launching.
 fn portfolio_winner_skips_delayed_solver() {
     let marker = portfolio_test_marker("delayed-solver");
     let marker_arg = marker.display().to_string();
@@ -3566,7 +3402,6 @@ fn portfolio_winner_skips_delayed_solver() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for delayed solvers still rescuing unresolved queries.
 fn portfolio_delayed_solver_can_rescue_stalled_leader() {
     let commands = vec![
         SolverCommand::new(
@@ -3597,7 +3432,6 @@ fn portfolio_delayed_solver_can_rescue_stalled_leader() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for deferring SMT and portfolio diagnostics during progress rendering.
 fn solver_capture_diagnostics_buffers_dump_smt_output() {
     let commands = vec![
         SolverCommand::new(
@@ -3634,7 +3468,6 @@ fn solver_capture_diagnostics_buffers_dump_smt_output() {
 }
 
 #[test]
-/// Regression coverage for `PortfolioDiagnostics::record`.
 fn portfolio_diagnostics_counts_staged_outcomes() {
     let summaries = vec![
         SolverRunSummary::new(
@@ -3700,7 +3533,6 @@ outcome counts:
 }
 
 #[test]
-/// Regression coverage for `assertion_revert_classifies_assert_panic_only`.
 fn assertion_revert_classifies_assert_panic_only() {
     let mut assert_payload = PANIC_SELECTOR.to_vec();
     assert_payload.extend_from_slice(&U256::from(1).to_be_bytes::<32>());
@@ -3713,18 +3545,15 @@ fn assertion_revert_classifies_assert_panic_only() {
 }
 
 #[test]
-/// Regression coverage for `assertion_revert_ignores_plain_require_reverts`.
 fn assertion_revert_ignores_plain_require_reverts() {
     assert!(!is_assertion_revert(&error_payload("hit")));
 }
 
 #[test]
-/// Regression coverage for `assertion_revert_accepts_forge_assertion_reverts`.
 fn assertion_revert_accepts_forge_assertion_reverts() {
     assert!(is_assertion_revert(&error_payload("assertion failed: expected 1 to equal 2")));
 }
 
-/// Regression coverage for `error_payload`.
 fn error_payload(message: &str) -> Vec<u8> {
     let mut payload = ERROR_SELECTOR.to_vec();
     payload.extend_from_slice(&U256::from(32).to_be_bytes::<32>());
