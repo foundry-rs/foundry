@@ -1850,7 +1850,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 .find(|(expected, _)| !expected.found && expected.count > 0)
             {
                 outcome.result.result = InstructionResult::Revert;
-                let error_msg = expected.mismatch_error.as_deref().unwrap_or("log != expected log");
+                let mismatch_error = expected.mismatch_error.clone();
+                let expected_log = expected.log.clone();
+                let checks = expected.checks;
+                let anonymous = expected.anonymous;
+                let error_msg = mismatch_error
+                    .as_ref()
+                    .map(|mismatch| {
+                        mismatch.to_error_msg(self, checks, expected_log.as_ref(), anonymous)
+                    })
+                    .unwrap_or_else(|| "log != expected log".to_string());
                 outcome.result.output = error_msg.abi_encode().into();
                 return;
             }
