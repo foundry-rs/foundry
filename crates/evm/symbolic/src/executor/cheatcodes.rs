@@ -1,4 +1,3 @@
-use alloy_sol_types::SolCall;
 use foundry_cheatcodes_spec::Vm::*;
 
 use super::*;
@@ -513,2037 +512,2199 @@ impl SymbolicExecutor {
         in_size: usize,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         let args_offset = in_offset + 4;
-        if selector == assumeCall::SELECTOR {
-            return self.handle_assume(state, in_offset + 4);
-        }
-        if selector == assumeNoRevert_0Call::SELECTOR {
-            if state.assume_no_revert_next_call.is_some() {
-                return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
+        match selector {
+            assumeCall::SELECTOR => {
+                return self.handle_assume(state, in_offset + 4);
             }
-            state.assume_no_revert_next_call = Some(AssumeNoRevert::Any);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == assumeNoRevert_1Call::SELECTOR {
-            if state.assume_no_revert_next_call.is_some() {
-                return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
+            assumeNoRevert_0Call::SELECTOR => {
+                if state.assume_no_revert_next_call.is_some() {
+                    return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
+                }
+                state.assume_no_revert_next_call = Some(AssumeNoRevert::Any);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
-            let mut values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::Tuple(vec![
-                    DynSolType::Address,
-                    DynSolType::Bool,
-                    DynSolType::Bytes,
-                ])],
-            )?;
-            let value = values
-                .pop()
-                .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
-            state.assume_no_revert_next_call =
-                Some(AssumeNoRevert::Filtered(vec![dyn_potential_revert(&value)?]));
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == assumeNoRevert_2Call::SELECTOR {
-            if state.assume_no_revert_next_call.is_some() {
-                return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
+            assumeNoRevert_1Call::SELECTOR => {
+                if state.assume_no_revert_next_call.is_some() {
+                    return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
+                }
+                let mut values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::Tuple(vec![
+                        DynSolType::Address,
+                        DynSolType::Bool,
+                        DynSolType::Bytes,
+                    ])],
+                )?;
+                let value = values
+                    .pop()
+                    .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
+                state.assume_no_revert_next_call =
+                    Some(AssumeNoRevert::Filtered(vec![dyn_potential_revert(&value)?]));
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
-            let mut values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::Array(Box::new(DynSolType::Tuple(vec![
-                    DynSolType::Address,
-                    DynSolType::Bool,
-                    DynSolType::Bytes,
-                ])))],
-            )?;
-            let value = values
-                .pop()
-                .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
-            state.assume_no_revert_next_call =
-                Some(AssumeNoRevert::Filtered(dyn_potential_reverts(&value)?));
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == skip_0Call::SELECTOR || selector == skip_1Call::SELECTOR {
-            return self.handle_skip(state, in_offset + 4);
-        }
-        if selector == recordLogsCall::SELECTOR {
-            state.recorded_logs = Some(Vec::new());
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == recordCall::SELECTOR {
-            state.access_record = Some(AccessRecord::default());
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == stopRecordCall::SELECTOR {
-            state.access_record = None;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == accessesCall::SELECTOR {
-            let target = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            return Ok(CheatcodeOutcome::ContinueData(
-                self.accesses_return_data_for_target(state, target)?,
-            ));
-        }
-        if selector == getRecordedLogsCall::SELECTOR {
-            let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
-            return Ok(CheatcodeOutcome::ContinueData(recorded_logs_return_data(logs)));
-        }
-        if selector == getRecordedLogsJsonCall::SELECTOR {
-            let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
-            return Ok(CheatcodeOutcome::ContinueData(recorded_logs_json_return_data(logs)?));
-        }
-        if selector == expectRevert_0Call::SELECTOR {
-            return Ok(self.set_expected_revert(state, ExpectedRevertData::Any, None, 1));
-        }
-        if selector == expectRevert_1Call::SELECTOR {
-            let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::prefix(selector),
-                None,
-                1,
-            ));
-        }
-        if selector == expectRevert_2Call::SELECTOR {
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                0,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectRevert",
-            )?;
-            return Ok(self.set_expected_revert(state, ExpectedRevertData::exact(data), None, 1));
-        }
-        if selector == expectRevert_3Call::SELECTOR {
-            let reverter = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            return Ok(self.set_expected_revert(state, ExpectedRevertData::Any, Some(reverter), 1));
-        }
-        if selector == expectRevert_4Call::SELECTOR {
-            let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-            let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::prefix(selector),
-                Some(reverter),
-                1,
-            ));
-        }
-        if selector == expectRevert_5Call::SELECTOR {
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                0,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectRevert",
-            )?;
-            let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::exact(data),
-                Some(reverter),
-                1,
-            ));
-        }
-        if selector == expectRevert_6Call::SELECTOR {
-            let count =
-                read_abi_u64_arg(&state.memory, args_offset, 0, "symbolic vm.expectRevert")?;
-            return Ok(self.set_expected_revert(state, ExpectedRevertData::Any, None, count));
-        }
-        if selector == expectRevert_7Call::SELECTOR {
-            let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-            let count =
-                read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::prefix(selector),
-                None,
-                count,
-            ));
-        }
-        if selector == expectRevert_8Call::SELECTOR {
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                0,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectRevert",
-            )?;
-            let count =
-                read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::exact(data),
-                None,
-                count,
-            ));
-        }
-        if selector == expectRevert_9Call::SELECTOR {
-            let reverter = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let count =
-                read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::Any,
-                Some(reverter),
-                count,
-            ));
-        }
-        if selector == expectRevert_10Call::SELECTOR {
-            let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-            let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            let count =
-                read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectRevert")?;
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::prefix(selector),
-                Some(reverter),
-                count,
-            ));
-        }
-        if selector == expectRevert_11Call::SELECTOR {
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                0,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectRevert",
-            )?;
-            let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            let count =
-                read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectRevert")?;
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::exact(data),
-                Some(reverter),
-                count,
-            ));
-        }
-        if selector == expectPartialRevert_0Call::SELECTOR {
-            let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::prefix(selector),
-                None,
-                1,
-            ));
-        }
-        if selector == expectPartialRevert_1Call::SELECTOR {
-            let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-            let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return Ok(self.set_expected_revert(
-                state,
-                ExpectedRevertData::prefix(selector),
-                Some(reverter),
-                1,
-            ));
-        }
-        if selector == expectEmit_2Call::SELECTOR {
-            return Ok(self.set_expected_emit(
-                state,
-                ExpectedEmitChecks::default_non_anonymous(),
-                None,
-                1,
-            ));
-        }
-        if selector == expectEmit_3Call::SELECTOR {
-            let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            return Ok(self.set_expected_emit(
-                state,
-                ExpectedEmitChecks::default_non_anonymous(),
-                Some(emitter),
-                1,
-            ));
-        }
-        if selector == expectEmit_6Call::SELECTOR {
-            let count = read_abi_u64_arg(&state.memory, args_offset, 0, "symbolic vm.expectEmit")?;
-            return Ok(self.set_expected_emit(
-                state,
-                ExpectedEmitChecks::default_non_anonymous(),
-                None,
-                count,
-            ));
-        }
-        if selector == expectEmit_7Call::SELECTOR {
-            let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let count = read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectEmit")?;
-            return Ok(self.set_expected_emit(
-                state,
-                ExpectedEmitChecks::default_non_anonymous(),
-                Some(emitter),
-                count,
-            ));
-        }
-        if selector == expectEmit_0Call::SELECTOR {
-            let checks = ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
-            return Ok(self.set_expected_emit(state, checks, None, 1));
-        }
-        if selector == expectEmit_1Call::SELECTOR {
-            let checks = ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
-            let emitter = read_abi_word_arg(&state.memory, args_offset, 4)?;
-            return Ok(self.set_expected_emit(state, checks, Some(emitter), 1));
-        }
-        if selector == expectEmit_4Call::SELECTOR {
-            let checks = ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
-            let count = read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectEmit")?;
-            return Ok(self.set_expected_emit(state, checks, None, count));
-        }
-        if selector == expectEmit_5Call::SELECTOR {
-            let checks = ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
-            let emitter = read_abi_word_arg(&state.memory, args_offset, 4)?;
-            let count = read_abi_u64_arg(&state.memory, args_offset, 5, "symbolic vm.expectEmit")?;
-            return Ok(self.set_expected_emit(state, checks, Some(emitter), count));
-        }
-        if selector == expectEmitAnonymous_2Call::SELECTOR {
-            return Ok(self.set_expected_emit(
-                state,
-                ExpectedEmitChecks::default_anonymous(),
-                None,
-                1,
-            ));
-        }
-        if selector == expectEmitAnonymous_3Call::SELECTOR {
-            let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            return Ok(self.set_expected_emit(
-                state,
-                ExpectedEmitChecks::default_anonymous(),
-                Some(emitter),
-                1,
-            ));
-        }
-        if selector == expectEmitAnonymous_0Call::SELECTOR {
-            let checks = ExpectedEmitChecks::from_anonymous_args(&state.memory, args_offset)?;
-            return Ok(self.set_expected_emit(state, checks, None, 1));
-        }
-        if selector == expectEmitAnonymous_1Call::SELECTOR {
-            let checks = ExpectedEmitChecks::from_anonymous_args(&state.memory, args_offset)?;
-            let emitter = read_abi_word_arg(&state.memory, args_offset, 5)?;
-            return Ok(self.set_expected_emit(state, checks, Some(emitter), 1));
-        }
-        if selector == expectCall_0Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                1,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectCall",
-            )?;
-            return Ok(self.set_expected_call(state, callee, None, None, None, data, None));
-        }
-        if selector == expectCall_1Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                1,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectCall",
-            )?;
-            let count = read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-            return Ok(self.set_expected_call(state, callee, None, None, None, data, Some(count)));
-        }
-        if selector == expectCall_2Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value = read_abi_concrete_word_arg(
-                &state.memory,
-                args_offset,
-                1,
-                "symbolic vm.expectCall",
-            )?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectCall",
-            )?;
-            return Ok(self.set_expected_call(state, callee, Some(value), None, None, data, None));
-        }
-        if selector == expectCall_3Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value = read_abi_concrete_word_arg(
-                &state.memory,
-                args_offset,
-                1,
-                "symbolic vm.expectCall",
-            )?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectCall",
-            )?;
-            let count = read_abi_u64_arg(&state.memory, args_offset, 3, "symbolic vm.expectCall")?;
-            return Ok(self.set_expected_call(
-                state,
-                callee,
-                Some(value),
-                None,
-                None,
-                data,
-                Some(count),
-            ));
-        }
-        if selector == expectCall_4Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value = read_abi_concrete_word_arg(
-                &state.memory,
-                args_offset,
-                1,
-                "symbolic vm.expectCall",
-            )?;
-            let gas = read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                3,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectCall",
-            )?;
-            return Ok(self.set_expected_call(
-                state,
-                callee,
-                Some(value),
-                Some(gas),
-                None,
-                data,
-                None,
-            ));
-        }
-        if selector == expectCall_5Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value = read_abi_concrete_word_arg(
-                &state.memory,
-                args_offset,
-                1,
-                "symbolic vm.expectCall",
-            )?;
-            let gas = read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                3,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectCall",
-            )?;
-            let count = read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectCall")?;
-            return Ok(self.set_expected_call(
-                state,
-                callee,
-                Some(value),
-                Some(gas),
-                None,
-                data,
-                Some(count),
-            ));
-        }
-        if selector == expectCallMinGas_0Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value = read_abi_concrete_word_arg(
-                &state.memory,
-                args_offset,
-                1,
-                "symbolic vm.expectCall",
-            )?;
-            let min_gas =
-                read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                3,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectCall",
-            )?;
-            return Ok(self.set_expected_call(
-                state,
-                callee,
-                Some(value),
-                None,
-                Some(min_gas),
-                data,
-                None,
-            ));
-        }
-        if selector == expectCallMinGas_1Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value = read_abi_concrete_word_arg(
-                &state.memory,
-                args_offset,
-                1,
-                "symbolic vm.expectCall",
-            )?;
-            let min_gas =
-                read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                3,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.expectCall",
-            )?;
-            let count = read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectCall")?;
-            return Ok(self.set_expected_call(
-                state,
-                callee,
-                Some(value),
-                None,
-                Some(min_gas),
-                data,
-                Some(count),
-            ));
-        }
-        if selector == expectCreateCall::SELECTOR || selector == expectCreate2Call::SELECTOR {
-            let bytecode = read_abi_dynamic_bytes_arg(
-                &state.memory,
-                args_offset,
-                0,
-                "symbolic vm.expectCreate bytecode",
-            )?;
-            let deployer = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            let kind = if selector == expectCreateCall::SELECTOR {
-                CreateKind::Create
-            } else {
-                CreateKind::Create2
-            };
-            return Ok(self.set_expected_create(state, bytecode, deployer, kind));
-        }
-        if selector == clearMockedCallsCall::SELECTOR {
-            state.call_mocks.clear();
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == mockCall_0Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                1,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCall",
-            )?;
-            let ret = read_abi_dynamic_return_data_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCall",
-            )?;
-            return Ok(self.add_call_mock(state, callee, None, data, vec![ret], false));
-        }
-        if selector == mockCall_1Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value =
-                read_abi_concrete_word_arg(&state.memory, args_offset, 1, "symbolic vm.mockCall")?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCall",
-            )?;
-            let ret = read_abi_dynamic_return_data_arg(
-                state,
-                args_offset,
-                3,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCall",
-            )?;
-            return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], false));
-        }
-        if selector == mockCall_2Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 1);
-            let ret = read_abi_dynamic_return_data_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCall",
-            )?;
-            return Ok(self.add_call_mock(state, callee, None, data, vec![ret], false));
-        }
-        if selector == mockCall_3Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value =
-                read_abi_concrete_word_arg(&state.memory, args_offset, 1, "symbolic vm.mockCall")?;
-            let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 2);
-            let ret = read_abi_dynamic_return_data_arg(
-                state,
-                args_offset,
-                3,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCall",
-            )?;
-            return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], false));
-        }
-        if selector == mockCalls_0Call::SELECTOR || selector == mockCalls_1Call::SELECTOR {
-            let has_value = selector == mockCalls_1Call::SELECTOR;
-            let (value, data_idx, ret_idx) = if has_value {
+            assumeNoRevert_2Call::SELECTOR => {
+                if state.assume_no_revert_next_call.is_some() {
+                    return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
+                }
+                let mut values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::Array(Box::new(DynSolType::Tuple(vec![
+                        DynSolType::Address,
+                        DynSolType::Bool,
+                        DynSolType::Bytes,
+                    ])))],
+                )?;
+                let value = values
+                    .pop()
+                    .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
+                state.assume_no_revert_next_call =
+                    Some(AssumeNoRevert::Filtered(dyn_potential_reverts(&value)?));
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            skip_0Call::SELECTOR | skip_1Call::SELECTOR => {
+                return self.handle_skip(state, in_offset + 4);
+            }
+            recordLogsCall::SELECTOR => {
+                state.recorded_logs = Some(Vec::new());
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            recordCall::SELECTOR => {
+                state.access_record = Some(AccessRecord::default());
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            stopRecordCall::SELECTOR => {
+                state.access_record = None;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            accessesCall::SELECTOR => {
+                let target = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                return Ok(CheatcodeOutcome::ContinueData(
+                    self.accesses_return_data_for_target(state, target)?,
+                ));
+            }
+            getRecordedLogsCall::SELECTOR => {
+                let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
+                return Ok(CheatcodeOutcome::ContinueData(recorded_logs_return_data(logs)));
+            }
+            getRecordedLogsJsonCall::SELECTOR => {
+                let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
+                return Ok(CheatcodeOutcome::ContinueData(recorded_logs_json_return_data(logs)?));
+            }
+            expectRevert_0Call::SELECTOR => {
+                return Ok(self.set_expected_revert(state, ExpectedRevertData::Any, None, 1));
+            }
+            expectRevert_1Call::SELECTOR => {
+                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::prefix(selector),
+                    None,
+                    1,
+                ));
+            }
+            expectRevert_2Call::SELECTOR => {
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    0,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectRevert",
+                )?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::exact(data),
+                    None,
+                    1,
+                ));
+            }
+            expectRevert_3Call::SELECTOR => {
+                let reverter = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::Any,
+                    Some(reverter),
+                    1,
+                ));
+            }
+            expectRevert_4Call::SELECTOR => {
+                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
+                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::prefix(selector),
+                    Some(reverter),
+                    1,
+                ));
+            }
+            expectRevert_5Call::SELECTOR => {
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    0,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectRevert",
+                )?;
+                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::exact(data),
+                    Some(reverter),
+                    1,
+                ));
+            }
+            expectRevert_6Call::SELECTOR => {
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 0, "symbolic vm.expectRevert")?;
+                return Ok(self.set_expected_revert(state, ExpectedRevertData::Any, None, count));
+            }
+            expectRevert_7Call::SELECTOR => {
+                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::prefix(selector),
+                    None,
+                    count,
+                ));
+            }
+            expectRevert_8Call::SELECTOR => {
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    0,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectRevert",
+                )?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::exact(data),
+                    None,
+                    count,
+                ));
+            }
+            expectRevert_9Call::SELECTOR => {
+                let reverter = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::Any,
+                    Some(reverter),
+                    count,
+                ));
+            }
+            expectRevert_10Call::SELECTOR => {
+                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
+                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectRevert")?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::prefix(selector),
+                    Some(reverter),
+                    count,
+                ));
+            }
+            expectRevert_11Call::SELECTOR => {
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    0,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectRevert",
+                )?;
+                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectRevert")?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::exact(data),
+                    Some(reverter),
+                    count,
+                ));
+            }
+            expectPartialRevert_0Call::SELECTOR => {
+                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::prefix(selector),
+                    None,
+                    1,
+                ));
+            }
+            expectPartialRevert_1Call::SELECTOR => {
+                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
+                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return Ok(self.set_expected_revert(
+                    state,
+                    ExpectedRevertData::prefix(selector),
+                    Some(reverter),
+                    1,
+                ));
+            }
+            expectEmit_2Call::SELECTOR => {
+                return Ok(self.set_expected_emit(
+                    state,
+                    ExpectedEmitChecks::default_non_anonymous(),
+                    None,
+                    1,
+                ));
+            }
+            expectEmit_3Call::SELECTOR => {
+                let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                return Ok(self.set_expected_emit(
+                    state,
+                    ExpectedEmitChecks::default_non_anonymous(),
+                    Some(emitter),
+                    1,
+                ));
+            }
+            expectEmit_6Call::SELECTOR => {
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 0, "symbolic vm.expectEmit")?;
+                return Ok(self.set_expected_emit(
+                    state,
+                    ExpectedEmitChecks::default_non_anonymous(),
+                    None,
+                    count,
+                ));
+            }
+            expectEmit_7Call::SELECTOR => {
+                let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectEmit")?;
+                return Ok(self.set_expected_emit(
+                    state,
+                    ExpectedEmitChecks::default_non_anonymous(),
+                    Some(emitter),
+                    count,
+                ));
+            }
+            expectEmit_0Call::SELECTOR => {
+                let checks =
+                    ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
+                return Ok(self.set_expected_emit(state, checks, None, 1));
+            }
+            expectEmit_1Call::SELECTOR => {
+                let checks =
+                    ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
+                let emitter = read_abi_word_arg(&state.memory, args_offset, 4)?;
+                return Ok(self.set_expected_emit(state, checks, Some(emitter), 1));
+            }
+            expectEmit_4Call::SELECTOR => {
+                let checks =
+                    ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectEmit")?;
+                return Ok(self.set_expected_emit(state, checks, None, count));
+            }
+            expectEmit_5Call::SELECTOR => {
+                let checks =
+                    ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
+                let emitter = read_abi_word_arg(&state.memory, args_offset, 4)?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 5, "symbolic vm.expectEmit")?;
+                return Ok(self.set_expected_emit(state, checks, Some(emitter), count));
+            }
+            expectEmitAnonymous_2Call::SELECTOR => {
+                return Ok(self.set_expected_emit(
+                    state,
+                    ExpectedEmitChecks::default_anonymous(),
+                    None,
+                    1,
+                ));
+            }
+            expectEmitAnonymous_3Call::SELECTOR => {
+                let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                return Ok(self.set_expected_emit(
+                    state,
+                    ExpectedEmitChecks::default_anonymous(),
+                    Some(emitter),
+                    1,
+                ));
+            }
+            expectEmitAnonymous_0Call::SELECTOR => {
+                let checks = ExpectedEmitChecks::from_anonymous_args(&state.memory, args_offset)?;
+                return Ok(self.set_expected_emit(state, checks, None, 1));
+            }
+            expectEmitAnonymous_1Call::SELECTOR => {
+                let checks = ExpectedEmitChecks::from_anonymous_args(&state.memory, args_offset)?;
+                let emitter = read_abi_word_arg(&state.memory, args_offset, 5)?;
+                return Ok(self.set_expected_emit(state, checks, Some(emitter), 1));
+            }
+            expectCall_0Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    1,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectCall",
+                )?;
+                return Ok(self.set_expected_call(state, callee, None, None, None, data, None));
+            }
+            expectCall_1Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    1,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectCall",
+                )?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                return Ok(self.set_expected_call(
+                    state,
+                    callee,
+                    None,
+                    None,
+                    None,
+                    data,
+                    Some(count),
+                ));
+            }
+            expectCall_2Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
                     &state.memory,
                     args_offset,
                     1,
-                    "symbolic vm.mockCalls",
+                    "symbolic vm.expectCall",
                 )?;
-                (Some(value), 2, 3)
-            } else {
-                (None, 1, 2)
-            };
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                data_idx,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCalls data",
-            )?;
-            let returns = read_abi_symbolic_dynamic_bytes_array_arg(
-                state,
-                args_offset,
-                ret_idx,
-                self.config.max_dynamic_length as usize,
-                self.config.max_calldata_bytes as usize,
-            )?;
-            return Ok(self.add_call_mock(state, callee, value, data, returns, false));
-        }
-        if selector == mockCallRevert_0Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                1,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCallRevert",
-            )?;
-            let ret = read_abi_dynamic_return_data_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCallRevert",
-            )?;
-            return Ok(self.add_call_mock(state, callee, None, data, vec![ret], true));
-        }
-        if selector == mockCallRevert_1Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value = read_abi_concrete_word_arg(
-                &state.memory,
-                args_offset,
-                1,
-                "symbolic vm.mockCallRevert",
-            )?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCallRevert",
-            )?;
-            let ret = read_abi_dynamic_return_data_arg(
-                state,
-                args_offset,
-                3,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCallRevert",
-            )?;
-            return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], true));
-        }
-        if selector == mockCallRevert_2Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 1);
-            let ret = read_abi_dynamic_return_data_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCallRevert",
-            )?;
-            return Ok(self.add_call_mock(state, callee, None, data, vec![ret], true));
-        }
-        if selector == mockCallRevert_3Call::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let value = read_abi_concrete_word_arg(
-                &state.memory,
-                args_offset,
-                1,
-                "symbolic vm.mockCallRevert",
-            )?;
-            let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 2);
-            let ret = read_abi_dynamic_return_data_arg(
-                state,
-                args_offset,
-                3,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockCallRevert",
-            )?;
-            return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], true));
-        }
-        if selector == mockFunctionCall::SELECTOR {
-            let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let target =
-                read_abi_address_arg(&state.memory, args_offset, 1, "symbolic vm.mockFunction")?;
-            let data = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                2,
-                self.config.max_calldata_bytes as usize,
-                "symbolic vm.mockFunction",
-            )?;
-            return Ok(self.set_function_mock(state, callee, target, data));
-        }
-        if selector == prank_0Call::SELECTOR {
-            state.prank.next_caller =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-            state.prank.next_origin = None;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == prank_1Call::SELECTOR {
-            state.prank.next_caller =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-            state.prank.next_origin =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == prank_2Call::SELECTOR {
-            let delegate_call =
-                read_abi_bool_arg(&state.memory, args_offset, 1, "symbolic vm.prank")?;
-            if delegate_call {
-                return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectCall",
+                )?;
+                return Ok(self.set_expected_call(
+                    state,
+                    callee,
+                    Some(value),
+                    None,
+                    None,
+                    data,
+                    None,
+                ));
             }
-            state.prank.next_caller =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-            state.prank.next_origin = None;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == prank_3Call::SELECTOR {
-            let delegate_call =
-                read_abi_bool_arg(&state.memory, args_offset, 2, "symbolic vm.prank")?;
-            if delegate_call {
-                return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
+            expectCall_3Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectCall",
+                )?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectCall",
+                )?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 3, "symbolic vm.expectCall")?;
+                return Ok(self.set_expected_call(
+                    state,
+                    callee,
+                    Some(value),
+                    None,
+                    None,
+                    data,
+                    Some(count),
+                ));
             }
-            state.prank.next_caller =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-            state.prank.next_origin =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == startPrank_0Call::SELECTOR {
-            state.prank.persistent_caller =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-            state.prank.persistent_origin = None;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == startPrank_1Call::SELECTOR {
-            state.prank.persistent_caller =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-            state.prank.persistent_origin =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == startPrank_2Call::SELECTOR {
-            let delegate_call =
-                read_abi_bool_arg(&state.memory, args_offset, 1, "symbolic vm.startPrank")?;
-            if delegate_call {
-                return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
+            expectCall_4Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectCall",
+                )?;
+                let gas =
+                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    3,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectCall",
+                )?;
+                return Ok(self.set_expected_call(
+                    state,
+                    callee,
+                    Some(value),
+                    Some(gas),
+                    None,
+                    data,
+                    None,
+                ));
             }
-            state.prank.persistent_caller =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-            state.prank.persistent_origin = None;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == startPrank_3Call::SELECTOR {
-            let delegate_call =
-                read_abi_bool_arg(&state.memory, args_offset, 2, "symbolic vm.startPrank")?;
-            if delegate_call {
-                return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
+            expectCall_5Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectCall",
+                )?;
+                let gas =
+                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    3,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectCall",
+                )?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectCall")?;
+                return Ok(self.set_expected_call(
+                    state,
+                    callee,
+                    Some(value),
+                    Some(gas),
+                    None,
+                    data,
+                    Some(count),
+                ));
             }
-            state.prank.persistent_caller =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-            state.prank.persistent_origin =
-                Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == stopPrankCall::SELECTOR {
-            state.prank = SymbolicPrank::default();
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == readCallersCall::SELECTOR {
-            return Ok(CheatcodeOutcome::Continue(state.read_callers_words()));
-        }
-        if selector == addrCall::SELECTOR {
-            let private_key =
-                read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.addr")?;
-            let address = private_key_address(private_key)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(address))]));
-        }
-        if selector == sign_1Call::SELECTOR {
-            let private_key =
-                read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.sign")?;
-            let digest = read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.sign")?;
-            return Ok(CheatcodeOutcome::Continue(sign_hash_words(private_key, digest)?));
-        }
-        if selector == signCompact_1Call::SELECTOR {
-            let private_key =
-                read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.signCompact")?;
-            let digest =
-                read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.signCompact")?;
-            return Ok(CheatcodeOutcome::Continue(sign_compact_hash_words(private_key, digest)?));
-        }
-        if selector == deriveKey_0Call::SELECTOR {
-            let mnemonic =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
-            let index = read_abi_u32_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
-            let private_key =
-                derive_private_key::<English>(&mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, index)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
-        }
-        if selector == deriveKey_1Call::SELECTOR {
-            let mnemonic =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
-            let path = read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
-            let index = read_abi_u32_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
-            let private_key = derive_private_key::<English>(&mnemonic, &path, index)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
-        }
-        if selector == deriveKey_2Call::SELECTOR {
-            let mnemonic =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
-            let index = read_abi_u32_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
-            let language =
-                read_abi_string_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
-            let private_key = derive_private_key_with_language(
-                &mnemonic,
-                DEFAULT_DERIVATION_PATH_PREFIX,
-                index,
-                &language,
-            )?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
-        }
-        if selector == deriveKey_3Call::SELECTOR {
-            let mnemonic =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
-            let path = read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
-            let index = read_abi_u32_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
-            let language =
-                read_abi_string_arg(&state.memory, args_offset, 3, "symbolic vm.deriveKey")?;
-            let private_key = derive_private_key_with_language(&mnemonic, &path, index, &language)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
-        }
-        if selector == rememberKeyCall::SELECTOR {
-            let private_key =
-                read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.rememberKey")?;
-            let address = private_key_address(private_key)?;
-            state.wallets.insert(address);
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(address))]));
-        }
-        if selector == rememberKeys_0Call::SELECTOR || selector == rememberKeys_1Call::SELECTOR {
-            let mnemonic =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.rememberKeys")?;
-            let path =
-                read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.rememberKeys")?;
-            let (language, count_index) = if selector == rememberKeys_1Call::SELECTOR {
-                (
-                    Some(read_abi_string_arg(
+            expectCallMinGas_0Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectCall",
+                )?;
+                let min_gas =
+                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    3,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectCall",
+                )?;
+                return Ok(self.set_expected_call(
+                    state,
+                    callee,
+                    Some(value),
+                    None,
+                    Some(min_gas),
+                    data,
+                    None,
+                ));
+            }
+            expectCallMinGas_1Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectCall",
+                )?;
+                let min_gas =
+                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    3,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.expectCall",
+                )?;
+                let count =
+                    read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectCall")?;
+                return Ok(self.set_expected_call(
+                    state,
+                    callee,
+                    Some(value),
+                    None,
+                    Some(min_gas),
+                    data,
+                    Some(count),
+                ));
+            }
+            expectCreateCall::SELECTOR | expectCreate2Call::SELECTOR => {
+                let bytecode = read_abi_dynamic_bytes_arg(
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.expectCreate bytecode",
+                )?;
+                let deployer = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let kind = if selector == expectCreateCall::SELECTOR {
+                    CreateKind::Create
+                } else {
+                    CreateKind::Create2
+                };
+                return Ok(self.set_expected_create(state, bytecode, deployer, kind));
+            }
+            clearMockedCallsCall::SELECTOR => {
+                state.call_mocks.clear();
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            mockCall_0Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    1,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCall",
+                )?;
+                let ret = read_abi_dynamic_return_data_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCall",
+                )?;
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], false));
+            }
+            mockCall_1Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.mockCall",
+                )?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCall",
+                )?;
+                let ret = read_abi_dynamic_return_data_arg(
+                    state,
+                    args_offset,
+                    3,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCall",
+                )?;
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], false));
+            }
+            mockCall_2Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 1);
+                let ret = read_abi_dynamic_return_data_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCall",
+                )?;
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], false));
+            }
+            mockCall_3Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.mockCall",
+                )?;
+                let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 2);
+                let ret = read_abi_dynamic_return_data_arg(
+                    state,
+                    args_offset,
+                    3,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCall",
+                )?;
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], false));
+            }
+            mockCalls_0Call::SELECTOR | mockCalls_1Call::SELECTOR => {
+                let has_value = selector == mockCalls_1Call::SELECTOR;
+                let (value, data_idx, ret_idx) = if has_value {
+                    let value = read_abi_concrete_word_arg(
                         &state.memory,
                         args_offset,
-                        2,
-                        "symbolic vm.rememberKeys",
-                    )?),
-                    3,
-                )
-            } else {
-                (None, 2)
-            };
-            let count = read_abi_u32_arg(
-                &state.memory,
-                args_offset,
-                count_index,
-                "symbolic vm.rememberKeys",
-            )?;
-            if count > MAX_REMEMBER_KEYS {
-                return Err(SymbolicError::Unsupported("symbolic vm.rememberKeys count"));
-            }
-            let mut addresses = Vec::with_capacity(count as usize);
-            for index in 0..count {
-                let private_key = if let Some(language) = &language {
-                    derive_private_key_with_language(&mnemonic, &path, index, language)?
+                        1,
+                        "symbolic vm.mockCalls",
+                    )?;
+                    (Some(value), 2, 3)
                 } else {
-                    derive_private_key::<English>(&mnemonic, &path, index)?
+                    (None, 1, 2)
                 };
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    data_idx,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCalls data",
+                )?;
+                let returns = read_abi_symbolic_dynamic_bytes_array_arg(
+                    state,
+                    args_offset,
+                    ret_idx,
+                    self.config.max_dynamic_length as usize,
+                    self.config.max_calldata_bytes as usize,
+                )?;
+                return Ok(self.add_call_mock(state, callee, value, data, returns, false));
+            }
+            mockCallRevert_0Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    1,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCallRevert",
+                )?;
+                let ret = read_abi_dynamic_return_data_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCallRevert",
+                )?;
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], true));
+            }
+            mockCallRevert_1Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.mockCallRevert",
+                )?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCallRevert",
+                )?;
+                let ret = read_abi_dynamic_return_data_arg(
+                    state,
+                    args_offset,
+                    3,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCallRevert",
+                )?;
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], true));
+            }
+            mockCallRevert_2Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 1);
+                let ret = read_abi_dynamic_return_data_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCallRevert",
+                )?;
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], true));
+            }
+            mockCallRevert_3Call::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.mockCallRevert",
+                )?;
+                let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 2);
+                let ret = read_abi_dynamic_return_data_arg(
+                    state,
+                    args_offset,
+                    3,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockCallRevert",
+                )?;
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], true));
+            }
+            mockFunctionCall::SELECTOR => {
+                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let target = read_abi_address_arg(
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.mockFunction",
+                )?;
+                let data = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    2,
+                    self.config.max_calldata_bytes as usize,
+                    "symbolic vm.mockFunction",
+                )?;
+                return Ok(self.set_function_mock(state, callee, target, data));
+            }
+            prank_0Call::SELECTOR => {
+                state.prank.next_caller =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
+                state.prank.next_origin = None;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            prank_1Call::SELECTOR => {
+                state.prank.next_caller =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
+                state.prank.next_origin =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            prank_2Call::SELECTOR => {
+                let delegate_call =
+                    read_abi_bool_arg(&state.memory, args_offset, 1, "symbolic vm.prank")?;
+                if delegate_call {
+                    return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
+                }
+                state.prank.next_caller =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
+                state.prank.next_origin = None;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            prank_3Call::SELECTOR => {
+                let delegate_call =
+                    read_abi_bool_arg(&state.memory, args_offset, 2, "symbolic vm.prank")?;
+                if delegate_call {
+                    return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
+                }
+                state.prank.next_caller =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
+                state.prank.next_origin =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            startPrank_0Call::SELECTOR => {
+                state.prank.persistent_caller =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
+                state.prank.persistent_origin = None;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            startPrank_1Call::SELECTOR => {
+                state.prank.persistent_caller =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
+                state.prank.persistent_origin =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            startPrank_2Call::SELECTOR => {
+                let delegate_call =
+                    read_abi_bool_arg(&state.memory, args_offset, 1, "symbolic vm.startPrank")?;
+                if delegate_call {
+                    return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
+                }
+                state.prank.persistent_caller =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
+                state.prank.persistent_origin = None;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            startPrank_3Call::SELECTOR => {
+                let delegate_call =
+                    read_abi_bool_arg(&state.memory, args_offset, 2, "symbolic vm.startPrank")?;
+                if delegate_call {
+                    return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
+                }
+                state.prank.persistent_caller =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
+                state.prank.persistent_origin =
+                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            stopPrankCall::SELECTOR => {
+                state.prank = SymbolicPrank::default();
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            readCallersCall::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(state.read_callers_words()));
+            }
+            addrCall::SELECTOR => {
+                let private_key =
+                    read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.addr")?;
+                let address = private_key_address(private_key)?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(
+                    address,
+                ))]));
+            }
+            sign_1Call::SELECTOR => {
+                let private_key =
+                    read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.sign")?;
+                let digest =
+                    read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.sign")?;
+                return Ok(CheatcodeOutcome::Continue(sign_hash_words(private_key, digest)?));
+            }
+            signCompact_1Call::SELECTOR => {
+                let private_key = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.signCompact",
+                )?;
+                let digest = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    1,
+                    "symbolic vm.signCompact",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(sign_compact_hash_words(
+                    private_key,
+                    digest,
+                )?));
+            }
+            deriveKey_0Call::SELECTOR => {
+                let mnemonic =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
+                let index =
+                    read_abi_u32_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
+                let private_key = derive_private_key::<English>(
+                    &mnemonic,
+                    DEFAULT_DERIVATION_PATH_PREFIX,
+                    index,
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
+            }
+            deriveKey_1Call::SELECTOR => {
+                let mnemonic =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
+                let path =
+                    read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
+                let index =
+                    read_abi_u32_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
+                let private_key = derive_private_key::<English>(&mnemonic, &path, index)?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
+            }
+            deriveKey_2Call::SELECTOR => {
+                let mnemonic =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
+                let index =
+                    read_abi_u32_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
+                let language =
+                    read_abi_string_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
+                let private_key = derive_private_key_with_language(
+                    &mnemonic,
+                    DEFAULT_DERIVATION_PATH_PREFIX,
+                    index,
+                    &language,
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
+            }
+            deriveKey_3Call::SELECTOR => {
+                let mnemonic =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
+                let path =
+                    read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
+                let index =
+                    read_abi_u32_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
+                let language =
+                    read_abi_string_arg(&state.memory, args_offset, 3, "symbolic vm.deriveKey")?;
+                let private_key =
+                    derive_private_key_with_language(&mnemonic, &path, index, &language)?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
+            }
+            rememberKeyCall::SELECTOR => {
+                let private_key = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.rememberKey",
+                )?;
                 let address = private_key_address(private_key)?;
                 state.wallets.insert(address);
-                addresses.push(DynSolValue::Address(address));
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(
+                    address,
+                ))]));
             }
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
-                DynSolValue::Array(addresses),
-            )));
-        }
-        if selector == getWalletsCall::SELECTOR {
-            let wallets = DynSolValue::Array(
-                state.wallets.iter().copied().map(DynSolValue::Address).collect(),
-            );
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(wallets)));
-        }
-        if selector == storeCall::SELECTOR {
-            let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let slot = state.memory.load_word(in_offset + 36)?;
-            let value = state.memory.load_word(in_offset + 68)?;
-            if target == CHEATCODE_ADDRESS
-                && slot == SymWord::constant(failed_slot())
-                && value == SymWord::constant(U256::from(1))
-            {
-                return Ok(CheatcodeOutcome::Failure);
-            }
-            state.world.sstore(target, slot, value);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == loadCall::SELECTOR {
-            let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let slot = state.memory.load_word(in_offset + 36)?;
-            let concrete_slot = state.constrained_word(&slot);
-            let value = state.world.sload(executor, target, slot, concrete_slot)?;
-            return Ok(CheatcodeOutcome::Continue(vec![value]));
-        }
-        if selector == getNonce_0Call::SELECTOR {
-            let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let nonce = state.world.nonce(executor, target)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(nonce))]));
-        }
-        if selector == computeCreateAddressCall::SELECTOR {
-            let deployer = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let nonce = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            let address = compute_create_address_word(state, deployer, nonce)?;
-            return Ok(CheatcodeOutcome::Continue(vec![address]));
-        }
-        if selector == computeCreate2Address_0Call::SELECTOR {
-            let salt = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let init_code_hash = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            let deployer = read_abi_word_arg(&state.memory, args_offset, 2)?;
-            let address = compute_create2_address_word(state, deployer, salt, init_code_hash)?;
-            return Ok(CheatcodeOutcome::Continue(vec![address]));
-        }
-        if selector == computeCreate2Address_1Call::SELECTOR {
-            let salt = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let init_code_hash = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            let address = compute_create2_address_word(
-                state,
-                SymWord::constant(address_word(DEFAULT_CREATE2_DEPLOYER)),
-                salt,
-                init_code_hash,
-            )?;
-            return Ok(CheatcodeOutcome::Continue(vec![address]));
-        }
-        if selector == etchCall::SELECTOR {
-            let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let code = read_abi_symbolic_dynamic_bytes_arg(
-                state,
-                args_offset,
-                1,
-                self.config.max_dynamic_length as usize,
-                "symbolic vm.etch",
-            )?;
-            state.world.install_code(target, SymCode::from_symbolic_bytes(code));
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == getCodeCall::SELECTOR || selector == getDeployedCodeCall::SELECTOR {
-            let artifact =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.getCode")?;
-            let code = artifact_code(&artifact, selector == getDeployedCodeCall::SELECTOR)?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(code)));
-        }
-        if selector == dealCall::SELECTOR {
-            let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let value = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            if value.contains_gasleft() {
-                return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-            }
-            let value = state.constrained_word(&value).map(SymWord::constant).unwrap_or(value);
-            state.world.set_balance_word(target, value);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == setNonceCall::SELECTOR || selector == setNonceUnsafeCall::SELECTOR {
-            let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let nonce =
-                read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.setNonce")?;
-            if nonce > U256::from(u64::MAX) {
-                return Err(SymbolicError::Unsupported("symbolic vm.setNonce nonce"));
-            }
-            let nonce = nonce.to::<u64>();
-            if selector == setNonceCall::SELECTOR && nonce < state.world.nonce(executor, target)? {
-                return Ok(CheatcodeOutcome::Failure);
-            }
-            state.world.set_nonce(target, nonce);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == resetNonceCall::SELECTOR {
-            let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let nonce = if state.world.extcode(executor, target)?.is_empty() { 0 } else { 1 };
-            state.world.set_nonce(target, nonce);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == allowCheatcodesCall::SELECTOR {
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == makePersistent_0Call::SELECTOR {
-            let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            state.persistent_accounts.insert(account);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == makePersistent_1Call::SELECTOR {
-            let account0 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let account1 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 1)?;
-            state.persistent_accounts.insert(account0);
-            state.persistent_accounts.insert(account1);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == makePersistent_2Call::SELECTOR {
-            let account0 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let account1 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 1)?;
-            let account2 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 2)?;
-            state.persistent_accounts.insert(account0);
-            state.persistent_accounts.insert(account1);
-            state.persistent_accounts.insert(account2);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == makePersistent_3Call::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::Array(Box::new(DynSolType::Address))],
-            )?;
-            for account in dyn_address_array(&values[0])? {
-                state.persistent_accounts.insert(account);
-            }
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == revokePersistent_0Call::SELECTOR {
-            let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            state.persistent_accounts.remove(&account);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == revokePersistent_1Call::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::Array(Box::new(DynSolType::Address))],
-            )?;
-            for account in dyn_address_array(&values[0])? {
-                state.persistent_accounts.remove(&account);
-            }
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == isPersistentCall::SELECTOR {
-            let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
-                state.persistent_accounts.contains(&account),
-            ))]));
-        }
-        if selector == activeForkCall::SELECTOR {
-            let id = executor.backend().active_fork_id().ok_or(SymbolicError::Unsupported(
-                "symbolic vm.activeFork requires an active forked executor",
-            ))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(id)]));
-        }
-        if selector == selectForkCall::SELECTOR {
-            let id =
-                read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.selectFork id")?;
-            if executor.backend().is_active_fork(id) {
-                return Ok(CheatcodeOutcome::Continue(Vec::new()));
-            }
-            return Err(SymbolicError::Unsupported(
-                "symbolic vm.selectFork can only select the already active fork",
-            ));
-        }
-        if selector == rollFork_0Call::SELECTOR {
-            let block_number = read_abi_constrained_word_arg(
-                state,
-                args_offset,
-                0,
-                "symbolic vm.rollFork block number",
-            )?;
-            let current =
-                state.block.number.clone().into_concrete("symbolic vm.rollFork current block")?;
-            if block_number == current {
-                return Ok(CheatcodeOutcome::Continue(Vec::new()));
-            }
-            return Err(SymbolicError::Unsupported(
-                "symbolic vm.rollFork cannot change the active fork block during symbolic execution",
-            ));
-        }
-        if selector == rollFork_2Call::SELECTOR {
-            let id =
-                read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.rollFork id")?;
-            let block_number = read_abi_constrained_word_arg(
-                state,
-                args_offset,
-                1,
-                "symbolic vm.rollFork block number",
-            )?;
-            let current =
-                state.block.number.clone().into_concrete("symbolic vm.rollFork current block")?;
-            if executor.backend().is_active_fork(id) && block_number == current {
-                return Ok(CheatcodeOutcome::Continue(Vec::new()));
-            }
-            return Err(SymbolicError::Unsupported(
-                "symbolic vm.rollFork cannot change the active fork block during symbolic execution",
-            ));
-        }
-        if selector == createFork_0Call::SELECTOR
-            || selector == createFork_1Call::SELECTOR
-            || selector == createFork_2Call::SELECTOR
-            || selector == createSelectFork_0Call::SELECTOR
-            || selector == createSelectFork_1Call::SELECTOR
-            || selector == createSelectFork_2Call::SELECTOR
-            || selector == rollFork_1Call::SELECTOR
-            || selector == rollFork_3Call::SELECTOR
-        {
-            return Err(SymbolicError::Unsupported(
-                "symbolic fork creation and fork block mutation must happen before symbolic execution",
-            ));
-        }
-        if selector == snapshotCall::SELECTOR || selector == snapshotStateCall::SELECTOR {
-            let id = state.world.snapshot_state();
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(id)]));
-        }
-        if selector == revertToCall::SELECTOR
-            || selector == revertToStateCall::SELECTOR
-            || selector == revertToAndDeleteCall::SELECTOR
-            || selector == revertToStateAndDeleteCall::SELECTOR
-        {
-            let id = read_abi_constrained_word_arg(
-                state,
-                args_offset,
-                0,
-                "symbolic vm.revertToState snapshot",
-            )?;
-            let success = state.world.restore_snapshot(id);
-            if success
-                && (selector == revertToAndDeleteCall::SELECTOR
-                    || selector == revertToStateAndDeleteCall::SELECTOR)
-            {
-                state.world.delete_snapshot(id);
-            }
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(success))]));
-        }
-        if selector == deleteSnapshotCall::SELECTOR || selector == deleteStateSnapshotCall::SELECTOR
-        {
-            let id = read_abi_constrained_word_arg(
-                state,
-                args_offset,
-                0,
-                "symbolic vm.deleteStateSnapshot snapshot",
-            )?;
-            let success = state.world.delete_snapshot(id);
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(success))]));
-        }
-        if selector == deleteSnapshotsCall::SELECTOR
-            || selector == deleteStateSnapshotsCall::SELECTOR
-        {
-            state.world.delete_snapshots();
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == warpCall::SELECTOR {
-            state.block.timestamp = state.memory.load_word(in_offset + 4)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == rollCall::SELECTOR {
-            state.block.number = state.memory.load_word(in_offset + 4)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == setBlockhashCall::SELECTOR {
-            let block_number = read_abi_constrained_word_arg(
-                state,
-                args_offset,
-                0,
-                "symbolic vm.setBlockhash block number",
-            )?;
-            let block_hash = state.memory.load_word(in_offset + 36)?;
-            state.block.set_block_hash(block_number, block_hash)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == prevrandao_0Call::SELECTOR || selector == prevrandao_1Call::SELECTOR {
-            state.block.difficulty = state.memory.load_word(in_offset + 4)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == blobhashesCall::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))],
-            )?;
-            state.block.set_blob_hashes(dyn_bytes32_array(&values[0])?);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == getBlobhashesCall::SELECTOR {
-            let value = DynSolValue::Array(
-                state
-                    .block
-                    .blob_hashes
-                    .iter()
-                    .copied()
-                    .map(|hash| DynSolValue::FixedBytes(hash, 32))
-                    .collect(),
-            );
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
-        }
-        if selector == feeCall::SELECTOR {
-            state.block.basefee = state.memory.load_word(in_offset + 4)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == blobBaseFeeCall::SELECTOR {
-            state.block.blob_basefee = state.memory.load_word(in_offset + 4)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == getBlobBaseFeeCall::SELECTOR {
-            return Ok(CheatcodeOutcome::Continue(vec![state.block.blob_basefee.clone()]));
-        }
-        if selector == chainIdCall::SELECTOR {
-            state.block.chain_id = state.memory.load_word(in_offset + 4)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == getChainIdCall::SELECTOR {
-            return Ok(CheatcodeOutcome::Continue(vec![state.block.chain_id.clone()]));
-        }
-        if selector == difficultyCall::SELECTOR {
-            state.block.difficulty = state.memory.load_word(in_offset + 4)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == coinbaseCall::SELECTOR {
-            let coinbase = read_abi_constrained_address_arg(
-                state,
-                args_offset,
-                0,
-                "symbolic vm.coinbase value",
-            )?;
-            state.block.coinbase = coinbase;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == getBlockNumberCall::SELECTOR {
-            return Ok(CheatcodeOutcome::Continue(vec![state.block.number.clone()]));
-        }
-        if selector == txGasPriceCall::SELECTOR {
-            state.gas_price = state.memory.load_word(in_offset + 4)?;
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == getBlockTimestampCall::SELECTOR {
-            return Ok(CheatcodeOutcome::Continue(vec![state.block.timestamp.clone()]));
-        }
-        if selector == labelCall::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::Address, DynSolType::String],
-            )?;
-            let account = dyn_address(&values[0])?;
-            let label = dyn_string(&values[1])?;
-            state.labels.insert(account, label);
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == getLabelCall::SELECTOR {
-            let account =
-                read_abi_address_arg(&state.memory, args_offset, 0, "symbolic vm.getLabel")?;
-            let label = state
-                .labels
-                .get(&account)
-                .cloned()
-                .unwrap_or_else(|| format!("unlabeled:{account}"));
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(label.bytes())));
-        }
-        if selector == expectSafeMemoryCall::SELECTOR {
-            return Err(SymbolicError::Unsupported("symbolic vm.expectSafeMemory not modeled"));
-        }
-        if selector == expectSafeMemoryCallCall::SELECTOR {
-            return Err(SymbolicError::Unsupported("symbolic vm.expectSafeMemoryCall not modeled"));
-        }
-        if selector == stopExpectSafeMemoryCall::SELECTOR {
-            return Err(SymbolicError::Unsupported("symbolic vm.stopExpectSafeMemory not modeled"));
-        }
-        if selector == lastCallGasCall::SELECTOR {
-            return Err(SymbolicError::Unsupported("symbolic vm.lastCallGas not modeled"));
-        }
-        if selector == snapshotGasLastCall_0Call::SELECTOR
-            || selector == snapshotGasLastCall_1Call::SELECTOR
-        {
-            return Err(SymbolicError::Unsupported("symbolic vm.snapshotGasLastCall not modeled"));
-        }
-        if selector == stopSnapshotGas_0Call::SELECTOR
-            || selector == stopSnapshotGas_1Call::SELECTOR
-            || selector == stopSnapshotGas_2Call::SELECTOR
-        {
-            return Err(SymbolicError::Unsupported("symbolic vm.stopSnapshotGas not modeled"));
-        }
-        if selector == pauseGasMeteringCall::SELECTOR
-            || selector == resumeGasMeteringCall::SELECTOR
-            || selector == resetGasMeteringCall::SELECTOR
-            || selector == breakpoint_0Call::SELECTOR
-            || selector == breakpoint_1Call::SELECTOR
-            || selector == snapshotValue_0Call::SELECTOR
-            || selector == snapshotValue_1Call::SELECTOR
-            || selector == startSnapshotGas_0Call::SELECTOR
-            || selector == startSnapshotGas_1Call::SELECTOR
-            || selector == sleepCall::SELECTOR
-            || selector == coolCall::SELECTOR
-            || selector == accessListCall::SELECTOR
-            || selector == warmSlotCall::SELECTOR
-            || selector == coolSlotCall::SELECTOR
-            || selector == noAccessListCall::SELECTOR
-        {
-            return Ok(CheatcodeOutcome::Continue(Vec::new()));
-        }
-        if selector == setEvmVersionCall::SELECTOR {
-            return Err(SymbolicError::Unsupported("symbolic vm.setEvmVersion not modeled"));
-        }
-        if selector == getEvmVersionCall::SELECTOR {
-            return Err(SymbolicError::Unsupported("symbolic vm.getEvmVersion not modeled"));
-        }
-        if selector == getFoundryVersionCall::SELECTOR {
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                env!("CARGO_PKG_VERSION").bytes(),
-            )));
-        }
-        if selector == projectRootCall::SELECTOR {
-            let root = std::env::current_dir()
-                .map_err(|_| SymbolicError::Unsupported("symbolic vm.projectRoot"))?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                root.display().to_string().bytes(),
-            )));
-        }
-        if selector == unixTimeCall::SELECTOR {
-            let milliseconds = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?
-                .as_millis();
-            let value = U256::try_from(milliseconds)
-                .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
-        }
-        if selector == isContextCall::SELECTOR {
-            let context =
-                read_abi_concrete_word_arg(&state.memory, args_offset, 0, "symbolic vm.isContext")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
-                context == U256::ZERO || context == U256::from(1),
-            ))]));
-        }
-        if selector == toString_0Call::SELECTOR {
-            let address =
-                read_abi_address_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                format!("{address:?}").bytes(),
-            )));
-        }
-        if selector == toString_1Call::SELECTOR {
-            let bytes =
-                read_abi_dynamic_bytes_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                format!("0x{}", hex::encode(bytes)).bytes(),
-            )));
-        }
-        if selector == toString_2Call::SELECTOR {
-            let value =
-                read_abi_concrete_word_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                format!("0x{}", hex::encode(value.to_be_bytes::<32>())).bytes(),
-            )));
-        }
-        if selector == toString_3Call::SELECTOR {
-            let value = read_abi_bool_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                if value { "true" } else { "false" }.bytes(),
-            )));
-        }
-        if selector == toString_4Call::SELECTOR {
-            let value =
-                read_abi_concrete_word_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                value.to_string().bytes(),
-            )));
-        }
-        if selector == toString_5Call::SELECTOR {
-            let value =
-                read_abi_concrete_word_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                I256::from_raw(value).to_string().bytes(),
-            )));
-        }
-        if selector == parseBytesCall::SELECTOR {
-            let value =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBytes")?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(parse_env_bytes(
-                &value,
-            )?)));
-        }
-        if selector == parseAddressCall::SELECTOR {
-            let value =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseAddress")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(
-                parse_env_address(&value)?,
-            ))]));
-        }
-        if selector == parseUintCall::SELECTOR {
-            let value =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseUint")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_uint(
-                &value,
-            )?)]));
-        }
-        if selector == parseIntCall::SELECTOR {
-            let value = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseInt")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_int(&value)?)]));
-        }
-        if selector == parseBytes32Call::SELECTOR {
-            let value =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBytes32")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_bytes32(
-                &value,
-            )?)]));
-        }
-        if selector == parseBoolCall::SELECTOR {
-            let value =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBool")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
-                parse_env_bool(&value)?,
-            ))]));
-        }
-        if selector == toLowercaseCall::SELECTOR
-            || selector == toUppercaseCall::SELECTOR
-            || selector == trimCall::SELECTOR
-        {
-            let value = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.string")?;
-            let output = if selector == toLowercaseCall::SELECTOR {
-                value.to_lowercase()
-            } else if selector == toUppercaseCall::SELECTOR {
-                value.to_uppercase()
-            } else {
-                value.trim().to_string()
-            };
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(output.bytes())));
-        }
-        if selector == replaceCall::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::String, DynSolType::String, DynSolType::String],
-            )?;
-            let output =
-                dyn_string(&values[0])?.replace(&dyn_string(&values[1])?, &dyn_string(&values[2])?);
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(output.bytes())));
-        }
-        if selector == splitCall::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::String, DynSolType::String],
-            )?;
-            let input = dyn_string(&values[0])?;
-            let delimiter = dyn_string(&values[1])?;
-            let parts = if delimiter.is_empty() {
-                input.chars().map(|ch| DynSolValue::String(ch.to_string())).collect()
-            } else {
-                input.split(&delimiter).map(|part| DynSolValue::String(part.to_string())).collect()
-            };
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
-                DynSolValue::Array(parts),
-            )));
-        }
-        if selector == indexOfCall::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::String, DynSolType::String],
-            )?;
-            let input = dyn_string(&values[0])?;
-            let needle = dyn_string(&values[1])?;
-            let index = input.find(&needle).map(U256::from).unwrap_or(U256::MAX);
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(index)]));
-        }
-        if selector == containsCall::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::String, DynSolType::String],
-            )?;
-            let contains = dyn_string(&values[0])?.contains(&dyn_string(&values[1])?);
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(contains))]));
-        }
-        if selector == toBase64_0Call::SELECTOR
-            || selector == toBase64_1Call::SELECTOR
-            || selector == toBase64URL_0Call::SELECTOR
-            || selector == toBase64URL_1Call::SELECTOR
-        {
-            let data =
-                read_abi_dynamic_bytes_arg(&state.memory, args_offset, 0, "symbolic vm.toBase64")?;
-            let encoded = if selector == toBase64URL_0Call::SELECTOR
-                || selector == toBase64URL_1Call::SELECTOR
-            {
-                BASE64_URL_SAFE.encode(data)
-            } else {
-                BASE64_STANDARD.encode(data)
-            };
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(encoded.bytes())));
-        }
-        if selector == bound_0Call::SELECTOR {
-            return self.handle_bound_uint(state, args_offset);
-        }
-        if selector == bound_1Call::SELECTOR {
-            return self.handle_bound_int(state, args_offset);
-        }
-        if selector == envExistsCall::SELECTOR {
-            let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envExists")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
-                std::env::var_os(name).is_some(),
-            ))]));
-        }
-        if selector == envBool_0Call::SELECTOR {
-            let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBool")?;
-            let value = std::env::var(name)
-                .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
-                parse_env_bool(&value)?,
-            ))]));
-        }
-        if selector == envUint_0Call::SELECTOR {
-            let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envUint")?;
-            let value = std::env::var(name)
-                .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_uint(
-                &value,
-            )?)]));
-        }
-        if selector == envInt_0Call::SELECTOR {
-            let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envInt")?;
-            let value = std::env::var(name)
-                .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_int(&value)?)]));
-        }
-        if selector == envAddress_0Call::SELECTOR {
-            let name =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envAddress")?;
-            let value = std::env::var(name)
-                .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            let address = parse_env_address(&value)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(address))]));
-        }
-        if selector == envBytes32_0Call::SELECTOR {
-            let name =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBytes32")?;
-            let value = std::env::var(name)
-                .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_bytes32(
-                &value,
-            )?)]));
-        }
-        if selector == envString_0Call::SELECTOR {
-            let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envString")?;
-            let value = std::env::var(name)
-                .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(value.bytes())));
-        }
-        if selector == envBytes_0Call::SELECTOR {
-            let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBytes")?;
-            let value = std::env::var(name)
-                .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(parse_env_bytes(
-                &value,
-            )?)));
-        }
-        if selector == envBool_1Call::SELECTOR
-            || selector == envUint_1Call::SELECTOR
-            || selector == envInt_1Call::SELECTOR
-            || selector == envAddress_1Call::SELECTOR
-            || selector == envBytes32_1Call::SELECTOR
-            || selector == envString_1Call::SELECTOR
-            || selector == envBytes_1Call::SELECTOR
-        {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::String, DynSolType::String],
-            )?;
-            let name = dyn_string(&values[0])?;
-            let delimiter = dyn_string(&values[1])?;
-            let value = std::env::var(name)
-                .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            let value = if selector == envBool_1Call::SELECTOR {
-                parse_env_array(&value, &delimiter, parse_env_bool_value)?
-            } else if selector == envUint_1Call::SELECTOR {
-                parse_env_array(&value, &delimiter, parse_env_uint_value)?
-            } else if selector == envInt_1Call::SELECTOR {
-                parse_env_array(&value, &delimiter, parse_env_int_value)?
-            } else if selector == envAddress_1Call::SELECTOR {
-                parse_env_array(&value, &delimiter, parse_env_address_value)?
-            } else if selector == envBytes32_1Call::SELECTOR {
-                parse_env_array(&value, &delimiter, parse_env_bytes32_value)?
-            } else if selector == envString_1Call::SELECTOR {
-                parse_env_array(&value, &delimiter, parse_env_string_value)?
-            } else {
-                parse_env_array(&value, &delimiter, parse_env_bytes_value)?
-            };
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
-        }
-        if selector == envOr_0Call::SELECTOR {
-            let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envOr")?;
-            let value = match std::env::var(name) {
-                Ok(value) => U256::from(parse_env_bool(&value)?),
-                Err(_) => {
-                    read_abi_concrete_word_arg(&state.memory, args_offset, 1, "symbolic vm.envOr")?
-                }
-            };
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
-        }
-        if selector == envOr_1Call::SELECTOR
-            || selector == envOr_2Call::SELECTOR
-            || selector == envOr_3Call::SELECTOR
-            || selector == envOr_4Call::SELECTOR
-        {
-            let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envOr")?;
-            let default =
-                read_abi_concrete_word_arg(&state.memory, args_offset, 1, "symbolic vm.envOr")?;
-            let value = match std::env::var(name) {
-                Ok(value) if selector == envOr_1Call::SELECTOR => parse_env_uint(&value)?,
-                Ok(value) if selector == envOr_2Call::SELECTOR => parse_env_int(&value)?,
-                Ok(value) if selector == envOr_3Call::SELECTOR => {
-                    address_word(parse_env_address(&value)?)
-                }
-                Ok(value) => parse_env_bytes32(&value)?,
-                Err(_) => default,
-            };
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
-        }
-        if selector == envOr_5Call::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::String, DynSolType::String],
-            )?;
-            let name = dyn_string(&values[0])?;
-            let value = std::env::var(name).unwrap_or(dyn_string(&values[1])?);
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(value.bytes())));
-        }
-        if selector == envOr_6Call::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::String, DynSolType::Bytes],
-            )?;
-            let name = dyn_string(&values[0])?;
-            let value = match std::env::var(name) {
-                Ok(value) => parse_env_bytes(&value)?,
-                Err(_) => dyn_bytes(&values[1])?,
-            };
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(value)));
-        }
-        if selector == envOr_7Call::SELECTOR
-            || selector == envOr_8Call::SELECTOR
-            || selector == envOr_9Call::SELECTOR
-            || selector == envOr_10Call::SELECTOR
-            || selector == envOr_11Call::SELECTOR
-            || selector == envOr_12Call::SELECTOR
-            || selector == envOr_13Call::SELECTOR
-        {
-            let element_ty = if selector == envOr_7Call::SELECTOR {
-                DynSolType::Bool
-            } else if selector == envOr_8Call::SELECTOR {
-                DynSolType::Uint(256)
-            } else if selector == envOr_9Call::SELECTOR {
-                DynSolType::Int(256)
-            } else if selector == envOr_10Call::SELECTOR {
-                DynSolType::Address
-            } else if selector == envOr_11Call::SELECTOR {
-                DynSolType::FixedBytes(32)
-            } else if selector == envOr_12Call::SELECTOR {
-                DynSolType::String
-            } else {
-                DynSolType::Bytes
-            };
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![
-                    DynSolType::String,
-                    DynSolType::String,
-                    DynSolType::Array(Box::new(element_ty)),
-                ],
-            )?;
-            let name = dyn_string(&values[0])?;
-            let delimiter = dyn_string(&values[1])?;
-            let value = match std::env::var(name) {
-                Ok(value) if selector == envOr_7Call::SELECTOR => {
-                    parse_env_array(&value, &delimiter, parse_env_bool_value)?
-                }
-                Ok(value) if selector == envOr_8Call::SELECTOR => {
-                    parse_env_array(&value, &delimiter, parse_env_uint_value)?
-                }
-                Ok(value) if selector == envOr_9Call::SELECTOR => {
-                    parse_env_array(&value, &delimiter, parse_env_int_value)?
-                }
-                Ok(value) if selector == envOr_10Call::SELECTOR => {
-                    parse_env_array(&value, &delimiter, parse_env_address_value)?
-                }
-                Ok(value) if selector == envOr_11Call::SELECTOR => {
-                    parse_env_array(&value, &delimiter, parse_env_bytes32_value)?
-                }
-                Ok(value) if selector == envOr_12Call::SELECTOR => {
-                    parse_env_array(&value, &delimiter, parse_env_string_value)?
-                }
-                Ok(value) => parse_env_array(&value, &delimiter, parse_env_bytes_value)?,
-                Err(_) => values[2].clone(),
-            };
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
-        }
-        if selector == ffiCall::SELECTOR {
-            if !state.ffi_enabled {
-                return Err(SymbolicError::Unsupported("symbolic ffi disabled"));
-            }
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                vec![DynSolType::Array(Box::new(DynSolType::String))],
-            )?;
-            let args = dyn_string_array(&values[0])?;
-            if args.is_empty() || args[0].is_empty() {
-                return Err(SymbolicError::Unsupported("symbolic ffi empty command"));
-            }
-            let output = Command::new(&args[0])
-                .args(&args[1..])
-                .output()
-                .map_err(|_| SymbolicError::Unsupported("symbolic ffi command"))?;
-            if !output.status.success() {
-                return Err(SymbolicError::Unsupported("symbolic ffi command failed"));
-            }
-            let stdout = String::from_utf8(output.stdout)
-                .map_err(|_| SymbolicError::Unsupported("symbolic ffi stdout"))?;
-            let trimmed = stdout.trim();
-            let bytes = hex::decode(trimmed).unwrap_or_else(|_| trimmed.as_bytes().to_vec());
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(bytes)));
-        }
-        if selector == assertTrue_0Call::SELECTOR || selector == assertTrue_1Call::SELECTOR {
-            let condition = read_abi_word_arg(&state.memory, args_offset, 0)?.nonzero_bool();
-            return self.handle_assertion(state, condition);
-        }
-        if selector == assertFalse_0Call::SELECTOR || selector == assertFalse_1Call::SELECTOR {
-            let condition = read_abi_word_arg(&state.memory, args_offset, 0)?.into_zero_bool();
-            return self.handle_assertion(state, condition);
-        }
-        if selector == assertEq_2Call::SELECTOR
-            || selector == assertEq_3Call::SELECTOR
-            || selector == assertEq_4Call::SELECTOR
-            || selector == assertEq_5Call::SELECTOR
-            || selector == assertEq_6Call::SELECTOR
-            || selector == assertEq_7Call::SELECTOR
-            || selector == assertEq_8Call::SELECTOR
-            || selector == assertEq_9Call::SELECTOR
-            || selector == assertEq_0Call::SELECTOR
-            || selector == assertEq_1Call::SELECTOR
-        {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(state, BoolExpr::eq(left.into_expr(), right.into_expr()));
-        }
-        if selector == assertEq_10Call::SELECTOR || selector == assertEq_11Call::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                if selector == assertEq_10Call::SELECTOR {
-                    vec![DynSolType::String, DynSolType::String]
-                } else {
-                    vec![DynSolType::String, DynSolType::String, DynSolType::String]
-                },
-            )?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::constant(dyn_string(&values[0])? == dyn_string(&values[1])?),
-            );
-        }
-        if selector == assertEq_12Call::SELECTOR || selector == assertEq_13Call::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                if selector == assertEq_12Call::SELECTOR {
-                    vec![DynSolType::Bytes, DynSolType::Bytes]
-                } else {
-                    vec![DynSolType::Bytes, DynSolType::Bytes, DynSolType::String]
-                },
-            )?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::constant(dyn_bytes(&values[0])? == dyn_bytes(&values[1])?),
-            );
-        }
-        if selector == assertEq_14Call::SELECTOR
-            || selector == assertEq_15Call::SELECTOR
-            || selector == assertEq_16Call::SELECTOR
-            || selector == assertEq_17Call::SELECTOR
-            || selector == assertEq_18Call::SELECTOR
-            || selector == assertEq_19Call::SELECTOR
-            || selector == assertEq_20Call::SELECTOR
-            || selector == assertEq_21Call::SELECTOR
-            || selector == assertEq_22Call::SELECTOR
-            || selector == assertEq_23Call::SELECTOR
-            || selector == assertEq_24Call::SELECTOR
-            || selector == assertEq_25Call::SELECTOR
-            || selector == assertEq_26Call::SELECTOR
-            || selector == assertEq_27Call::SELECTOR
-        {
-            let element_ty = array_assertion_element_type(selector)?;
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                if selector_has_string_reason(selector) {
-                    vec![
-                        DynSolType::Array(Box::new(element_ty.clone())),
-                        DynSolType::Array(Box::new(element_ty)),
-                        DynSolType::String,
-                    ]
-                } else {
-                    vec![
-                        DynSolType::Array(Box::new(element_ty.clone())),
-                        DynSolType::Array(Box::new(element_ty)),
-                    ]
-                },
-            )?;
-            return self.handle_assertion(state, BoolExpr::constant(values[0] == values[1]));
-        }
-        if selector == assertEqDecimal_0Call::SELECTOR
-            || selector == assertEqDecimal_1Call::SELECTOR
-            || selector == assertEqDecimal_2Call::SELECTOR
-            || selector == assertEqDecimal_3Call::SELECTOR
-        {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(state, BoolExpr::eq(left.into_expr(), right.into_expr()));
-        }
-        if selector == assertNotEq_2Call::SELECTOR
-            || selector == assertNotEq_3Call::SELECTOR
-            || selector == assertNotEq_4Call::SELECTOR
-            || selector == assertNotEq_5Call::SELECTOR
-            || selector == assertNotEq_6Call::SELECTOR
-            || selector == assertNotEq_7Call::SELECTOR
-            || selector == assertNotEq_8Call::SELECTOR
-            || selector == assertNotEq_9Call::SELECTOR
-            || selector == assertNotEq_0Call::SELECTOR
-            || selector == assertNotEq_1Call::SELECTOR
-        {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self
-                .handle_assertion(state, BoolExpr::eq(left.into_expr(), right.into_expr()).not());
-        }
-        if selector == assertNotEq_10Call::SELECTOR || selector == assertNotEq_11Call::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                if selector == assertNotEq_10Call::SELECTOR {
-                    vec![DynSolType::String, DynSolType::String]
-                } else {
-                    vec![DynSolType::String, DynSolType::String, DynSolType::String]
-                },
-            )?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::constant(dyn_string(&values[0])? != dyn_string(&values[1])?),
-            );
-        }
-        if selector == assertNotEq_12Call::SELECTOR || selector == assertNotEq_13Call::SELECTOR {
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                if selector == assertNotEq_12Call::SELECTOR {
-                    vec![DynSolType::Bytes, DynSolType::Bytes]
-                } else {
-                    vec![DynSolType::Bytes, DynSolType::Bytes, DynSolType::String]
-                },
-            )?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::constant(dyn_bytes(&values[0])? != dyn_bytes(&values[1])?),
-            );
-        }
-        if selector == assertNotEq_14Call::SELECTOR
-            || selector == assertNotEq_15Call::SELECTOR
-            || selector == assertNotEq_16Call::SELECTOR
-            || selector == assertNotEq_17Call::SELECTOR
-            || selector == assertNotEq_18Call::SELECTOR
-            || selector == assertNotEq_19Call::SELECTOR
-            || selector == assertNotEq_20Call::SELECTOR
-            || selector == assertNotEq_21Call::SELECTOR
-            || selector == assertNotEq_22Call::SELECTOR
-            || selector == assertNotEq_23Call::SELECTOR
-            || selector == assertNotEq_24Call::SELECTOR
-            || selector == assertNotEq_25Call::SELECTOR
-            || selector == assertNotEq_26Call::SELECTOR
-            || selector == assertNotEq_27Call::SELECTOR
-        {
-            let element_ty = array_assertion_element_type(selector)?;
-            let values = decode_cheatcode_args(
-                state,
-                in_offset,
-                in_size,
-                if selector_has_string_reason(selector) {
-                    vec![
-                        DynSolType::Array(Box::new(element_ty.clone())),
-                        DynSolType::Array(Box::new(element_ty)),
-                        DynSolType::String,
-                    ]
-                } else {
-                    vec![
-                        DynSolType::Array(Box::new(element_ty.clone())),
-                        DynSolType::Array(Box::new(element_ty)),
-                    ]
-                },
-            )?;
-            return self.handle_assertion(state, BoolExpr::constant(values[0] != values[1]));
-        }
-        if selector == assertLt_0Call::SELECTOR || selector == assertLt_1Call::SELECTOR {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::cmp(BoolExprOp::Ult, left.into_expr(), right.into_expr()),
-            );
-        }
-        if selector == assertLe_0Call::SELECTOR || selector == assertLe_1Call::SELECTOR {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::cmp(BoolExprOp::Ule, left.into_expr(), right.into_expr()),
-            );
-        }
-        if selector == assertGt_0Call::SELECTOR || selector == assertGt_1Call::SELECTOR {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::cmp(BoolExprOp::Ugt, left.into_expr(), right.into_expr()),
-            );
-        }
-        if selector == assertGe_0Call::SELECTOR || selector == assertGe_1Call::SELECTOR {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::cmp(BoolExprOp::Uge, left.into_expr(), right.into_expr()),
-            );
-        }
-        if selector == assertLt_2Call::SELECTOR || selector == assertLt_3Call::SELECTOR {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::cmp(BoolExprOp::Slt, left.into_expr(), right.into_expr()),
-            );
-        }
-        if selector == assertGt_2Call::SELECTOR || selector == assertGt_3Call::SELECTOR {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::cmp(BoolExprOp::Sgt, left.into_expr(), right.into_expr()),
-            );
-        }
-        if selector == assertLe_2Call::SELECTOR || selector == assertLe_3Call::SELECTOR {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::cmp(BoolExprOp::Sgt, left.into_expr(), right.into_expr()).not(),
-            );
-        }
-        if selector == assertGe_2Call::SELECTOR || selector == assertGe_3Call::SELECTOR {
-            let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-            return self.handle_assertion(
-                state,
-                BoolExpr::cmp(BoolExprOp::Slt, left.into_expr(), right.into_expr()).not(),
-            );
-        }
-        if selector == randomUint_0Call::SELECTOR {
-            return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomUint")]));
-        }
-        if selector == randomUint_2Call::SELECTOR {
-            let bits =
-                read_abi_constrained_word_arg(state, args_offset, 0, "symbolic randomUint bits")?;
-            Self::validate_symbolic_integer_bits(bits, "symbolic randomUint bits")?;
-            return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_uint(bits)]));
-        }
-        if selector == randomUint_1Call::SELECTOR {
-            let min = state.memory.load_word(in_offset + 4)?;
-            let max = state.memory.load_word(in_offset + 36)?;
-            let value = state.fresh_word("vmRandomUintRange");
-            state.constraints.push(BoolExpr::cmp_word_expr(
-                BoolExprOp::Uge,
-                &value,
-                min.into_expr(),
-            ));
-            state.constraints.push(BoolExpr::cmp_word_expr(
-                BoolExprOp::Ule,
-                &value,
-                max.into_expr(),
-            ));
-            return Ok(CheatcodeOutcome::Continue(vec![value]));
-        }
-        if selector == randomInt_0Call::SELECTOR {
-            return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomInt")]));
-        }
-        if selector == randomInt_1Call::SELECTOR {
-            let bits =
-                read_abi_constrained_word_arg(state, args_offset, 0, "symbolic randomInt bits")?;
-            Self::validate_symbolic_integer_bits(bits, "symbolic randomInt bits")?;
-            return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_int(bits)]));
-        }
-        if selector == randomAddressCall::SELECTOR {
-            let value = state.fresh_bounded_uint(U256::from(160));
-            return Ok(CheatcodeOutcome::Continue(vec![value]));
-        }
-        if selector == randomBoolCall::SELECTOR {
-            let value = state.fresh_bounded_uint(U256::from(1));
-            return Ok(CheatcodeOutcome::Continue(vec![value]));
-        }
-        if selector == randomBytesCall::SELECTOR {
-            let len = read_abi_word_arg(&state.memory, args_offset, 0)?;
-            let max_limit = self.config.max_dynamic_length as usize;
-            let max_len = state
-                .upper_bound_usize(&len)
-                .filter(|len| *len <= max_limit)
-                .map(Ok)
-                .unwrap_or_else(|| {
-                    self.solver_upper_bound_usize(
-                        state,
-                        &len,
-                        max_limit,
-                        "symbolic randomBytes length",
+            rememberKeys_0Call::SELECTOR | rememberKeys_1Call::SELECTOR => {
+                let mnemonic =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.rememberKeys")?;
+                let path =
+                    read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.rememberKeys")?;
+                let (language, count_index) = if selector == rememberKeys_1Call::SELECTOR {
+                    (
+                        Some(read_abi_string_arg(
+                            &state.memory,
+                            args_offset,
+                            2,
+                            "symbolic vm.rememberKeys",
+                        )?),
+                        3,
                     )
-                })?;
-            let bytes = (0..max_len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
-            return Ok(CheatcodeOutcome::ContinueData(abi_bytes_return_with_len(len, bytes)));
-        }
-        if selector == randomBytes4Call::SELECTOR {
-            let value = state.fresh_bounded_uint(U256::from(32));
-            return Ok(CheatcodeOutcome::Continue(vec![shift_left(value, 224)]));
-        }
-        if selector == randomBytes8Call::SELECTOR {
-            let value = state.fresh_bounded_uint(U256::from(64));
-            return Ok(CheatcodeOutcome::Continue(vec![shift_left(value, 192)]));
+                } else {
+                    (None, 2)
+                };
+                let count = read_abi_u32_arg(
+                    &state.memory,
+                    args_offset,
+                    count_index,
+                    "symbolic vm.rememberKeys",
+                )?;
+                if count > MAX_REMEMBER_KEYS {
+                    return Err(SymbolicError::Unsupported("symbolic vm.rememberKeys count"));
+                }
+                let mut addresses = Vec::with_capacity(count as usize);
+                for index in 0..count {
+                    let private_key = if let Some(language) = &language {
+                        derive_private_key_with_language(&mnemonic, &path, index, language)?
+                    } else {
+                        derive_private_key::<English>(&mnemonic, &path, index)?
+                    };
+                    let address = private_key_address(private_key)?;
+                    state.wallets.insert(address);
+                    addresses.push(DynSolValue::Address(address));
+                }
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
+                    DynSolValue::Array(addresses),
+                )));
+            }
+            getWalletsCall::SELECTOR => {
+                let wallets = DynSolValue::Array(
+                    state.wallets.iter().copied().map(DynSolValue::Address).collect(),
+                );
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(wallets)));
+            }
+            storeCall::SELECTOR => {
+                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let slot = state.memory.load_word(in_offset + 36)?;
+                let value = state.memory.load_word(in_offset + 68)?;
+                if target == CHEATCODE_ADDRESS
+                    && slot == SymWord::constant(failed_slot())
+                    && value == SymWord::constant(U256::from(1))
+                {
+                    return Ok(CheatcodeOutcome::Failure);
+                }
+                state.world.sstore(target, slot, value);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            loadCall::SELECTOR => {
+                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let slot = state.memory.load_word(in_offset + 36)?;
+                let concrete_slot = state.constrained_word(&slot);
+                let value = state.world.sload(executor, target, slot, concrete_slot)?;
+                return Ok(CheatcodeOutcome::Continue(vec![value]));
+            }
+            getNonce_0Call::SELECTOR => {
+                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let nonce = state.world.nonce(executor, target)?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(nonce))]));
+            }
+            computeCreateAddressCall::SELECTOR => {
+                let deployer = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let nonce = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let address = compute_create_address_word(state, deployer, nonce)?;
+                return Ok(CheatcodeOutcome::Continue(vec![address]));
+            }
+            computeCreate2Address_0Call::SELECTOR => {
+                let salt = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let init_code_hash = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let deployer = read_abi_word_arg(&state.memory, args_offset, 2)?;
+                let address = compute_create2_address_word(state, deployer, salt, init_code_hash)?;
+                return Ok(CheatcodeOutcome::Continue(vec![address]));
+            }
+            computeCreate2Address_1Call::SELECTOR => {
+                let salt = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let init_code_hash = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let address = compute_create2_address_word(
+                    state,
+                    SymWord::constant(address_word(DEFAULT_CREATE2_DEPLOYER)),
+                    salt,
+                    init_code_hash,
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![address]));
+            }
+            etchCall::SELECTOR => {
+                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let code = read_abi_symbolic_dynamic_bytes_arg(
+                    state,
+                    args_offset,
+                    1,
+                    self.config.max_dynamic_length as usize,
+                    "symbolic vm.etch",
+                )?;
+                state.world.install_code(target, SymCode::from_symbolic_bytes(code));
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            getCodeCall::SELECTOR | getDeployedCodeCall::SELECTOR => {
+                let artifact =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.getCode")?;
+                let code = artifact_code(&artifact, selector == getDeployedCodeCall::SELECTOR)?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(code)));
+            }
+            dealCall::SELECTOR => {
+                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let value = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                if value.contains_gasleft() {
+                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+                }
+                let value = state.constrained_word(&value).map(SymWord::constant).unwrap_or(value);
+                state.world.set_balance_word(target, value);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            setNonceCall::SELECTOR | setNonceUnsafeCall::SELECTOR => {
+                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let nonce =
+                    read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.setNonce")?;
+                if nonce > U256::from(u64::MAX) {
+                    return Err(SymbolicError::Unsupported("symbolic vm.setNonce nonce"));
+                }
+                let nonce = nonce.to::<u64>();
+                if selector == setNonceCall::SELECTOR
+                    && nonce < state.world.nonce(executor, target)?
+                {
+                    return Ok(CheatcodeOutcome::Failure);
+                }
+                state.world.set_nonce(target, nonce);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            resetNonceCall::SELECTOR => {
+                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let nonce = if state.world.extcode(executor, target)?.is_empty() { 0 } else { 1 };
+                state.world.set_nonce(target, nonce);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            allowCheatcodesCall::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            makePersistent_0Call::SELECTOR => {
+                let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                state.persistent_accounts.insert(account);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            makePersistent_1Call::SELECTOR => {
+                let account0 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let account1 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 1)?;
+                state.persistent_accounts.insert(account0);
+                state.persistent_accounts.insert(account1);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            makePersistent_2Call::SELECTOR => {
+                let account0 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let account1 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 1)?;
+                let account2 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 2)?;
+                state.persistent_accounts.insert(account0);
+                state.persistent_accounts.insert(account1);
+                state.persistent_accounts.insert(account2);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            makePersistent_3Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::Array(Box::new(DynSolType::Address))],
+                )?;
+                for account in dyn_address_array(&values[0])? {
+                    state.persistent_accounts.insert(account);
+                }
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            revokePersistent_0Call::SELECTOR => {
+                let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                state.persistent_accounts.remove(&account);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            revokePersistent_1Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::Array(Box::new(DynSolType::Address))],
+                )?;
+                for account in dyn_address_array(&values[0])? {
+                    state.persistent_accounts.remove(&account);
+                }
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            isPersistentCall::SELECTOR => {
+                let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
+                    state.persistent_accounts.contains(&account),
+                ))]));
+            }
+            activeForkCall::SELECTOR => {
+                let id = executor.backend().active_fork_id().ok_or(SymbolicError::Unsupported(
+                    "symbolic vm.activeFork requires an active forked executor",
+                ))?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(id)]));
+            }
+            selectForkCall::SELECTOR => {
+                let id = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.selectFork id",
+                )?;
+                if executor.backend().is_active_fork(id) {
+                    return Ok(CheatcodeOutcome::Continue(Vec::new()));
+                }
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.selectFork can only select the already active fork",
+                ));
+            }
+            rollFork_0Call::SELECTOR => {
+                let block_number = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.rollFork block number",
+                )?;
+                let current = state
+                    .block
+                    .number
+                    .clone()
+                    .into_concrete("symbolic vm.rollFork current block")?;
+                if block_number == current {
+                    return Ok(CheatcodeOutcome::Continue(Vec::new()));
+                }
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.rollFork cannot change the active fork block during symbolic execution",
+                ));
+            }
+            rollFork_2Call::SELECTOR => {
+                let id = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.rollFork id",
+                )?;
+                let block_number = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    1,
+                    "symbolic vm.rollFork block number",
+                )?;
+                let current = state
+                    .block
+                    .number
+                    .clone()
+                    .into_concrete("symbolic vm.rollFork current block")?;
+                if executor.backend().is_active_fork(id) && block_number == current {
+                    return Ok(CheatcodeOutcome::Continue(Vec::new()));
+                }
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.rollFork cannot change the active fork block during symbolic execution",
+                ));
+            }
+            createFork_0Call::SELECTOR
+            | createFork_1Call::SELECTOR
+            | createFork_2Call::SELECTOR
+            | createSelectFork_0Call::SELECTOR
+            | createSelectFork_1Call::SELECTOR
+            | createSelectFork_2Call::SELECTOR
+            | rollFork_1Call::SELECTOR
+            | rollFork_3Call::SELECTOR => {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic fork creation and fork block mutation must happen before symbolic execution",
+                ));
+            }
+            snapshotCall::SELECTOR | snapshotStateCall::SELECTOR => {
+                let id = state.world.snapshot_state();
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(id)]));
+            }
+            revertToCall::SELECTOR
+            | revertToStateCall::SELECTOR
+            | revertToAndDeleteCall::SELECTOR
+            | revertToStateAndDeleteCall::SELECTOR => {
+                let id = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.revertToState snapshot",
+                )?;
+                let success = state.world.restore_snapshot(id);
+                if success
+                    && (selector == revertToAndDeleteCall::SELECTOR
+                        || selector == revertToStateAndDeleteCall::SELECTOR)
+                {
+                    state.world.delete_snapshot(id);
+                }
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
+                    success,
+                ))]));
+            }
+            deleteSnapshotCall::SELECTOR | deleteStateSnapshotCall::SELECTOR => {
+                let id = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.deleteStateSnapshot snapshot",
+                )?;
+                let success = state.world.delete_snapshot(id);
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
+                    success,
+                ))]));
+            }
+            deleteSnapshotsCall::SELECTOR | deleteStateSnapshotsCall::SELECTOR => {
+                state.world.delete_snapshots();
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            warpCall::SELECTOR => {
+                state.block.timestamp = state.memory.load_word(in_offset + 4)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            rollCall::SELECTOR => {
+                state.block.number = state.memory.load_word(in_offset + 4)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            setBlockhashCall::SELECTOR => {
+                let block_number = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.setBlockhash block number",
+                )?;
+                let block_hash = state.memory.load_word(in_offset + 36)?;
+                state.block.set_block_hash(block_number, block_hash)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            prevrandao_0Call::SELECTOR | prevrandao_1Call::SELECTOR => {
+                state.block.difficulty = state.memory.load_word(in_offset + 4)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            blobhashesCall::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))],
+                )?;
+                state.block.set_blob_hashes(dyn_bytes32_array(&values[0])?);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            getBlobhashesCall::SELECTOR => {
+                let value = DynSolValue::Array(
+                    state
+                        .block
+                        .blob_hashes
+                        .iter()
+                        .copied()
+                        .map(|hash| DynSolValue::FixedBytes(hash, 32))
+                        .collect(),
+                );
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
+            }
+            feeCall::SELECTOR => {
+                state.block.basefee = state.memory.load_word(in_offset + 4)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            blobBaseFeeCall::SELECTOR => {
+                state.block.blob_basefee = state.memory.load_word(in_offset + 4)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            getBlobBaseFeeCall::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(vec![state.block.blob_basefee.clone()]));
+            }
+            chainIdCall::SELECTOR => {
+                state.block.chain_id = state.memory.load_word(in_offset + 4)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            getChainIdCall::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(vec![state.block.chain_id.clone()]));
+            }
+            difficultyCall::SELECTOR => {
+                state.block.difficulty = state.memory.load_word(in_offset + 4)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            coinbaseCall::SELECTOR => {
+                let coinbase = read_abi_constrained_address_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.coinbase value",
+                )?;
+                state.block.coinbase = coinbase;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            getBlockNumberCall::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(vec![state.block.number.clone()]));
+            }
+            txGasPriceCall::SELECTOR => {
+                state.gas_price = state.memory.load_word(in_offset + 4)?;
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            getBlockTimestampCall::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(vec![state.block.timestamp.clone()]));
+            }
+            labelCall::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::Address, DynSolType::String],
+                )?;
+                let account = dyn_address(&values[0])?;
+                let label = dyn_string(&values[1])?;
+                state.labels.insert(account, label);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            getLabelCall::SELECTOR => {
+                let account =
+                    read_abi_address_arg(&state.memory, args_offset, 0, "symbolic vm.getLabel")?;
+                let label = state
+                    .labels
+                    .get(&account)
+                    .cloned()
+                    .unwrap_or_else(|| format!("unlabeled:{account}"));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    label.bytes(),
+                )));
+            }
+            expectSafeMemoryCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported("symbolic vm.expectSafeMemory not modeled"));
+            }
+            expectSafeMemoryCallCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.expectSafeMemoryCall not modeled",
+                ));
+            }
+            stopExpectSafeMemoryCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.stopExpectSafeMemory not modeled",
+                ));
+            }
+            lastCallGasCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported("symbolic vm.lastCallGas not modeled"));
+            }
+            snapshotGasLastCall_0Call::SELECTOR | snapshotGasLastCall_1Call::SELECTOR => {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.snapshotGasLastCall not modeled",
+                ));
+            }
+            stopSnapshotGas_0Call::SELECTOR
+            | stopSnapshotGas_1Call::SELECTOR
+            | stopSnapshotGas_2Call::SELECTOR => {
+                return Err(SymbolicError::Unsupported("symbolic vm.stopSnapshotGas not modeled"));
+            }
+            pauseGasMeteringCall::SELECTOR
+            | resumeGasMeteringCall::SELECTOR
+            | resetGasMeteringCall::SELECTOR
+            | breakpoint_0Call::SELECTOR
+            | breakpoint_1Call::SELECTOR
+            | snapshotValue_0Call::SELECTOR
+            | snapshotValue_1Call::SELECTOR
+            | startSnapshotGas_0Call::SELECTOR
+            | startSnapshotGas_1Call::SELECTOR
+            | sleepCall::SELECTOR
+            | coolCall::SELECTOR
+            | accessListCall::SELECTOR
+            | warmSlotCall::SELECTOR
+            | coolSlotCall::SELECTOR
+            | noAccessListCall::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            setEvmVersionCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported("symbolic vm.setEvmVersion not modeled"));
+            }
+            getEvmVersionCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported("symbolic vm.getEvmVersion not modeled"));
+            }
+            getFoundryVersionCall::SELECTOR => {
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    env!("CARGO_PKG_VERSION").bytes(),
+                )));
+            }
+            projectRootCall::SELECTOR => {
+                let root = std::env::current_dir()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic vm.projectRoot"))?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    root.display().to_string().bytes(),
+                )));
+            }
+            unixTimeCall::SELECTOR => {
+                let milliseconds = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?
+                    .as_millis();
+                let value = U256::try_from(milliseconds)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
+            }
+            isContextCall::SELECTOR => {
+                let context = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.isContext",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
+                    context == U256::ZERO || context == U256::from(1),
+                ))]));
+            }
+            toString_0Call::SELECTOR => {
+                let address =
+                    read_abi_address_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    format!("{address:?}").bytes(),
+                )));
+            }
+            toString_1Call::SELECTOR => {
+                let bytes = read_abi_dynamic_bytes_arg(
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.toString",
+                )?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    format!("0x{}", hex::encode(bytes)).bytes(),
+                )));
+            }
+            toString_2Call::SELECTOR => {
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.toString",
+                )?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    format!("0x{}", hex::encode(value.to_be_bytes::<32>())).bytes(),
+                )));
+            }
+            toString_3Call::SELECTOR => {
+                let value =
+                    read_abi_bool_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    if value { "true" } else { "false" }.bytes(),
+                )));
+            }
+            toString_4Call::SELECTOR => {
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.toString",
+                )?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    value.to_string().bytes(),
+                )));
+            }
+            toString_5Call::SELECTOR => {
+                let value = read_abi_concrete_word_arg(
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.toString",
+                )?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    I256::from_raw(value).to_string().bytes(),
+                )));
+            }
+            parseBytesCall::SELECTOR => {
+                let value =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBytes")?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    parse_env_bytes(&value)?,
+                )));
+            }
+            parseAddressCall::SELECTOR => {
+                let value =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseAddress")?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(
+                    parse_env_address(&value)?,
+                ))]));
+            }
+            parseUintCall::SELECTOR => {
+                let value =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseUint")?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_uint(
+                    &value,
+                )?)]));
+            }
+            parseIntCall::SELECTOR => {
+                let value =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseInt")?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_int(
+                    &value,
+                )?)]));
+            }
+            parseBytes32Call::SELECTOR => {
+                let value =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBytes32")?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_bytes32(
+                    &value,
+                )?)]));
+            }
+            parseBoolCall::SELECTOR => {
+                let value =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBool")?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
+                    parse_env_bool(&value)?,
+                ))]));
+            }
+            toLowercaseCall::SELECTOR | toUppercaseCall::SELECTOR | trimCall::SELECTOR => {
+                let value =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.string")?;
+                let output = if selector == toLowercaseCall::SELECTOR {
+                    value.to_lowercase()
+                } else if selector == toUppercaseCall::SELECTOR {
+                    value.to_uppercase()
+                } else {
+                    value.trim().to_string()
+                };
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    output.bytes(),
+                )));
+            }
+            replaceCall::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::String, DynSolType::String, DynSolType::String],
+                )?;
+                let output = dyn_string(&values[0])?
+                    .replace(&dyn_string(&values[1])?, &dyn_string(&values[2])?);
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    output.bytes(),
+                )));
+            }
+            splitCall::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::String, DynSolType::String],
+                )?;
+                let input = dyn_string(&values[0])?;
+                let delimiter = dyn_string(&values[1])?;
+                let parts = if delimiter.is_empty() {
+                    input.chars().map(|ch| DynSolValue::String(ch.to_string())).collect()
+                } else {
+                    input
+                        .split(&delimiter)
+                        .map(|part| DynSolValue::String(part.to_string()))
+                        .collect()
+                };
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
+                    DynSolValue::Array(parts),
+                )));
+            }
+            indexOfCall::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::String, DynSolType::String],
+                )?;
+                let input = dyn_string(&values[0])?;
+                let needle = dyn_string(&values[1])?;
+                let index = input.find(&needle).map(U256::from).unwrap_or(U256::MAX);
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(index)]));
+            }
+            containsCall::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::String, DynSolType::String],
+                )?;
+                let contains = dyn_string(&values[0])?.contains(&dyn_string(&values[1])?);
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
+                    contains,
+                ))]));
+            }
+            toBase64_0Call::SELECTOR
+            | toBase64_1Call::SELECTOR
+            | toBase64URL_0Call::SELECTOR
+            | toBase64URL_1Call::SELECTOR => {
+                let data = read_abi_dynamic_bytes_arg(
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.toBase64",
+                )?;
+                let encoded = if selector == toBase64URL_0Call::SELECTOR
+                    || selector == toBase64URL_1Call::SELECTOR
+                {
+                    BASE64_URL_SAFE.encode(data)
+                } else {
+                    BASE64_STANDARD.encode(data)
+                };
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    encoded.bytes(),
+                )));
+            }
+            bound_0Call::SELECTOR => {
+                return self.handle_bound_uint(state, args_offset);
+            }
+            bound_1Call::SELECTOR => {
+                return self.handle_bound_int(state, args_offset);
+            }
+            envExistsCall::SELECTOR => {
+                let name =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envExists")?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
+                    std::env::var_os(name).is_some(),
+                ))]));
+            }
+            envBool_0Call::SELECTOR => {
+                let name =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBool")?;
+                let value = std::env::var(name)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
+                    parse_env_bool(&value)?,
+                ))]));
+            }
+            envUint_0Call::SELECTOR => {
+                let name =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envUint")?;
+                let value = std::env::var(name)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_uint(
+                    &value,
+                )?)]));
+            }
+            envInt_0Call::SELECTOR => {
+                let name =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envInt")?;
+                let value = std::env::var(name)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_int(
+                    &value,
+                )?)]));
+            }
+            envAddress_0Call::SELECTOR => {
+                let name =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envAddress")?;
+                let value = std::env::var(name)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
+                let address = parse_env_address(&value)?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(
+                    address,
+                ))]));
+            }
+            envBytes32_0Call::SELECTOR => {
+                let name =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBytes32")?;
+                let value = std::env::var(name)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_bytes32(
+                    &value,
+                )?)]));
+            }
+            envString_0Call::SELECTOR => {
+                let name =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envString")?;
+                let value = std::env::var(name)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    value.bytes(),
+                )));
+            }
+            envBytes_0Call::SELECTOR => {
+                let name =
+                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBytes")?;
+                let value = std::env::var(name)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    parse_env_bytes(&value)?,
+                )));
+            }
+            envBool_1Call::SELECTOR
+            | envUint_1Call::SELECTOR
+            | envInt_1Call::SELECTOR
+            | envAddress_1Call::SELECTOR
+            | envBytes32_1Call::SELECTOR
+            | envString_1Call::SELECTOR
+            | envBytes_1Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::String, DynSolType::String],
+                )?;
+                let name = dyn_string(&values[0])?;
+                let delimiter = dyn_string(&values[1])?;
+                let value = std::env::var(name)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
+                let value = if selector == envBool_1Call::SELECTOR {
+                    parse_env_array(&value, &delimiter, parse_env_bool_value)?
+                } else if selector == envUint_1Call::SELECTOR {
+                    parse_env_array(&value, &delimiter, parse_env_uint_value)?
+                } else if selector == envInt_1Call::SELECTOR {
+                    parse_env_array(&value, &delimiter, parse_env_int_value)?
+                } else if selector == envAddress_1Call::SELECTOR {
+                    parse_env_array(&value, &delimiter, parse_env_address_value)?
+                } else if selector == envBytes32_1Call::SELECTOR {
+                    parse_env_array(&value, &delimiter, parse_env_bytes32_value)?
+                } else if selector == envString_1Call::SELECTOR {
+                    parse_env_array(&value, &delimiter, parse_env_string_value)?
+                } else {
+                    parse_env_array(&value, &delimiter, parse_env_bytes_value)?
+                };
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
+            }
+            envOr_0Call::SELECTOR => {
+                let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envOr")?;
+                let value = match std::env::var(name) {
+                    Ok(value) => U256::from(parse_env_bool(&value)?),
+                    Err(_) => read_abi_concrete_word_arg(
+                        &state.memory,
+                        args_offset,
+                        1,
+                        "symbolic vm.envOr",
+                    )?,
+                };
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
+            }
+            envOr_1Call::SELECTOR
+            | envOr_2Call::SELECTOR
+            | envOr_3Call::SELECTOR
+            | envOr_4Call::SELECTOR => {
+                let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envOr")?;
+                let default =
+                    read_abi_concrete_word_arg(&state.memory, args_offset, 1, "symbolic vm.envOr")?;
+                let value = match std::env::var(name) {
+                    Ok(value) if selector == envOr_1Call::SELECTOR => parse_env_uint(&value)?,
+                    Ok(value) if selector == envOr_2Call::SELECTOR => parse_env_int(&value)?,
+                    Ok(value) if selector == envOr_3Call::SELECTOR => {
+                        address_word(parse_env_address(&value)?)
+                    }
+                    Ok(value) => parse_env_bytes32(&value)?,
+                    Err(_) => default,
+                };
+                return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
+            }
+            envOr_5Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::String, DynSolType::String],
+                )?;
+                let name = dyn_string(&values[0])?;
+                let value = std::env::var(name).unwrap_or(dyn_string(&values[1])?);
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    value.bytes(),
+                )));
+            }
+            envOr_6Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::String, DynSolType::Bytes],
+                )?;
+                let name = dyn_string(&values[0])?;
+                let value = match std::env::var(name) {
+                    Ok(value) => parse_env_bytes(&value)?,
+                    Err(_) => dyn_bytes(&values[1])?,
+                };
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(value)));
+            }
+            envOr_7Call::SELECTOR
+            | envOr_8Call::SELECTOR
+            | envOr_9Call::SELECTOR
+            | envOr_10Call::SELECTOR
+            | envOr_11Call::SELECTOR
+            | envOr_12Call::SELECTOR
+            | envOr_13Call::SELECTOR => {
+                let element_ty = if selector == envOr_7Call::SELECTOR {
+                    DynSolType::Bool
+                } else if selector == envOr_8Call::SELECTOR {
+                    DynSolType::Uint(256)
+                } else if selector == envOr_9Call::SELECTOR {
+                    DynSolType::Int(256)
+                } else if selector == envOr_10Call::SELECTOR {
+                    DynSolType::Address
+                } else if selector == envOr_11Call::SELECTOR {
+                    DynSolType::FixedBytes(32)
+                } else if selector == envOr_12Call::SELECTOR {
+                    DynSolType::String
+                } else {
+                    DynSolType::Bytes
+                };
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![
+                        DynSolType::String,
+                        DynSolType::String,
+                        DynSolType::Array(Box::new(element_ty)),
+                    ],
+                )?;
+                let name = dyn_string(&values[0])?;
+                let delimiter = dyn_string(&values[1])?;
+                let value = match std::env::var(name) {
+                    Ok(value) if selector == envOr_7Call::SELECTOR => {
+                        parse_env_array(&value, &delimiter, parse_env_bool_value)?
+                    }
+                    Ok(value) if selector == envOr_8Call::SELECTOR => {
+                        parse_env_array(&value, &delimiter, parse_env_uint_value)?
+                    }
+                    Ok(value) if selector == envOr_9Call::SELECTOR => {
+                        parse_env_array(&value, &delimiter, parse_env_int_value)?
+                    }
+                    Ok(value) if selector == envOr_10Call::SELECTOR => {
+                        parse_env_array(&value, &delimiter, parse_env_address_value)?
+                    }
+                    Ok(value) if selector == envOr_11Call::SELECTOR => {
+                        parse_env_array(&value, &delimiter, parse_env_bytes32_value)?
+                    }
+                    Ok(value) if selector == envOr_12Call::SELECTOR => {
+                        parse_env_array(&value, &delimiter, parse_env_string_value)?
+                    }
+                    Ok(value) => parse_env_array(&value, &delimiter, parse_env_bytes_value)?,
+                    Err(_) => values[2].clone(),
+                };
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
+            }
+            ffiCall::SELECTOR => {
+                if !state.ffi_enabled {
+                    return Err(SymbolicError::Unsupported("symbolic ffi disabled"));
+                }
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    vec![DynSolType::Array(Box::new(DynSolType::String))],
+                )?;
+                let args = dyn_string_array(&values[0])?;
+                if args.is_empty() || args[0].is_empty() {
+                    return Err(SymbolicError::Unsupported("symbolic ffi empty command"));
+                }
+                let output = Command::new(&args[0])
+                    .args(&args[1..])
+                    .output()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic ffi command"))?;
+                if !output.status.success() {
+                    return Err(SymbolicError::Unsupported("symbolic ffi command failed"));
+                }
+                let stdout = String::from_utf8(output.stdout)
+                    .map_err(|_| SymbolicError::Unsupported("symbolic ffi stdout"))?;
+                let trimmed = stdout.trim();
+                let bytes = hex::decode(trimmed).unwrap_or_else(|_| trimmed.as_bytes().to_vec());
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(bytes)));
+            }
+            assertTrue_0Call::SELECTOR | assertTrue_1Call::SELECTOR => {
+                let condition = read_abi_word_arg(&state.memory, args_offset, 0)?.nonzero_bool();
+                return self.handle_assertion(state, condition);
+            }
+            assertFalse_0Call::SELECTOR | assertFalse_1Call::SELECTOR => {
+                let condition = read_abi_word_arg(&state.memory, args_offset, 0)?.into_zero_bool();
+                return self.handle_assertion(state, condition);
+            }
+            assertEq_2Call::SELECTOR
+            | assertEq_3Call::SELECTOR
+            | assertEq_4Call::SELECTOR
+            | assertEq_5Call::SELECTOR
+            | assertEq_6Call::SELECTOR
+            | assertEq_7Call::SELECTOR
+            | assertEq_8Call::SELECTOR
+            | assertEq_9Call::SELECTOR
+            | assertEq_0Call::SELECTOR
+            | assertEq_1Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self
+                    .handle_assertion(state, BoolExpr::eq(left.into_expr(), right.into_expr()));
+            }
+            assertEq_10Call::SELECTOR | assertEq_11Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    if selector == assertEq_10Call::SELECTOR {
+                        vec![DynSolType::String, DynSolType::String]
+                    } else {
+                        vec![DynSolType::String, DynSolType::String, DynSolType::String]
+                    },
+                )?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::constant(dyn_string(&values[0])? == dyn_string(&values[1])?),
+                );
+            }
+            assertEq_12Call::SELECTOR | assertEq_13Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    if selector == assertEq_12Call::SELECTOR {
+                        vec![DynSolType::Bytes, DynSolType::Bytes]
+                    } else {
+                        vec![DynSolType::Bytes, DynSolType::Bytes, DynSolType::String]
+                    },
+                )?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::constant(dyn_bytes(&values[0])? == dyn_bytes(&values[1])?),
+                );
+            }
+            assertEq_14Call::SELECTOR
+            | assertEq_15Call::SELECTOR
+            | assertEq_16Call::SELECTOR
+            | assertEq_17Call::SELECTOR
+            | assertEq_18Call::SELECTOR
+            | assertEq_19Call::SELECTOR
+            | assertEq_20Call::SELECTOR
+            | assertEq_21Call::SELECTOR
+            | assertEq_22Call::SELECTOR
+            | assertEq_23Call::SELECTOR
+            | assertEq_24Call::SELECTOR
+            | assertEq_25Call::SELECTOR
+            | assertEq_26Call::SELECTOR
+            | assertEq_27Call::SELECTOR => {
+                let element_ty = array_assertion_element_type(selector)?;
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    if selector_has_string_reason(selector) {
+                        vec![
+                            DynSolType::Array(Box::new(element_ty.clone())),
+                            DynSolType::Array(Box::new(element_ty)),
+                            DynSolType::String,
+                        ]
+                    } else {
+                        vec![
+                            DynSolType::Array(Box::new(element_ty.clone())),
+                            DynSolType::Array(Box::new(element_ty)),
+                        ]
+                    },
+                )?;
+                return self.handle_assertion(state, BoolExpr::constant(values[0] == values[1]));
+            }
+            assertEqDecimal_0Call::SELECTOR
+            | assertEqDecimal_1Call::SELECTOR
+            | assertEqDecimal_2Call::SELECTOR
+            | assertEqDecimal_3Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self
+                    .handle_assertion(state, BoolExpr::eq(left.into_expr(), right.into_expr()));
+            }
+            assertNotEq_2Call::SELECTOR
+            | assertNotEq_3Call::SELECTOR
+            | assertNotEq_4Call::SELECTOR
+            | assertNotEq_5Call::SELECTOR
+            | assertNotEq_6Call::SELECTOR
+            | assertNotEq_7Call::SELECTOR
+            | assertNotEq_8Call::SELECTOR
+            | assertNotEq_9Call::SELECTOR
+            | assertNotEq_0Call::SELECTOR
+            | assertNotEq_1Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::eq(left.into_expr(), right.into_expr()).not(),
+                );
+            }
+            assertNotEq_10Call::SELECTOR | assertNotEq_11Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    if selector == assertNotEq_10Call::SELECTOR {
+                        vec![DynSolType::String, DynSolType::String]
+                    } else {
+                        vec![DynSolType::String, DynSolType::String, DynSolType::String]
+                    },
+                )?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::constant(dyn_string(&values[0])? != dyn_string(&values[1])?),
+                );
+            }
+            assertNotEq_12Call::SELECTOR | assertNotEq_13Call::SELECTOR => {
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    if selector == assertNotEq_12Call::SELECTOR {
+                        vec![DynSolType::Bytes, DynSolType::Bytes]
+                    } else {
+                        vec![DynSolType::Bytes, DynSolType::Bytes, DynSolType::String]
+                    },
+                )?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::constant(dyn_bytes(&values[0])? != dyn_bytes(&values[1])?),
+                );
+            }
+            assertNotEq_14Call::SELECTOR
+            | assertNotEq_15Call::SELECTOR
+            | assertNotEq_16Call::SELECTOR
+            | assertNotEq_17Call::SELECTOR
+            | assertNotEq_18Call::SELECTOR
+            | assertNotEq_19Call::SELECTOR
+            | assertNotEq_20Call::SELECTOR
+            | assertNotEq_21Call::SELECTOR
+            | assertNotEq_22Call::SELECTOR
+            | assertNotEq_23Call::SELECTOR
+            | assertNotEq_24Call::SELECTOR
+            | assertNotEq_25Call::SELECTOR
+            | assertNotEq_26Call::SELECTOR
+            | assertNotEq_27Call::SELECTOR => {
+                let element_ty = array_assertion_element_type(selector)?;
+                let values = decode_cheatcode_args(
+                    state,
+                    in_offset,
+                    in_size,
+                    if selector_has_string_reason(selector) {
+                        vec![
+                            DynSolType::Array(Box::new(element_ty.clone())),
+                            DynSolType::Array(Box::new(element_ty)),
+                            DynSolType::String,
+                        ]
+                    } else {
+                        vec![
+                            DynSolType::Array(Box::new(element_ty.clone())),
+                            DynSolType::Array(Box::new(element_ty)),
+                        ]
+                    },
+                )?;
+                return self.handle_assertion(state, BoolExpr::constant(values[0] != values[1]));
+            }
+            assertLt_0Call::SELECTOR | assertLt_1Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::cmp(BoolExprOp::Ult, left.into_expr(), right.into_expr()),
+                );
+            }
+            assertLe_0Call::SELECTOR | assertLe_1Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::cmp(BoolExprOp::Ule, left.into_expr(), right.into_expr()),
+                );
+            }
+            assertGt_0Call::SELECTOR | assertGt_1Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::cmp(BoolExprOp::Ugt, left.into_expr(), right.into_expr()),
+                );
+            }
+            assertGe_0Call::SELECTOR | assertGe_1Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::cmp(BoolExprOp::Uge, left.into_expr(), right.into_expr()),
+                );
+            }
+            assertLt_2Call::SELECTOR | assertLt_3Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::cmp(BoolExprOp::Slt, left.into_expr(), right.into_expr()),
+                );
+            }
+            assertGt_2Call::SELECTOR | assertGt_3Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::cmp(BoolExprOp::Sgt, left.into_expr(), right.into_expr()),
+                );
+            }
+            assertLe_2Call::SELECTOR | assertLe_3Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::cmp(BoolExprOp::Sgt, left.into_expr(), right.into_expr()).not(),
+                );
+            }
+            assertGe_2Call::SELECTOR | assertGe_3Call::SELECTOR => {
+                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                return self.handle_assertion(
+                    state,
+                    BoolExpr::cmp(BoolExprOp::Slt, left.into_expr(), right.into_expr()).not(),
+                );
+            }
+            randomUint_0Call::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomUint")]));
+            }
+            randomUint_2Call::SELECTOR => {
+                let bits = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic randomUint bits",
+                )?;
+                Self::validate_symbolic_integer_bits(bits, "symbolic randomUint bits")?;
+                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_uint(bits)]));
+            }
+            randomUint_1Call::SELECTOR => {
+                let min = state.memory.load_word(in_offset + 4)?;
+                let max = state.memory.load_word(in_offset + 36)?;
+                let value = state.fresh_word("vmRandomUintRange");
+                state.constraints.push(BoolExpr::cmp_word_expr(
+                    BoolExprOp::Uge,
+                    &value,
+                    min.into_expr(),
+                ));
+                state.constraints.push(BoolExpr::cmp_word_expr(
+                    BoolExprOp::Ule,
+                    &value,
+                    max.into_expr(),
+                ));
+                return Ok(CheatcodeOutcome::Continue(vec![value]));
+            }
+            randomInt_0Call::SELECTOR => {
+                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomInt")]));
+            }
+            randomInt_1Call::SELECTOR => {
+                let bits = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic randomInt bits",
+                )?;
+                Self::validate_symbolic_integer_bits(bits, "symbolic randomInt bits")?;
+                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_int(bits)]));
+            }
+            randomAddressCall::SELECTOR => {
+                let value = state.fresh_bounded_uint(U256::from(160));
+                return Ok(CheatcodeOutcome::Continue(vec![value]));
+            }
+            randomBoolCall::SELECTOR => {
+                let value = state.fresh_bounded_uint(U256::from(1));
+                return Ok(CheatcodeOutcome::Continue(vec![value]));
+            }
+            randomBytesCall::SELECTOR => {
+                let len = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let max_limit = self.config.max_dynamic_length as usize;
+                let max_len = state
+                    .upper_bound_usize(&len)
+                    .filter(|len| *len <= max_limit)
+                    .map(Ok)
+                    .unwrap_or_else(|| {
+                        self.solver_upper_bound_usize(
+                            state,
+                            &len,
+                            max_limit,
+                            "symbolic randomBytes length",
+                        )
+                    })?;
+                let bytes = (0..max_len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
+                return Ok(CheatcodeOutcome::ContinueData(abi_bytes_return_with_len(len, bytes)));
+            }
+            randomBytes4Call::SELECTOR => {
+                let value = state.fresh_bounded_uint(U256::from(32));
+                return Ok(CheatcodeOutcome::Continue(vec![shift_left(value, 224)]));
+            }
+            randomBytes8Call::SELECTOR => {
+                let value = state.fresh_bounded_uint(U256::from(64));
+                return Ok(CheatcodeOutcome::Continue(vec![shift_left(value, 192)]));
+            }
+
+            _ => {}
         }
 
         Err(SymbolicError::Unsupported("symbolic Foundry cheatcode"))

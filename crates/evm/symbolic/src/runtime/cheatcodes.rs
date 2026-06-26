@@ -1,4 +1,3 @@
-use alloy_sol_types::SolCall;
 use foundry_cheatcodes_spec::Vm::*;
 use foundry_common::wallet::private_key_from_u256;
 
