@@ -797,27 +797,25 @@ pub(crate) fn decode_cheatcode_args(
 }
 
 /// Returns the `selector_has_string_reason` cheatcode runtime helper result.
-pub(crate) fn selector_has_string_reason(selector: [u8; 4]) -> bool {
-    selector_in(
+pub(crate) const fn selector_has_string_reason(selector: [u8; 4]) -> bool {
+    matches!(
         selector,
-        &[
-            assertEq_15Call::SELECTOR,
-            assertEq_17Call::SELECTOR,
-            assertEq_19Call::SELECTOR,
-            assertEq_21Call::SELECTOR,
-            assertEq_23Call::SELECTOR,
-            assertEq_25Call::SELECTOR,
-            assertEq_27Call::SELECTOR,
-            assertNotEq_15Call::SELECTOR,
-            assertNotEq_17Call::SELECTOR,
-            assertNotEq_19Call::SELECTOR,
-            assertNotEq_21Call::SELECTOR,
-            assertNotEq_23Call::SELECTOR,
-            assertNotEq_25Call::SELECTOR,
-            assertNotEq_27Call::SELECTOR,
-            assertEqDecimal_1Call::SELECTOR,
-            assertEqDecimal_3Call::SELECTOR,
-        ],
+        assertEq_15Call::SELECTOR
+            | assertEq_17Call::SELECTOR
+            | assertEq_19Call::SELECTOR
+            | assertEq_21Call::SELECTOR
+            | assertEq_23Call::SELECTOR
+            | assertEq_25Call::SELECTOR
+            | assertEq_27Call::SELECTOR
+            | assertNotEq_15Call::SELECTOR
+            | assertNotEq_17Call::SELECTOR
+            | assertNotEq_19Call::SELECTOR
+            | assertNotEq_21Call::SELECTOR
+            | assertNotEq_23Call::SELECTOR
+            | assertNotEq_25Call::SELECTOR
+            | assertNotEq_27Call::SELECTOR
+            | assertEqDecimal_1Call::SELECTOR
+            | assertEqDecimal_3Call::SELECTOR
     )
 }
 
