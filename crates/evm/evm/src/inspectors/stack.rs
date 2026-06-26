@@ -5,7 +5,7 @@ use super::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
-    map::{AddressHashMap, AddressMap},
+    map::{AddressHashMap, AddressHashSet, AddressMap},
 };
 
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure, Wallets};
@@ -34,7 +34,7 @@ use revm::{
     handler::FrameResult,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
-        InstructionResult, Interpreter, InterpreterResult, return_ok,
+        InstructionResult, Interpreter, InterpreterResult, interpreter_types::InputsTr, return_ok,
     },
     primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
@@ -331,6 +331,8 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
 pub struct InnerContextData {
     /// Origin of the transaction in the outer EVM context.
     original_origin: Address,
+    /// Accounts that were created locally before entering the nested EVM context.
+    locally_created_accounts: AddressHashSet,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -480,6 +482,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         self.in_inner_context = enabled;
         self.inner_context_data = enabled.then(|| InnerContextData {
             original_origin: original_origin.expect("origin required when enabling inner ctx"),
+            locally_created_accounts: AddressHashSet::default(),
         });
     }
 }
@@ -826,8 +829,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             ecx.tx_mut().set_blob_hashes(Vec::new());
         }
 
-        self.inner_context_data =
-            Some(InnerContextData { original_origin: cached_tx_env.caller() });
+        let locally_created_accounts = ecx
+            .journal()
+            .evm_state()
+            .iter()
+            .filter_map(|(addr, acc)| acc.is_created_locally().then_some(*addr))
+            .collect();
+        self.inner_context_data = Some(InnerContextData {
+            original_origin: cached_tx_env.caller(),
+            locally_created_accounts,
+        });
         self.in_inner_context = true;
 
         // Tell cheatcodes we're entering the synthetic inner transaction so
@@ -854,9 +865,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
                     for (addr, acc_mut) in &mut state {
                         // Preserve revm's per-transaction creation flag for accounts created in
-                        // the parent context. A cold load in the nested context clears local
-                        // flags, which would incorrectly disable EIP-6780 cleanup.
-                        if journal.warm_addresses.is_cold(addr) && !acc_mut.is_created_locally() {
+                        // the parent context in initialize_interp. A cold load in the nested
+                        // context clears local flags, but keeping accounts cold preserves gas
+                        // accounting for isolated calls.
+                        if journal.warm_addresses.is_cold(addr) {
                             acc_mut.mark_cold();
                         }
 
@@ -1068,6 +1080,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        if let Some(inner_context) = &self.inner_context_data {
+            let address = interpreter.input.target_address();
+            if inner_context.locally_created_accounts.contains(&address)
+                && let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&address)
+            {
+                account.mark_created_locally();
+            }
+        }
+
         call_inspectors!(
             [
                 &mut self.line_coverage,
