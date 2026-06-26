@@ -174,7 +174,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
             | ExprOp::SRem
             | ExprOp::Sar => None,
         },
-        Expr::AddMod { .. } | Expr::MulMod { .. } => None,
+        Expr::AddMod(_) | Expr::MulMod(_) => None,
     }
 }
 

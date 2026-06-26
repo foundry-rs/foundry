@@ -21,8 +21,10 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
         Expr::Op(ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, left, right) => {
             expr_contains_var(left) || expr_contains_var(right)
         }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_var(left) || expr_contains_var(right) || expr_contains_var(modulus)
+        Expr::AddMod(expr) | Expr::MulMod(expr) => {
+            expr_contains_var(expr.left())
+                || expr_contains_var(expr.right())
+                || expr_contains_var(expr.modulus())
         }
         Expr::Op(_, left, right) => {
             expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
@@ -292,10 +294,10 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
         }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-            collect_expr_fallback_vars(modulus, vars);
+        Expr::AddMod(expr) | Expr::MulMod(expr) => {
+            collect_expr_fallback_vars(expr.left(), vars);
+            collect_expr_fallback_vars(expr.right(), vars);
+            collect_expr_fallback_vars(expr.modulus(), vars);
         }
         Expr::Ite(cond, left, right) => {
             collect_bool_fallback_vars(cond, vars);
@@ -402,10 +404,10 @@ pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut HashSet<U256>)
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
         }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-            collect_expr_constants(modulus, constants);
+        Expr::AddMod(expr) | Expr::MulMod(expr) => {
+            collect_expr_constants(expr.left(), constants);
+            collect_expr_constants(expr.right(), constants);
+            collect_expr_constants(expr.modulus(), constants);
         }
         Expr::Ite(cond, left, right) => {
             collect_bool_constants(cond, constants);

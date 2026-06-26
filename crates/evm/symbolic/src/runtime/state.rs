@@ -206,7 +206,8 @@ impl PathState {
             Expr::Const(value) => u256_to_usize(*value),
             Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => None,
             Expr::Not(_) => None,
-            Expr::AddMod { modulus, .. } | Expr::MulMod { modulus, .. } => {
+            Expr::AddMod(expr) | Expr::MulMod(expr) => {
+                let modulus = expr.modulus();
                 match expr_const_value(modulus) {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => u256_to_usize(modulus - U256::from(1)),
@@ -1679,8 +1680,8 @@ fn collect_eval_vars(expr: &Expr, vars: &mut SymbolicVars) {
         | Expr::Keccak(_)
         | Expr::Not(_)
         | Expr::Op(_, _, _)
-        | Expr::AddMod { .. }
-        | Expr::MulMod { .. }
+        | Expr::AddMod(_)
+        | Expr::MulMod(_)
         | Expr::Ite(_, _, _) => {}
     });
 }

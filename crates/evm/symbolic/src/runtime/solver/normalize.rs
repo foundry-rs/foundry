@@ -185,16 +185,22 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
                 Expr::op(op, left, right)
             }
         }
-        Expr::AddMod { left, right, modulus } => Expr::addmod(
-            normalize_expr_for_solver(Arc::unwrap_or_clone(left)),
-            normalize_expr_for_solver(Arc::unwrap_or_clone(right)),
-            normalize_expr_for_solver(Arc::unwrap_or_clone(modulus)),
-        ),
-        Expr::MulMod { left, right, modulus } => Expr::mulmod(
-            normalize_expr_for_solver(Arc::unwrap_or_clone(left)),
-            normalize_expr_for_solver(Arc::unwrap_or_clone(right)),
-            normalize_expr_for_solver(Arc::unwrap_or_clone(modulus)),
-        ),
+        Expr::AddMod(expr) => {
+            let (left, right, modulus) = Arc::unwrap_or_clone(expr).into_parts();
+            Expr::addmod(
+                normalize_expr_for_solver(left),
+                normalize_expr_for_solver(right),
+                normalize_expr_for_solver(modulus),
+            )
+        }
+        Expr::MulMod(expr) => {
+            let (left, right, modulus) = Arc::unwrap_or_clone(expr).into_parts();
+            Expr::mulmod(
+                normalize_expr_for_solver(left),
+                normalize_expr_for_solver(right),
+                normalize_expr_for_solver(modulus),
+            )
+        }
         Expr::Ite(cond, left, right) => normalize_ite_expr_for_solver(
             Arc::unwrap_or_clone(cond),
             Arc::unwrap_or_clone(left),
@@ -601,7 +607,7 @@ pub(crate) fn expr_unsigned_bits(expr: &Expr) -> usize {
             expr_unsigned_bits(left).saturating_add(expr_unsigned_bits(right)).min(256)
         }
         Expr::Op(ExprOp::UDiv, left, _) => expr_unsigned_bits(left),
-        Expr::AddMod { modulus, .. } | Expr::MulMod { modulus, .. } => expr_unsigned_bits(modulus),
+        Expr::AddMod(expr) | Expr::MulMod(expr) => expr_unsigned_bits(expr.modulus()),
         Expr::Ite(_, left, right) => expr_unsigned_bits(left).max(expr_unsigned_bits(right)),
         _ => 256,
     }

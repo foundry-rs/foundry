@@ -496,7 +496,7 @@ pub(crate) fn expr_nonzero_forces_const(
         {
             expr_nonzero_forces_const(value, target, context)
         }
-        Expr::AddMod { .. } | Expr::MulMod { .. } => None,
+        Expr::AddMod(_) | Expr::MulMod(_) => None,
         Expr::Op(_, _, _) => None,
     }
 }
@@ -531,15 +531,15 @@ pub(crate) fn expr_const_value(expr: &Expr) -> Option<U256> {
         Expr::Op(op, left, right) => {
             Some(eval_expr_op(*op, expr_const_value(left)?, expr_const_value(right)?))
         }
-        Expr::AddMod { left, right, modulus } => Some(addmod_word(
-            expr_const_value(left)?,
-            expr_const_value(right)?,
-            expr_const_value(modulus)?,
+        Expr::AddMod(expr) => Some(addmod_word(
+            expr_const_value(expr.left())?,
+            expr_const_value(expr.right())?,
+            expr_const_value(expr.modulus())?,
         )),
-        Expr::MulMod { left, right, modulus } => Some(mulmod_word(
-            expr_const_value(left)?,
-            expr_const_value(right)?,
-            expr_const_value(modulus)?,
+        Expr::MulMod(expr) => Some(mulmod_word(
+            expr_const_value(expr.left())?,
+            expr_const_value(expr.right())?,
+            expr_const_value(expr.modulus())?,
         )),
         Expr::Ite(cond, then_expr, else_expr) => {
             if bool_const_value(cond)? {
@@ -788,15 +788,15 @@ pub(crate) fn eval_expr(
             let right = eval_expr(right, model)?;
             eval_expr_op(*op, left, right)
         }
-        Expr::AddMod { left, right, modulus } => addmod_word(
-            eval_expr(left, model)?,
-            eval_expr(right, model)?,
-            eval_expr(modulus, model)?,
+        Expr::AddMod(expr) => addmod_word(
+            eval_expr(expr.left(), model)?,
+            eval_expr(expr.right(), model)?,
+            eval_expr(expr.modulus(), model)?,
         ),
-        Expr::MulMod { left, right, modulus } => mulmod_word(
-            eval_expr(left, model)?,
-            eval_expr(right, model)?,
-            eval_expr(modulus, model)?,
+        Expr::MulMod(expr) => mulmod_word(
+            eval_expr(expr.left(), model)?,
+            eval_expr(expr.right(), model)?,
+            eval_expr(expr.modulus(), model)?,
         ),
         Expr::Ite(cond, then_expr, else_expr) => {
             if eval_bool_expr(cond, model)? {
@@ -1030,8 +1030,8 @@ pub(crate) enum Expr {
     Hash(Arc<HashExpr>),
     Not(Arc<Self>),
     Op(ExprOp, Arc<Self>, Arc<Self>),
-    AddMod { left: Arc<Self>, right: Arc<Self>, modulus: Arc<Self> },
-    MulMod { left: Arc<Self>, right: Arc<Self>, modulus: Arc<Self> },
+    AddMod(Arc<ModularExpr>),
+    MulMod(Arc<ModularExpr>),
     Ite(Arc<BoolExpr>, Arc<Self>, Arc<Self>),
 }
 
@@ -1047,6 +1047,13 @@ pub(crate) struct HashExpr {
     name: Arc<str>,
     algorithm: &'static str,
     bytes: Arc<[Expr]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct ModularExpr {
+    left: Arc<Expr>,
+    right: Arc<Expr>,
+    modulus: Arc<Expr>,
 }
 
 impl KeccakExpr {
@@ -1083,6 +1090,34 @@ impl HashExpr {
     pub(crate) fn into_parts(self) -> (Arc<str>, &'static str, Arc<[Expr]>) {
         let Self { name, algorithm, bytes } = self;
         (name, algorithm, bytes)
+    }
+}
+
+impl ModularExpr {
+    /// Constructs a new modular arithmetic expression.
+    fn new(left: Expr, right: Expr, modulus: Expr) -> Self {
+        Self { left: Arc::new(left), right: Arc::new(right), modulus: Arc::new(modulus) }
+    }
+
+    /// Returns the left operand.
+    pub(crate) fn left(&self) -> &Expr {
+        self.left.as_ref()
+    }
+
+    /// Returns the right operand.
+    pub(crate) fn right(&self) -> &Expr {
+        self.right.as_ref()
+    }
+
+    /// Returns the modulus operand.
+    pub(crate) fn modulus(&self) -> &Expr {
+        self.modulus.as_ref()
+    }
+
+    /// Consumes this modular expression into its parts.
+    pub(crate) fn into_parts(self) -> (Expr, Expr, Expr) {
+        let Self { left, right, modulus } = self;
+        (Arc::unwrap_or_clone(left), Arc::unwrap_or_clone(right), Arc::unwrap_or_clone(modulus))
     }
 }
 
@@ -1151,10 +1186,10 @@ impl Expr {
                 left.visit(visitor);
                 right.visit(visitor);
             }
-            Self::AddMod { left, right, modulus } | Self::MulMod { left, right, modulus } => {
-                left.visit(visitor);
-                right.visit(visitor);
-                modulus.visit(visitor);
+            Self::AddMod(expr) | Self::MulMod(expr) => {
+                expr.left().visit(visitor);
+                expr.right().visit(visitor);
+                expr.modulus().visit(visitor);
             }
             Self::Ite(cond, left, right) => {
                 cond.visit_exprs(visitor);
@@ -1241,7 +1276,7 @@ impl Expr {
         {
             return Self::Const(addmod_word(*left, *right, *modulus));
         }
-        Self::AddMod { left: Arc::new(left), right: Arc::new(right), modulus: Arc::new(modulus) }
+        Self::AddMod(Arc::new(ModularExpr::new(left, right, modulus)))
     }
 
     /// Builds an exact EVM `MULMOD` expression.
@@ -1254,7 +1289,7 @@ impl Expr {
         {
             return Self::Const(mulmod_word(*left, *right, *modulus));
         }
-        Self::MulMod { left: Arc::new(left), right: Arc::new(right), modulus: Arc::new(modulus) }
+        Self::MulMod(Arc::new(ModularExpr::new(left, right, modulus)))
     }
 
     fn and_const(expr: Self, mask: U256) -> Self {
@@ -1303,8 +1338,8 @@ impl Expr {
             | Self::GasLeft(_)
             | Self::Not(_)
             | Self::Op(_, _, _)
-            | Self::AddMod { .. }
-            | Self::MulMod { .. }
+            | Self::AddMod(_)
+            | Self::MulMod(_)
             | Self::Ite(_, _, _) => {}
         });
     }
@@ -1340,11 +1375,23 @@ impl Expr {
                 right.write_smt(out);
                 out.push(')');
             }
-            Self::AddMod { left, right, modulus } => {
-                write_smt_wide_modular_arithmetic(out, "bvadd", left, right, modulus);
+            Self::AddMod(expr) => {
+                write_smt_wide_modular_arithmetic(
+                    out,
+                    "bvadd",
+                    expr.left(),
+                    expr.right(),
+                    expr.modulus(),
+                );
             }
-            Self::MulMod { left, right, modulus } => {
-                write_smt_wide_modular_arithmetic(out, "bvmul", left, right, modulus);
+            Self::MulMod(expr) => {
+                write_smt_wide_modular_arithmetic(
+                    out,
+                    "bvmul",
+                    expr.left(),
+                    expr.right(),
+                    expr.modulus(),
+                );
             }
             Self::Ite(cond, left, right) => {
                 out.push_str("(ite ");

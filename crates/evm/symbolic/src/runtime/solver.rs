@@ -702,20 +702,22 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::op(op, left, right)
             }
         }
-        Expr::AddMod { left, right, modulus } => {
-            let left = cache_key_expr(Arc::unwrap_or_clone(left));
-            let right = cache_key_expr(Arc::unwrap_or_clone(right));
-            let modulus = cache_key_expr(Arc::unwrap_or_clone(modulus));
+        Expr::AddMod(expr) => {
+            let (left, right, modulus) = Arc::unwrap_or_clone(expr).into_parts();
+            let left = cache_key_expr(left);
+            let right = cache_key_expr(right);
+            let modulus = cache_key_expr(modulus);
             if right < left {
                 Expr::addmod(right, left, modulus)
             } else {
                 Expr::addmod(left, right, modulus)
             }
         }
-        Expr::MulMod { left, right, modulus } => {
-            let left = cache_key_expr(Arc::unwrap_or_clone(left));
-            let right = cache_key_expr(Arc::unwrap_or_clone(right));
-            let modulus = cache_key_expr(Arc::unwrap_or_clone(modulus));
+        Expr::MulMod(expr) => {
+            let (left, right, modulus) = Arc::unwrap_or_clone(expr).into_parts();
+            let left = cache_key_expr(left);
+            let right = cache_key_expr(right);
+            let modulus = cache_key_expr(modulus);
             if right < left {
                 Expr::mulmod(right, left, modulus)
             } else {

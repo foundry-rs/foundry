@@ -232,7 +232,7 @@ pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
             | ExprOp::SRem
             | ExprOp::Sar => None,
         },
-        Expr::AddMod { .. } | Expr::MulMod { .. } => None,
+        Expr::AddMod(_) | Expr::MulMod(_) => None,
     }
 }
 
