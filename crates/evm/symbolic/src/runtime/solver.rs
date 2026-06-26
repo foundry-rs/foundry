@@ -640,8 +640,8 @@ fn cache_key_bool(expr: SymBoolExpr) -> SymBoolExpr {
 }
 
 fn cache_key_bool_node(expr: SymBoolExpr) -> SymBoolExpr {
-    match expr.kind() {
-        SymBoolExprKind::Not(value) => value.clone().not(),
+    match expr.into_kind() {
+        SymBoolExprKind::Not(value) => value.not(),
         SymBoolExprKind::And(values) => {
             let mut conjuncts = Vec::new();
             for value in values.iter().cloned() {
@@ -652,14 +652,14 @@ fn cache_key_bool_node(expr: SymBoolExpr) -> SymBoolExpr {
             SymBoolExpr::and(conjuncts)
         }
         SymBoolExprKind::Eq(left, right) => {
-            let left = cache_key_expr(left.clone());
-            let right = cache_key_expr(right.clone());
+            let left = cache_key_expr(left);
+            let right = cache_key_expr(right);
             if left <= right { SymBoolExpr::eq(left, right) } else { SymBoolExpr::eq(right, left) }
         }
         SymBoolExprKind::Cmp(op, left, right) => {
-            cache_key_cmp(*op, cache_key_expr(left.clone()), cache_key_expr(right.clone()))
+            cache_key_cmp(op, cache_key_expr(left), cache_key_expr(right))
         }
-        SymBoolExprKind::Const(_) => expr,
+        SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
     }
 }
 
@@ -697,27 +697,35 @@ fn cache_key_expr_node(expr: SymExpr) -> SymExpr {
     match expr.kind() {
         SymExprKind::Op(op, left, right) => {
             if expr_op_is_commutative(*op) && right < left {
-                SymExpr::op(*op, right.clone(), left.clone())
+                let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
+                SymExpr::op(op, right, left)
             } else {
                 expr
             }
         }
-        SymExprKind::AddMod { left, right, modulus } => {
+        SymExprKind::AddMod { left, right, .. } => {
             if right < left {
-                SymExpr::addmod(right.clone(), left.clone(), modulus.clone())
+                let SymExprKind::AddMod { left, right, modulus } = expr.into_kind() else {
+                    unreachable!()
+                };
+                SymExpr::addmod(right, left, modulus)
             } else {
                 expr
             }
         }
-        SymExprKind::MulMod { left, right, modulus } => {
+        SymExprKind::MulMod { left, right, .. } => {
             if right < left {
-                SymExpr::mulmod(right.clone(), left.clone(), modulus.clone())
+                let SymExprKind::MulMod { left, right, modulus } = expr.into_kind() else {
+                    unreachable!()
+                };
+                SymExpr::mulmod(right, left, modulus)
             } else {
                 expr
             }
         }
-        SymExprKind::Ite(cond, left, right) => {
-            SymExpr::ite(cache_key_bool(cond.clone()), left.clone(), right.clone())
+        SymExprKind::Ite(_, _, _) => {
+            let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
+            SymExpr::ite(cache_key_bool(cond), left, right)
         }
         _ => expr,
     }
