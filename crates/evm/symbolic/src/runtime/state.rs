@@ -1841,16 +1841,15 @@ impl SymbolicWorld {
         let expr = word;
         let representative = representative_symbolic_address(&expr);
         let mut result = self.extcode_hash_for_address(executor, representative)?;
-        let cached_codes: Vec<_> =
-            self.code_cache.iter().map(|(address, code)| (*address, code.clone())).collect();
+        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
-            let hash = if self.destroyed_accounts.contains(&address) {
+            let hash = if self.destroyed_accounts.contains(address) {
                 SymExpr::zero()
             } else {
                 keccak_word(code.read_bytes(0, code.len()))
             };
             result = SymExpr::ite(
-                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address))),
+                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
                 hash,
                 result,
             );
@@ -1874,15 +1873,15 @@ impl SymbolicWorld {
         let representative = representative_symbolic_address(&expr);
         let mut result =
             self.extcode(executor, representative)?.read_bytes_offset(offset.clone(), size);
-        let cached_codes: Vec<_> =
-            self.code_cache.iter().map(|(address, code)| (*address, code.clone())).collect();
+        let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
-            let bytes = if self.destroyed_accounts.contains(&address) {
+            let bytes = if self.destroyed_accounts.contains(address) {
                 vec![SymExpr::zero(); size]
             } else {
                 code.read_bytes_offset(offset.clone(), size)
             };
-            let condition = SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address)));
+            let condition =
+                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address)));
             for (idx, byte) in bytes.into_iter().enumerate() {
                 result[idx] = SymExpr::ite(condition.clone(), byte, result[idx].clone());
             }
