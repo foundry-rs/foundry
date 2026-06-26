@@ -454,19 +454,17 @@ pub(crate) fn push_hex_word(out: &mut Vec<SymWord>, word: SymWord) {
 
 pub(crate) fn push_hex_byte(out: &mut Vec<SymWord>, byte: SymWord) {
     let byte = low_byte(byte);
-    let high = if let Some(value) = byte.as_const() {
-        SymWord::constant(U256::from(value.to::<u8>() >> 4))
+    let (high, low) = if let Some(value) = byte.as_const() {
+        (
+            SymWord::constant(U256::from(value.to::<u8>() >> 4)),
+            SymWord::constant(U256::from(value.to::<u8>() & 0x0f)),
+        )
     } else {
-        SymWord::expr(Expr::op(
-            ExprOp::Shr,
-            byte.clone().into_expr(),
-            Expr::constant(U256::from(4)),
-        ))
-    };
-    let low = if let Some(value) = byte.as_const() {
-        SymWord::constant(U256::from(value.to::<u8>() & 0x0f))
-    } else {
-        SymWord::expr(Expr::op(ExprOp::And, byte.into_expr(), Expr::constant(U256::from(0x0f))))
+        let expr = byte.into_expr();
+        (
+            SymWord::expr(Expr::op(ExprOp::Shr, expr.clone(), Expr::constant(U256::from(4)))),
+            SymWord::expr(Expr::op(ExprOp::And, expr, Expr::constant(U256::from(0x0f)))),
+        )
     };
     out.push(hex_nibble_ascii(high));
     out.push(hex_nibble_ascii(low));

@@ -1612,16 +1612,16 @@ impl BoolExpr {
         if let Some(word) = word.as_const() {
             Self::constant(word == value)
         } else {
-            Self::eq(word.as_expr().clone(), Expr::constant(value))
+            Self::eq(word.clone_expr(), Expr::constant(value))
         }
     }
 
     pub(crate) fn eq_word_expr(word: &SymWord, expr: Expr) -> Self {
-        Self::eq(word.as_expr().clone(), expr)
+        Self::eq(word.clone_expr(), expr)
     }
 
     pub(crate) fn eq_words(left: &SymWord, right: &SymWord) -> Self {
-        Self::eq(left.as_expr().clone(), right.as_expr().clone())
+        Self::eq(left.clone_expr(), right.clone_expr())
     }
 
     pub(crate) fn and(values: Vec<Self>) -> Self {
@@ -1707,12 +1707,12 @@ impl BoolExpr {
         if let Some(word) = word.as_const() {
             Self::constant(op.eval(word, value))
         } else {
-            Self::cmp(op, word.as_expr().clone(), Expr::constant(value))
+            Self::cmp(op, word.clone_expr(), Expr::constant(value))
         }
     }
 
     pub(crate) fn cmp_word_expr(op: BoolExprOp, word: &SymWord, expr: Expr) -> Self {
-        Self::cmp(op, word.as_expr().clone(), expr)
+        Self::cmp(op, word.clone_expr(), expr)
     }
 
     pub(crate) fn not(self) -> Self {
