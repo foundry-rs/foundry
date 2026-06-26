@@ -137,6 +137,36 @@ impl PathState {
         child
     }
 
+    pub(crate) fn copy_call_output_offset(
+        &mut self,
+        dest: SymWord,
+        size: &BoundedCopySize,
+    ) -> Result<(), SymbolicError> {
+        let CallFrame { memory, return_data, .. } = &mut self.frame;
+        memory.copy_call_output_offset(dest, size, return_data)
+    }
+
+    pub(crate) fn copy_return_data_to_offset(
+        &mut self,
+        dest: SymWord,
+        offset: SymWord,
+        size: usize,
+    ) -> Result<(), SymbolicError> {
+        let CallFrame { memory, return_data, .. } = &mut self.frame;
+        memory.copy_return_data_to_offset(dest, offset, size, return_data)
+    }
+
+    pub(crate) fn copy_return_data_symbolic_size(
+        &mut self,
+        dest: SymWord,
+        offset: SymWord,
+        size: SymWord,
+        max_size: usize,
+    ) -> Result<(), SymbolicError> {
+        let CallFrame { memory, return_data, .. } = &mut self.frame;
+        memory.copy_return_data_symbolic_size(dest, offset, size, max_size, return_data)
+    }
+
     pub(crate) fn constrained_usize(&self, word: &SymWord) -> Option<usize> {
         let value = self.constrained_word(word)?;
         (value <= U256::from(usize::MAX)).then(|| value.to::<usize>())

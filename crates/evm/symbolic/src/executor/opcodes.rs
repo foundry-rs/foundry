@@ -362,13 +362,7 @@ impl SymbolicExecutor {
                         )? {
                             return Ok(StepOutcome::Revert);
                         }
-                        let return_data = state.return_data.clone();
-                        state.memory.copy_return_data_to_offset(
-                            dest,
-                            offset,
-                            size,
-                            &return_data,
-                        )?;
+                        state.copy_return_data_to_offset(dest, offset, size)?;
                     }
                     None if state.constrained_word(&size).is_some() => {
                         return Ok(StepOutcome::Revert);
@@ -392,7 +386,6 @@ impl SymbolicExecutor {
                                 )
                             })?;
                         if max_size != 0 {
-                            let return_data = state.return_data.clone();
                             if !self.assume_returndata_copy_in_bounds(
                                 state,
                                 offset.clone(),
@@ -400,13 +393,7 @@ impl SymbolicExecutor {
                             )? {
                                 return Ok(StepOutcome::Revert);
                             }
-                            state.memory.copy_return_data_symbolic_size(
-                                dest,
-                                offset,
-                                size,
-                                max_size,
-                                &return_data,
-                            )?;
+                            state.copy_return_data_symbolic_size(dest, offset, size, max_size)?;
                         }
                     }
                 }

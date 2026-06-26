@@ -873,16 +873,14 @@ impl SymbolicExecutor {
             };
 
             state.return_data = return_data;
-            let return_data = state.return_data.clone();
-            state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
+            state.copy_call_output_offset(out_offset, &out_size)?;
             state.stack.push(SymWord::constant(U256::from(1)))?;
             return Ok(StepOutcome::Continue);
         }
 
         if is_console(to) {
             state.return_data = SymReturnData::default();
-            let return_data = state.return_data.clone();
-            state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
+            state.copy_call_output_offset(out_offset, &out_size)?;
             state.stack.push(SymWord::constant(U256::from(1)))?;
             return Ok(StepOutcome::Continue);
         }
@@ -904,8 +902,7 @@ impl SymbolicExecutor {
                     let _ = state.prank_for_next_call();
                 }
                 state.return_data = mock.return_data;
-                let return_data = state.return_data.clone();
-                state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
+                state.copy_call_output_offset(out_offset, &out_size)?;
                 state.stack.push(SymWord::constant(U256::from(!mock.reverts)))?;
                 return Ok(StepOutcome::Continue);
             }
@@ -940,14 +937,12 @@ impl SymbolicExecutor {
                     if matches!(kind, CallKind::Call) {
                         state.world.transfer(executor, state.address, to, value);
                     }
-                    let return_data = state.return_data.clone();
-                    state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
+                    state.copy_call_output_offset(out_offset, &out_size)?;
                     state.stack.push(SymWord::constant(U256::from(1)))?;
                 }
                 None => {
                     state.return_data = SymReturnData::default();
-                    let return_data = state.return_data.clone();
-                    state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
+                    state.copy_call_output_offset(out_offset, &out_size)?;
                     state.stack.push(SymWord::zero())?;
                 }
             }
@@ -960,8 +955,7 @@ impl SymbolicExecutor {
                 state.world.transfer(executor, state.address, to, value);
             }
             state.return_data = SymReturnData::default();
-            let return_data = state.return_data.clone();
-            state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
+            state.copy_call_output_offset(out_offset, &out_size)?;
             state.stack.push(SymWord::constant(U256::from(1)))?;
             return Ok(StepOutcome::Continue);
         }
@@ -1107,12 +1101,7 @@ impl SymbolicExecutor {
                         parent.function_mocks = outcome.state.function_mocks.clone();
                         parent.world = original_world.clone();
                         parent.return_data = SymReturnData::default();
-                        let return_data = parent.return_data.clone();
-                        parent.memory.copy_call_output_offset(
-                            out_offset.clone(),
-                            &out_size,
-                            &return_data,
-                        )?;
+                        parent.copy_call_output_offset(out_offset.clone(), &out_size)?;
                         parent.stack.push(SymWord::constant(U256::from(1)))?;
                         parents.push_back(parent);
                         continue;
@@ -1143,8 +1132,7 @@ impl SymbolicExecutor {
                 TopLevelCallStatus::Revert => {}
             }
             parent.return_data = outcome.return_data.clone();
-            let return_data = parent.return_data.clone();
-            parent.memory.copy_call_output_offset(out_offset.clone(), &out_size, &return_data)?;
+            parent.copy_call_output_offset(out_offset.clone(), &out_size)?;
             parent.stack.push(SymWord::constant(U256::from(matches!(
                 outcome.status,
                 TopLevelCallStatus::Success
@@ -1269,14 +1257,12 @@ impl SymbolicExecutor {
                 if matches!(kind, CallKind::Call) {
                     state.world.transfer(executor, state.address, to, value);
                 }
-                let return_data = state.return_data.clone();
-                state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
+                state.copy_call_output_offset(out_offset, out_size)?;
                 state.stack.push(SymWord::constant(U256::from(1)))?;
             }
             None => {
                 state.return_data = SymReturnData::default();
-                let return_data = state.return_data.clone();
-                state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
+                state.copy_call_output_offset(out_offset, out_size)?;
                 state.stack.push(SymWord::zero())?;
             }
         }
@@ -1302,8 +1288,7 @@ impl SymbolicExecutor {
             Some(true) => Ok(true),
             Some(false) => {
                 state.return_data = SymReturnData::default();
-                let return_data = state.return_data.clone();
-                state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
+                state.copy_call_output_offset(out_offset, out_size)?;
                 state.stack.push(SymWord::zero())?;
                 Ok(false)
             }
@@ -1321,12 +1306,7 @@ impl SymbolicExecutor {
                         let mut failure = state.clone();
                         failure.constraints = failure_constraints;
                         failure.return_data = SymReturnData::default();
-                        let return_data = failure.return_data.clone();
-                        failure.memory.copy_call_output_offset(
-                            out_offset,
-                            out_size,
-                            &return_data,
-                        )?;
+                        failure.copy_call_output_offset(out_offset, out_size)?;
                         failure.stack.push(SymWord::zero())?;
                         worklist.push_back(failure);
 
@@ -1340,8 +1320,7 @@ impl SymbolicExecutor {
                     (false, true) => {
                         state.constraints = failure_constraints;
                         state.return_data = SymReturnData::default();
-                        let return_data = state.return_data.clone();
-                        state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
+                        state.copy_call_output_offset(out_offset, out_size)?;
                         state.stack.push(SymWord::zero())?;
                         Ok(false)
                     }
@@ -1464,23 +1443,13 @@ impl SymbolicExecutor {
                     let to = branch.world.symbolic_address_slot(symbolic_target);
                     branch.world.transfer(executor, branch.address, to, value.clone());
                     branch.return_data = SymReturnData::default();
-                    let return_data = branch.return_data.clone();
-                    branch.memory.copy_call_output_offset(
-                        out_offset.clone(),
-                        &out_size,
-                        &return_data,
-                    )?;
+                    branch.copy_call_output_offset(out_offset.clone(), &out_size)?;
                     branch.stack.push(SymWord::constant(U256::from(1)))?;
                     parents.push_back(branch);
                 }
             } else {
                 branch.return_data = SymReturnData::default();
-                let return_data = branch.return_data.clone();
-                branch.memory.copy_call_output_offset(
-                    out_offset.clone(),
-                    &out_size,
-                    &return_data,
-                )?;
+                branch.copy_call_output_offset(out_offset.clone(), &out_size)?;
                 branch.stack.push(SymWord::constant(U256::from(1)))?;
                 parents.push_back(branch);
             }

@@ -428,8 +428,7 @@ pub(crate) fn complete_cheatcode_call(
     return_data: SymReturnData,
 ) -> Result<(), SymbolicError> {
     state.return_data = return_data;
-    let return_data = state.return_data.clone();
-    state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
+    state.copy_call_output_offset(out_offset, out_size)?;
     state.stack.push(SymWord::constant(U256::from(1)))?;
     Ok(())
 }

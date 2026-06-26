@@ -293,12 +293,7 @@ impl SymbolicExecutor {
                 TopLevelCallStatus::Revert => {
                     parent.world = failure_world.clone();
                     parent.return_data = outcome.return_data.clone();
-                    let return_data = parent.return_data.clone();
-                    parent.memory.copy_call_output_offset(
-                        out_offset.clone(),
-                        out_size,
-                        &return_data,
-                    )?;
+                    parent.copy_call_output_offset(out_offset.clone(), out_size)?;
                     parent.stack.push(SymWord::zero())?;
                 }
                 TopLevelCallStatus::Failure => {
