@@ -1522,17 +1522,17 @@ impl BoolExpr {
         }
         match (left.as_inner(), right.as_inner()) {
             (ExprInner::Const(left), ExprInner::Const(right)) => Self::Const(left == right),
-            (left_inner, ExprInner::Const(right_value)) => {
+            (_, ExprInner::Const(right_value)) => {
                 if let Some(left_value) = expr_known_word(&left) {
                     return Self::Const(left_value == *right_value);
                 }
-                Self::Eq(Expr::from_inner(left_inner.clone()), Expr::constant(*right_value))
+                Self::Eq(left, right)
             }
-            (ExprInner::Const(left_value), right_inner) => {
+            (ExprInner::Const(left_value), _) => {
                 if let Some(right_value) = expr_known_word(&right) {
                     return Self::Const(*left_value == right_value);
                 }
-                Self::Eq(Expr::constant(*left_value), Expr::from_inner(right_inner.clone()))
+                Self::Eq(left, right)
             }
             (ExprInner::Keccak(left), ExprInner::Keccak(right))
                 if left.bytes.len() == right.bytes.len() =>
