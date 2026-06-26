@@ -74,12 +74,11 @@ pub(crate) fn execute_symbolic_precompile(
     input_len: SymExpr,
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
-    if input.iter().all(|byte| byte.as_const().is_some())
-        && let Some(input_len) = input_len.as_const()
+    if let Some(input_len) = input_len.as_const()
         && let Ok(input_len) = usize::try_from(input_len)
         && input_len <= input.len()
+        && let Ok(input) = concrete_bytes(&input[..input_len], "symbolic precompile input")
     {
-        let input = concrete_bytes(&input[..input_len], "symbolic precompile input")?;
         return execute_precompile(address, &input, spec_id);
     }
 

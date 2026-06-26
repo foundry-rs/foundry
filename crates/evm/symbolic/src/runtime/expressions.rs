@@ -72,16 +72,11 @@ pub(crate) fn keccak_word(bytes: Vec<SymExpr>) -> SymExpr {
 }
 
 pub(crate) fn keccak_word_with_len(bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr {
-    if bytes.iter().all(|byte| byte.as_const().is_some())
-        && let Some(len) = len.as_const()
+    if let Some(len) = len.as_const()
         && let Ok(len) = usize::try_from(len)
         && len <= bytes.len()
+        && let Ok(bytes) = concrete_bytes(&bytes[..len], "symbolic keccak input")
     {
-        let bytes = bytes
-            .into_iter()
-            .take(len)
-            .map(|byte| byte.as_const().expect("checked concrete byte").to::<u8>())
-            .collect::<Vec<_>>();
         return SymExpr::constant(U256::from_be_bytes(keccak256(bytes).0));
     }
 
@@ -354,10 +349,10 @@ pub(crate) fn word_bytes(word: SymExpr) -> Vec<SymExpr> {
 
 pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymExpr>) -> SymExpr {
     let bytes = bytes.into_iter().collect::<Vec<_>>();
-    if bytes.iter().all(|byte| byte.as_const().is_some()) {
+    if let Ok(concrete) = concrete_bytes(&bytes, "symbolic word bytes") {
         let mut word = [0u8; 32];
-        for (idx, byte) in bytes.into_iter().take(32).enumerate() {
-            word[idx] = byte.as_const().expect("checked concrete byte").to::<u8>();
+        for (idx, byte) in concrete.into_iter().take(32).enumerate() {
+            word[idx] = byte;
         }
         return SymExpr::constant(U256::from_be_bytes(word));
     }
