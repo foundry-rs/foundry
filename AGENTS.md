@@ -159,6 +159,13 @@ heredoc with real newlines; never pass escaped `\n` sequences.
 - Keep release feature lists aligned between the root `Makefile` and release
   workflows when changing published CLI feature surfaces.
 
+## Code Style
+
+- Comments end with periods (except URLs)
+- Files end with LF and trailing newline
+- Follow existing patterns
+- Never expose secrets
+
 ### Rust
 
 - Put doc comments before attributes, always: `/// ...` comes before `#[derive]`, `#[inline]`, `#[cfg]`, and every other attribute.
