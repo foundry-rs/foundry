@@ -16,7 +16,10 @@ use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
-    fuzz::{CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
+    fuzz::{
+        CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
+        strategies::EvmFuzzState,
+    },
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats, SymbolicStopReason};
@@ -25,6 +28,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
+    sync::OnceLock,
     time::Duration,
 };
 use yansi::Paint;
@@ -1999,6 +2003,7 @@ impl TestResult {
             reason,
             skipped,
             deployment_failure: _,
+            ..
         } = setup;
         Self {
             status: if skipped { TestStatus::Skipped } else { TestStatus::Failure },
@@ -2705,6 +2710,8 @@ pub struct TestSetup {
     pub coverage: Option<HitMaps>,
     /// Addresses of external libraries deployed during setup.
     pub deployed_libs: Vec<Address>,
+    /// Cached setup-derived fuzz dictionary for stateless fuzz tests.
+    pub(crate) fuzz_state: OnceLock<EvmFuzzState>,
 
     /// The reason the setup failed, if it did.
     pub reason: Option<String>,

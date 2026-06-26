@@ -24,7 +24,9 @@ use alloy_primitives::{Address, Bytes, Selector, U256, address, hex, keccak256, 
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig, InlineConfig, InvariantConfig};
+use foundry_config::{
+    Config, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
+};
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS},
     core::evm::FoundryEvmNetwork,
@@ -2552,7 +2554,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
-            self.build_fuzz_state(true),
+            self.build_fuzz_state(true, None),
             progress.as_ref(),
             &self.tcfg.early_exit,
             persisted_handler_failures,
@@ -3004,7 +3006,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if fuzz_config.run.is_some() { 1 } else { fuzz_config.runs },
         );
 
-        let state = self.build_fuzz_state(false);
+        let state = self.build_fuzz_state(false, Some(func));
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
@@ -3193,9 +3195,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.executor.clone().into_owned()
     }
 
-    fn build_fuzz_state(&self, invariant: bool) -> EvmFuzzState {
+    fn build_fuzz_state(&self, invariant: bool, func: Option<&Function>) -> EvmFuzzState {
         let config =
             if invariant { self.config.invariant.dictionary } else { self.config.fuzz.dictionary };
+        let has_function_inline_config =
+            func.is_some_and(|func| self.inline_config.contains_function(self.cr.name, &func.name));
+        let can_reuse_setup_state = !invariant
+            && config == self.cr.config.fuzz.dictionary
+            && !has_function_inline_config
+            && !self.cr.contract.abi.functions().any(|func| func.name.is_before_test_setup());
+        if can_reuse_setup_state {
+            return self
+                .setup
+                .fuzz_state
+                .get_or_init(|| self.build_fuzz_state_uncached(false, config))
+                .fork();
+        }
+
+        self.build_fuzz_state_uncached(invariant, config)
+    }
+
+    fn build_fuzz_state_uncached(
+        &self,
+        invariant: bool,
+        config: FuzzDictionaryConfig,
+    ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
         if let Some(db) = self.executor.backend().active_fork_db() {
