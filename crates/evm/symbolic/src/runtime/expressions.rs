@@ -926,6 +926,14 @@ impl SymWord {
         }
     }
 
+    /// Converts a shared expression into a symbolic word, preserving the concrete fast path.
+    pub(crate) fn from_arc_expr(expr: Arc<Expr>) -> Self {
+        match expr.as_ref() {
+            Expr::Const(value) => Self::Concrete(*value),
+            _ => Self::Expr(expr),
+        }
+    }
+
     /// Builds a symbolic word from an expression.
     pub(crate) fn expr(expr: Expr) -> Self {
         Self::from_expr(expr)
@@ -949,6 +957,22 @@ impl SymWord {
         match self {
             Self::Concrete(value) => Expr::Const(value),
             Self::Expr(expr) => Arc::unwrap_or_clone(expr),
+        }
+    }
+
+    /// Converts this symbolic word into a shared expression.
+    pub(crate) fn into_arc_expr(self) -> Arc<Expr> {
+        match self {
+            Self::Concrete(value) => Arc::new(Expr::Const(value)),
+            Self::Expr(expr) => expr,
+        }
+    }
+
+    /// Clones this symbolic word as a shared expression.
+    pub(crate) fn clone_arc_expr(&self) -> Arc<Expr> {
+        match self {
+            Self::Concrete(value) => Arc::new(Expr::Const(*value)),
+            Self::Expr(expr) => Arc::clone(expr),
         }
     }
 
@@ -1147,6 +1171,21 @@ impl Expr {
                     then_expr
                 } else {
                     Self::Ite(Arc::new(cond), Arc::new(then_expr), Arc::new(else_expr))
+                }
+            }
+        }
+    }
+
+    /// Builds a shared conditional expression.
+    pub(crate) fn ite_arc(cond: BoolExpr, then_expr: Arc<Self>, else_expr: Arc<Self>) -> Arc<Self> {
+        match cond {
+            BoolExpr::Const(true) => then_expr,
+            BoolExpr::Const(false) => else_expr,
+            cond => {
+                if then_expr == else_expr {
+                    then_expr
+                } else {
+                    Arc::new(Self::Ite(Arc::new(cond), then_expr, else_expr))
                 }
             }
         }

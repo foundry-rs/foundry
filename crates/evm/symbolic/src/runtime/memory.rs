@@ -228,15 +228,20 @@ impl SymMemory {
         size: SymWord,
         max_size: usize,
     ) -> Vec<SymWord> {
-        let size = size.into_expr();
+        let size = size.into_arc_expr();
+        let zero = Arc::new(Expr::Const(U256::ZERO));
         self.read_bytes_offset(offset, max_size)
             .into_iter()
             .enumerate()
             .map(|(idx, source)| {
-                SymWord::from_expr(Expr::ite(
-                    BoolExpr::cmp(BoolExprOp::Ult, Expr::Const(U256::from(idx)), size.clone()),
-                    source.into_expr(),
-                    Expr::Const(U256::ZERO),
+                SymWord::from_arc_expr(Expr::ite_arc(
+                    BoolExpr::cmp_arc(
+                        BoolExprOp::Ult,
+                        Arc::new(Expr::Const(U256::from(idx))),
+                        Arc::clone(&size),
+                    ),
+                    source.into_arc_expr(),
+                    Arc::clone(&zero),
                 ))
             })
             .collect()
@@ -245,12 +250,12 @@ impl SymMemory {
     /// Implements the `byte` symbolic memory helper.
     pub(crate) fn byte(&self, offset: usize) -> SymWord {
         let (base, base_epoch) = self.base_byte(offset);
-        let mut result = base.clone().into_expr();
+        let mut result = base.clone_arc_expr();
         let mut has_symbolic_match = false;
         for write in self.symbolic_writes.iter().filter(|write| write.epoch > base_epoch) {
             for (idx, byte) in write.bytes.iter().enumerate() {
                 has_symbolic_match = true;
-                result = Expr::ite(
+                result = Expr::ite_arc(
                     BoolExpr::eq(
                         Expr::op(
                             ExprOp::Add,
@@ -259,12 +264,12 @@ impl SymMemory {
                         ),
                         Expr::Const(U256::from(offset)),
                     ),
-                    byte.clone().into_expr(),
+                    byte.clone_arc_expr(),
                     result,
                 );
             }
         }
-        if has_symbolic_match { SymWord::from_expr(result) } else { base }
+        if has_symbolic_match { SymWord::from_arc_expr(result) } else { base }
     }
 
     /// Implements the `base_byte` symbolic memory helper.
@@ -277,13 +282,13 @@ impl SymMemory {
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
     pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
-        let mut result = Expr::Const(U256::ZERO);
+        let mut result = Arc::new(Expr::Const(U256::ZERO));
         for candidate in (delta..self.size).rev() {
             let (byte, base_epoch) = self.base_byte(candidate);
-            let mut candidate_result = byte.into_expr();
+            let mut candidate_result = byte.into_arc_expr();
             for write in self.symbolic_writes.iter().filter(|write| write.epoch > base_epoch) {
                 for (idx, byte) in write.bytes.iter().enumerate() {
-                    candidate_result = Expr::ite(
+                    candidate_result = Expr::ite_arc(
                         BoolExpr::eq(
                             Expr::op(
                                 ExprOp::Add,
@@ -292,18 +297,18 @@ impl SymMemory {
                             ),
                             Expr::Const(U256::from(candidate)),
                         ),
-                        byte.clone().into_expr(),
+                        byte.clone_arc_expr(),
                         candidate_result,
                     );
                 }
             }
-            result = Expr::ite(
+            result = Expr::ite_arc(
                 BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
                 candidate_result,
                 result,
             );
         }
-        SymWord::from_expr(result)
+        SymWord::from_arc_expr(result)
     }
 
     /// Implements the `size_word` symbolic memory helper.
@@ -583,10 +588,10 @@ impl SymMemory {
         match guard {
             BoolExpr::Const(true) => return_data.byte(idx),
             BoolExpr::Const(false) => self.call_output_existing_byte(dest, idx),
-            guard => SymWord::from_expr(Expr::ite(
+            guard => SymWord::from_arc_expr(Expr::ite_arc(
                 guard,
-                return_data.byte(idx).into_expr(),
-                self.call_output_existing_byte(dest, idx).into_expr(),
+                return_data.byte(idx).into_arc_expr(),
+                self.call_output_existing_byte(dest, idx).into_arc_expr(),
             )),
         }
     }
@@ -826,15 +831,15 @@ impl SymCode {
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
     pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
-        let mut result = Expr::Const(U256::ZERO);
+        let mut result = Arc::new(Expr::Const(U256::ZERO));
         for candidate in (delta..self.len()).rev() {
-            result = Expr::ite(
+            result = Expr::ite_arc(
                 BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
-                self.bytes[candidate].clone().into_expr(),
+                self.bytes[candidate].clone_arc_expr(),
                 result,
             );
         }
-        SymWord::from_expr(result)
+        SymWord::from_arc_expr(result)
     }
 
     /// Returns the `concrete_bytes` symbolic memory helper result.
@@ -924,15 +929,15 @@ impl SymReturnData {
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
     pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
-        let mut result = Expr::Const(U256::ZERO);
+        let mut result = Arc::new(Expr::Const(U256::ZERO));
         for candidate in (delta..self.len()).rev() {
-            result = Expr::ite(
+            result = Expr::ite_arc(
                 BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
-                self.bytes[candidate].clone().into_expr(),
+                self.bytes[candidate].clone_arc_expr(),
                 result,
             );
         }
-        SymWord::from_expr(result)
+        SymWord::from_arc_expr(result)
     }
 
     /// Returns the `load_word` symbolic memory helper result.
