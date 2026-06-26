@@ -3823,7 +3823,8 @@ fn solver_smt_dump_shares_repeated_subterms() {
     assert!(solver.is_sat(&constraints).unwrap());
     let diagnostics = solver.take_diagnostics().unwrap();
 
-    assert!(diagnostics.contains("(assert (let ((__sym_expr_"));
+    assert!(diagnostics.contains("(define-fun __sym_expr_"));
+    assert!(diagnostics.contains("(assert (= __sym_expr_"));
     assert_eq!(diagnostics.matches("(bvlshr calldata_0 (_ bv248 256))").count(), 1);
 }
 

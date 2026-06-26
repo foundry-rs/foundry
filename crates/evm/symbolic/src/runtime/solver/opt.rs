@@ -223,27 +223,26 @@ pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]
     }
 
     let writer = SmtCseWriter { plan: &plan };
-    // assert:
-    //   let binding_0 = term_0
-    //   ...
-    //   let binding_n = term_n
-    //   and(constraints)
-    out.push_str("(assert ");
+    // define binding_0 = term_0
+    // ...
+    // define binding_n = term_n
+    // assert constraint_0
+    // ...
+    // assert constraint_n
     for (idx, binding) in plan.bindings.iter().enumerate() {
-        out.push_str("(let ((");
-        binding.write_name(out, idx);
-        out.push(' ');
+        out.push_str("(define-fun ");
+        binding.write_definition_header(out, idx);
         match binding {
             SmtBinding::Expr(expr) => writer.write_expr(out, expr, Some(idx), None),
             SmtBinding::Bool(expr) => writer.write_bool(out, expr, None, Some(idx)),
         }
-        out.push_str(")) ");
+        out.push_str(")\n");
     }
-    writer.write_bool_conjunction(out, constraints);
-    for _ in &plan.bindings {
-        out.push(')');
+    for constraint in constraints {
+        out.push_str("(assert ");
+        writer.write_bool(out, constraint, None, None);
+        out.push_str(")\n");
     }
-    out.push_str(")\n");
 }
 
 #[derive(Default)]
@@ -413,10 +412,16 @@ enum SmtBinding {
 }
 
 impl SmtBinding {
-    fn write_name(&self, out: &mut String, idx: usize) {
+    fn write_definition_header(&self, out: &mut String, idx: usize) {
         match self {
-            Self::Expr(_) => Self::write_expr_name(out, idx),
-            Self::Bool(_) => Self::write_bool_name(out, idx),
+            Self::Expr(_) => {
+                Self::write_expr_name(out, idx);
+                out.push_str(" () (_ BitVec 256) ");
+            }
+            Self::Bool(_) => {
+                Self::write_bool_name(out, idx);
+                out.push_str(" () Bool ");
+            }
         }
     }
 
@@ -557,20 +562,6 @@ impl SmtCseWriter<'_> {
                 out.push(')');
             }
         }
-    }
-
-    fn write_bool_conjunction(&self, out: &mut String, constraints: &[SymBoolExpr]) {
-        if constraints.len() == 1 {
-            self.write_bool(out, &constraints[0], None, None);
-            return;
-        }
-
-        out.push_str("(and");
-        for constraint in constraints {
-            out.push(' ');
-            self.write_bool(out, constraint, None, None);
-        }
-        out.push(')');
     }
 }
 
