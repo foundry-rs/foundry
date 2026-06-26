@@ -55,3 +55,6 @@ yansi.workspace = true
 [features]
 default = ["optimism"]
 optimism = ["foundry-common/optimism", "foundry-evm-core/optimism"]
+
+[dev-dependencies]
+snapbox.workspace = true

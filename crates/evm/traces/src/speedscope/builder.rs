@@ -120,6 +120,83 @@ mod tests {
     }
 
     #[test]
+    fn test_entries_to_speedscope_json() {
+        let entries = vec![
+            TraceEntry { names: vec!["top".into()], gas: 200 },
+            TraceEntry { names: vec!["top".into(), "child_a".into()], gas: 100 },
+            TraceEntry { names: vec!["top".into(), "child_b".into()], gas: 150 },
+        ];
+
+        let file = entries_to_speedscope(&entries, "test", "Test");
+        let json = serde_json::to_string_pretty(&file).unwrap();
+
+        snapbox::assert_data_eq!(
+            json,
+            snapbox::str![[r#"
+{
+  "$schema": "https://www.speedscope.app/file-format-schema.json",
+  "shared": {
+    "frames": [
+      {
+        "name": "top"
+      },
+      {
+        "name": "child_a"
+      },
+      {
+        "name": "child_b"
+      }
+    ]
+  },
+  "profiles": [
+    {
+      "type": "evented",
+      "name": "Test::test",
+      "unit": "none",
+      "startValue": 0,
+      "endValue": 450,
+      "events": [
+        {
+          "type": "O",
+          "frame": 0,
+          "at": 0
+        },
+        {
+          "type": "O",
+          "frame": 1,
+          "at": 200
+        },
+        {
+          "type": "C",
+          "frame": 1,
+          "at": 300
+        },
+        {
+          "type": "O",
+          "frame": 2,
+          "at": 300
+        },
+        {
+          "type": "C",
+          "frame": 2,
+          "at": 450
+        },
+        {
+          "type": "C",
+          "frame": 0,
+          "at": 450
+        }
+      ]
+    }
+  ],
+  "name": "Test::test",
+  "exporter": "foundry"
+}
+"#]],
+        );
+    }
+
+    #[test]
     fn test_monotonic_events() {
         // Test that events are in strictly non-decreasing order.
         let entries = vec![
