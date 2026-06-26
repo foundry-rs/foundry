@@ -271,7 +271,8 @@ fn invariant_focus_worker_count(worker_count: usize) -> usize {
     if worker_count <= 1 {
         0
     } else {
-        (worker_count / INVARIANT_FOCUS_WORKER_DIVISOR).max(1).min(worker_count - 1)
+        let max_focus_workers = if worker_count > 2 { worker_count - 2 } else { worker_count - 1 };
+        (worker_count / INVARIANT_FOCUS_WORKER_DIVISOR).max(1).min(max_focus_workers)
     }
 }
 
@@ -282,8 +283,10 @@ fn invariant_focus_worker_index(worker_id: u32, worker_count: usize) -> Option<u
         return None;
     }
 
-    let first_focus_worker = worker_count - focus_workers;
-    (worker_id >= first_focus_worker).then(|| worker_id - first_focus_worker)
+    let focus_worker_end = if worker_count > 2 { worker_count - 1 } else { worker_count };
+    let first_focus_worker = focus_worker_end - focus_workers;
+    (worker_id >= first_focus_worker && worker_id < focus_worker_end)
+        .then(|| worker_id - first_focus_worker)
 }
 
 #[cfg(test)]
@@ -292,7 +295,7 @@ fn campaign_seed_for_worker(
     plan: InvariantWorkerPlan,
     worker_count: usize,
 ) -> InvariantCampaignSeed {
-    focused_campaign_seed_for_worker(campaign_seed, plan, worker_count)
+    focused_campaign_seed_for_worker(campaign_seed, plan, worker_count, None)
         .unwrap_or_else(|| campaign_seed.clone())
 }
 
@@ -300,10 +303,11 @@ fn focused_campaign_seed_for_worker(
     campaign_seed: &InvariantCampaignSeed,
     plan: InvariantWorkerPlan,
     worker_count: usize,
+    focus_seed: Option<U256>,
 ) -> Option<InvariantCampaignSeed> {
     let focus_index = invariant_focus_worker_index(plan.worker_id, worker_count)?;
     let targeted_contracts =
-        focused_targeted_contracts(&campaign_seed.targeted_contracts, focus_index)?;
+        focused_targeted_contracts(&campaign_seed.targeted_contracts, focus_index, focus_seed)?;
 
     Some(InvariantCampaignSeed {
         targeted_contracts,
@@ -318,11 +322,12 @@ fn campaign_seed_and_corpus_seed_for_worker(
     plan: InvariantWorkerPlan,
     worker_count: usize,
     include_cmp_seq: bool,
+    focus_seed: Option<U256>,
 ) -> (InvariantCampaignSeed, WorkerCorpusSeed) {
     let worker_corpus_seed =
         corpus_seed.clone_for_worker(plan.worker_id as usize, worker_count, include_cmp_seq);
     let Some(worker_campaign_seed) =
-        focused_campaign_seed_for_worker(campaign_seed, plan, worker_count)
+        focused_campaign_seed_for_worker(campaign_seed, plan, worker_count, focus_seed)
     else {
         return (campaign_seed.clone(), worker_corpus_seed);
     };
@@ -335,6 +340,7 @@ fn campaign_seed_and_corpus_seed_for_worker(
 fn focused_targeted_contracts(
     targeted_contracts: &TargetedContracts,
     focus_index: usize,
+    focus_seed: Option<U256>,
 ) -> Option<TargetedContracts> {
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
@@ -350,7 +356,11 @@ fn focused_targeted_contracts(
         return None;
     }
 
-    let (address, function) = candidates[focus_index % candidates.len()].clone();
+    let seed_offset = focus_seed
+        .map(|seed| (seed % U256::from(candidates.len())).to::<usize>())
+        .unwrap_or_default();
+    let candidate_index = (focus_index % candidates.len() + seed_offset) % candidates.len();
+    let (address, function) = candidates[candidate_index].clone();
     let mut contract = targeted_contracts.get(&address)?.clone();
     contract.targeted_functions = vec![function];
 
@@ -883,6 +893,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let setup_contracts = self.setup_contracts;
         let project_contracts = self.project_contracts;
         let base_executor = self.executor.clone();
+        let focus_seed = self.fuzz_seed;
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
@@ -918,6 +929,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             worker_plan,
                             actual_worker_count,
                             collect_cmp_log,
+                            focus_seed,
                         );
                     let output = Self::run_invariant_worker(
                         base_executor.clone(),
@@ -958,6 +970,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     worker_plan,
                     actual_worker_count,
                     collect_cmp_log,
+                    focus_seed,
                 );
             vec![Self::run_invariant_worker(
                 base_executor,
@@ -2528,7 +2541,7 @@ mod tests {
     }
 
     #[test]
-    fn invariant_focus_workers_are_tail_workers_only() {
+    fn invariant_focus_workers_stay_before_exploratory_tail_worker() {
         assert_eq!(invariant_focus_worker_count(1), 0);
         assert_eq!(invariant_focus_worker_count(2), 1);
         assert_eq!(invariant_focus_worker_count(4), 1);
@@ -2536,11 +2549,13 @@ mod tests {
         assert_eq!(invariant_focus_worker_count(16), 2);
 
         assert_eq!(invariant_focus_worker_index(0, 1), None);
+        assert_eq!(invariant_focus_worker_index(1, 2), Some(0));
         assert_eq!(invariant_focus_worker_index(0, 4), None);
-        assert_eq!(invariant_focus_worker_index(2, 4), None);
-        assert_eq!(invariant_focus_worker_index(3, 4), Some(0));
-        assert_eq!(invariant_focus_worker_index(14, 16), Some(0));
-        assert_eq!(invariant_focus_worker_index(15, 16), Some(1));
+        assert_eq!(invariant_focus_worker_index(2, 4), Some(0));
+        assert_eq!(invariant_focus_worker_index(3, 4), None);
+        assert_eq!(invariant_focus_worker_index(13, 16), Some(0));
+        assert_eq!(invariant_focus_worker_index(14, 16), Some(1));
+        assert_eq!(invariant_focus_worker_index(15, 16), None);
         assert_eq!(invariant_focus_worker_index(16, 16), None);
     }
 
@@ -2556,12 +2571,33 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.insert(target, contract);
 
-        let focused = focused_targeted_contracts(&targets, 1).unwrap();
+        let focused = focused_targeted_contracts(&targets, 1, None).unwrap();
         let focused_functions = focused[&target].abi_fuzzed_functions().collect::<Vec<_>>();
 
         assert_eq!(focused.len(), 1);
         assert_eq!(focused_functions.len(), 1);
         assert_eq!(focused_functions[0].selector(), second_selector);
+    }
+
+    #[test]
+    fn invariant_focus_seed_rotates_effective_selector() {
+        let target = Address::from([0x55; 20]);
+        let first = function("first(uint256)");
+        let second = function("second(uint256)");
+        let third = function("third(uint256)");
+        let third_selector = third.selector();
+        let mut contract =
+            targeted_contract("Target", vec![first.clone(), second.clone(), third.clone()]);
+        contract.targeted_functions = vec![first, second, third];
+
+        let mut targets = TargetedContracts::new();
+        targets.insert(target, contract);
+
+        let focused = focused_targeted_contracts(&targets, 0, Some(U256::from(2))).unwrap();
+        let focused_functions = focused[&target].abi_fuzzed_functions().collect::<Vec<_>>();
+
+        assert_eq!(focused_functions.len(), 1);
+        assert_eq!(focused_functions[0].selector(), third_selector);
     }
 
     #[test]
@@ -2608,7 +2644,7 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.insert(target, contract);
 
-        assert!(focused_targeted_contracts(&targets, 0).is_none());
+        assert!(focused_targeted_contracts(&targets, 0, None).is_none());
     }
 
     #[test]
@@ -2624,7 +2660,7 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.insert(target, contract);
 
-        let focused = focused_targeted_contracts(&targets, 3).unwrap();
+        let focused = focused_targeted_contracts(&targets, 3, None).unwrap();
         let focused_functions = focused[&target].abi_fuzzed_functions().collect::<Vec<_>>();
 
         assert_eq!(focused_functions.len(), 1);
