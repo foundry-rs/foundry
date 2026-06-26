@@ -1704,7 +1704,7 @@ fn symbolic_world_snapshot_restores_overlay_state() {
 
     assert!(world.restore_snapshot(snapshot));
     assert_eq!(world.storage.len(), 1);
-    assert_eq!(world.storage[0].value, SymExpr::constant(U256::from(2)));
+    assert_eq!(world.storage[0].value(), &SymExpr::constant(U256::from(2)));
 }
 
 #[test]

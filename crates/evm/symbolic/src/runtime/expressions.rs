@@ -233,8 +233,8 @@ pub(crate) fn read_storage_writes(
     base: SymExpr,
 ) -> SymExpr {
     let mut value = base;
-    for write in writes.iter().filter(|write| write.address == address) {
-        value = storage_select(key.clone(), write.key.clone(), write.value.clone(), value);
+    for write in writes.iter().filter(|write| write.address() == address) {
+        value = write.select(key.clone(), value);
     }
     value
 }

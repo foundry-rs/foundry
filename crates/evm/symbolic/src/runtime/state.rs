@@ -1231,14 +1231,27 @@ pub(crate) struct SymbolicPrank {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StorageWrite {
-    pub(crate) address: Address,
-    pub(crate) key: SymExpr,
-    pub(crate) value: SymExpr,
+    address: Address,
+    key: SymExpr,
+    value: SymExpr,
 }
 
 impl StorageWrite {
     pub(crate) const fn new(address: Address, key: SymExpr, value: SymExpr) -> Self {
         Self { address, key, value }
+    }
+
+    pub(crate) const fn address(&self) -> Address {
+        self.address
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn value(&self) -> &SymExpr {
+        &self.value
+    }
+
+    pub(crate) fn select(&self, read_key: SymExpr, base: SymExpr) -> SymExpr {
+        storage_select(read_key, self.key.clone(), self.value.clone(), base)
     }
 }
 
@@ -1589,8 +1602,8 @@ impl SymbolicWorld {
             let nonce = self.nonce(executor, address)?;
             self.nonces.insert(address, nonce);
         }
-        self.storage.retain(|write| write.address != address);
-        self.transient_storage.retain(|write| write.address != address);
+        self.storage.retain(|write| write.address() != address);
+        self.transient_storage.retain(|write| write.address() != address);
         self.existing_accounts.remove(&address);
         self.destroyed_accounts.insert(address);
         Ok(())
