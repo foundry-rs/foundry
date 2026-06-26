@@ -319,7 +319,7 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
             })
             .collect(),
     };
-    SymReturnData::from_byte_exprs(encode_sequence(std::iter::once(&value)))
+    SymReturnData::from_bytes(encode_sequence(std::iter::once(&value)))
 }
 
 pub(crate) fn recorded_logs_json_return_data(
@@ -372,7 +372,7 @@ pub(crate) fn accesses_return_data(
     let reads = record.map(|record| record.read_slots(target)).unwrap_or_default();
     let writes = record.map(|record| record.write_slots(target)).unwrap_or_default();
     let values = [storage_slots_abi_array(reads), storage_slots_abi_array(writes)];
-    SymReturnData::from_byte_exprs(encode_sequence(values.iter()))
+    SymReturnData::from_bytes(encode_sequence(values.iter()))
 }
 
 pub(crate) fn complete_cheatcode_call(

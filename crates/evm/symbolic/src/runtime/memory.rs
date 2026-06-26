@@ -157,8 +157,20 @@ impl SymMemory {
             let Ok(offset) = usize::try_from(offset) else { return Ok(SymExpr::zero()) };
             self.load_word(offset)
         } else {
-            Ok(self.read_bytes_offset(offset, 32).word_at(0))
+            self.load_word_dynamic(&offset)
         }
+    }
+
+    fn load_word_dynamic(&self, offset: &SymExpr) -> Result<SymExpr, SymbolicError> {
+        let mut result = SymExpr::zero();
+        for candidate in (0..self.size).rev() {
+            result = SymExpr::ite(
+                SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate))),
+                self.load_word(candidate)?,
+                result,
+            );
+        }
+        Ok(result)
     }
 
     pub(crate) fn read_concrete(

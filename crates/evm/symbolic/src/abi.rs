@@ -38,13 +38,11 @@ impl SymbolicCalldata {
                 function.name
             )));
         }
-        let bytes = function
-            .selector()
-            .iter()
-            .copied()
-            .map(|byte| SymExpr::constant(U256::from(byte)))
-            .collect::<Vec<_>>();
-        Ok(Self { bytes: SymBytes::exprs(bytes), inputs: Vec::new(), constraints: Vec::new() })
+        Ok(Self {
+            bytes: SymBytes::concrete(function.selector().to_vec()),
+            inputs: Vec::new(),
+            constraints: Vec::new(),
+        })
     }
 
     pub(super) fn variants_with_prefix(
@@ -81,20 +79,17 @@ impl SymbolicCalldata {
         variants
             .into_iter()
             .map(|(builder, inputs)| {
-                let mut bytes = function
-                    .selector()
-                    .iter()
-                    .copied()
-                    .map(|byte| SymExpr::constant(U256::from(byte)))
-                    .collect::<Vec<_>>();
-                bytes.extend(encode_sequence(inputs.iter().map(|input| &input.value)));
+                let bytes = SymBytes::concat([
+                    SymBytes::concrete(function.selector().to_vec()),
+                    encode_sequence(inputs.iter().map(|input| &input.value)),
+                ]);
                 if bytes.len() > config.max_calldata_bytes as usize {
                     return Err(SymbolicError::Unsupported(
                         "symbolic calldata size exceeds configured max",
                     ));
                 }
 
-                Ok(Self { bytes: SymBytes::exprs(bytes), inputs, constraints: builder.constraints })
+                Ok(Self { bytes, inputs, constraints: builder.constraints })
             })
             .collect()
     }
@@ -650,17 +645,16 @@ impl SymbolicAbiValue {
         }
     }
 
-    pub(super) fn encode_static(&self) -> Vec<SymExpr> {
+    pub(super) fn encode_static(&self) -> SymBytes {
         match self {
             Self::Bool { word }
             | Self::Uint { word, .. }
             | Self::Int { word, .. }
-            | Self::Address { word } => word.clone().into_byte_exprs(),
-            Self::FixedBytes { bytes, .. } => {
-                let mut out = bytes.materialize();
-                out.resize(32, SymExpr::zero());
-                out
-            }
+            | Self::Address { word } => word.clone().into_bytes(),
+            Self::FixedBytes { bytes, .. } => SymBytes::concat([
+                bytes.clone(),
+                SymBytes::concrete(vec![0; 32usize.saturating_sub(bytes.len())]),
+            ]),
             Self::FixedArray { elements } | Self::Tuple { elements } => {
                 encode_sequence(elements.iter())
             }
@@ -670,17 +664,16 @@ impl SymbolicAbiValue {
         }
     }
 
-    pub(super) fn encode_dynamic_body(&self) -> Vec<SymExpr> {
+    pub(super) fn encode_dynamic_body(&self) -> SymBytes {
         match self {
             Self::Bytes { len, bytes } => encode_packed_bytes_with_len(len.clone(), bytes),
             Self::String { bytes } => {
                 encode_packed_bytes_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
             }
-            Self::Array { elements } => {
-                let mut out = SymExpr::constant(U256::from(elements.len())).into_byte_exprs();
-                out.extend(encode_sequence(elements.iter()));
-                out
-            }
+            Self::Array { elements } => SymBytes::concat([
+                SymExpr::constant(U256::from(elements.len())).into_bytes(),
+                encode_sequence(elements.iter()),
+            ]),
             Self::FixedArray { elements } | Self::Tuple { elements } => {
                 encode_sequence(elements.iter())
             }
@@ -755,36 +748,37 @@ impl SymbolicAbiValue {
 
 pub(super) fn encode_sequence<'a>(
     values: impl IntoIterator<Item = &'a SymbolicAbiValue>,
-) -> Vec<SymExpr> {
+) -> SymBytes {
     let values = values.into_iter().collect::<Vec<_>>();
     let head_size = values.iter().map(|value| value.head_size()).sum::<usize>();
-    let mut head = Vec::with_capacity(head_size);
+    let mut head = Vec::with_capacity(values.len());
     let mut tail = Vec::new();
+    let mut tail_len = 0usize;
 
     for value in values {
         if value.is_dynamic() {
-            head.extend(SymExpr::constant(U256::from(head_size + tail.len())).into_byte_exprs());
-            tail.extend(value.encode_dynamic_body());
+            head.push(SymExpr::constant(U256::from(head_size + tail_len)).into_bytes());
+            let body = value.encode_dynamic_body();
+            tail_len += body.len();
+            tail.push(body);
         } else {
-            head.extend(value.encode_static());
+            head.push(value.encode_static());
         }
     }
 
-    head.extend(tail);
-    head
+    SymBytes::concat(head.into_iter().chain(tail))
 }
 
 #[cfg(test)]
 pub(super) fn encode_packed_byte_exprs_with_len(len: SymExpr, bytes: &[SymExpr]) -> Vec<SymExpr> {
-    let mut out = len.into_byte_exprs();
-    out.extend(bytes.iter().cloned());
-    out.resize(32 + bytes.len().next_multiple_of(32), SymExpr::zero());
-    out
+    encode_packed_bytes_with_len(len, &SymBytes::exprs(bytes.to_vec())).materialize()
 }
 
-fn encode_packed_bytes_with_len(len: SymExpr, bytes: &SymBytes) -> Vec<SymExpr> {
-    let mut out = len.into_byte_exprs();
-    out.extend(bytes.materialize());
-    out.resize(32 + bytes.len().next_multiple_of(32), SymExpr::zero());
-    out
+fn encode_packed_bytes_with_len(len: SymExpr, bytes: &SymBytes) -> SymBytes {
+    let padded_len = bytes.len().next_multiple_of(32);
+    SymBytes::concat([
+        len.into_bytes(),
+        bytes.clone(),
+        SymBytes::concrete(vec![0; padded_len - bytes.len()]),
+    ])
 }

@@ -400,6 +400,64 @@ fn dynamic_calldata_encodes_bounded_bytes() {
 }
 
 #[test]
+fn calldata_word_loads_preserve_structural_words() {
+    let function = Function::parse("check(uint256,bool,address)").unwrap();
+    let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
+
+    assert_eq!(calldata.load(4).unwrap(), SymExpr::var("calldata_0"));
+    assert_eq!(calldata.load(36).unwrap(), SymExpr::var("calldata_1"));
+    assert_eq!(calldata.load(68).unwrap(), SymExpr::var("calldata_2"));
+}
+
+#[test]
+fn calldata_copy_to_memory_preserves_structural_words() {
+    let function = Function::parse("check(uint256,uint256)").unwrap();
+    let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
+    let mut memory = SymMemory::default();
+
+    memory
+        .copy_calldata_to_offset(
+            SymExpr::constant(U256::from(0x80)),
+            SymExpr::constant(U256::from(4)),
+            64,
+            &calldata.call_data(),
+        )
+        .unwrap();
+
+    assert_eq!(memory.load_word(0x80).unwrap(), SymExpr::var("calldata_0"));
+    assert_eq!(memory.load_word(0xa0).unwrap(), SymExpr::var("calldata_1"));
+}
+
+#[test]
+fn byte_concat_word_load_assembles_word_fragments() {
+    let selector = [0xde, 0xad, 0xbe, 0xef];
+    let word = SymExpr::var("calldata_0");
+    let bytes =
+        SymBytes::concat([SymBytes::concrete(selector.to_vec()), word.clone().into_bytes()]);
+
+    assert_eq!(bytes.word_at(4), word);
+
+    let mut word_value = [0u8; 32];
+    for (idx, byte) in word_value.iter_mut().enumerate() {
+        *byte = idx as u8 + 1;
+    }
+    let mut expected = [0u8; 32];
+    expected[..4].copy_from_slice(&selector);
+    expected[4..].copy_from_slice(&word_value[..28]);
+
+    assert_eq!(
+        bytes
+            .word_at(0)
+            .eval_model(&BTreeMap::from([(
+                "calldata_0".to_string(),
+                U256::from_be_bytes(word_value)
+            )]))
+            .unwrap(),
+        U256::from_be_bytes(expected)
+    );
+}
+
+#[test]
 fn calldata_load_accepts_symbolic_offsets() {
     let calldata = SymCalldata::from_byte_exprs(
         (0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
