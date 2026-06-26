@@ -2312,7 +2312,7 @@ mod tests {
         FuzzRunIdentifiedContracts::new(targets, false)
     }
 
-    // A corrupt/truncated corpus file (valid name, unparseable content — e.g. a process killed
+    // A corrupt/truncated corpus file (valid name, unparsable content — e.g. a process killed
     // mid-write, since entries are persisted non-atomically) must surface as a per-entry read
     // error rather than break directory scanning, so the load/sync loops can skip it instead of
     // aborting the whole campaign.
