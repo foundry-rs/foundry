@@ -9,7 +9,6 @@ mod evm;
 mod expressions;
 mod memory;
 mod precompiles;
-mod smt_cse;
 mod solver;
 mod state;
 mod symbols;
@@ -23,7 +22,6 @@ pub(crate) use evm::*;
 pub(crate) use expressions::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
-pub(crate) use smt_cse::*;
 pub use solver::PortfolioDiagnostics;
 pub(crate) use solver::{
     SmtLibSubprocessSolver, SymbolicSolver, solver_portfolio_availability_warning,

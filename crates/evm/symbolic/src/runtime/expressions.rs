@@ -1241,7 +1241,6 @@ impl SymExpr {
     }
 }
 
-/// Encodes EVM `ADDMOD`/`MULMOD` by widening operands before modular reduction.
 fn write_smt_wide_modular_arithmetic(
     out: &mut String,
     op: &'static str,
@@ -1249,6 +1248,10 @@ fn write_smt_wide_modular_arithmetic(
     right: &SymExpr,
     modulus: &SymExpr,
 ) {
+    // if modulus == 0:
+    //   0
+    // else:
+    //   low_256((zext(left) op zext(right)) urem zext(modulus))
     out.push_str("(ite (= ");
     modulus.write_smt(out);
     out.push_str(" (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (bvurem (");
