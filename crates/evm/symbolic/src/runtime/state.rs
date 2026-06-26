@@ -1609,13 +1609,15 @@ impl SymbolicWorld {
         &mut self,
         executor: &Executor<FEN>,
     ) -> Result<Vec<Address>, SymbolicError> {
-        let mut addresses = BTreeSet::new();
+        let mut addresses = HashSet::<Address>::default();
         addresses.extend(self.code_cache.keys().copied());
         addresses.extend(self.existing_accounts.iter().copied());
         addresses.extend(executor.backend().mem_db().cache.accounts.keys().copied());
         if let Some(db) = executor.backend().active_fork_db() {
             addresses.extend(db.cache.accounts.keys().copied());
         }
+        let mut addresses = addresses.into_iter().collect::<Vec<_>>();
+        addresses.sort_unstable();
 
         let mut targets = Vec::new();
         let spec_id: SpecId = executor.spec_id().into();

@@ -183,7 +183,7 @@ impl SymbolicExecutor {
             return Ok(false);
         }
 
-        let mut candidates = BTreeSet::new();
+        let mut candidates = HashSet::<U256>::default();
         for expected in &state.expected_calls {
             let Some(expected_value) = expected.value else { continue };
             if self
@@ -216,6 +216,8 @@ impl SymbolicExecutor {
             }
         }
 
+        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+        candidates.sort_unstable();
         for candidate in candidates {
             let eq = BoolExpr::eq(value.clone().into_expr(), Expr::Const(candidate));
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;

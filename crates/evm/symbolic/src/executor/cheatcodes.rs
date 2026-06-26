@@ -3,6 +3,15 @@ use foundry_cheatcodes_spec::Vm::*;
 
 use super::*;
 
+fn sorted_access_record_addresses(record: &AccessRecord) -> Vec<Address> {
+    let mut addresses = HashSet::<Address>::default();
+    addresses.extend(record.reads.keys().copied());
+    addresses.extend(record.writes.keys().copied());
+    let mut addresses = addresses.into_iter().collect::<Vec<_>>();
+    addresses.sort_unstable();
+    addresses
+}
+
 impl SymbolicExecutor {
     /// Runs the `handle_assertion` symbolic executor helper.
     pub(super) fn handle_assertion(
@@ -381,8 +390,7 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        let addresses =
-            record.reads.keys().chain(record.writes.keys()).copied().collect::<BTreeSet<_>>();
+        let addresses = sorted_access_record_addresses(&record);
         if addresses.is_empty() {
             return Ok(None);
         }
@@ -441,8 +449,7 @@ impl SymbolicExecutor {
             return Ok(accesses_return_data(Some(&record), word_to_address(target)));
         }
 
-        let addresses =
-            record.reads.keys().chain(record.writes.keys()).copied().collect::<BTreeSet<_>>();
+        let addresses = sorted_access_record_addresses(&record);
         if addresses.is_empty() {
             return Ok(accesses_return_data(Some(&record), Address::ZERO));
         }
