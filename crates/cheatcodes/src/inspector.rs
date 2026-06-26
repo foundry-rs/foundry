@@ -2551,7 +2551,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // it's not set (zero value)
                 // Try to load the account and the slot's present value
                 let present_value = if ecx.journal_mut().load_account(address).is_ok()
-                    && let Some(previous) = ecx.sload(address, key)
+                    && let Ok(previous) = ecx.sload_skip_cold_load(address, key, true)
                 {
                     previous.data
                 } else {
@@ -2578,7 +2578,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
                 let previous_value = if ecx.journal_mut().load_account(address).is_ok()
-                    && let Some(previous) = ecx.sload(address, key)
+                    && let Ok(previous) = ecx.sload_skip_cold_load(address, key, true)
                 {
                     previous.data
                 } else {

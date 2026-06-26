@@ -27,6 +27,22 @@ contract Target {
     fallback() external {}
 }
 
+contract StorageGasTarget {
+    uint256[256] private slots;
+
+    function fill() public {
+        for (uint256 i; i < 256; ++i) {
+            slots[i] = i + 1;
+        }
+    }
+
+    function sum() public view returns (uint256 s) {
+        for (uint256 i; i < 256; ++i) {
+            s += slots[i];
+        }
+    }
+}
+
 abstract contract LastCallGasFixture is Test {
     Target public target;
 
@@ -83,6 +99,20 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         _setup();
         _performRefund();
         _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21380, gasMemoryUsed: 0, gasRefunded: 4800}));
+    }
+
+    function testStateDiffRecordingDoesNotWarmStorageReads() public {
+        StorageGasTarget recordingOff = new StorageGasTarget();
+        recordingOff.fill();
+        recordingOff.sum();
+        uint64 gasRecordingOff = vm.lastCallGas().gasTotalUsed;
+
+        StorageGasTarget recordingOn = new StorageGasTarget();
+        recordingOn.fill();
+        vm.startStateDiffRecording();
+        recordingOn.sum();
+
+        assertEq(vm.lastCallGas().gasTotalUsed, gasRecordingOff);
     }
 }
 
