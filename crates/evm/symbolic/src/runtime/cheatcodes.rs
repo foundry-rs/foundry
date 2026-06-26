@@ -822,85 +822,40 @@ pub(crate) fn selector_has_string_reason(selector: [u8; 4]) -> bool {
 }
 
 /// Implements the `array_assertion_element_type` cheatcode runtime helper.
-pub(crate) fn array_assertion_element_type(selector: [u8; 4]) -> Result<DynSolType, SymbolicError> {
-    if selector_in(
-        selector,
-        &[
-            assertEq_14Call::SELECTOR,
-            assertEq_15Call::SELECTOR,
-            assertNotEq_14Call::SELECTOR,
-            assertNotEq_15Call::SELECTOR,
-        ],
-    ) {
-        return Ok(DynSolType::Bool);
+pub(crate) const fn array_assertion_element_type(
+    selector: [u8; 4],
+) -> Result<DynSolType, SymbolicError> {
+    match selector {
+        assertEq_14Call::SELECTOR
+        | assertEq_15Call::SELECTOR
+        | assertNotEq_14Call::SELECTOR
+        | assertNotEq_15Call::SELECTOR => Ok(DynSolType::Bool),
+        assertEq_16Call::SELECTOR
+        | assertEq_17Call::SELECTOR
+        | assertNotEq_16Call::SELECTOR
+        | assertNotEq_17Call::SELECTOR => Ok(DynSolType::Uint(256)),
+        assertEq_18Call::SELECTOR
+        | assertEq_19Call::SELECTOR
+        | assertNotEq_18Call::SELECTOR
+        | assertNotEq_19Call::SELECTOR => Ok(DynSolType::Int(256)),
+        assertEq_20Call::SELECTOR
+        | assertEq_21Call::SELECTOR
+        | assertNotEq_20Call::SELECTOR
+        | assertNotEq_21Call::SELECTOR => Ok(DynSolType::Address),
+        assertEq_22Call::SELECTOR
+        | assertEq_23Call::SELECTOR
+        | assertNotEq_22Call::SELECTOR
+        | assertNotEq_23Call::SELECTOR => Ok(DynSolType::FixedBytes(32)),
+        assertEq_24Call::SELECTOR
+        | assertEq_25Call::SELECTOR
+        | assertNotEq_24Call::SELECTOR
+        | assertNotEq_25Call::SELECTOR => Ok(DynSolType::String),
+        assertEq_26Call::SELECTOR
+        | assertEq_27Call::SELECTOR
+        | assertNotEq_26Call::SELECTOR
+        | assertNotEq_27Call::SELECTOR => Ok(DynSolType::Bytes),
+        _ => Err(SymbolicError::Unsupported("symbolic cheatcode ABI decode")),
     }
-    if selector_in(
-        selector,
-        &[
-            assertEq_16Call::SELECTOR,
-            assertEq_17Call::SELECTOR,
-            assertNotEq_16Call::SELECTOR,
-            assertNotEq_17Call::SELECTOR,
-        ],
-    ) {
-        return Ok(DynSolType::Uint(256));
-    }
-    if selector_in(
-        selector,
-        &[
-            assertEq_18Call::SELECTOR,
-            assertEq_19Call::SELECTOR,
-            assertNotEq_18Call::SELECTOR,
-            assertNotEq_19Call::SELECTOR,
-        ],
-    ) {
-        return Ok(DynSolType::Int(256));
-    }
-    if selector_in(
-        selector,
-        &[
-            assertEq_20Call::SELECTOR,
-            assertEq_21Call::SELECTOR,
-            assertNotEq_20Call::SELECTOR,
-            assertNotEq_21Call::SELECTOR,
-        ],
-    ) {
-        return Ok(DynSolType::Address);
-    }
-    if selector_in(
-        selector,
-        &[
-            assertEq_22Call::SELECTOR,
-            assertEq_23Call::SELECTOR,
-            assertNotEq_22Call::SELECTOR,
-            assertNotEq_23Call::SELECTOR,
-        ],
-    ) {
-        return Ok(DynSolType::FixedBytes(32));
-    }
-    if selector_in(
-        selector,
-        &[
-            assertEq_24Call::SELECTOR,
-            assertEq_25Call::SELECTOR,
-            assertNotEq_24Call::SELECTOR,
-            assertNotEq_25Call::SELECTOR,
-        ],
-    ) {
-        return Ok(DynSolType::String);
-    }
-    if selector_in(
-        selector,
-        &[
-            assertEq_26Call::SELECTOR,
-            assertEq_27Call::SELECTOR,
-            assertNotEq_26Call::SELECTOR,
-            assertNotEq_27Call::SELECTOR,
-        ],
-    ) {
-        return Ok(DynSolType::Bytes);
-    }
-    Err(SymbolicError::Unsupported("symbolic cheatcode ABI decode"))
 }
 
 /// Returns the `dyn_string` cheatcode runtime helper result.
