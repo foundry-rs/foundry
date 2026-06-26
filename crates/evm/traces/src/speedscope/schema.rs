@@ -177,6 +177,27 @@ pub struct SampledProfile<'a> {
     pub weights: Vec<u64>,
 }
 
+impl<'a> SampledProfile<'a> {
+    /// Creates a new sampled profile with the given name and unit.
+    pub fn new(name: impl Into<Cow<'a, str>>, unit: ValueUnit) -> Self {
+        Self {
+            name: name.into(),
+            unit,
+            start_value: 0,
+            end_value: 0,
+            samples: Vec::new(),
+            weights: Vec::new(),
+        }
+    }
+
+    /// Adds a weighted stack sample.
+    pub fn add_sample(&mut self, sample: Vec<usize>, weight: u64) {
+        self.samples.push(sample);
+        self.weights.push(weight);
+        self.end_value = self.end_value.saturating_add(weight);
+    }
+}
+
 /// Units for profile values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
