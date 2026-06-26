@@ -224,6 +224,31 @@ forgetest_init!(machine_mode_rejects_mutation_testing, |_prj, cmd| {
     );
 });
 
+forgetest_init!(evm_profile_no_open_writes_profile_and_exits, |prj, cmd| {
+    prj.add_test(
+        "EvmProfileNoOpen.t.sol",
+        r#"
+contract EvmProfileNoOpenTest {
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testProfile", "--evm-profile", "--no-open"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Profile saved to cache/evm_profile_EvmProfileNoOpenTest_testProfile.json
+
+"#]]);
+
+    let profile_path = prj.root().join("cache/evm_profile_EvmProfileNoOpenTest_testProfile.json");
+    let profile: Value = serde_json::from_str(&std::fs::read_to_string(profile_path).unwrap())
+        .expect("profile should be valid JSON");
+    assert_eq!(profile["exporter"], "foundry");
+    assert_eq!(profile["profiles"][0]["type"], "evented");
+});
+
 // `--allow-failure`: success envelope with `data.failed > 0` and exit 0.
 forgetest_init!(machine_mode_allow_failure_emits_success_envelope, |prj, cmd| {
     prj.add_test(

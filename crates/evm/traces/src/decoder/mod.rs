@@ -39,7 +39,7 @@ use tempo_precompiles::{
     TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
 };
 
-mod precompiles;
+pub(crate) mod precompiles;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
