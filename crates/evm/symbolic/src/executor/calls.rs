@@ -667,7 +667,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         };
 
-        if let Some(template) = expected.template.clone() {
+        if let Some(template) = expected.template().cloned() {
             if !self.expected_emit_matches(state, &expected, &template, &log)? {
                 state.expected_emit = Some(expected);
                 state.record_log(log);
@@ -678,7 +678,7 @@ impl SymbolicExecutor {
                 state.expected_emit = Some(expected);
             }
         } else {
-            expected.template = Some(log.clone());
+            expected.set_template(log.clone());
             state.expected_emit = Some(expected);
         }
 
@@ -694,38 +694,9 @@ impl SymbolicExecutor {
         template: &SymbolicLog,
         actual: &SymbolicLog,
     ) -> Result<bool, SymbolicError> {
-        let mut conditions = Vec::new();
-        if let Some(expected_emitter) = &expected.emitter {
-            conditions.push(address_match_condition(expected_emitter, actual.emitter));
-        }
-        for idx in 0..expected.checks.topics.len() {
-            if !expected.checks.topics[idx] {
-                continue;
-            }
-            match (template.topics.get(idx), actual.topics.get(idx)) {
-                (Some(left), Some(right)) => {
-                    conditions.push(SymBoolExpr::eq_words(left, right));
-                }
-                (None, None) => {}
-                _ => return Ok(false),
-            }
-        }
-
-        if expected.checks.data {
-            conditions.push(SymBoolExpr::eq_words(&template.data_len, &actual.data_len));
-            if template.data.len() != actual.data.len() {
-                return Ok(false);
-            }
-            conditions.extend(
-                template
-                    .data
-                    .iter()
-                    .zip(actual.data.iter())
-                    .map(|(left, right)| SymBoolExpr::eq_words(left, right)),
-            );
-        }
-
-        let condition = SymBoolExpr::and(conditions);
+        let Some(condition) = expected.match_condition(template, actual) else {
+            return Ok(false);
+        };
         let (match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
         if !match_sat {

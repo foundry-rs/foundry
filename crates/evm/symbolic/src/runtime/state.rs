@@ -919,15 +919,31 @@ impl FunctionMock {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedEmit {
-    pub(crate) checks: ExpectedEmitChecks,
-    pub(crate) emitter: Option<SymExpr>,
-    pub(crate) remaining: u64,
-    pub(crate) template: Option<SymbolicLog>,
+    checks: ExpectedEmitChecks,
+    emitter: Option<SymExpr>,
+    remaining: u64,
+    template: Option<SymbolicLog>,
 }
 
 impl ExpectedEmit {
+    pub(crate) fn new(
+        checks: ExpectedEmitChecks,
+        emitter: Option<SymExpr>,
+        remaining: u64,
+    ) -> Self {
+        Self { checks, emitter, remaining: remaining.max(1), template: None }
+    }
+
     pub(crate) const fn is_satisfied(&self) -> bool {
         self.template.is_none() && self.remaining == 0
+    }
+
+    pub(crate) const fn template(&self) -> Option<&SymbolicLog> {
+        self.template.as_ref()
+    }
+
+    pub(crate) fn set_template(&mut self, log: SymbolicLog) {
+        self.template = Some(log);
     }
 
     pub(crate) fn consume_one(&mut self) -> bool {
@@ -939,12 +955,51 @@ impl ExpectedEmit {
             false
         }
     }
+
+    pub(crate) fn match_condition(
+        &self,
+        template: &SymbolicLog,
+        actual: &SymbolicLog,
+    ) -> Option<SymBoolExpr> {
+        let mut conditions = Vec::new();
+        if let Some(expected_emitter) = &self.emitter {
+            conditions.push(address_match_condition(expected_emitter, actual.emitter));
+        }
+        for idx in 0..self.checks.topics.len() {
+            if !self.checks.topics[idx] {
+                continue;
+            }
+            match (template.topics.get(idx), actual.topics.get(idx)) {
+                (Some(left), Some(right)) => {
+                    conditions.push(SymBoolExpr::eq_words(left, right));
+                }
+                (None, None) => {}
+                _ => return None,
+            }
+        }
+
+        if self.checks.data {
+            conditions.push(SymBoolExpr::eq_words(&template.data_len, &actual.data_len));
+            if template.data.len() != actual.data.len() {
+                return None;
+            }
+            conditions.extend(
+                template
+                    .data
+                    .iter()
+                    .zip(actual.data.iter())
+                    .map(|(left, right)| SymBoolExpr::eq_words(left, right)),
+            );
+        }
+
+        Some(SymBoolExpr::and(conditions))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedEmitChecks {
-    pub(crate) topics: [bool; 4],
-    pub(crate) data: bool,
+    topics: [bool; 4],
+    data: bool,
 }
 
 impl ExpectedEmitChecks {

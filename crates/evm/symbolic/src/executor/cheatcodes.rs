@@ -49,8 +49,7 @@ impl SymbolicExecutor {
         emitter: Option<SymExpr>,
         remaining: u64,
     ) -> CheatcodeOutcome {
-        state.expected_emit =
-            Some(ExpectedEmit { checks, emitter, remaining: remaining.max(1), template: None });
+        state.expected_emit = Some(ExpectedEmit::new(checks, emitter, remaining));
         CheatcodeOutcome::Continue(Vec::new())
     }
 
