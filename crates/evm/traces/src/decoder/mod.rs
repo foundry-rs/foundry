@@ -118,6 +118,16 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn with_tempo_hardfork(mut self, hardfork: Option<TempoHardfork>) -> Self {
         self.decoder.tempo_hardfork = hardfork;
+        if hardfork.is_some_and(|hardfork| hardfork.is_t3()) {
+            self.decoder
+                .labels
+                .entry(ADDRESS_REGISTRY_ADDRESS)
+                .or_insert_with(|| "AddressRegistry".to_string());
+            self.decoder
+                .labels
+                .entry(SIGNATURE_VERIFIER_ADDRESS)
+                .or_insert_with(|| "SignatureVerifier".to_string());
+        }
         if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
             self.decoder
                 .labels
@@ -129,6 +139,12 @@ impl CallTraceDecoderBuilder {
                 .labels
                 .entry(RECEIVE_POLICY_GUARD_ADDRESS)
                 .or_insert_with(|| "ReceivePolicyGuard".to_string());
+        }
+        if hardfork.is_some_and(|hardfork| hardfork.is_t7()) {
+            self.decoder
+                .labels
+                .entry(STORAGE_CREDITS_ADDRESS)
+                .or_insert_with(|| "StorageCredits".to_string());
         }
         self
     }
@@ -262,11 +278,6 @@ impl CallTraceDecoder {
                 (NONCE_PRECOMPILE_ADDRESS, "Nonce".to_string()),
                 (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
                 (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
-                (ADDRESS_REGISTRY_ADDRESS, "AddressRegistry".to_string()),
-                (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
-                (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
-                (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
-                (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
@@ -1762,8 +1773,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_t5_channel_reserve_call_and_event_decode() {
-        let mut decoder = CallTraceDecoder::new().clone();
-        decoder.chain_id = Some(4217);
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T5))
+            .build();
 
         let open = ITIP20ChannelReserve::openCall {
             payee: address!("0x0000000000000000000000000000000000000abc"),
@@ -1936,6 +1949,18 @@ mod tests {
                 .precompile_labels()
         };
 
+        let t2_labels = labels_for_hardfork(TempoHardfork::T2);
+        assert!(!t2_labels.contains_key(&ADDRESS_REGISTRY_ADDRESS));
+        assert!(!t2_labels.contains_key(&SIGNATURE_VERIFIER_ADDRESS));
+
+        let t3_labels = labels_for_hardfork(TempoHardfork::T3);
+        assert_eq!(t3_labels.get(&ADDRESS_REGISTRY_ADDRESS), Some(&"AddressRegistry".to_string()));
+        assert_eq!(
+            t3_labels.get(&SIGNATURE_VERIFIER_ADDRESS),
+            Some(&"SignatureVerifier".to_string())
+        );
+        assert!(!t3_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+
         let t4_labels = labels_for_hardfork(TempoHardfork::T4);
         assert_eq!(t4_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
         assert!(!t4_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
@@ -1968,6 +1993,36 @@ mod tests {
             Some(&"ReceivePolicyGuard".to_string())
         );
         assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+    }
+
+    async fn decoded_label_at_tempo_hardfork(
+        address: Address,
+        hardfork: TempoHardfork,
+    ) -> Option<String> {
+        let decoder = CallTraceDecoderBuilder::new().with_tempo_hardfork(Some(hardfork)).build();
+        decoder
+            .decode_function(&CallTrace { address, success: true, ..Default::default() })
+            .await
+            .label
+    }
+
+    #[tokio::test]
+    async fn test_decoded_labels_follow_tempo_hardfork_activation_boundaries() {
+        for (address, hardfork, expected) in [
+            (ADDRESS_REGISTRY_ADDRESS, TempoHardfork::T2, None),
+            (ADDRESS_REGISTRY_ADDRESS, TempoHardfork::T3, Some("AddressRegistry")),
+            (SIGNATURE_VERIFIER_ADDRESS, TempoHardfork::T2, None),
+            (SIGNATURE_VERIFIER_ADDRESS, TempoHardfork::T3, Some("SignatureVerifier")),
+            (TIP20_CHANNEL_RESERVE_ADDRESS, TempoHardfork::T4, None),
+            (TIP20_CHANNEL_RESERVE_ADDRESS, TempoHardfork::T5, Some("TIP20ChannelReserve")),
+            (RECEIVE_POLICY_GUARD_ADDRESS, TempoHardfork::T5, None),
+            (RECEIVE_POLICY_GUARD_ADDRESS, TempoHardfork::T6, Some("ReceivePolicyGuard")),
+            (STORAGE_CREDITS_ADDRESS, TempoHardfork::T6, None),
+            (STORAGE_CREDITS_ADDRESS, TempoHardfork::T7, Some("StorageCredits")),
+        ] {
+            let label = decoded_label_at_tempo_hardfork(address, hardfork).await;
+            assert_eq!(label.as_deref(), expected);
+        }
     }
 
     #[test]
