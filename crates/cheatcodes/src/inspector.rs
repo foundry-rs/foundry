@@ -1348,6 +1348,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || !self.env_overrides.is_empty()
     }
 
+    #[inline(always)]
+    pub fn has_log_hooks(&self) -> bool {
+        !self.expected_emits.is_empty() || self.recorded_logs.is_some()
+    }
+
     /// Returns struct definitions from the analysis, if available.
     pub fn struct_defs(&self) -> Option<&foundry_common::fmt::StructDefinitions> {
         self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok())
@@ -3093,6 +3098,7 @@ mod tests {
         let cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
         assert!(!cheats.has_step_hooks());
         assert!(!cheats.has_step_end_hooks());
+        assert!(!cheats.has_log_hooks());
     }
 
     #[test]
@@ -3107,5 +3113,29 @@ mod tests {
         cheats.gas_metering.touched = true;
         assert!(!cheats.has_step_hooks());
         assert!(cheats.has_step_end_hooks());
+    }
+
+    #[test]
+    fn active_log_state_enables_log_hooks() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+
+        cheats.recorded_logs = Some(Default::default());
+        assert!(cheats.has_log_hooks());
+
+        cheats.recorded_logs = None;
+        cheats.expected_emits.push_back((
+            expect::ExpectedEmit {
+                depth: 0,
+                log: None,
+                checks: [false; 5],
+                address: None,
+                anonymous: false,
+                found: false,
+                count: 1,
+                mismatch_error: None,
+            },
+            Default::default(),
+        ));
+        assert!(cheats.has_log_hooks());
     }
 }

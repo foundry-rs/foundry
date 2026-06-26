@@ -1128,10 +1128,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
     #[allow(clippy::redundant_clone)]
     fn log(&mut self, ecx: &mut FoundryContextFor<'_, FEN>, log: Log) {
-        call_inspectors!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| inspector.log(ecx, log.clone()),
-        );
+        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
+            inspector.log(ecx, log.clone())
+        });
+        if let Some(inspector) = &mut self.cheatcodes
+            && inspector.has_log_hooks()
+        {
+            crate::utils::cold_path();
+            inspector.log(ecx, log.clone());
+        }
+        call_inspectors!([&mut self.printer], |inspector| { inspector.log(ecx, log.clone()) });
     }
 
     #[allow(clippy::redundant_clone)]
@@ -1141,10 +1147,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         ecx: &mut FoundryContextFor<'_, FEN>,
         log: Log,
     ) {
-        call_inspectors!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| inspector.log_full(interpreter, ecx, log.clone()),
-        );
+        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
+            inspector.log_full(interpreter, ecx, log.clone())
+        });
+        if let Some(inspector) = &mut self.cheatcodes
+            && inspector.has_log_hooks()
+        {
+            crate::utils::cold_path();
+            inspector.log_full(interpreter, ecx, log.clone());
+        }
+        call_inspectors!([&mut self.printer], |inspector| {
+            inspector.log_full(interpreter, ecx, log.clone())
+        });
     }
 
     fn frame_start(
