@@ -130,6 +130,8 @@ pub struct InvariantReplayOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayFailure {
     /// A stateless fuzz test call failed. Keyed by selector and code-path fingerprint.
+    // TODO(@mablr): include revert data/reason if this identity is reused by
+    // minimization, so same-edge branchless failures cannot be swapped.
     Fuzz { selector: Selector, fingerprint: Option<B256> },
     /// An invariant handler call hit an assertion or a `fail_on_revert` revert.
     /// Keyed by `(target, selector)` site and code-path fingerprint, mirroring the
@@ -179,6 +181,9 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     target: ShowmapReplayTarget<'_>,
     opts: &ShowmapOpts,
 ) -> Result<ShowmapStats> {
+    // TODO(@mablr): if `corpus_dir` points at a generated corpus root, first narrow it
+    // to the selected contract/test corpus path so selector collisions in sibling contracts do not
+    // contaminate replay. Keep accepting flat/manual corpus directories as-is.
     let entries = read_corpus_tree(corpus_dir)?;
     if opts.emit_files && entries.is_empty() {
         return Err(eyre::eyre!("corpus directory not found: {}", corpus_dir.display()));

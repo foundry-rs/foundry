@@ -68,6 +68,7 @@ pub enum FuzzSubcommands {
     Replay(FuzzReplayArgs),
     /// Print persisted corpus entries.
     Show(FuzzShowArgs),
+    // TODO(@mablr): add corpus minimization subcommands `cmin`/`tmin`.
 }
 
 /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.

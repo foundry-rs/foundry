@@ -179,6 +179,8 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                 let tests = c
                     .abi
                     .functions()
+                    // TODO(@mablr): in fuzz-only mode, make `--list` mirror execution
+                    // by hiding unit/table/symbolic tests that `forge fuzz run/replay` skips.
                     .filter(|func| self.matches_test_function(filter, &identifier, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();

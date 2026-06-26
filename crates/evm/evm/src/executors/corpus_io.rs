@@ -110,6 +110,8 @@ pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
         return Err(eyre!("corpus path does not exist or is not readable: {}", path.display()));
     }
 
+    // TODO(@mablr): support hand-crafted corpora that intentionally use the same UUID
+    // with different timestamps while preserving generated worker-shard deduplication.
     let mut seen_uuids = HashSet::new();
     let mut visited_dirs = HashSet::new();
     let mut entries = Vec::new();
