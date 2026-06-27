@@ -384,7 +384,8 @@ pub struct VerifyArgs {
     /// The Etherscan license type code or SPDX identifier to include with the verification
     /// request.
     ///
-    /// Accepts either an Etherscan numeric code (1-14) or a common SPDX identifier such as
+    /// Accepts either an Etherscan numeric license code (see
+    /// <https://etherscan.io/contract-license-types>) or a common SPDX identifier such as
     /// `MIT`, `Apache-2.0`, `GPL-3.0-or-later`, or `AGPL-3.0-or-later`. Only used for
     /// Etherscan-style verifiers.
     #[arg(
@@ -436,13 +437,8 @@ fn parse_etherscan_license_type(value: &str) -> Result<String, String> {
         return Err("license type cannot be empty".into());
     }
 
-    if let Ok(code) = value.parse::<u8>() {
-        if (1..=14).contains(&code) {
-            return Ok(code.to_string());
-        }
-        return Err(format!(
-            "unsupported Etherscan license type `{value}`; expected a code from 1 to 14"
-        ));
+    if let Ok(code) = value.parse::<u32>() {
+        return Ok(code.to_string());
     }
 
     let normalized = normalize_license_type(value);
@@ -466,7 +462,7 @@ fn parse_etherscan_license_type(value: &str) -> Result<String, String> {
         "bsl-1.1" | "busl-1.1" | "business-source-license-1.1" => 14,
         _ => {
             return Err(format!(
-                "unsupported Etherscan license type `{value}`; expected a code from 1 to 14 or a \
+                "unsupported Etherscan license type `{value}`; expected a numeric code or a \
                  supported SPDX identifier such as MIT, Apache-2.0, GPL-3.0-or-later, or \
                  AGPL-3.0-or-later"
             ));
@@ -1040,8 +1036,8 @@ mod tests {
     }
 
     #[test]
-    fn verify_contract_license_type_accepts_range_bounds() {
-        for (code, expected) in [("1", "1"), ("14", "14")] {
+    fn verify_contract_license_type_accepts_numeric_codes() {
+        for (code, expected) in [("1", "1"), ("14", "14"), ("15", "15")] {
             let args: VerifyArgs = VerifyArgs::parse_from([
                 "foundry-cli",
                 "0x0000000000000000000000000000000000000000",
@@ -1064,16 +1060,6 @@ mod tests {
         ])
         .unwrap_err();
         assert!(err.to_string().contains("unsupported Etherscan license type"));
-
-        let err = VerifyArgs::try_parse_from([
-            "foundry-cli",
-            "0x0000000000000000000000000000000000000000",
-            "src/Domains.sol:Domains",
-            "--license-type",
-            "99",
-        ])
-        .unwrap_err();
-        assert!(err.to_string().contains("expected a code from 1 to 14"));
     }
 
     #[test]
