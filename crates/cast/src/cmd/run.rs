@@ -42,7 +42,7 @@ use foundry_evm::{
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode, Traces},
+    traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
@@ -242,7 +242,8 @@ impl RunArgs {
             );
         }
 
-        let trace_mode = TraceMode::Call
+        let trace_requirements = TraceRequirements::none()
+            .with_calls(true)
             .with_debug(self.debug)
             .with_decode_internal(if self.decode_internal {
                 InternalTraceMode::Full
@@ -254,7 +255,7 @@ impl RunArgs {
             (evm_env.clone(), tx_env),
             fork,
             evm_version,
-            trace_mode,
+            trace_requirements,
             networks,
             create2_deployer,
             None,

@@ -31,7 +31,7 @@ use foundry_evm_core::{
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
-use foundry_evm_traces::TraceMode;
+use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
 use rand::Rng;
 use revm::{
@@ -470,6 +470,16 @@ impl Cheatcode for lastCallGasCall {
     }
 }
 
+impl Cheatcode for lastFrameGasCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self {} = self;
+        let Some(last_frame_gas) = &state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        Ok(last_frame_gas.abi_encode())
+    }
+}
+
 impl Cheatcode for getChainIdCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
@@ -856,6 +866,31 @@ impl Cheatcode for snapshotGasLastCall_1Call {
             Some(group.clone()),
             Some(name.clone()),
             last_call_gas.gasTotalUsed,
+        )
+    }
+}
+
+impl Cheatcode for snapshotGasLastFrame_0Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { name } = self;
+        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_frame_gas.gasTotalUsed)
+    }
+}
+
+impl Cheatcode for snapshotGasLastFrame_1Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { name, group } = self;
+        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        inner_last_gas_snapshot(
+            ccx,
+            Some(group.clone()),
+            Some(name.clone()),
+            last_frame_gas.gasTotalUsed,
         )
     }
 }
@@ -1318,7 +1353,8 @@ impl Cheatcode for startDebugTraceRecordingCall {
         };
 
         // turn on tracer debug configuration for recording
-        *tracer.config_mut() = TraceMode::Debug.into_config().expect("cannot be None");
+        *tracer.config_mut() =
+            TraceRequirements::none().with_debug(true).into_config().expect("cannot be None");
 
         // track where the recording starts
         if let Some(last_node) = tracer.traces().nodes().last() {
