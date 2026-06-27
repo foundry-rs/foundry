@@ -1596,6 +1596,14 @@ contract SymbolicFuzzCorpusSeed {
         if (y == 0) return;
         assert(false);
     }
+
+    function checkHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y != 0) return;
+        assert(y == 0);
+    }
 }
 "#,
     );
@@ -1604,9 +1612,19 @@ contract SymbolicFuzzCorpusSeed {
         .args(["test", "--match-test", "testHybridFindsBug", "--threads", "1", "--fuzz-runs", "8"])
         .assert_success();
 
-    cmd.forge_fuse()
-        .args(["test", "--symbolic", "--match-test", "testHybridFindsBug"])
-        .assert_success();
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkHybridFindsBug",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFuzzCorpusSeed.t.sol:SymbolicFuzzCorpusSeed
+[PASS] checkHybridFindsBug(uint256,uint256) ([METRICS])
+...
+"#]]);
 
     let stdout = cmd
         .forge_fuse()
