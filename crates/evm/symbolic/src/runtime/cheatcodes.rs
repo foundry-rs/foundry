@@ -32,6 +32,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | resumeGasMeteringCall::SELECTOR
         | resetGasMeteringCall::SELECTOR
         | lastCallGasCall::SELECTOR
+        | lastFrameGasCall::SELECTOR
         | stopExpectSafeMemoryCall::SELECTOR
         | stopSnapshotGas_0Call::SELECTOR
         | getEvmVersionCall::SELECTOR
@@ -116,6 +117,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | txGasPriceCall::SELECTOR
         | getLabelCall::SELECTOR
         | snapshotGasLastCall_0Call::SELECTOR
+        | snapshotGasLastFrame_0Call::SELECTOR
         | startSnapshotGas_0Call::SELECTOR
         | stopSnapshotGas_1Call::SELECTOR
         | coolCall::SELECTOR
@@ -162,6 +164,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | labelCall::SELECTOR
         | snapshotValue_0Call::SELECTOR
         | snapshotGasLastCall_1Call::SELECTOR
+        | snapshotGasLastFrame_1Call::SELECTOR
         | startSnapshotGas_1Call::SELECTOR
         | stopSnapshotGas_2Call::SELECTOR
         | warmSlotCall::SELECTOR
