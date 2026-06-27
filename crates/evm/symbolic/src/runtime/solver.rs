@@ -13,8 +13,8 @@ pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
 pub(crate) use opt::normalize_constraints_for_solver;
 use opt::{
-    branch_condition_complement_cache_key, constraint_cache_key, constraints_are_directly_unsat,
-    sorted_bool_exprs_are_subset, write_smt_assertions,
+    constraint_cache_key, constraints_are_directly_unsat, sorted_bool_exprs_are_subset,
+    write_smt_assertions,
 };
 #[cfg(test)]
 pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
@@ -417,8 +417,20 @@ impl SmtLibSubprocessSolver {
             return Ok(false);
         }
         if defer_hard_arith_without_witness
-            && let Some(complement_key) = branch_condition_complement_cache_key(constraints)
-            && self.has_cached_unsat_subset(&complement_key)
+            && let Some((condition, base)) = constraints.split_last()
+            && {
+                let normalized_base = normalize_constraints_for_solver(base);
+                let base_key = constraint_cache_key(&normalized_base);
+                self.sat_cache.get(&base_key) == Some(&true)
+            }
+            && {
+                let mut complement = Vec::with_capacity(constraints.len());
+                complement.extend(base.iter().cloned());
+                complement.push(condition.clone().not());
+                let normalized_complement = normalize_constraints_for_solver(&complement);
+                let complement_key = constraint_cache_key(&normalized_complement);
+                self.has_cached_unsat_subset(&complement_key)
+            }
         {
             self.sat_cache_hits += 1;
             trace!("is_sat: branch complement unsat cache hit");

@@ -3078,22 +3078,28 @@ fn portfolio_test_marker(name: &str) -> std::path::PathBuf {
 
 #[cfg(unix)]
 /// Returns a fake solver command that counts invocations before emitting `response`.
-fn counted_solver_command(marker: &Path, response: &'static str) -> SolverCommand {
-    SolverCommand::new(
-        vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            format!(
-                "count=$(cat \"$1\" 2>/dev/null || printf 0); \
+fn counted_solver_command(marker: &Path, response: &str) -> SolverCommand {
+    counted_solver_command_sequence(marker, &[response])
+}
+
+/// Returns a fake solver command that emits one response per invocation.
+fn counted_solver_command_sequence(marker: &Path, responses: &[&str]) -> SolverCommand {
+    let mut args = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        "count=$(cat \"$1\" 2>/dev/null || printf 0); \
                  count=$((count + 1)); printf '%s' \"$count\" > \"$1\"; \
-                 cat >/dev/null; printf '{response}\\n'"
-            ),
-            "sh".to_string(),
-            marker.display().to_string(),
-        ],
-        false,
-    )
-    .unwrap()
+                 cat >/dev/null; shift; \
+                 idx=$count; while [ \"$idx\" -gt 1 ] && [ \"$#\" -gt 1 ]; do \
+                    shift; idx=$((idx - 1)); \
+                 done; \
+                 printf '%s\\n' \"$1\""
+            .to_string(),
+        "sh".to_string(),
+        marker.display().to_string(),
+    ];
+    args.extend(responses.iter().map(|response| response.to_string()));
+    SolverCommand::new(args, false).unwrap()
 }
 
 #[cfg(unix)]
@@ -3354,20 +3360,45 @@ fn sat_cache_reuses_reversed_comparisons() {
 #[test]
 fn sat_cache_reuses_unsat_branch_complement() {
     let marker = portfolio_test_marker("sat-cache-branch-complement");
-    let commands = vec![counted_solver_command(&marker, "unsat")];
-    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let commands = vec![counted_solver_command_sequence(&marker, &["sat", "unsat"])];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = SymExpr::var("x");
     let base = SymBoolExpr::cmp(SymBoolExprOp::Ult, x.clone(), SymExpr::constant(U256::from(10)));
     let condition = SymBoolExpr::eq(x, SymExpr::constant(U256::from(1)));
 
+    assert!(solver.is_sat(std::slice::from_ref(&base)).unwrap());
     assert!(!solver.is_sat_branch(&[base.clone(), condition.clone()]).unwrap());
     assert!(solver.is_sat_branch(&[base, condition.not()]).unwrap());
 
     let stats = solver.stats();
-    assert_eq!(stats.solver_queries, 1);
-    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.solver_queries, 2);
+    assert_eq!(stats.sat_queries, 3);
     assert_eq!(stats.sat_cache_hits, 1);
-    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(counted_solver_invocations(&marker), 2);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
+    let marker = portfolio_test_marker("sat-cache-unsat-base-branch-complement");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = SymExpr::var("x");
+    let base = SymBoolExpr::and(vec![
+        SymBoolExpr::cmp(SymBoolExprOp::Uge, x.clone(), SymExpr::constant(U256::from(2))),
+        SymBoolExpr::cmp(SymBoolExprOp::Ule, x.clone(), SymExpr::constant(U256::from(1))),
+    ]);
+    let condition = SymBoolExpr::eq(x, SymExpr::constant(U256::from(1)));
+
+    assert!(!solver.is_sat_branch(&[base.clone(), condition.clone()]).unwrap());
+    assert!(!solver.is_sat_branch(&[base, condition.not()]).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 2);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 0);
+    assert_eq!(counted_solver_invocations(&marker), 2);
     let _ = std::fs::remove_file(&marker);
 }
 
