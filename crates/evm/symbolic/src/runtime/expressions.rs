@@ -55,7 +55,7 @@ pub(crate) fn create2_address_word(
             Ok((word, address))
         }
         (_, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
-            let initcode_bytes = initcode.bytes();
+            let initcode_bytes = initcode.read_byte_exprs(0, initcode.len());
             let word = symbolic_create2_address_word(
                 state,
                 format!("{creator:?}"),

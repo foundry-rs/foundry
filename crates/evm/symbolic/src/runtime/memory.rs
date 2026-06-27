@@ -687,10 +687,6 @@ impl SymCode {
         Self::from_bytes(memory.read_bytes_symbolic_size(offset, size, max_size))
     }
 
-    pub(crate) fn bytes(&self) -> SymBytes {
-        self.bytes.clone()
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.bytes.len()
     }

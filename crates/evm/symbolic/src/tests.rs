@@ -1346,6 +1346,24 @@ fn symbolic_create2_accepts_symbolic_salt() {
 }
 
 #[test]
+fn symbolic_create2_initcode_identity_uses_byte_semantics() {
+    let creator = Address::from([0x11; 20]);
+    let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
+    let salt = SymExpr::var("salt");
+    let init_word = SymExpr::var("init_word");
+    let structural = SymCode::from_bytes(init_word.clone().into_bytes());
+    let materialized = SymCode::from_byte_exprs(init_word.into_byte_exprs());
+
+    let (structural_word, structural_address) =
+        create2_address_word(&mut state, creator, salt.clone(), &structural).unwrap();
+    let (materialized_word, materialized_address) =
+        create2_address_word(&mut state, creator, salt, &materialized).unwrap();
+
+    assert_eq!(structural_word, materialized_word);
+    assert_eq!(structural_address, materialized_address);
+}
+
+#[test]
 fn symbolic_return_data_can_be_installed_as_runtime_code() {
     let data = SymReturnData::from_bytes(SymBytes::exprs(vec![SymExpr::var("runtime_byte")]));
 
