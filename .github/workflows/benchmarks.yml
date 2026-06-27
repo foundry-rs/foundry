@@ -35,7 +35,8 @@ env:
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
   SYMBOLIC_REPOS: >-
-    Vectorized/solady:v0.1.26
+    Vectorized/solady:v0.1.26,
+    SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5
 
   BUILD_REPOS: >-
     ithacaxyz/account:v0.5.7,

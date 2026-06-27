@@ -28,6 +28,13 @@ const SOLADY_SYMBOLIC_MATCH_TEST: &str = concat!(
     "DelayRestriction",
     ")"
 );
+const ANGSTROM_SYMBOLIC_MATCH_TEST: &str = "check_matchesSolady_fullMulX128";
+const ANGSTROM_SYMBOLIC_MATCH_PATH: &str = "test/libraries/X128MathLib.t.sol";
+
+struct SymbolicBenchmarkSpec {
+    build_command: String,
+    test_command: String,
+}
 
 /// Configuration for repositories to benchmark
 #[derive(Debug, Clone)]
@@ -195,6 +202,35 @@ impl BenchmarkProject {
         match self.extra_args.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(extra) => format!("{base} {extra}"),
             None => base.to_string(),
+        }
+    }
+
+    fn symbolic_benchmark_spec(&self) -> SymbolicBenchmarkSpec {
+        let name = self.name.to_ascii_lowercase();
+        if name == "solady" || name.ends_with("-solady") {
+            return SymbolicBenchmarkSpec {
+                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build".to_string(),
+                test_command: format!(
+                    "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --symbolic --json \
+                     --match-test '{SOLADY_SYMBOLIC_MATCH_TEST}'"
+                ),
+            };
+        }
+        if name == "angstrom" || name.ends_with("-angstrom") {
+            return SymbolicBenchmarkSpec {
+                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build --root contracts"
+                    .to_string(),
+                test_command: format!(
+                    "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --root contracts --symbolic \
+                     --json --symbolic-timeout 5 --match-path {ANGSTROM_SYMBOLIC_MATCH_PATH} \
+                     --match-test {ANGSTROM_SYMBOLIC_MATCH_TEST}"
+                ),
+            };
+        }
+        SymbolicBenchmarkSpec {
+            build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build".to_string(),
+            test_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --symbolic --json"
+                .to_string(),
         }
     }
 
@@ -438,21 +474,19 @@ impl BenchmarkProject {
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        let name = self.name.to_ascii_lowercase();
-        let base = if name == "solady" || name.ends_with("-solady") {
-            format!("forge test --symbolic --json --match-test '{SOLADY_SYMBOLIC_MATCH_TEST}'")
-        } else {
-            "forge test --symbolic --json".to_string()
-        };
-        let command = self.cmd(&base);
+        let spec = self.symbolic_benchmark_spec();
+        let command = self.cmd(&spec.test_command);
 
         let status = Command::new("bash")
             .current_dir(&self.root_path)
-            .args(["-lc", "forge build"])
+            .args(["-lc", &spec.build_command])
             .status()
             .wrap_err("Failed to build project before symbolic benchmark")?;
         if !status.success() {
-            eyre::bail!("forge build failed before symbolic benchmark");
+            eyre::bail!(
+                "forge build failed before symbolic benchmark with command: {}",
+                spec.build_command
+            );
         }
 
         let mut times = Vec::with_capacity(runs as usize);
@@ -473,12 +507,23 @@ impl BenchmarkProject {
             if verbose {
                 let _ = sh_println!("{}", String::from_utf8_lossy(&output.stderr));
             }
-            if !output.status.success() {
-                let _ = sh_eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-                eyre::bail!("forge symbolic benchmark failed with command: {}", command);
-            }
 
-            summaries.push(parse_symbolic_benchmark_summary(&output.stdout)?);
+            let summary = match parse_symbolic_benchmark_summary(&output.stdout) {
+                Ok(summary) => summary,
+                Err(err) => {
+                    if !output.status.success() {
+                        let _ = sh_eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                        eyre::bail!(
+                            "forge symbolic benchmark failed with command: {command}; {err}"
+                        );
+                    }
+                    return Err(err);
+                }
+            };
+            if !output.status.success() && verbose {
+                let _ = sh_eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+            }
+            summaries.push(summary);
         }
 
         let symbolic = summaries
@@ -546,6 +591,15 @@ fn parse_symbolic_benchmark_summary(stdout: &[u8]) -> Result<SymbolicBenchmarkSu
                 continue;
             };
             summary.tests += 1;
+            let status = result.get("status").and_then(Value::as_str).unwrap_or_default();
+            let reason = result.get("reason").and_then(Value::as_str).unwrap_or_default();
+            if status == "Success" {
+                summary.passed += 1;
+            } else if reason.contains("incomplete symbolic execution") {
+                summary.incomplete += 1;
+            } else {
+                summary.failed += 1;
+            }
             summary.paths += metric(stats, "paths");
             summary.solver_queries += metric(stats, "solver_queries");
             summary.smt_queries += metric(stats, "smt_queries");
@@ -734,19 +788,46 @@ mod tests {
                                 "smt_build_time_ms": 1,
                                 "smt_max_query_time_ms": 9
                             }
-                        }
+                        },
+                        "status": "Success"
+                    },
+                    "check_two(uint256)": {
+                        "symbolic": {
+                            "solver": {
+                                "stats": {
+                                    "paths": 0,
+                                    "solver_queries": 1,
+                                    "smt_queries": 1,
+                                    "sat_queries": 1,
+                                    "model_queries": 0,
+                                    "sat_cache_hits": 0,
+                                    "model_cache_hits": 0,
+                                    "heuristic_witnesses": 0,
+                                    "solver_time_ms": 5,
+                                    "smt_input_bytes": 10,
+                                    "smt_max_query_bytes": 10,
+                                    "smt_build_time_ms": 0,
+                                    "smt_max_query_time_ms": 5
+                                }
+                            }
+                        },
+                        "status": "Failure",
+                        "reason": "incomplete symbolic execution (Timeout): solver returned unknown"
                     }
                 }
             }
         }"#;
 
         let summary = parse_symbolic_benchmark_summary(stdout).unwrap();
-        assert_eq!(summary.tests, 1);
+        assert_eq!(summary.tests, 2);
+        assert_eq!(summary.passed, 1);
+        assert_eq!(summary.failed, 0);
+        assert_eq!(summary.incomplete, 1);
         assert_eq!(summary.paths, 2);
-        assert_eq!(summary.smt_queries, 2);
+        assert_eq!(summary.smt_queries, 3);
         assert_eq!(summary.sat_cache_hits, 1);
-        assert_eq!(summary.solver_time_ms, 12);
-        assert_eq!(summary.smt_input_bytes, 1024);
+        assert_eq!(summary.solver_time_ms, 17);
+        assert_eq!(summary.smt_input_bytes, 1034);
         assert_eq!(summary.smt_max_query_bytes, 600);
         assert_eq!(summary.smt_build_time_ms, 1);
         assert_eq!(summary.smt_max_query_time_ms, 9);

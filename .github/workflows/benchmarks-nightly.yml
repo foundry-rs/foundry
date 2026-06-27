@@ -9,7 +9,9 @@ on:
 
 env:
   AAVE_V4_REPO: "aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
-  SOLADY_SYMBOLIC_REPO: "Vectorized/solady:v0.1.26"
+  SYMBOLIC_REPOS: >-
+    Vectorized/solady:v0.1.26,
+    SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5
   RUSTC_WRAPPER: "sccache"
 
 jobs:
@@ -124,7 +126,7 @@ jobs:
           DATE=$(date -u +%Y-%m-%d)
           ./target/release/foundry-bench --output-dir ./benches \
             --versions stable \
-            --repos "$SOLADY_SYMBOLIC_REPO" \
+            --repos "$SYMBOLIC_REPOS" \
             --benchmarks forge_symbolic_test \
             --json-output "stable-${DATE}-forge_symbolic.json" \
             --verbose
@@ -191,7 +193,7 @@ jobs:
           DATE=$(date -u +%Y-%m-%d)
           ./target/release/foundry-bench --output-dir ./benches \
             --versions nightly \
-            --repos "$SOLADY_SYMBOLIC_REPO" \
+            --repos "$SYMBOLIC_REPOS" \
             --benchmarks forge_symbolic_test \
             --json-output "nightly-${DATE}-forge_symbolic.json" \
             --verbose

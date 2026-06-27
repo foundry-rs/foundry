@@ -27,6 +27,9 @@ pub struct HyperfineResult {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SymbolicBenchmarkSummary {
     pub tests: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub incomplete: usize,
     pub paths: u64,
     pub solver_queries: u64,
     pub smt_queries: u64,
@@ -262,6 +265,7 @@ fn get_benchmark_cell_content(
         let Some(result) = repo_data.get(repo_name)
     {
         if let Some(symbolic) = &result.symbolic {
+            let status = format_symbolic_status(symbolic);
             let has_smt_size_metrics = symbolic.smt_queries == 0
                 || symbolic.smt_input_bytes != 0
                 || symbolic.smt_max_query_bytes != 0;
@@ -276,9 +280,9 @@ fn get_benchmark_cell_content(
                 "n/a".to_string()
             };
             return format!(
-                "{}<br/>{} tests, solver {}ms<br/>SMT: {} queries, {} total, {} max",
+                "{}<br/>{}, solver {}ms<br/>SMT: {} queries, {} total, {} max",
                 format_duration_seconds(result.mean),
-                symbolic.tests,
+                status,
                 symbolic.solver_time_ms,
                 symbolic.smt_queries,
                 smt_input_bytes,
@@ -303,6 +307,20 @@ pub fn format_benchmark_name(name: &str) -> String {
         _ => name,
     }
     .to_string()
+}
+
+fn format_symbolic_status(symbolic: &SymbolicBenchmarkSummary) -> String {
+    let mut parts = Vec::new();
+    if symbolic.passed != 0 {
+        parts.push(format!("{} pass", symbolic.passed));
+    }
+    if symbolic.incomplete != 0 {
+        parts.push(format!("{} incomplete", symbolic.incomplete));
+    }
+    if symbolic.failed != 0 {
+        parts.push(format!("{} fail", symbolic.failed));
+    }
+    if parts.is_empty() { format!("{} tests", symbolic.tests) } else { parts.join(", ") }
 }
 
 fn format_bytes(bytes: u64) -> String {
