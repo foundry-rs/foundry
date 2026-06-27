@@ -68,7 +68,7 @@ foundry-bench --benchmarks forge_fuzz_test
 foundry-bench --benchmarks forge_coverage
 
 # Run focused symbolic tests and report solver counters
-foundry-bench --repos Vectorized/solady:v0.1.26,SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5 --benchmarks forge_symbolic_test
+foundry-bench --repos Vectorized/solady:v0.1.26,SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5,farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b --benchmarks forge_symbolic_test
 
 # Combine options
 foundry-bench \

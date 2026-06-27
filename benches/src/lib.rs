@@ -38,6 +38,64 @@ const SOLADY_SYMBOLIC_MATCH_TEST: &str = concat!(
 );
 const ANGSTROM_SYMBOLIC_MATCH_TEST: &str = "check_matchesSolady_fullMulX128";
 const ANGSTROM_SYMBOLIC_MATCH_PATH: &str = "test/libraries/X128MathLib.t.sol";
+const FARCASTER_SYMBOLIC_MATCH_PATH: &str = "test/FarcasterNativeSymbolic.t.sol";
+const FARCASTER_SYMBOLIC_BENCHMARK_TEST: &str = r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.21;
+
+import {Test} from "forge-std/Test.sol";
+import {Migration} from "../src/abstract/Migration.sol";
+
+contract MigrationHarness is Migration {
+    constructor(uint24 gracePeriod, address migrator, address initialOwner)
+        Migration(gracePeriod, migrator, initialOwner)
+    {}
+}
+
+contract FarcasterNativeSymbolicTest is Test {
+    function check_migrateOnlyMigrator(
+        uint24 gracePeriod,
+        address migrator,
+        address initialOwner,
+        address caller,
+        uint40 timestamp
+    ) public {
+        vm.assume(timestamp != 0);
+
+        MigrationHarness migration = new MigrationHarness(gracePeriod, migrator, initialOwner);
+
+        vm.warp(timestamp);
+        vm.prank(caller);
+        (bool success,) = address(migration).call(abi.encodeCall(Migration.migrate, ()));
+
+        assert(success == (caller == migrator));
+        if (success) {
+            assert(migration.isMigrated());
+            assert(migration.migratedAt() == timestamp);
+        }
+    }
+
+    function check_setMigratorOnlyOwner(
+        uint24 gracePeriod,
+        address migrator,
+        address initialOwner,
+        address caller,
+        address nextMigrator
+    ) public {
+        MigrationHarness migration = new MigrationHarness(gracePeriod, migrator, initialOwner);
+
+        vm.prank(caller);
+        (bool success,) =
+            address(migration).call(abi.encodeCall(Migration.setMigrator, (nextMigrator)));
+
+        assert(success == (caller == initialOwner));
+        if (success) {
+            assert(migration.migrator() == nextMigrator);
+        } else {
+            assert(migration.migrator() == migrator);
+        }
+    }
+}
+"#;
 
 struct SymbolicBenchmarkSpec {
     build_command: String,
@@ -192,6 +250,8 @@ impl BenchmarkProject {
             }
         }
 
+        Self::install_symbolic_benchmark_fixtures(&root_path, config)?;
+
         // Git submodules are already cloned via --recursive flag
         // But npm dependencies still need to be installed
         Self::install_npm_dependencies(&root_path)?;
@@ -235,11 +295,34 @@ impl BenchmarkProject {
                 ),
             };
         }
+        if name == "farcasterxyz-contracts" || name == "farcaster-contracts" {
+            return SymbolicBenchmarkSpec {
+                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build".to_string(),
+                test_command: format!(
+                    "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --symbolic --json \
+                     --symbolic-timeout 5 --match-path '{FARCASTER_SYMBOLIC_MATCH_PATH}' \
+                     --match-test 'check_'"
+                ),
+            };
+        }
         SymbolicBenchmarkSpec {
             build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build".to_string(),
             test_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --symbolic --json"
                 .to_string(),
         }
+    }
+
+    fn install_symbolic_benchmark_fixtures(root: &Path, config: &RepoConfig) -> Result<()> {
+        if config.org.eq_ignore_ascii_case("farcasterxyz") && config.repo == "contracts" {
+            // Farcaster's checked-in Halmos tests create symbolic values in setUp,
+            // which native forge symbolic does not produce benchmark counters for.
+            std::fs::write(
+                root.join(FARCASTER_SYMBOLIC_MATCH_PATH),
+                FARCASTER_SYMBOLIC_BENCHMARK_TEST,
+            )
+            .wrap_err("Failed to install Farcaster symbolic benchmark test")?;
+        }
+        Ok(())
     }
 
     /// Install npm dependencies if package.json exists

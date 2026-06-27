@@ -11,7 +11,8 @@ env:
   AAVE_V4_REPO: "aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
   SYMBOLIC_REPOS: >-
     Vectorized/solady:v0.1.26,
-    SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5
+    SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5,
+    farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b
   RUSTC_WRAPPER: "sccache"
 
 jobs:
