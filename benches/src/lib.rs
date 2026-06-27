@@ -22,10 +22,18 @@ pub const RUNS: u32 = 5;
 const SOLADY_SYMBOLIC_MATCH_TEST: &str = concat!(
     "check_(",
     "SaturatingAddEquivalence|",
+    "SaturatingMulEquivalence|",
     "HasDuplicateHashmapCapacityTrickEquivalence|",
     "IsPermit2AndValueIsNotInfinityTrickEquivalence|",
     "IsNotUint256MaxTrickEquivalence|",
-    "DelayRestriction",
+    "DelayRestriction|",
+    "OperationStateDifferentialTrick|",
+    "CarryBoundsTrick|",
+    "SafeCastInt256ToIntTrickEquivalence|",
+    "P256Normalized|",
+    "AuxPackEquivalence|",
+    "EcrecoverTrickEquivalence|",
+    "EcrecoverLoopTrick",
     ")"
 );
 const ANGSTROM_SYMBOLIC_MATCH_TEST: &str = "check_matchesSolady_fullMulX128";
