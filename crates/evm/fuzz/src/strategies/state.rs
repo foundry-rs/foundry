@@ -218,6 +218,8 @@ impl From<EvmFuzzState> for InvariantFuzzState {
 // for performance when iterating over the sets.
 /// Maximum number of persistent values from sancov trace-cmp.
 const MAX_PERSISTENT_VALUES: usize = 2048;
+/// Maximum cached storage slot layout lookups per fuzz dictionary.
+const MAX_SLOT_INFO_CACHE_ENTRIES: usize = 4096;
 
 #[derive(Clone)]
 pub struct FuzzDictionary {
@@ -252,6 +254,8 @@ pub struct FuzzDictionary {
     persistent_values: B256IndexSet,
     /// Parsed storage layout identifiers keyed by the layout allocation.
     slot_identifiers: HashMap<usize, SlotIdentifier>,
+    /// Cached non-mapping storage slot identification keyed by layout allocation and slot.
+    slot_info_cache: HashMap<(usize, B256), Option<SlotInfo>>,
 
     misses: usize,
     hits: usize,
@@ -289,6 +293,7 @@ impl FuzzDictionary {
             literal_values: Default::default(),
             persistent_values: Default::default(),
             slot_identifiers: Default::default(),
+            slot_info_cache: Default::default(),
             misses: Default::default(),
             hits: Default::default(),
         };
@@ -473,15 +478,39 @@ impl FuzzDictionary {
                     let slot_info = slot_identifier_key.and_then(|key| {
                         let slot = B256::from(*slot);
                         let value_word = B256::from(value.present_value);
-                        self.slot_identifiers
-                            .get(&key)
-                            .and_then(|identifier| identifier.identify(&slot, mapping_slots))
+                        self.identify_storage_slot(key, slot, mapping_slots)
                             .filter(|slot_info| slot_info.decode(value_word).is_some())
                     });
                     self.insert_storage_value(slot, &value.present_value, slot_info);
                 }
             }
         }
+    }
+
+    fn identify_storage_slot(
+        &mut self,
+        key: usize,
+        slot: B256,
+        mapping_slots: Option<&MappingSlots>,
+    ) -> Option<SlotInfo> {
+        if mapping_slots.is_some() {
+            return self
+                .slot_identifiers
+                .get(&key)
+                .and_then(|identifier| identifier.identify(&slot, mapping_slots));
+        }
+
+        let cache_key = (key, slot);
+        if let Some(slot_info) = self.slot_info_cache.get(&cache_key) {
+            return slot_info.clone();
+        }
+
+        let slot_info =
+            self.slot_identifiers.get(&key).and_then(|identifier| identifier.identify(&slot, None));
+        if self.slot_info_cache.len() < MAX_SLOT_INFO_CACHE_ENTRIES {
+            self.slot_info_cache.insert(cache_key, slot_info.clone());
+        }
+        slot_info
     }
 
     /// Insert values from push bytes into fuzz dictionary.

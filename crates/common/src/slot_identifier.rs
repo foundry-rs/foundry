@@ -23,7 +23,7 @@ pub const ENCODING_BYTES: &str = "bytes";
 pub const ENCODING_DYN_ARRAY: &str = "dynamic_array";
 
 /// Information about a storage slot including its label, type, and decoded values.
-#[derive(Serialize, Debug)]
+#[derive(Clone, Serialize, Debug)]
 pub struct SlotInfo {
     /// The variable name from the storage layout.
     ///
@@ -62,7 +62,7 @@ pub struct SlotInfo {
 /// We need both because:
 /// - `label`: Used for serialization to ensure output matches user expectations
 /// - `dyn_sol_type`: The parsed type used for actual value decoding
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StorageTypeInfo {
     /// The original type label from storage layout (e.g., "uint256", "address", "mapping(address
     /// => uint256)")
@@ -348,7 +348,7 @@ where
 }
 
 /// Decoded storage slot values
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DecodedSlotValues {
     /// Initial decoded storage value
     pub previous_value: DynSolValue,
