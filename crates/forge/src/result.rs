@@ -355,6 +355,32 @@ mod tests {
         visit_refs(&counterexample_schema, result_defs, counterexample_defs);
     }
 
+    #[test]
+    fn symbolic_result_schema_includes_solver_stats() {
+        let schema: serde_json::Value = serde_json::from_str(SYMBOLIC_RESULT_SCHEMA_JSON).unwrap();
+        let stats = schema["$defs"]["solver_stats"]["properties"]
+            .as_object()
+            .expect("solver stats properties");
+
+        for key in [
+            "paths",
+            "solver_queries",
+            "smt_queries",
+            "sat_queries",
+            "model_queries",
+            "sat_cache_hits",
+            "model_cache_hits",
+            "heuristic_witnesses",
+            "solver_time_ms",
+            "smt_input_bytes",
+            "smt_max_query_bytes",
+            "smt_build_time_ms",
+            "smt_max_query_time_ms",
+        ] {
+            assert!(stats.contains_key(key), "missing solver stats schema key {key}");
+        }
+    }
+
     fn assert_counterexample_artifact_shape(value: &serde_json::Value) {
         assert_counterexample_schema_refs_resolve_offline();
         let object = value.as_object().expect("artifact object");

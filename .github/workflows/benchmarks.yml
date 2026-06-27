@@ -66,7 +66,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config
+          sudo apt-get install -y build-essential pkg-config z3
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
@@ -126,8 +126,13 @@ jobs:
           VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
           REPOS: ${{ github.event.inputs.repos || env.SYMBOLIC_REPOS }}
         run: |
+          SYMBOLIC_VERSIONS=$(printf '%s\n' "$VERSIONS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -E '^(local|nightly)$' | paste -sd, -)
+          if [ -z "$SYMBOLIC_VERSIONS" ]; then
+            echo "Skipping symbolic benchmarks: no symbolic-capable versions in '$VERSIONS'"
+            exit 0
+          fi
           ./target/release/foundry-bench --output-dir ./benches \
-            --versions "$VERSIONS" \
+            --versions "$SYMBOLIC_VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_symbolic_test \
             --output-file forge_symbolic_bench.md \
