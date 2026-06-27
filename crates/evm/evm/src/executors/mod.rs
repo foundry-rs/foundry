@@ -573,7 +573,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     /// Applies the EIP-4788 beacon roots system call (Cancun+).
-    /// https://eips.ethereum.org/EIPS/eip-4788
+    /// <https://eips.ethereum.org/EIPS/eip-4788>
     pub fn apply_beacon_root(
         &mut self,
         parent_beacon_block_root: alloy_primitives::B256,
