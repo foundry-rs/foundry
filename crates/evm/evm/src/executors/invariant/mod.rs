@@ -75,8 +75,9 @@ pub use result::InvariantFuzzTestResult;
 
 mod shrink;
 pub use shrink::{
-    CheckSequenceOptions, HandlerReplayOutcome, check_sequence, check_sequence_value,
-    replay_handler_failure_sequence,
+    CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
+    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
+    check_sequence_value, replay_handler_failure_sequence, shrink_sequence_by_removing,
 };
 
 /// Minimum number of logical runs assigned to each auto invariant worker at the default invariant
@@ -382,6 +383,8 @@ struct InvariantProgressContext<'a> {
     elapsed: Duration,
     worker_id: u32,
     worker_count: usize,
+    /// Time since this worker last saw a new edge, or `None` if it has not seen one yet.
+    time_since_new_edge: Option<Duration>,
 }
 
 /// Builds the machine-readable invariant progress payload emitted during a
@@ -413,6 +416,10 @@ fn build_invariant_progress_json<M: Serialize>(
         "worker": {
             "id": context.worker_id,
             "count": context.worker_count,
+            // `null` until this worker sees its first edge.
+            "secs_since_new_edge": context
+                .time_since_new_edge
+                .map(|d| d.as_secs_f64()),
         },
     });
 
@@ -1027,7 +1034,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 }
 
                 // Collect line coverage from last fuzzed call.
-                invariant_test.merge_line_coverage(call_result.line_coverage.clone());
+                invariant_test.merge_line_coverage(call_result.line_coverage.take());
                 // Snapshot the edge fingerprint before `merge_edge_coverage` zeroes the
                 // buffer. Gate on `assertion_failure` to skip keccak on plain reverts.
                 let assertion_failure =
@@ -1326,6 +1333,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             msg.push_str(", ");
                         }
                         msg.push_str(&format!("{}", corpus_manager.metrics));
+                        match corpus_manager.time_since_new_edge() {
+                            Some(elapsed) => msg.push_str(&format!(
+                                "\n        - time since new edge: {:.1}s",
+                                elapsed.as_secs_f64()
+                            )),
+                            None => msg.push_str("\n        - time since new edge: never"),
+                        }
                     }
                     if broken > 0 {
                         if !msg.is_empty() {
@@ -1363,6 +1377,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         elapsed: campaign_state.elapsed(),
                         worker_id: plan.worker_id,
                         worker_count,
+                        time_since_new_edge: corpus_manager.time_since_new_edge(),
                     },
                     &corpus_manager.metrics,
                     &failure_metrics,
@@ -2178,6 +2193,7 @@ mod tests {
                 elapsed: Duration::from_secs(10),
                 worker_id: 1,
                 worker_count: 4,
+                time_since_new_edge: Some(Duration::from_secs(3)),
             },
             &json!({ "corpus_count": 7 }),
             &InvariantFailureMetrics::default(),
@@ -2468,6 +2484,7 @@ mod tests {
                 elapsed: Duration::ZERO,
                 worker_id: 0,
                 worker_count: 1,
+                time_since_new_edge: None,
             },
             &json!({ "corpus_count": 1 }),
             &InvariantFailureMetrics::default(),
@@ -2476,6 +2493,29 @@ mod tests {
         assert_eq!(payload["tps"], json!(0.0));
         assert_eq!(payload["gps"], json!(0.0));
         assert!(payload.get("optimization_best").is_none());
+        // No edge seen yet -> `null`.
+        assert_eq!(payload["worker"]["secs_since_new_edge"], json!(null));
+    }
+
+    #[test]
+    fn invariant_progress_json_reports_secs_since_new_edge() {
+        let payload = build_invariant_progress_json(
+            InvariantProgressContext {
+                timestamp_secs: 1,
+                contract_name: "TestContract",
+                optimization_best: None,
+                throughput: InvariantThroughputMetrics::default(),
+                elapsed: Duration::from_secs(1),
+                worker_id: 2,
+                worker_count: 4,
+                time_since_new_edge: Some(Duration::from_millis(1500)),
+            },
+            &json!({ "corpus_count": 1 }),
+            &InvariantFailureMetrics::default(),
+        );
+
+        assert_eq!(payload["worker"]["id"], json!(2));
+        assert_eq!(payload["worker"]["secs_since_new_edge"], json!(1.5));
     }
 
     #[test]
@@ -2489,6 +2529,7 @@ mod tests {
                 elapsed: Duration::from_secs(3),
                 worker_id: 0,
                 worker_count: 1,
+                time_since_new_edge: None,
             },
             &json!({ "corpus_count": 1 }),
             &InvariantFailureMetrics::default(),
@@ -2515,6 +2556,7 @@ mod tests {
                 elapsed: Duration::from_secs(1),
                 worker_id: 0,
                 worker_count: 1,
+                time_since_new_edge: None,
             },
             &json!({ "corpus_count": 5 }),
             &failure_metrics,

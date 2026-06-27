@@ -7,7 +7,7 @@ use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
-    map::{HashMap, HashSet},
+    map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
 use foundry_common::{
@@ -37,11 +37,12 @@ use tempo_contracts::precompiles::{
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
     RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
+    STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce,
+    tip20::ITIP20,
 };
 
-mod precompiles;
+pub(crate) mod precompiles;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -270,6 +271,7 @@ impl CallTraceDecoder {
                 (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
                 (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
                 (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
+                (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
@@ -345,6 +347,17 @@ impl CallTraceDecoder {
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
+    }
+
+    /// Returns labels for precompiles active in this decoder's chain context.
+    pub fn precompile_labels(&self) -> AddressHashMap<String> {
+        self.labels
+            .iter()
+            .filter(|(address, _)| {
+                precompiles::is_known_precompile(**address, self.chain_id, self.tempo_hardfork)
+            })
+            .map(|(address, label)| (*address, label.clone()))
+            .collect()
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -1941,6 +1954,62 @@ mod tests {
 
         // On a Tempo chain, the Tempo precompile should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_precompile_labels_follow_tempo_hardfork_activation_boundaries() {
+        let labels_for_hardfork = |hardfork| {
+            CallTraceDecoderBuilder::new()
+                .with_tempo_hardfork(Some(hardfork))
+                .build()
+                .precompile_labels()
+        };
+
+        let t4_labels = labels_for_hardfork(TempoHardfork::T4);
+        assert_eq!(t4_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert!(!t4_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(!t4_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!t4_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t5_labels = labels_for_hardfork(TempoHardfork::T5);
+        assert_eq!(t5_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert_eq!(
+            t5_labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert!(!t5_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!t5_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t6_labels = labels_for_hardfork(TempoHardfork::T6);
+        assert_eq!(
+            t6_labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert_eq!(
+            t6_labels.get(&RECEIVE_POLICY_GUARD_ADDRESS),
+            Some(&"ReceivePolicyGuard".to_string())
+        );
+        assert!(!t6_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t7_labels = labels_for_hardfork(TempoHardfork::T7);
+        assert_eq!(
+            t7_labels.get(&RECEIVE_POLICY_GUARD_ADDRESS),
+            Some(&"ReceivePolicyGuard".to_string())
+        );
+        assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+    }
+
+    #[test]
+    fn test_precompile_labels_skip_tempo_precompiles_on_other_chains() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(1))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+
+        let labels = decoder.precompile_labels();
+        assert!(!labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
+        assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!labels.contains_key(&STORAGE_CREDITS_ADDRESS));
     }
 
     #[test]

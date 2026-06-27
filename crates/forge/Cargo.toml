@@ -93,6 +93,8 @@ path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 
+axum.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
 opener = "0.8"
 
 # soldeer
@@ -104,7 +106,6 @@ tempfile.workspace = true
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
-axum.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 
