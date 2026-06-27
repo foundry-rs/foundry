@@ -381,10 +381,9 @@ impl FuzzDictionary {
                 for &topic in log.topics() {
                     self.insert_value(topic);
                 }
-                let chunks = log.data.data.chunks_exact(32);
-                let rem = chunks.remainder();
+                let (chunks, rem) = log.data.data.as_chunks::<32>();
                 for chunk in chunks {
-                    self.insert_value(chunk.try_into().unwrap());
+                    self.insert_value((*chunk).into());
                 }
                 if !rem.is_empty() {
                     self.insert_value(B256::right_padding_from(rem));
