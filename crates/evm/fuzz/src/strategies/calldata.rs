@@ -2,10 +2,43 @@ use crate::{
     FuzzFixtures,
     strategies::{FuzzStateReader, fuzz_param_from_state, fuzz_param_with_fixtures},
 };
-use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_dyn_abi::{DynSolCall, DynSolReturns, DynSolType, DynSolValue};
 use alloy_json_abi::{Function, Param};
 use alloy_primitives::{Bytes, U256};
 use proptest::{prelude::Strategy, strategy::BoxedStrategy};
+
+#[derive(Clone)]
+struct CalldataEncoder {
+    call: DynSolCall,
+    name: String,
+    inputs: Vec<Param>,
+}
+
+impl CalldataEncoder {
+    fn new(func: Function, input_types: Vec<DynSolType>) -> Self {
+        let selector = func.selector();
+        let name = func.name;
+        let inputs = func.inputs;
+        let call = DynSolCall::new(selector, input_types, None, DynSolReturns::new(Vec::new()));
+        Self { call, name, inputs }
+    }
+
+    fn encode(&self, values: &[DynSolValue]) -> Bytes {
+        self.call
+            .abi_encode_input(values)
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Fuzzer generated invalid arguments for function `{}` with inputs {:?}: {:?}",
+                    self.name, self.inputs, values
+                )
+            })
+            .into()
+    }
+}
+
+fn parse_input_types(func: &Function) -> Vec<DynSolType> {
+    func.inputs.iter().map(|input| input.selector_type().parse().unwrap()).collect()
+}
 
 /// Plan for constraining the enum leaves of a fuzzed parameter into their valid `0..variant_count`
 /// range. Solidity enums are ABI-encoded as `uint8`, so without this the fuzzer can generate
@@ -114,30 +147,24 @@ pub fn fuzz_calldata(
     func: Function,
     fuzz_fixtures: &FuzzFixtures,
 ) -> impl Strategy<Value = Bytes> + use<> {
+    let input_types = parse_input_types(&func);
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations, accounting any parameter declared fixture
     let strats = func
         .inputs
         .iter()
-        .map(|input| {
+        .zip(&input_types)
+        .map(|(input, input_type)| {
             let strat = fuzz_param_with_fixtures(
-                &input.selector_type().parse().unwrap(),
+                input_type,
                 fuzz_fixtures.param_fixtures(&input.name),
                 &input.name,
             );
             bound_enum(strat, input, fuzz_fixtures)
         })
         .collect::<Vec<_>>();
-    strats.prop_map(move |values| {
-        func.abi_encode_input(&values)
-            .unwrap_or_else(|_| {
-                panic!(
-                    "Fuzzer generated invalid arguments for function `{}` with inputs {:?}: {:?}",
-                    func.name, func.inputs, values
-                )
-            })
-            .into()
-    })
+    let encoder = CalldataEncoder::new(func, input_types);
+    strats.prop_map(move |values| encoder.encode(&values))
 }
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
@@ -147,26 +174,18 @@ pub fn fuzz_calldata_from_state<S: FuzzStateReader>(
     state: &S,
     fuzz_fixtures: &FuzzFixtures,
 ) -> impl Strategy<Value = Bytes> + use<S> {
+    let input_types = parse_input_types(&func);
     let strats = func
         .inputs
         .iter()
-        .map(|input| {
-            let strat = fuzz_param_from_state(&input.selector_type().parse().unwrap(), state);
+        .zip(&input_types)
+        .map(|(input, input_type)| {
+            let strat = fuzz_param_from_state(input_type, state);
             bound_enum(strat, input, fuzz_fixtures)
         })
         .collect::<Vec<_>>();
-    strats
-        .prop_map(move |values| {
-            func.abi_encode_input(&values)
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "Fuzzer generated invalid arguments for function `{}` with inputs {:?}: {:?}",
-                        func.name, func.inputs, values
-                    )
-                })
-                .into()
-        })
-        .no_shrink()
+    let encoder = CalldataEncoder::new(func, input_types);
+    strats.prop_map(move |values| encoder.encode(&values)).no_shrink()
 }
 
 #[cfg(test)]
@@ -174,7 +193,7 @@ mod tests {
     use crate::{FuzzFixtures, strategies::fuzz_calldata};
     use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
     use alloy_json_abi::Function;
-    use alloy_primitives::{Address, map::HashMap};
+    use alloy_primitives::{Address, U256, map::HashMap};
     use proptest::prelude::Strategy;
 
     #[test]
@@ -193,5 +212,34 @@ mod tests {
         let _ = strategy.prop_map(move |fuzzed| {
             assert_eq!(expected, fuzzed);
         });
+    }
+
+    #[test]
+    fn calldata_encoder_matches_json_abi() {
+        let function = Function::parse("test_values(uint256,string,bytes,uint64[2])").unwrap();
+        let values = vec![
+            DynSolValue::Uint(U256::from(42), 256),
+            DynSolValue::String("hello".to_string()),
+            DynSolValue::Bytes(vec![0xaa, 0xbb, 0xcc]),
+            DynSolValue::FixedArray(vec![
+                DynSolValue::Uint(U256::from(1), 64),
+                DynSolValue::Uint(U256::from(2), 64),
+            ]),
+        ];
+        let expected = function.abi_encode_input(&values).unwrap();
+        let encoder =
+            super::CalldataEncoder::new(function.clone(), super::parse_input_types(&function));
+
+        assert_eq!(expected, encoder.encode(&values));
+    }
+
+    #[test]
+    fn calldata_encoder_matches_json_abi_for_empty_inputs() {
+        let function = Function::parse("test_no_args()").unwrap();
+        let expected = function.abi_encode_input(&[]).unwrap();
+        let encoder =
+            super::CalldataEncoder::new(function.clone(), super::parse_input_types(&function));
+
+        assert_eq!(expected, encoder.encode(&[]));
     }
 }
