@@ -47,7 +47,7 @@ impl SymbolicExecutor {
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {
                 if let Some(offset) = state.constrained_usize(&offset) {
-                    SymCode::from_symbolic_bytes(state.memory.read_bytes(offset, *size))
+                    SymCode::from_bytes(state.memory.read_bytes(offset, *size))
                 } else {
                     SymCode::from_memory_offset(&state.memory, offset, *size)
                 }
@@ -91,7 +91,7 @@ impl SymbolicExecutor {
             state.address,
             value.clone(),
             false,
-            SymCalldata::new(Vec::new()),
+            SymCalldata::from_bytes(SymBytes::default()),
         );
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();

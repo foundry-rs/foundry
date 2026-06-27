@@ -4,20 +4,17 @@ use super::*;
 pub(crate) struct SymCalldata {
     size: usize,
     size_word: SymExpr,
-    bytes: Arc<[SymExpr]>,
+    bytes: SymBytes,
 }
 
 impl SymCalldata {
-    pub(crate) fn new(bytes: Vec<SymExpr>) -> Self {
-        Self::from_shared(bytes.into())
+    pub(crate) fn from_bytes(bytes: SymBytes) -> Self {
+        let size = bytes.len();
+        Self { size_word: SymExpr::constant(U256::from(size)), size, bytes }
     }
 
-    pub(crate) fn from_shared(bytes: Arc<[SymExpr]>) -> Self {
-        Self { size_word: SymExpr::constant(U256::from(bytes.len())), size: bytes.len(), bytes }
-    }
-
-    pub(crate) fn new_symbolic_size(bytes: Vec<SymExpr>, size_word: SymExpr) -> Self {
-        Self { size: bytes.len(), size_word, bytes: bytes.into() }
+    pub(crate) fn from_bytes_with_size(bytes: SymBytes, size_word: SymExpr) -> Self {
+        Self { size: bytes.len(), size_word, bytes }
     }
 
     pub(crate) fn size_word(&self) -> SymExpr {
@@ -36,11 +33,7 @@ impl SymCalldata {
     }
 
     pub(crate) fn load(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))))
-    }
-
-    pub(crate) fn byte(&self, offset: usize) -> SymExpr {
-        self.bytes.get(offset).cloned().unwrap_or_else(SymExpr::zero)
+        Ok(self.bytes.word_at(offset))
     }
 
     pub(crate) fn load_dynamic(&self, offset: &SymExpr) -> Result<SymExpr, SymbolicError> {
@@ -55,21 +48,13 @@ impl SymCalldata {
         Ok(result)
     }
 
-    pub(crate) fn byte_dynamic_with_delta(&self, offset: &SymExpr, delta: usize) -> SymExpr {
-        let mut result = SymExpr::constant(U256::ZERO);
-        for candidate in (delta..self.size).rev() {
-            result = SymExpr::ite(
-                SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
-                self.byte(candidate),
-                result,
-            );
-        }
-        result
+    pub(crate) fn read_bytes_offset(&self, offset: SymExpr, size: usize) -> SymBytes {
+        self.bytes.read_offset(offset, size)
     }
 }
 
 impl BoundedCopySize {
-    pub(crate) fn read_from_memory(&self, memory: &SymMemory, offset: SymExpr) -> Vec<SymExpr> {
+    pub(crate) fn read_from_memory(&self, memory: &SymMemory, offset: SymExpr) -> SymBytes {
         match self {
             Self::Concrete(size) => memory.read_bytes_offset(offset, *size),
             Self::Symbolic { size, max_size } => {
@@ -92,10 +77,10 @@ impl BoundedCopySize {
         }
     }
 
-    pub(crate) fn calldata(&self, input: Vec<SymExpr>) -> SymCalldata {
+    pub(crate) fn calldata(&self, input: SymBytes) -> SymCalldata {
         match self {
-            Self::Concrete(_) => SymCalldata::new(input),
-            Self::Symbolic { size, .. } => SymCalldata::new_symbolic_size(input, size.clone()),
+            Self::Concrete(_) => SymCalldata::from_bytes(input),
+            Self::Symbolic { size, .. } => SymCalldata::from_bytes_with_size(input, size.clone()),
         }
     }
 }
