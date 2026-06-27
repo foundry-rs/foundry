@@ -345,6 +345,7 @@ interface Vm {
     function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
     function lastCallGas() external view returns (Gas memory gas);
+    function lastFrameGas() external view returns (Gas memory gas);
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
     function makePersistent(address account) external;
@@ -529,6 +530,8 @@ interface Vm {
     function snapshot() external returns (uint256 snapshotId);
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function snapshotState() external returns (uint256 snapshotId);
     function snapshotValue(string calldata name, uint256 value) external;
     function snapshotValue(string calldata group, string calldata name, uint256 value) external;

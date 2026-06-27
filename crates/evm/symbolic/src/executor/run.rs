@@ -26,7 +26,7 @@ impl SymbolicExecutor {
     /// Checks branch feasibility, recording solver-unknown as an incomplete proof path.
     pub(super) fn branch_is_sat_or_defer(
         &mut self,
-        constraints: &[BoolExpr],
+        constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
         match self.solver.is_sat_branch(constraints) {
             Ok(feasible) => Ok(feasible),
@@ -140,7 +140,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Runs the `run_inner` symbolic executor helper.
     pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
@@ -152,10 +151,8 @@ impl SymbolicExecutor {
             .basic_ref(input.target)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
-        let code =
-            account.code.ok_or(SymbolicError::MissingCode(input.target))?.original_bytes().to_vec();
-        let code = SymCode::concrete(code);
-        let jumpdests = analyze_jumpdests(&code);
+        let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
+        let code = SymCode::from_bytecode(&bytecode);
         let mut worklist = VecDeque::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config)? {
             let mut root = PathState::new(
@@ -239,7 +236,7 @@ impl SymbolicExecutor {
                 match self.step(
                     input.executor,
                     &code,
-                    &jumpdests,
+                    code.jump_table(),
                     &mut state,
                     &mut worklist,
                     &mut completed_paths,
@@ -337,7 +334,6 @@ impl SymbolicExecutor {
         })
     }
 
-    /// Runs the `materialize_stateless_counterexample` symbolic executor helper.
     pub(super) fn materialize_stateless_counterexample(
         &mut self,
         calldata: &SymbolicCalldata,
@@ -365,7 +361,6 @@ impl SymbolicExecutor {
         Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
     }
 
-    /// Runs the `run_invariant_inner` symbolic executor helper.
     pub(super) fn run_invariant_inner<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
@@ -413,7 +408,7 @@ impl SymbolicExecutor {
                         let calldatas = SymbolicCalldata::variants_with_prefix(
                             &target.function,
                             &self.config,
-                            prefix,
+                            &prefix,
                         )?;
                         for calldata in calldatas {
                             let step = SequenceStepTemplate {
@@ -430,7 +425,7 @@ impl SymbolicExecutor {
                                 sender,
                                 &target.function,
                                 step.calldata.call_data(),
-                                step.calldata.constraints.clone(),
+                                step.calldata.constraints().to_vec(),
                                 &mut completed_paths,
                             )?;
 
@@ -559,7 +554,6 @@ impl SymbolicExecutor {
         Ok(SymbolicInvariantRunResult::Safe(self.stats_with_paths(completed_paths)))
     }
 
-    /// Implements the `stats_with_paths` symbolic executor helper.
     pub(super) fn stats_with_paths(&self, paths: usize) -> SymbolicStats {
         let mut stats = self.solver.stats();
         stats.paths = paths;

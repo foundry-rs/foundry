@@ -2,7 +2,6 @@ use super::{install, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
-    diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
     multi_runner::{
         MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, matches_artifact,
@@ -24,8 +23,6 @@ use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
-    ExitCode,
-    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
@@ -33,7 +30,7 @@ use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
 };
 use foundry_compilers::{
-    CompilationError, ProjectCompileOutput,
+    ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
     compilers::{
         Language,
@@ -722,50 +719,6 @@ impl TestArgs {
         Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
     }
 
-    /// Reject flags whose stdout shape conflicts with the NDJSON stream
-    /// contract under `--machine`. Called from the binary entry point so
-    /// `--watch` is also rejected.
-    pub(crate) fn reject_machine_unsupported_flags(&self) -> Result<()> {
-        if !foundry_cli::is_machine() {
-            return Ok(());
-        }
-        let unsupported = [
-            ("--watch", self.is_watch()),
-            ("--debug", self.debug),
-            ("--flamegraph", self.flamegraph),
-            ("--flamechart", self.flamechart),
-            ("--gas-report", self.gas_report),
-            ("--summary", self.summary),
-            ("--list", self.list),
-            ("--junit", self.junit),
-            ("--show-progress", self.show_progress),
-            ("--mutate", self.mutate.is_some()),
-            // `--live-logs` writes console.log straight to stdout; the
-            // `live_logs = true` config equivalent is overridden in
-            // `compile_and_run`.
-            ("--live-logs", self.evm.live_logs),
-            // Bails mid-suite on diff; config equivalent overridden in `compile_and_run`.
-            ("--gas-snapshot-check", self.gas_snapshot_check.unwrap_or(false)),
-            // Writes mid-suite to disk and can fail between test_result and
-            // suite_finished; config equivalent overridden in `compile_and_run`.
-            ("--gas-snapshot-emit", self.gas_snapshot_emit == Some(true)),
-        ]
-        .into_iter()
-        .filter_map(|(name, on)| on.then_some(name))
-        .collect::<Vec<_>>();
-        if !unsupported.is_empty() {
-            foundry_cli::machine::bail_machine_usage_with_details(
-                format!(
-                    "`forge test` under `--machine` does not yet support {}; \
-                     run without `--machine` or omit those flags.",
-                    unsupported.join(", ")
-                ),
-                serde_json::json!({ "unsupported_flags": unsupported }),
-            );
-        }
-        Ok(())
-    }
-
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
@@ -806,11 +759,6 @@ impl TestArgs {
         });
         let output = project.compile()?;
         if output.has_compiler_errors() {
-            // Mirror the main-compile typed envelope so agents don't see this
-            // path as `cli.unknown` + exit 1.
-            if foundry_cli::is_machine() {
-                emit_machine_compile_error(&output);
-            }
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
@@ -848,8 +796,6 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
-        let machine_mode = foundry_cli::is_machine();
-
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -861,21 +807,7 @@ impl TestArgs {
             config.cache = true;
         }
 
-        // Override foundry.toml knobs that would print outside the NDJSON
-        // stream or bail mid-suite; the CLI equivalents are rejected in
-        // `reject_machine_unsupported_flags`.
-        if machine_mode {
-            config.show_progress = false;
-            config.live_logs = false;
-            config.gas_snapshot_check = false;
-            config.gas_snapshot_emit = false;
-        }
-
-        // Skip implicit dep install: it prints to stdout. A missing dep then
-        // surfaces as a typed `compiler.solc.error` from the compile below.
-        if !machine_mode
-            && install::install_missing_dependencies(&mut config).await
-            && config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
@@ -910,20 +842,11 @@ impl TestArgs {
         }
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let mut compiler = ProjectCompiler::new()
+        let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit || machine_mode)
+            .quiet(shell::is_json() || self.junit)
             .files(self.get_sources_to_compile(&config, &filter)?);
-        // Disable inner `bail` so a compile error returns the output and we
-        // can emit a typed envelope instead of an untyped `cli.unknown`.
-        if machine_mode {
-            compiler = compiler.bail(false);
-        }
         let output = compiler.compile(&project)?;
-
-        if machine_mode && output.has_compiler_errors() {
-            emit_machine_compile_error(&output);
-        }
 
         self.run_tests(
             &project.paths.root,
@@ -1046,21 +969,6 @@ impl TestArgs {
         let inline_config = InlineConfig::new_parsed(output, &config)?;
         let override_networks = inline_config.referenced_override_networks(&config.profile);
 
-        // Multi-pass would emit `test_result*` + `suite_finished` once per
-        // pass for the same suite, violating "exactly one terminator per group".
-        if foundry_cli::is_machine() && !override_networks.is_empty() {
-            let networks: Vec<String> = override_networks.iter().map(|n| n.to_string()).collect();
-            foundry_cli::machine::bail_machine_usage_with_details(
-                "`forge test` under `--machine` does not yet support inline network \
-                 overrides; run without `--machine` or remove the inline `network` \
-                 annotations.",
-                serde_json::json!({
-                    "unsupported_features": ["inline_network_overrides"],
-                    "networks": networks,
-                }),
-            );
-        }
-
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
             execution.decode_internal = decode_internal;
@@ -1123,11 +1031,10 @@ impl TestArgs {
             }
 
             // Print the merged summary (per-pass summaries are suppressed in `run_tests_inner`).
-            // Machine mode emits a terminal envelope from the binary entry point instead.
-            if !self.summary && !shell::is_json() && !foundry_cli::is_machine() {
+            if !self.summary && !shell::is_json() {
                 sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
             }
-            if self.summary && !outcome.results.is_empty() && !foundry_cli::is_machine() {
+            if self.summary && !outcome.results.is_empty() {
                 let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
                 sh_println!("{}", &summary_report)?;
             }
@@ -1205,7 +1112,7 @@ impl TestArgs {
 
             // Prefer execution traces for normal debug runs, but when execution never starts
             // (for example if `setUp()` reverts), fall back to available setup/deployment traces.
-            let traces = {
+            let mut traces = {
                 let execution = test_result
                     .traces
                     .iter()
@@ -1214,6 +1121,11 @@ impl TestArgs {
                     .collect::<Vec<_>>();
                 if execution.is_empty() { test_result.traces.clone() } else { execution }
             };
+            if let Some(decoder) = &outcome.last_run_decoder {
+                for (_, arena) in &mut traces {
+                    decode_trace_arena(arena, decoder).await;
+                }
+            }
 
             // Run the debugger.
             let mut builder = Debugger::builder()
@@ -1545,12 +1457,8 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
-        let machine_mode = foundry_cli::is_machine();
-
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        // Machine mode is also a structured stream and must not interleave human output.
-        let silent = machine_mode
-            || self.gas_report && shell::is_json()
+        let silent = self.gas_report && shell::is_json()
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
 
@@ -1562,24 +1470,22 @@ impl TestArgs {
             } else {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
-            if !machine_mode {
-                if total_tests == 0 {
-                    sh_println!(
-                        "No tests found in project! Forge looks for functions that start with `test`"
-                    )?;
-                } else {
-                    let mut msg = format!("no tests match the provided pattern:\n{filter}");
-                    // Try to suggest a test when there's no match.
-                    if let Some(test_pattern) = &filter.args().test_pattern {
-                        let test_name = test_pattern.as_str();
-                        // Filter contracts but not test functions.
-                        let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                        if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                            write!(msg, "\nDid you mean `{suggestion}`?")?;
-                        }
+            if total_tests == 0 {
+                sh_println!(
+                    "No tests found in project! Forge looks for functions that start with `test`"
+                )?;
+            } else {
+                let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                // Try to suggest a test when there's no match.
+                if let Some(test_pattern) = &filter.args().test_pattern {
+                    let test_name = test_pattern.as_str();
+                    // Filter contracts but not test functions.
+                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                        write!(msg, "\nDid you mean `{suggestion}`?")?;
                     }
-                    sh_warn!("{msg}")?;
                 }
+                sh_warn!("{msg}")?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
@@ -1609,13 +1515,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        // Agent stream wins over `--json`.
-        if self.mutate.is_none()
-            && !machine_mode
-            && !self.gas_report
-            && !self.summary
-            && shell::is_json()
-        {
+        if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
             for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
@@ -1772,10 +1672,6 @@ impl TestArgs {
                             sh_println!()?;
                         }
                     }
-                }
-
-                if machine_mode {
-                    emit_test_result_event(&contract_name, name, result)?;
                 }
 
                 // We shouldn't break out of the outer loop directly here so that we finish
@@ -1980,17 +1876,6 @@ impl TestArgs {
                 sh_println!("{}", suite_result.summary())?;
             }
 
-            if machine_mode {
-                for warning in &suite_result.warnings {
-                    emit_warning_event(&contract_name, warning)?;
-                }
-                // Terminator follows any record for the group; warning-only
-                // suites get a zero-count `suite_finished`.
-                if has_tests || !suite_result.warnings.is_empty() {
-                    emit_suite_finished_event(&contract_name, &suite_result)?;
-                }
-            }
-
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
 
@@ -2010,11 +1895,11 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !is_multi_pass && !self.summary && !shell::is_json() && !machine_mode {
+        if !is_multi_pass && !self.summary && !shell::is_json() {
             sh_println!("{}", outcome.summary(duration))?;
         }
 
-        if !is_multi_pass && self.summary && !outcome.results.is_empty() && !machine_mode {
+        if !is_multi_pass && self.summary && !outcome.results.is_empty() {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
             sh_println!("{summary_report}")?;
         }
@@ -2074,124 +1959,6 @@ impl TestArgs {
             Ok([config.src, config.test])
         })
     }
-}
-
-/// Terminal `forge test` envelope payload under `--machine`. Counts are
-/// aggregated across every suite; times are in milliseconds.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct TestSummaryData {
-    pub suites: usize,
-    pub passed: usize,
-    pub failed: usize,
-    pub skipped: usize,
-    pub duration_ms: u128,
-}
-
-impl TestSummaryData {
-    pub fn from_outcome(outcome: &TestOutcome, wall_clock: Duration) -> Self {
-        Self {
-            suites: outcome.results.len(),
-            passed: outcome.passed(),
-            failed: outcome.failed(),
-            skipped: outcome.skipped(),
-            duration_ms: wall_clock.as_millis(),
-        }
-    }
-}
-
-#[derive(serde::Serialize)]
-struct TestResultEvent<'a> {
-    suite: &'a str,
-    name: &'a str,
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<&'a str>,
-    duration_ms: u128,
-}
-
-#[derive(serde::Serialize)]
-struct SuiteFinishedEvent<'a> {
-    suite: &'a str,
-    passed: usize,
-    failed: usize,
-    skipped: usize,
-    duration_ms: u128,
-}
-
-#[derive(serde::Serialize)]
-struct WarningEvent<'a> {
-    suite: &'a str,
-    code: &'static str,
-    message: &'a str,
-}
-
-const fn status_str(status: TestStatus) -> &'static str {
-    match status {
-        TestStatus::Success => "passed",
-        TestStatus::Failure => "failed",
-        TestStatus::Skipped => "skipped",
-    }
-}
-
-fn emit_test_result_event(
-    suite: &str,
-    name: &str,
-    result: &crate::result::TestResult,
-) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "test_result",
-        TestResultEvent {
-            suite,
-            name,
-            status: status_str(result.status),
-            reason: result.reason.as_deref(),
-            duration_ms: result.duration.as_millis(),
-        },
-    )?;
-    Ok(())
-}
-
-fn emit_suite_finished_event(suite: &str, result: &SuiteResult) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "suite_finished",
-        SuiteFinishedEvent {
-            suite,
-            passed: result.passed(),
-            failed: result.failed(),
-            skipped: result.skipped(),
-            duration_ms: result.duration.as_millis(),
-        },
-    )?;
-    Ok(())
-}
-
-fn emit_warning_event(suite: &str, message: &str) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "warning",
-        WarningEvent { suite, code: foundry_cli::diagnostic::test::WARNING, message },
-    )?;
-    Ok(())
-}
-
-/// Emit a `compiler.solc.error` envelope and exit `Build (4)`. Shared by the
-/// precompile and main-compile sites under `--machine`.
-fn emit_machine_compile_error(output: &ProjectCompileOutput) -> ! {
-    let errors: Vec<JsonMessage> = output
-        .output()
-        .errors
-        .iter()
-        .filter(|e| e.is_error())
-        .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
-        .collect();
-    // Best-effort: bubbling on a broken stdout would demote exit `4` to `1`.
-    let _ = print_json(&JsonEnvelope::<()>::failure(errors));
-    std::process::exit(ExitCode::Build.to_i32());
 }
 
 impl Provider for TestArgs {

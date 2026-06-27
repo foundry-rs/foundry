@@ -27,10 +27,10 @@ use foundry_evm::{
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
     fork::CreateFork,
-    fuzz::strategies::LiteralsDictionary,
+    fuzz::strategies::{EnumBounds, LiteralsDictionary},
     inspectors::CheatsConfig,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode},
+    traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
 
@@ -74,6 +74,8 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub fuzz_literals: LiteralsDictionary,
     /// Literals dictionary for invariant fuzzing.
     pub invariant_literals: LiteralsDictionary,
+    /// Variant counts for project enums, used to constrain fuzzed enum inputs.
+    pub enum_bounds: EnumBounds,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -468,7 +470,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             cheatcodes.config =
                 Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
         }
-        inspector.tracing(self.trace_mode());
+        inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.networks(self.evm_opts.networks);
@@ -501,7 +503,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                 stack
                     .logs(self.config.live_logs)
                     .cheatcodes(cheats_config)
-                    .trace_mode(self.trace_mode())
+                    .trace_requirements(self.trace_requirements())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .networks(self.evm_opts.networks)
@@ -514,8 +516,8 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .build(self.evm_env.clone(), self.tx_env.clone(), db)
     }
 
-    fn trace_mode(&self) -> TraceMode {
-        TraceMode::default()
+    const fn trace_requirements(&self) -> TraceRequirements {
+        TraceRequirements::none()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity)
@@ -722,6 +724,8 @@ impl MultiContractRunnerBuilder {
         })?;
 
         let analysis = Arc::new(analysis);
+        // Enum variant counts used to constrain fuzzed enum inputs to valid values.
+        let enum_bounds = EnumBounds::collect(&analysis);
         let fuzz_max_literals = self.config.fuzz.dictionary.max_fuzz_dictionary_literals;
         let invariant_max_literals = self.config.invariant.dictionary.max_fuzz_dictionary_literals;
         let fuzz_literals = LiteralsDictionary::new(
@@ -748,6 +752,7 @@ impl MultiContractRunnerBuilder {
             analysis,
             fuzz_literals,
             invariant_literals,
+            enum_bounds,
 
             tcfg: TestRunnerConfig {
                 evm_opts,
