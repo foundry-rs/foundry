@@ -913,7 +913,6 @@ impl WorkerCorpus {
         if let Some(index) = self.current_mutated_index.take() {
             let should_credit = new_coverage || improved_optimization;
             if let Some(corpus) = self.in_memory_corpus.get_mut(index) {
-                corpus.cmp_seq = cmp_seq.iter().take(corpus.tx_seq.len()).cloned().collect();
                 corpus.total_mutations += 1;
                 if should_credit {
                     corpus.new_finds_produced += 1
