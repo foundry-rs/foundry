@@ -355,6 +355,10 @@ pub struct GasMetering {
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
 
+    /// Cache of the amount of gas used in previous call or create frame.
+    /// This is used by the `lastFrameGas` cheatcode.
+    pub last_frame_gas: Option<crate::Vm::Gas>,
+
     /// True if gas recording is enabled.
     pub recording: bool,
     /// The gas used in the last frame.
@@ -962,16 +966,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Grab the different calldatas expected.
         if let Some(expected_calls_for_target) = self.expected_calls.get_mut(&call.bytecode_address)
         {
+            let input = call.input.as_bytes(ecx);
+            let value = call.transfer_value();
+
             // Match every partial/full calldata
             for (calldata, (expected, actual_count)) in expected_calls_for_target {
                 // Increment actual times seen if...
                 // The calldata is at most, as big as this call's input, and
-                if calldata.len() <= call.input.len() &&
+                if calldata.len() <= input.len() &&
                     // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
-                    *calldata == call.input.bytes(ecx)[..calldata.len()] &&
+                    input.get(..calldata.len()) == Some(calldata.as_ref()) &&
                     // The value matches, if provided
-                    expected
-                        .value.is_none_or(|value| Some(value) == call.transfer_value()) &&
+                    expected.value.is_none_or(|expected_value| Some(expected_value) == value) &&
                     // The gas matches, if provided
                     expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
@@ -1024,18 +1030,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
-            let ctx = MockCallDataContext {
-                calldata: call.input.bytes(ecx),
-                value: call.transfer_value(),
-            };
+            let input = call.input.bytes(ecx);
+            let value = call.transfer_value();
+            let ctx = MockCallDataContext { calldata: input.clone(), value };
 
             if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
                 Some(queue) => Some(queue),
                 None => mocks
                     .iter_mut()
                     .find(|(mock, _)| {
-                        call.input.bytes(ecx).get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
+                        input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                            && mock.value.is_none_or(|mock_value| Some(mock_value) == value)
                     })
                     .map(|(_, v)| v),
             } && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
@@ -1653,6 +1658,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
                 if needs_processing {
                     let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                    let clear_last_frame_gas =
+                        matches!(expected_revert.kind, ExpectedRevertKind::Default);
                     return match revert_handlers::handle_expect_revert(
                         cheatcode_call,
                         false,
@@ -1671,6 +1678,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
                                 self.expected_revert = Some(expected_revert);
+                            }
+                            if clear_last_frame_gas {
+                                self.gas_metering.last_frame_gas = None;
                             }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
@@ -1694,16 +1704,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
-        // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
-        // retrieve the gas usage of the last call.
+        // Record the gas usage of the call, this allows the `lastFrameGas` cheatcode to
+        // retrieve the gas usage of the last call or create.
         let gas = outcome.result.gas;
-        self.gas_metering.last_call_gas = Some(crate::Vm::Gas {
+        let frame_gas = crate::Vm::Gas {
             gasLimit: gas.limit(),
             gasTotalUsed: gas.total_gas_spent(),
             gasMemoryUsed: 0,
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
-        });
+        };
+        self.gas_metering.last_call_gas = Some(frame_gas.clone());
+        self.gas_metering.last_frame_gas = Some(frame_gas);
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
@@ -2165,6 +2177,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         outcome.result.result = InstructionResult::Return;
                         outcome.result.output = retdata;
                         outcome.address = address;
+                        self.gas_metering.last_frame_gas = None;
                     }
                     Err(err) => {
                         outcome.result.result = InstructionResult::Revert;
@@ -2172,6 +2185,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     }
                 };
             }
+        }
+
+        if curr_depth > 0 {
+            // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
+            // retrieve the gas usage of the last call or create.
+            let gas = outcome.result.gas;
+            self.gas_metering.last_frame_gas = Some(crate::Vm::Gas {
+                gasLimit: gas.limit(),
+                gasTotalUsed: gas.total_gas_spent(),
+                gasMemoryUsed: 0,
+                gasRefunded: gas.refunded(),
+                gasRemaining: gas.remaining(),
+            });
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the

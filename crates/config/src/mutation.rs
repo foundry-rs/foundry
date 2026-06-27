@@ -60,6 +60,16 @@ pub struct MutationConfig {
     /// other mutants can proceed. Cleanup backlog is bounded by the configured
     /// mutation worker count.
     pub timeout: Option<u32>,
+    /// Override `optimizer_runs` for mutation testing compile-and-test runs.
+    ///
+    /// This lets mutation campaigns use a faster compiler profile without
+    /// changing the project's normal build settings.
+    pub optimizer_runs: Option<u32>,
+    /// Override `via_ir` for mutation testing compile-and-test runs.
+    ///
+    /// This lets mutation campaigns disable the IR pipeline without changing
+    /// the project's normal build settings.
+    pub via_ir: Option<bool>,
 }
 
 impl MutationConfig {

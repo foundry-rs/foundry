@@ -1,7 +1,6 @@
 use super::*;
 
 impl SymbolicExecutor {
-    /// Implements the `create` symbolic executor helper.
     pub(super) fn create<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -18,11 +17,11 @@ impl SymbolicExecutor {
         let value = state.stack.pop()?;
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
-        let size = match state.constrained_usize(&size) {
-            Some(size) => BoundedCopySize::Concrete(size),
-            None if state.constrained_word(&size).is_some() => {
+        let size = match state.constrained_usize_checked(&size) {
+            Some(Ok(size)) => BoundedCopySize::Concrete(size),
+            Some(Err(_)) => {
                 state.return_data = SymReturnData::default();
-                state.stack.push(SymWord::zero())?;
+                state.stack.push(SymExpr::zero())?;
                 return Ok(StepOutcome::Continue);
             }
             None => {
@@ -48,7 +47,7 @@ impl SymbolicExecutor {
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {
                 if let Some(offset) = state.constrained_usize(&offset) {
-                    SymCode { bytes: state.memory.read_bytes(offset, *size) }
+                    SymCode::from_symbolic_bytes(state.memory.read_bytes(offset, *size))
                 } else {
                     SymCode::from_memory_offset(&state.memory, offset, *size)
                 }
@@ -61,7 +60,7 @@ impl SymbolicExecutor {
             CreateKind::Create => {
                 let nonce = state.world.nonce(executor, state.address)?;
                 let address = state.address.create(nonce);
-                (SymWord::Concrete(address_word(address)), address)
+                (SymExpr::constant(address_word(address)), address)
             }
             CreateKind::Create2 => create2_address_word(
                 state,
@@ -81,7 +80,7 @@ impl SymbolicExecutor {
         if failure_world.has_code_or_nonce(executor, created)? {
             state.world = failure_world;
             state.return_data = SymReturnData::default();
-            state.stack.push(SymWord::zero())?;
+            state.stack.push(SymExpr::zero())?;
             return Ok(StepOutcome::Continue);
         }
 
@@ -180,7 +179,7 @@ impl SymbolicExecutor {
                         kind,
                         &outcome.return_data,
                     )?;
-                    if !parent.world.destroyed_accounts.contains(&created) {
+                    if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, outcome.return_data.to_code()?);
                         parent.world.set_nonce(created, 1);
                     }
@@ -188,7 +187,7 @@ impl SymbolicExecutor {
                 }
                 TopLevelCallStatus::Revert => {
                     parent.world = failure_world.clone();
-                    parent.stack.push(SymWord::zero())?;
+                    parent.stack.push(SymExpr::zero())?;
                 }
                 TopLevelCallStatus::Failure => {
                     *state = parent;
@@ -207,7 +206,6 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Continue)
     }
 
-    /// Computes the `execute_external_call` symbolic executor helper result.
     pub(super) fn execute_external_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -215,7 +213,6 @@ impl SymbolicExecutor {
         code: &SymCode,
         completed_paths: &mut usize,
     ) -> Result<Vec<ExternalCallOutcome>, SymbolicError> {
-        let jumpdests = analyze_jumpdests(code);
         let mut worklist = VecDeque::from([initial]);
         let mut outcomes = Vec::new();
         let path_limit = self.config.path_width() as usize;
@@ -281,7 +278,7 @@ impl SymbolicExecutor {
                 match self.step(
                     executor,
                     code,
-                    &jumpdests,
+                    code.jump_table(),
                     &mut state,
                     &mut worklist,
                     completed_paths,

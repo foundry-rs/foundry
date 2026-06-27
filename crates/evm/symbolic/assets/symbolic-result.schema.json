@@ -55,6 +55,9 @@
     },
     "artifact": {
       "$ref": "#/$defs/artifact_ref"
+    },
+    "minimization": {
+      "$ref": "#/$defs/minimization"
     }
   },
   "allOf": [
@@ -466,6 +469,50 @@
         "path": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "minimization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original",
+        "minimized",
+        "attempts",
+        "accepted",
+        "original_calldata_bytes",
+        "minimized_calldata_bytes"
+      ],
+      "properties": {
+        "original": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "minimized": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "accepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "original_calldata_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimized_calldata_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "original_sequence_len": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimized_sequence_len": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

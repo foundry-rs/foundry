@@ -35,6 +35,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
   - `unused-return`: Return value of an external call is not used.
   - `locked-ether`: Contracts that can receive ETH but have no mechanism to send it out.
+  - `non-reentrant-not-first`: `nonReentrant` should be the first modifier on guarded entry points.
   - `weak-prng`: Flags randomness-like expressions derived from predictable on-chain values.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
