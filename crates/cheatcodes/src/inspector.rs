@@ -2569,6 +2569,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             op::SSTORE => {
                 let Some(last) = account_accesses.last_mut() else { return };
 
+                // TODO: avoid warming cold SSTORE slots while recording state diffs.
                 let key = try_or_return!(interpreter.stack.peek(0));
                 let value = try_or_return!(interpreter.stack.peek(1));
                 let address = interpreter.input.target_address;
@@ -2597,6 +2598,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
             // Record account accesses via the EXT family of opcodes
             op::EXTCODECOPY | op::EXTCODESIZE | op::EXTCODEHASH | op::BALANCE => {
+                // TODO: avoid warming cold accounts while recording EXT*/BALANCE state diffs.
                 let kind = match interpreter.bytecode.opcode() {
                     op::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
                     op::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
