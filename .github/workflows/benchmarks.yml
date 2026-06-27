@@ -126,13 +126,8 @@ jobs:
           VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
           REPOS: ${{ github.event.inputs.repos || env.SYMBOLIC_REPOS }}
         run: |
-          SYMBOLIC_VERSIONS=$(printf '%s\n' "$VERSIONS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -E '^(local|nightly)$' | paste -sd, -)
-          if [ -z "$SYMBOLIC_VERSIONS" ]; then
-            echo "Skipping symbolic benchmarks: no symbolic-capable versions in '$VERSIONS'"
-            exit 0
-          fi
           ./target/release/foundry-bench --output-dir ./benches \
-            --versions "$SYMBOLIC_VERSIONS" \
+            --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_symbolic_test \
             --output-file forge_symbolic_bench.md \

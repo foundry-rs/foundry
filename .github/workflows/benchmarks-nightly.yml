@@ -118,6 +118,19 @@ jobs:
             --json-output "stable-${DATE}-forge_coverage.json" \
             --verbose
 
+      - name: Run forge symbolic benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable \
+            --repos "$SYMBOLIC_REPOS" \
+            --benchmarks forge_symbolic_test \
+            --json-output "stable-${DATE}-forge_symbolic.json" \
+            --verbose
+
       # --- Nightly benchmarks ---
 
       - name: Run forge test benchmarks (nightly)
