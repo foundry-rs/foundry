@@ -54,6 +54,7 @@ pub use debug::DebugTraceIdentifier;
 pub mod folded_stack_trace;
 
 pub mod backtrace;
+pub mod speedscope;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
