@@ -207,6 +207,7 @@ contract RecordAccountAccessesTest is Test {
     Create2or create2or;
     StorageAccessor test1;
     StorageAccessor test2;
+    StorageAccessor coldReadAccessor;
     ExtChecker extChecker;
 
     function setUp() public {
@@ -215,6 +216,8 @@ contract RecordAccountAccessesTest is Test {
         create2or = new Create2or();
         test1 = new StorageAccessor();
         test2 = new StorageAccessor();
+        coldReadAccessor = new StorageAccessor();
+        coldReadAccessor.write(bytes32(uint256(123)), bytes32(uint256(456)));
         extChecker = new ExtChecker();
     }
 
@@ -350,6 +353,30 @@ contract RecordAccountAccessesTest is Test {
                 isWrite: true,
                 previousValue: bytes32(uint256(456)),
                 newValue: bytes32(uint256(789)),
+                reverted: false
+            })
+        );
+    }
+
+    /// @notice Test that cold reads to existing storage record the actual value
+    function testStorageAccessColdReadRecordsPresentValue() public {
+        StorageAccessor accessor = coldReadAccessor;
+        bytes32 slot = bytes32(uint256(123));
+
+        vm.startStateDiffRecording();
+        accessor.read(slot);
+
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+        assertEq(called.length, 1, "incorrect length");
+        assertEq(called[0].storageAccesses.length, 1, "incorrect storage length");
+        assertEq(
+            called[0].storageAccesses[0],
+            Vm.StorageAccess({
+                account: address(accessor),
+                slot: slot,
+                isWrite: false,
+                previousValue: bytes32(uint256(456)),
+                newValue: bytes32(uint256(456)),
                 reverted: false
             })
         );
