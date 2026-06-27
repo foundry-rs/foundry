@@ -19,6 +19,27 @@ pub struct HyperfineResult {
     pub exit_codes: Option<Vec<i32>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbolic: Option<SymbolicBenchmarkSummary>,
+}
+
+/// Aggregated symbolic counters for one benchmark run.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SymbolicBenchmarkSummary {
+    pub tests: usize,
+    pub paths: u64,
+    pub solver_queries: u64,
+    pub smt_queries: u64,
+    pub sat_queries: u64,
+    pub model_queries: u64,
+    pub sat_cache_hits: u64,
+    pub model_cache_hits: u64,
+    pub heuristic_witnesses: u64,
+    pub solver_time_ms: u64,
+    pub smt_input_bytes: u64,
+    pub smt_max_query_bytes: u64,
+    pub smt_build_time_ms: u64,
+    pub smt_max_query_time_ms: u64,
 }
 
 /// Hyperfine JSON output format
@@ -240,6 +261,30 @@ fn get_benchmark_cell_content(
     // Check if we have data for this repository
         let Some(result) = repo_data.get(repo_name)
     {
+        if let Some(symbolic) = &result.symbolic {
+            let has_smt_size_metrics = symbolic.smt_queries == 0
+                || symbolic.smt_input_bytes != 0
+                || symbolic.smt_max_query_bytes != 0;
+            let smt_input_bytes = if has_smt_size_metrics {
+                format_bytes(symbolic.smt_input_bytes)
+            } else {
+                "n/a".to_string()
+            };
+            let smt_max_query_bytes = if has_smt_size_metrics {
+                format_bytes(symbolic.smt_max_query_bytes)
+            } else {
+                "n/a".to_string()
+            };
+            return format!(
+                "{}<br/>{} tests, solver {}ms<br/>SMT: {} queries, {} total, {} max",
+                format_duration_seconds(result.mean),
+                symbolic.tests,
+                symbolic.solver_time_ms,
+                symbolic.smt_queries,
+                smt_input_bytes,
+                smt_max_query_bytes
+            );
+        }
         return format_duration_seconds(result.mean);
     }
 
@@ -254,9 +299,23 @@ pub fn format_benchmark_name(name: &str) -> String {
         "forge_fuzz_test" => "Forge Fuzz Test",
         "forge_coverage" => "Forge Coverage",
         "forge_isolate_test" => "Forge Test (Isolated)",
+        "forge_symbolic_test" => "Forge Symbolic Test",
         _ => name,
     }
     .to_string()
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes < KIB {
+        format!("{bytes:.0} B")
+    } else if bytes < MIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{:.1} MiB", bytes / MIB)
+    }
 }
 
 pub fn format_duration_seconds(seconds: f64) -> String {

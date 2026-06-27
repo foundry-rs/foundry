@@ -34,6 +34,9 @@ env:
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
+  SYMBOLIC_REPOS: >-
+    Vectorized/solady:v0.1.26
+
   BUILD_REPOS: >-
     ithacaxyz/account:v0.5.7,
     vectorized/solady:v0.1.26,
@@ -116,6 +119,19 @@ jobs:
             --output-file forge_isolate_test_bench.md \
             --verbose
 
+      - name: Run forge symbolic benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          REPOS: ${{ github.event.inputs.repos || env.SYMBOLIC_REPOS }}
+        run: |
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions "$VERSIONS" \
+            --repos "$REPOS" \
+            --benchmarks forge_symbolic_test \
+            --output-file forge_symbolic_bench.md \
+            --verbose
+
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -155,6 +171,7 @@ jobs:
           path: |
             benches/forge_test_bench.md
             benches/forge_isolate_test_bench.md
+            benches/forge_symbolic_bench.md
             benches/forge_build_bench.md
             benches/forge_coverage_bench.md
             benches/LATEST.md

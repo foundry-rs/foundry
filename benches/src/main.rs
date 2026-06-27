@@ -10,13 +10,14 @@ use foundry_common::sh_println;
 use rayon::prelude::*;
 use std::{fs, path::PathBuf, process::Command, sync::Mutex};
 
-const ALL_BENCHMARKS: [&str; 6] = [
+const ALL_BENCHMARKS: [&str; 7] = [
     "forge_test",
     "forge_build_no_cache",
     "forge_build_with_cache",
     "forge_fuzz_test",
     "forge_coverage",
     "forge_isolate_test",
+    "forge_symbolic_test",
 ];
 
 /// Foundry Benchmark Runner
@@ -50,7 +51,8 @@ struct Cli {
     json_output: Option<PathBuf>,
 
     /// Run only specific benchmarks (comma-separated:
-    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage)
+    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage,
+    /// forge_symbolic_test)
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 

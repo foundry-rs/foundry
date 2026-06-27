@@ -9,6 +9,7 @@ on:
 
 env:
   AAVE_V4_REPO: "aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
+  SOLADY_SYMBOLIC_REPO: "Vectorized/solady:v0.1.26"
   RUSTC_WRAPPER: "sccache"
 
 jobs:
@@ -115,6 +116,19 @@ jobs:
             --json-output "stable-${DATE}-forge_coverage.json" \
             --verbose
 
+      - name: Run forge symbolic benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable \
+            --repos "$SOLADY_SYMBOLIC_REPO" \
+            --benchmarks forge_symbolic_test \
+            --json-output "stable-${DATE}-forge_symbolic.json" \
+            --verbose
+
       # --- Nightly benchmarks ---
 
       - name: Run forge test benchmarks (nightly)
@@ -167,6 +181,19 @@ jobs:
             --repos "$AAVE_V4_REPO" \
             --benchmarks forge_coverage \
             --json-output "nightly-${DATE}-forge_coverage.json" \
+            --verbose
+
+      - name: Run forge symbolic benchmarks (nightly)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions nightly \
+            --repos "$SOLADY_SYMBOLIC_REPO" \
+            --benchmarks forge_symbolic_test \
+            --json-output "nightly-${DATE}-forge_symbolic.json" \
             --verbose
 
       - name: Merge benchmark JSON results

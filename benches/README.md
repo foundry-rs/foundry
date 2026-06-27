@@ -67,6 +67,9 @@ foundry-bench --benchmarks forge_fuzz_test
 # Run coverage benchmark
 foundry-bench --benchmarks forge_coverage
 
+# Run focused symbolic tests and report solver counters
+foundry-bench --repos Vectorized/solady:v0.1.26 --benchmarks forge_symbolic_test
+
 # Combine options
 foundry-bench \
   --versions stable,nightly \
@@ -147,6 +150,7 @@ The artifact bundle exposes:
 - `forge_fuzz_test` - Benchmarks non-isolated `forge test` with only fuzz tests (tests with parameters)
 - `forge_coverage` - Benchmarks `forge coverage --ir-minimum` command across repos
 - `forge_isolate_test` - Benchmarks isolated `forge test` command across repos
+- `forge_symbolic_test` - Benchmarks focused `forge test --symbolic --json` checks and reports symbolic solver counters
 
 ## Configuration
 
