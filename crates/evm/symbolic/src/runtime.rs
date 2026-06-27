@@ -1,6 +1,7 @@
 use super::{abi::*, *};
 
 mod address;
+mod bytes;
 mod calldata;
 mod cheatcodes;
 mod control;
@@ -10,8 +11,10 @@ mod memory;
 mod precompiles;
 mod solver;
 mod state;
+mod symbols;
 
 pub(crate) use address::*;
+pub(crate) use bytes::*;
 pub(crate) use calldata::*;
 pub(crate) use cheatcodes::*;
 pub(crate) use control::*;
@@ -32,6 +35,7 @@ pub(crate) use solver::{
     validate_solver_model_output,
 };
 pub(crate) use state::*;
+pub(crate) use symbols::*;
 
 pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     /// Concrete Foundry executor used as the source of deployed bytecode and backend state.

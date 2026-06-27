@@ -46,7 +46,7 @@ use foundry_evm::{
         strategies::EvmFuzzState,
     },
     revm::primitives::hardfork::SpecId,
-    traces::{TraceKind, TraceMode, load_contracts},
+    traces::{TraceKind, TraceRequirements, load_contracts},
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
@@ -766,7 +766,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         let prev_tracer = should_override_setup_tracing.then(|| {
             let prev_tracer = self.executor.inspector_mut().tracer.take();
-            self.executor.set_tracing(TraceMode::Call);
+            self.executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
             prev_tracer
         });
 

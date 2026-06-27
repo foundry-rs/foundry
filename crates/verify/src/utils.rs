@@ -27,7 +27,7 @@ use foundry_evm::{
     },
     executors::TracingExecutor,
     opts::EvmOpts,
-    traces::TraceMode,
+    traces::TraceRequirements,
     utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -311,7 +311,7 @@ where
         (evm_env.clone(), tx_env.clone()),
         fork,
         Some(fork_config.evm_version),
-        TraceMode::Call,
+        TraceRequirements::none().with_calls(true),
         networks,
         create2_deployer,
         None,

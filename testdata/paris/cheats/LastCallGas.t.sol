@@ -43,6 +43,38 @@ contract StorageGasTarget {
     }
 }
 
+contract TargetCreate2 {
+    uint256 public value;
+
+    constructor(uint256 value_) {
+        value = value_;
+    }
+}
+
+contract RevertingTarget {
+    function fail() public pure {
+        revert("failed");
+    }
+}
+
+contract RevertingConstructor {
+    constructor() {
+        revert("failed");
+    }
+}
+
+contract NestedRevertingTarget {
+    RevertingTarget public target;
+
+    constructor(RevertingTarget target_) {
+        target = target_;
+    }
+
+    function fail() public view {
+        target.fail();
+    }
+}
+
 abstract contract LastCallGasFixture is Test {
     Target public target;
 
@@ -55,6 +87,25 @@ abstract contract LastCallGasFixture is Test {
     function testRevertNoCachedLastCallGas() public {
         vm._expectCheatcodeRevert();
         vm.lastCallGas();
+    }
+
+    function testRevertNoCachedLastFrameGas() public {
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+
+    function testLastCallGasDoesNotRecordCreate() public {
+        new Target();
+
+        vm._expectCheatcodeRevert();
+        vm.lastCallGas();
+    }
+
+    function testSnapshotGasLastCallDoesNotRecordCreate() public {
+        new Target();
+
+        vm._expectCheatcodeRevert();
+        vm.snapshotGasLastCall("testSnapshotGasLastCallDoesNotRecordCreate");
     }
 
     function _setup() internal {
@@ -79,10 +130,87 @@ abstract contract LastCallGasFixture is Test {
         assertEq(lhs.gasMemoryUsed, rhs.gasMemoryUsed);
         assertEq(lhs.gasRefunded, rhs.gasRefunded);
     }
+
+    function _assertGasRecorded(Vm.Gas memory gas) internal {
+        assertGt(gas.gasLimit, 0);
+        assertGt(gas.gasRemaining, 0);
+        assertGt(gas.gasTotalUsed, 0);
+        assertEq(gas.gasMemoryUsed, 0);
+    }
+}
+
+contract LastFrameGasExpectedRevertTest is Test {
+    RevertingTarget public target;
+
+    function setUp() public {
+        target = new RevertingTarget();
+    }
+
+    function testExpectedRevertCallDoesNotRecordLastFrameGas() public {
+        vm.expectRevert();
+        target.fail();
+
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+
+    function testExpectedRevertCreateDoesNotRecordLastFrameGas() public {
+        vm.expectRevert();
+        new RevertingConstructor();
+
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+
+    function testExpectedRevertCreateClearsCachedLastFrameGas() public {
+        new Target();
+
+        vm.expectRevert();
+        new RevertingConstructor();
+
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+
+    function testNestedExpectedRevertCallClearsCachedLastFrameGas() public {
+        NestedRevertingTarget nestedTarget = new NestedRevertingTarget(target);
+
+        vm.expectRevert();
+        nestedTarget.fail();
+
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+
+    function testSnapshotGasLastFrameExpectedRevertClearsCachedLastFrameGas() public {
+        new Target();
+
+        vm.expectRevert();
+        new RevertingConstructor();
+
+        vm._expectCheatcodeRevert();
+        vm.snapshotGasLastFrame("testSnapshotGasLastFrameExpectedRevertClearsCachedLastFrameGas");
+    }
 }
 
 /// forge-config: default.isolate = true
 contract LastCallGasIsolatedTest is LastCallGasFixture {
+    function testRecordLastFrameGasFromCall() public {
+        _setup();
+        _performCall();
+        _assertGas(vm.lastFrameGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
+    }
+
+    function testRecordLastFrameGasFromCreate() public {
+        target = new Target();
+        _assertGasRecorded(vm.lastFrameGas());
+    }
+
+    function testRecordLastFrameGasFromCreate2() public {
+        new TargetCreate2{salt: "salt"}(1);
+        _assertGasRecorded(vm.lastFrameGas());
+    }
+
     function testRecordLastCallGas() public {
         _setup();
         _performCall();
@@ -118,6 +246,22 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
 
 // Without isolation mode enabled the gas usage will be incorrect.
 contract LastCallGasDefaultTest is LastCallGasFixture {
+    function testRecordLastFrameGasFromCall() public {
+        _setup();
+        _performCall();
+        _assertGas(vm.lastFrameGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
+    }
+
+    function testRecordLastFrameGasFromCreate() public {
+        target = new Target();
+        _assertGasRecorded(vm.lastFrameGas());
+    }
+
+    function testRecordLastFrameGasFromCreate2() public {
+        new TargetCreate2{salt: "salt"}(1);
+        _assertGasRecorded(vm.lastFrameGas());
+    }
+
     function testRecordLastCallGas() public {
         _setup();
         _performCall();
