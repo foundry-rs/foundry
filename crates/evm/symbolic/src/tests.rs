@@ -3532,6 +3532,8 @@ fn is_sat_reuses_cached_unsat_subset() {
     assert_eq!(stats.smt_queries, 1);
     assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 1);
+    assert!(stats.smt_input_bytes > 0);
+    assert!(stats.smt_max_query_bytes > 0);
     assert_eq!(counted_solver_invocations(&marker), 1);
     let _ = std::fs::remove_file(&marker);
 }

@@ -184,6 +184,10 @@ pub(crate) struct SmtLibSubprocessSolver {
     model_cache_hits: usize,
     smt_queries: usize,
     solver_time: Duration,
+    smt_input_bytes: u64,
+    smt_max_query_bytes: u64,
+    smt_build_time: Duration,
+    smt_max_query_time: Duration,
 }
 
 impl SmtLibSubprocessSolver {
@@ -212,6 +216,10 @@ impl SmtLibSubprocessSolver {
             model_cache_hits: 0,
             smt_queries: 0,
             solver_time: Duration::ZERO,
+            smt_input_bytes: 0,
+            smt_max_query_bytes: 0,
+            smt_build_time: Duration::ZERO,
+            smt_max_query_time: Duration::ZERO,
         }
     }
 
@@ -238,6 +246,14 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             model_cache_hits: self.model_cache_hits,
             heuristic_witnesses: self.heuristic_witnesses,
             solver_time_ms: self.solver_time.as_millis().try_into().unwrap_or(u64::MAX),
+            smt_input_bytes: self.smt_input_bytes,
+            smt_max_query_bytes: self.smt_max_query_bytes,
+            smt_build_time_ms: self.smt_build_time.as_millis().try_into().unwrap_or(u64::MAX),
+            smt_max_query_time_ms: self
+                .smt_max_query_time
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
         }
     }
 
@@ -580,6 +596,7 @@ impl SmtLibSubprocessSolver {
         model_constraints: &[SymBoolExpr],
     ) -> Result<String, SymbolicError> {
         self.smt_queries += 1;
+        let build_started = Instant::now();
         let mut vars = SymbolicVars::default();
         for constraint in smt_constraints {
             constraint.collect_vars(&mut vars);
@@ -605,6 +622,10 @@ impl SmtLibSubprocessSolver {
         if model {
             smt.push_str("(get-model)\n");
         }
+        let smt_bytes = smt.len().try_into().unwrap_or(u64::MAX);
+        self.smt_input_bytes = self.smt_input_bytes.saturating_add(smt_bytes);
+        self.smt_max_query_bytes = self.smt_max_query_bytes.max(smt_bytes);
+        self.smt_build_time += build_started.elapsed();
         if self.dump_smt {
             let query = self.queries;
             self.emit_diagnostic(format_args!("--- symbolic SMT query {query} ---\n{smt}\n"));
@@ -613,7 +634,9 @@ impl SmtLibSubprocessSolver {
         let started = Instant::now();
         let result =
             run_solver_commands(&commands, &smt, self.timeout, model.then_some(model_constraints));
-        self.solver_time += started.elapsed();
+        let query_time = started.elapsed();
+        self.solver_time += query_time;
+        self.smt_max_query_time = self.smt_max_query_time.max(query_time);
         self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
         if self.dump_smt {
             self.portfolio_diagnostics.record(&result.summaries);
