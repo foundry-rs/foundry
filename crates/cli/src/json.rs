@@ -217,7 +217,7 @@ pub fn print_tokens(tokens: &[DynSolValue]) -> Result<()> {
         let values = tokens
             .iter()
             .cloned()
-            .map(|t| serialize_value_as_json(t, None))
+            .map(|t| serialize_value_as_json(t, None, true))
             .collect::<Result<Vec<Value>>>()?;
         print_json_success(values)
     } else {

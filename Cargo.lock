@@ -5329,6 +5329,7 @@ dependencies = [
  "foundry-macros",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
+ "proptest",
  "revm",
  "serde",
  "serde_json",

@@ -4827,6 +4827,16 @@ contract ConstructorContract {
     assert!(
         value_output.contains("0x000000000000000000000000000000000000000000000000000000000000002a")
     );
+
+    cmd.cast_fuse()
+        .args(["--json", "call", address, "getValue()(uint256)", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[
+  "42"
+]
+
+"#]]);
 });
 
 // Test that cast estimate --create works correctly with constructor arguments
