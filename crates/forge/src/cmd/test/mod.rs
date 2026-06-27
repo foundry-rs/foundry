@@ -1732,13 +1732,14 @@ impl TestArgs {
             for (name, result) in tests {
                 let test_failed = result.status.is_failure();
                 let show_traces = !self.suppress_successful_traces || test_failed;
+                let render_trace_output = should_render_trace_output(silent, show_traces);
                 let should_include_trace = |kind: &TraceKind| match kind {
                     TraceKind::Execution => (verbosity == 3 && test_failed) || verbosity >= 4,
                     TraceKind::Setup => (verbosity == 4 && test_failed) || verbosity >= 5,
                     TraceKind::Deployment => false,
                 };
-                let renders_trace =
-                    show_traces && result.traces.iter().any(|(kind, _)| should_include_trace(kind));
+                let renders_trace = render_trace_output
+                    && result.traces.iter().any(|(kind, _)| should_include_trace(kind));
                 let identify_addresses = always_identify_traces || renders_trace;
 
                 if !silent {
@@ -1788,34 +1789,40 @@ impl TestArgs {
                 } else {
                     Vec::new()
                 };
-                for (kind, arena) in &mut result.traces {
-                    if identify_addresses {
-                        if self.debug && !result.debug_bytecodes.is_empty() {
-                            let mut local_identifier = TraceIdentifiers::new()
-                                .with_local_and_bytecodes(
-                                    &known_contracts,
-                                    &result.debug_bytecodes,
-                                );
-                            decoder.identify(arena, &mut local_identifier);
-                        }
-                        decoder.identify(arena, &mut identifier);
-                    }
-
-                    // verbosity:
-                    // - 0..3: nothing
-                    // - 3: only display traces for failed tests
-                    // - 4: also display the setup trace for failed tests
-                    // - 5..: display all traces for all tests, including storage changes
-                    let should_include = should_include_trace(kind);
-
-                    if show_traces && should_include {
-                        decode_trace_arena(arena, &decoder).await;
-
-                        if let Some(trace_depth) = self.trace_depth {
-                            prune_trace_depth(arena, trace_depth);
+                if identify_addresses || renders_trace {
+                    for (kind, arena) in &mut result.traces {
+                        if identify_addresses {
+                            if self.debug && !result.debug_bytecodes.is_empty() {
+                                let mut local_identifier = TraceIdentifiers::new()
+                                    .with_local_and_bytecodes(
+                                        &known_contracts,
+                                        &result.debug_bytecodes,
+                                    );
+                                decoder.identify(arena, &mut local_identifier);
+                            }
+                            decoder.identify(arena, &mut identifier);
                         }
 
-                        decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
+                        // verbosity:
+                        // - 0..3: nothing
+                        // - 3: only display traces for failed tests
+                        // - 4: also display the setup trace for failed tests
+                        // - 5..: display all traces for all tests, including storage changes
+                        let should_include = should_include_trace(kind);
+
+                        if renders_trace && should_include {
+                            decode_trace_arena(arena, &decoder).await;
+
+                            if let Some(trace_depth) = self.trace_depth {
+                                prune_trace_depth(arena, trace_depth);
+                            }
+
+                            decoded_traces.push(render_trace_arena_inner(
+                                arena,
+                                false,
+                                verbosity > 4,
+                            ));
+                        }
                     }
                 }
 
@@ -2066,6 +2073,10 @@ impl TestArgs {
             Ok([config.src, config.test])
         })
     }
+}
+
+const fn should_render_trace_output(silent: bool, show_traces: bool) -> bool {
+    !silent && show_traces
 }
 
 /// Terminal `forge test` envelope payload under `--machine`. Counts are
@@ -2775,6 +2786,13 @@ mod tests {
     fn depth_trace() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--trace-depth", "2"]);
         assert!(args.trace_depth.is_some());
+    }
+
+    #[test]
+    fn silent_output_disables_trace_rendering() {
+        assert!(!should_render_trace_output(true, true));
+        assert!(!should_render_trace_output(false, false));
+        assert!(should_render_trace_output(false, true));
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
