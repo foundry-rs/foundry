@@ -1642,37 +1642,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             function: func,
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
-            collect_success_input: should_symbolically_seed_fuzz_corpus(&self.config, func),
+            collect_success_input: false,
         });
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
         let symbolic_diagnostics = symbolic.take_diagnostics();
 
         match result {
-            SymbolicRunResult::Safe { stats, success_input } => {
-                if let Some(input) = success_input {
-                    let mut fuzz_config = self.config.fuzz.clone();
-                    let _ = test_paths(
-                        &mut fuzz_config.corpus,
-                        fuzz_config.failure_persist_dir.clone().unwrap(),
-                        self.cr.name,
-                        &func.name,
-                    );
-                    if let Err(err) = persist_corpus_seed(
-                        &fuzz_config.corpus,
-                        vec![BasicTxDetails {
-                            warp: None,
-                            roll: None,
-                            sender: self.sender,
-                            call_details: CallDetails {
-                                target: self.address,
-                                calldata: input.calldata,
-                                value: Some(U256::ZERO),
-                            },
-                        }],
-                    ) {
-                        warn!(%err, test = %func.signature(), "failed to persist symbolic fuzz corpus seed");
-                    }
-                }
+            SymbolicRunResult::Safe { stats, .. } => {
                 self.result.symbolic_result(
                     TestStatus::Success,
                     None,
