@@ -92,7 +92,7 @@ pub struct CmpOperands {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EdgeKey {
     pub address: Address,
-    pub depth: Option<usize>,
+    pub depth: Option<u32>,
     pub pc: usize,
     pub jump_dest: U256,
 }
@@ -105,7 +105,11 @@ impl EdgeKey {
         jump_dest: U256,
         include_depth: bool,
     ) -> Self {
-        Self { address, depth: include_depth.then_some(depth), pc, jump_dest }
+        if include_depth {
+            debug_assert!(depth <= u32::MAX as usize);
+        }
+        let depth = include_depth.then_some(depth as u32);
+        Self { address, depth, pc, jump_dest }
     }
 }
 
