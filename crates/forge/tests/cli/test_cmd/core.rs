@@ -1,6 +1,7 @@
 //! Core test functionality tests
 
 use foundry_test_utils::str;
+use serde_json::Value;
 
 forgetest_init!(failing_test_after_failed_setup, |prj, cmd| {
     prj.add_test(
@@ -94,6 +95,149 @@ Encountered a total of 2 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+});
+
+forgetest_init!(evm_profile_no_open_writes_profile_and_exits, |prj, cmd| {
+    prj.add_test(
+        "EvmProfileNoOpen.t.sol",
+        r#"
+contract EvmProfileNoOpenTest {
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testProfile", "--evm-profile", "--no-open"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Profile saved to cache/evm_profile_EvmProfileNoOpenTest_testProfile.json
+
+"#]]);
+
+    let profile_path = prj.root().join("cache/evm_profile_EvmProfileNoOpenTest_testProfile.json");
+    let profile: Value = serde_json::from_str(&std::fs::read_to_string(profile_path).unwrap())
+        .expect("profile should be valid JSON");
+    assert_eq!(profile["exporter"], "foundry");
+    assert_eq!(profile["profiles"][0]["type"], "evented");
+});
+
+forgetest_init!(evm_profile_conflicts_with_early_return_outputs, |_prj, cmd| {
+    cmd.args(["test", "--evm-profile", "--json"]).assert_failure().stderr_eq(str![[r#"
+error: the argument '--evm-profile [<FORMAT>]' cannot be used with '--json'
+
+Usage: forge[..] test --evm-profile [<FORMAT>] [PATH]
+
+For more information, try '--help'.
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--evm-profile", "--junit"]).assert_failure().stderr_eq(str![[
+        r#"
+error: the argument '--evm-profile [<FORMAT>]' cannot be used with '--junit'
+
+Usage: forge[..] test --evm-profile [<FORMAT>] [PATH]
+
+For more information, try '--help'.
+
+"#
+    ]]);
+
+    cmd.forge_fuse().args(["test", "--evm-profile", "--list"]).assert_failure().stderr_eq(str![[
+        r#"
+error: the argument '--evm-profile [<FORMAT>]' cannot be used with '--list'
+
+Usage: forge[..] test --evm-profile [<FORMAT>] [PATH]
+
+For more information, try '--help'.
+
+"#
+    ]]);
+});
+
+forgetest_init!(flame_outputs_conflict_with_early_return_outputs, |_prj, cmd| {
+    cmd.args(["test", "--flamegraph", "--json"]).assert_failure().stderr_eq(str![[r#"
+error: the argument '--flamegraph' cannot be used with '--json'
+
+Usage: forge[..] test --flamegraph [PATH]
+
+For more information, try '--help'.
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--flamechart", "--list"]).assert_failure().stderr_eq(str![[
+        r#"
+error: the argument '--flamechart' cannot be used with '--list'
+
+Usage: forge[..] test --flamechart [PATH]
+
+For more information, try '--help'.
+
+"#
+    ]]);
+});
+
+forgetest_init!(evm_profile_requires_execution_trace, |prj, cmd| {
+    prj.add_test(
+        "EvmProfileNoExecutionTrace.t.sol",
+        r#"
+contract EvmProfileNoExecutionTraceTest {
+    function setUp() public {
+        revert("setUp failed");
+    }
+
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testProfile", "--evm-profile", "--no-open"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: cannot generate EVM profile for EvmProfileNoExecutionTraceTest::setUp: no execution trace (test may have failed in setUp/constructor or been skipped)
+
+"#]]);
+});
+
+forgetest_init!(evm_profile_errors_when_no_tests_match, |prj, cmd| {
+    prj.add_test(
+        "EvmProfileNoMatch.t.sol",
+        r#"
+contract EvmProfileNoMatchTest {
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "missing", "--evm-profile", "--no-open"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+Error: cannot generate EVM profile: no tests were executed
+
+"#]]);
+});
+
+forgetest_init!(flamegraph_requires_execution_trace, |prj, cmd| {
+    prj.add_test(
+        "FlamegraphNoExecutionTrace.t.sol",
+        r#"
+contract FlamegraphNoExecutionTraceTest {
+    function setUp() public {
+        revert("setUp failed");
+    }
+
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testProfile", "--flamegraph"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: cannot generate flamegraph for FlamegraphNoExecutionTraceTest::setUp: no execution trace (test may have failed in setUp/constructor or been skipped)
 
 "#]]);
 });

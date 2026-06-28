@@ -16,7 +16,7 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let target = state.stack.pop()?;
-        ensure_word_not_gasleft(&target)?;
+        ensure_expr_not_gasleft(&target)?;
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to)) if is_known_cheatcode(to) => {
@@ -28,11 +28,11 @@ impl SymbolicExecutor {
             (CallKind::CallCode, _) => state.stack.pop()?,
             (CallKind::StaticCall | CallKind::DelegateCall, _) => SymExpr::zero(),
         };
-        ensure_word_not_gasleft(&value)?;
+        ensure_expr_not_gasleft(&value)?;
         let in_offset = state.stack.pop()?;
-        ensure_word_not_gasleft(&in_offset)?;
+        ensure_expr_not_gasleft(&in_offset)?;
         let in_size = state.stack.pop()?;
-        ensure_word_not_gasleft(&in_size)?;
+        ensure_expr_not_gasleft(&in_size)?;
         let in_size = match state.constrained_usize_checked(&in_size) {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
@@ -56,9 +56,9 @@ impl SymbolicExecutor {
             }
         };
         let out_offset = state.stack.pop()?;
-        ensure_word_not_gasleft(&out_offset)?;
+        ensure_expr_not_gasleft(&out_offset)?;
         let out_size = state.stack.pop()?;
-        ensure_word_not_gasleft(&out_size)?;
+        ensure_expr_not_gasleft(&out_size)?;
         let out_size = match state.constrained_usize_checked(&out_size) {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
@@ -88,9 +88,6 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
-        if call_input.iter().any(SymExpr::contains_gasleft) {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
 
         if let Some(to) = target_address {
             if self.branch_symbolic_function_mock_if_needed(
@@ -175,7 +172,7 @@ impl SymbolicExecutor {
         code_address: Address,
         value: &SymExpr,
         gas: &SymExpr,
-        call_input: &[SymExpr],
+        call_input: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         if state.constrained_word(value).is_some() {
             return Ok(false);
@@ -255,17 +252,13 @@ impl SymbolicExecutor {
         pre_call_state: &PathState,
         call_pc: usize,
         callee: Address,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         for idx in (0..state.function_mocks.len()).rev() {
             if state.function_mocks[idx].calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) = state.function_mocks[idx].match_condition(
-                callee,
-                calldata,
-                "symbolic vm.mockFunction calldata",
-            )?
+            let Some(condition) = state.function_mocks[idx].match_condition(callee, calldata)
             else {
                 continue;
             };
@@ -284,11 +277,7 @@ impl SymbolicExecutor {
             if state.function_mocks[idx].calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) = state.function_mocks[idx].match_condition(
-                callee,
-                calldata,
-                "symbolic vm.mockFunction selector",
-            )?
+            let Some(condition) = state.function_mocks[idx].match_condition(callee, calldata)
             else {
                 continue;
             };
@@ -312,7 +301,7 @@ impl SymbolicExecutor {
         callee: Address,
         value: Option<U256>,
         gas: &SymExpr,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         if state.expected_calls.is_empty() {
             return Ok(true);
@@ -344,16 +333,11 @@ impl SymbolicExecutor {
         code_address: Address,
         value: Option<U256>,
         gas: &SymExpr,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         for idx in 0..state.expected_calls.len() {
-            let Some(condition) = self.expected_call_match_condition(
-                &state.expected_calls[idx],
-                callee,
-                value,
-                gas,
-                calldata,
-            )?
+            let Some(condition) =
+                state.expected_calls[idx].match_condition(callee, value, gas, calldata)?
             else {
                 continue;
             };
@@ -375,12 +359,8 @@ impl SymbolicExecutor {
         });
 
         for idx in mocks {
-            let Some(condition) = self.call_mock_match_condition(
-                &state.call_mocks[idx],
-                code_address,
-                value,
-                calldata,
-            )?
+            let Some(condition) =
+                state.call_mocks[idx].match_condition(code_address, value, calldata)
             else {
                 continue;
             };
@@ -403,7 +383,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         callee: Address,
         value: Option<U256>,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<CallMockOutcome>, SymbolicError> {
         if state.call_mocks.is_empty() {
             return Ok(None);
@@ -478,17 +458,13 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
         callee: Address,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<Address>, SymbolicError> {
         for idx in (0..state.function_mocks.len()).rev() {
             if state.function_mocks[idx].calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) = state.function_mocks[idx].match_condition(
-                callee,
-                calldata,
-                "symbolic vm.mockFunction calldata",
-            )?
+            let Some(condition) = state.function_mocks[idx].match_condition(callee, calldata)
             else {
                 continue;
             };
@@ -501,11 +477,7 @@ impl SymbolicExecutor {
             if state.function_mocks[idx].calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) = state.function_mocks[idx].match_condition(
-                callee,
-                calldata,
-                "symbolic vm.mockFunction selector",
-            )?
+            let Some(condition) = state.function_mocks[idx].match_condition(callee, calldata)
             else {
                 continue;
             };
@@ -524,11 +496,9 @@ impl SymbolicExecutor {
         callee: Address,
         value: Option<U256>,
         gas: &SymExpr,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
-        let Some(condition) =
-            self.expected_call_match_condition(expected, callee, value, gas, calldata)?
-        else {
+        let Some(condition) = expected.match_condition(callee, value, gas, calldata)? else {
             return Ok(None);
         };
         self.constraints_for_condition(state, condition)
@@ -540,33 +510,12 @@ impl SymbolicExecutor {
         mock: &CallMock,
         callee: Address,
         value: Option<U256>,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
-        let Some(condition) = self.call_mock_match_condition(mock, callee, value, calldata)? else {
+        let Some(condition) = mock.match_condition(callee, value, calldata) else {
             return Ok(None);
         };
         self.constraints_for_condition(state, condition)
-    }
-
-    pub(super) fn expected_call_match_condition(
-        &self,
-        expected: &ExpectedCall,
-        callee: Address,
-        value: Option<U256>,
-        gas: &SymExpr,
-        calldata: &[SymExpr],
-    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
-        expected.match_condition(callee, value, gas, calldata)
-    }
-
-    pub(super) fn call_mock_match_condition(
-        &self,
-        mock: &CallMock,
-        callee: Address,
-        value: Option<U256>,
-        calldata: &[SymExpr],
-    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
-        mock.match_condition(callee, value, calldata)
     }
 
     /// Returns whether `expected_revert_matches` holds.
@@ -766,7 +715,7 @@ impl SymbolicExecutor {
                 return Err(SymbolicError::Unsupported("short cheatcode CALL"));
             }
             let in_offset = in_offset.into_usize("symbolic cheatcode CALL input offset")?;
-            if !self.assume_word_at_least(state, &in_size_word, 4)? {
+            if !self.assume_expr_at_least(state, &in_size_word, 4)? {
                 return Ok(StepOutcome::AssumeRejected);
             }
 
@@ -787,7 +736,7 @@ impl SymbolicExecutor {
                 if min_size > in_size {
                     return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input size"));
                 }
-                if !self.assume_word_at_least(state, &in_size_word, min_size)? {
+                if !self.assume_expr_at_least(state, &in_size_word, min_size)? {
                     return Ok(StepOutcome::AssumeRejected);
                 }
             }
@@ -891,7 +840,15 @@ impl SymbolicExecutor {
             let input = in_size.read_from_memory(&state.memory, in_offset);
             if precompile_number_for_spec(code_address, spec_id) == Some(10) {
                 return self.execute_kzg_precompile_call(
-                    executor, state, worklist, kind, to, value, out_offset, &out_size, input,
+                    executor,
+                    state,
+                    worklist,
+                    kind,
+                    to,
+                    value,
+                    out_offset,
+                    &out_size,
+                    input.materialize(),
                     input_len,
                 );
             }
@@ -931,7 +888,7 @@ impl SymbolicExecutor {
             .or_else(|| {
                 target_word
                     .as_ref()
-                    .filter(|word| state.world.resolve_address(word) == Some(to))
+                    .filter(|expr| state.world.resolve_address(expr) == Some(to))
                     .cloned()
             })
             .unwrap_or_else(|| SymExpr::constant(address_word(to)));
@@ -1532,7 +1489,7 @@ fn kzg_constrained_outcome(
 
 fn kzg_success_witness_condition(input: &[SymExpr], input_len: &SymExpr) -> SymBoolExpr {
     SymBoolExpr::and(vec![
-        word_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
+        expr_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
         bytes_eq_condition(input, KZG_VERSIONED_HASH_OFFSET, &KZG_SUCCESS_INPUT),
     ])
 }
@@ -1542,9 +1499,9 @@ fn kzg_failure_witness_condition(
     input: &[SymExpr],
     input_len: &SymExpr,
 ) -> SymBoolExpr {
-    let len_192 = word_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN);
+    let len_192 = expr_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN);
     let mut conditions = vec![
-        word_ne_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
+        expr_ne_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
         SymBoolExpr::and(vec![
             len_192.clone(),
             byte_ne_condition(input, 0, kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG),
@@ -1598,24 +1555,24 @@ fn kzg_versioned_hash_mismatch_condition(
     bytes_ne_condition(input, KZG_VERSIONED_HASH_OFFSET, expected_hash)
 }
 
-fn word_eq_condition(word: &SymExpr, value: usize) -> SymBoolExpr {
-    SymBoolExpr::eq_word_const(word, U256::from(value))
+fn expr_eq_condition(expr: &SymExpr, value: usize) -> SymBoolExpr {
+    SymBoolExpr::eq_word_const(expr, U256::from(value))
 }
 
-fn word_ne_condition(word: &SymExpr, value: usize) -> SymBoolExpr {
-    word_eq_condition(word, value).not()
+fn expr_ne_condition(expr: &SymExpr, value: usize) -> SymBoolExpr {
+    expr_eq_condition(expr, value).not()
 }
 
 fn byte_eq_condition(input: &[SymExpr], offset: usize, value: u8) -> SymBoolExpr {
     match input.get(offset) {
-        Some(word) => word_eq_condition(word, value as usize),
+        Some(expr) => expr_eq_condition(expr, value as usize),
         None => SymBoolExpr::constant(false),
     }
 }
 
 fn byte_ne_condition(input: &[SymExpr], offset: usize, value: u8) -> SymBoolExpr {
     match input.get(offset) {
-        Some(word) => word_ne_condition(word, value as usize),
+        Some(expr) => expr_ne_condition(expr, value as usize),
         None => SymBoolExpr::constant(false),
     }
 }
@@ -1631,7 +1588,7 @@ fn bytes_eq_condition(input: &[SymExpr], offset: usize, bytes: &[u8]) -> SymBool
         input[offset..end]
             .iter()
             .zip(bytes)
-            .map(|(word, byte)| word_eq_condition(word, *byte as usize))
+            .map(|(expr, byte)| expr_eq_condition(expr, *byte as usize))
             .collect(),
     )
 }
@@ -1647,7 +1604,7 @@ fn bytes_ne_condition(input: &[SymExpr], offset: usize, bytes: &[u8]) -> SymBool
         input[offset..end]
             .iter()
             .zip(bytes)
-            .map(|(word, byte)| word_ne_condition(word, *byte as usize))
+            .map(|(expr, byte)| expr_ne_condition(expr, *byte as usize))
             .collect(),
     )
 }
@@ -1667,8 +1624,8 @@ fn constrained_byte(state: &PathState, byte: &SymExpr) -> Option<u8> {
     state.constrained_word(byte).and_then(|byte| u8::try_from(byte).ok())
 }
 
-fn ensure_word_not_gasleft(word: &SymExpr) -> Result<(), SymbolicError> {
-    if word.contains_gasleft() {
+fn ensure_expr_not_gasleft(expr: &SymExpr) -> Result<(), SymbolicError> {
+    if expr.contains_gasleft() {
         Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"))
     } else {
         Ok(())
