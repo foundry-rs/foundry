@@ -588,6 +588,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Additional, user configurable context this Inspector has access to when inspecting a call.
     pub config: Arc<CheatsConfig>,
 
+    /// Bytecode resolved from the in-memory artifact list by `vm.getCode` and `vm.deployCode`.
+    pub artifact_code_cache: HashMap<(String, bool), Bytes>,
+
     /// Test-scoped context holding data that needs to be reset every test run
     pub test_context: TestContext,
 
@@ -693,6 +696,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fs_commit: true,
             labels: config.labels.clone(),
             config,
+            artifact_code_cache: Default::default(),
             block: Default::default(),
             active_delegations: Default::default(),
             active_blob_sidecar: Default::default(),

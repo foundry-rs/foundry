@@ -536,10 +536,18 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 /// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
 /// reject artifacts with unlinked library placeholders.
 fn get_artifact_code<FEN: FoundryEvmNetwork>(
-    state: &Cheatcodes<FEN>,
+    state: &mut Cheatcodes<FEN>,
     path: &str,
     deployed: bool,
 ) -> Result<Bytes> {
+    let cache_key = (!path.ends_with(".json") && state.config.available_artifacts.is_some())
+        .then(|| (path.to_owned(), deployed));
+    if let Some(key) = cache_key.as_ref()
+        && let Some(bytecode) = state.artifact_code_cache.get(key)
+    {
+        return Ok(bytecode.clone());
+    }
+
     let path = if path.ends_with(".json") {
         PathBuf::from(path)
     } else {
@@ -637,9 +645,13 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
                     artifact.1.bytecode().cloned()
                 };
 
-                return maybe_bytecode.ok_or_else(|| {
+                let bytecode = maybe_bytecode.ok_or_else(|| {
                     fmt_err!("no bytecode for contract; is it abstract or unlinked?")
-                });
+                })?;
+                if let Some(key) = cache_key {
+                    state.artifact_code_cache.insert(key, bytecode.clone());
+                }
+                return Ok(bytecode);
             }
         }
 
@@ -1213,10 +1225,10 @@ mod tests {
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+        let mut cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
 
         let bytecode =
-            super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
+            super::get_artifact_code(&mut cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
 
         assert_eq!(bytecode, paris_bytecode);
     }
@@ -1235,10 +1247,10 @@ mod tests {
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+        let mut cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
 
         let bytecode =
-            super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
+            super::get_artifact_code(&mut cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
 
         assert_eq!(bytecode, contract_bytecode);
     }
