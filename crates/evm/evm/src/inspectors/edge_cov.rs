@@ -258,6 +258,7 @@ impl EdgeCovInspector {
     }
 
     /// Mark the edge `(address, depth, pc, jump_dest)` as hit.
+    #[inline]
     fn store_hit(&mut self, address: Address, depth: usize, pc: usize, jump_dest: U256) {
         let edge_id = match self.config.kind {
             EdgeCovKind::CollisionFree => {
@@ -269,12 +270,14 @@ impl EdgeCovInspector {
         self.hitcount[edge_id] = self.hitcount[edge_id].wrapping_add(1).max(1);
     }
 
+    #[inline]
     fn store_dense_hit(&mut self, address: Address, depth: usize, pc: usize, jump_dest: U256) {
         let key = EdgeKey::new(address, depth, pc, jump_dest, self.config.include_call_depth);
         let count = self.dense_hitcount.entry(key).or_default();
         *count = count.wrapping_add(1).max(1);
     }
 
+    #[inline]
     fn hash_edge_id(
         &mut self,
         address: Address,
@@ -306,6 +309,7 @@ impl EdgeCovInspector {
     }
 
     /// Store comparison operands for CmpLog-style guided fuzzing.
+    #[inline]
     fn store_cmp(&mut self, cmp: CmpOperands) {
         let Some(cmp_log) = &mut self.cmp_log else {
             return;
@@ -324,8 +328,8 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
-    fn do_step<CTX>(&mut self, interp: &mut Interpreter, context: &mut CTX)
+    #[inline]
+    fn do_step<CTX>(&mut self, interp: &mut Interpreter, context: &mut CTX, op: u8)
     where
         CTX: ContextTr,
     {
@@ -333,7 +337,7 @@ impl EdgeCovInspector {
         let depth = context.journal_ref().depth();
         let current_pc = interp.bytecode.pc();
 
-        match interp.bytecode.opcode() {
+        match op {
             opcode::JUMP => {
                 // unconditional jump
                 if let Ok(jump_dest) = interp.stack.peek(0) {
@@ -361,8 +365,8 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
-    fn do_cmp_step(&mut self, interp: &mut Interpreter) {
+    #[inline]
+    fn do_cmp_step(&mut self, interp: &mut Interpreter, op: u8) {
         if self.cmp_log.is_none() {
             return;
         }
@@ -370,7 +374,7 @@ impl EdgeCovInspector {
         let address = interp.input.target_address();
         let current_pc = interp.bytecode.pc();
 
-        match interp.bytecode.opcode() {
+        match op {
             op @ (opcode::EQ | opcode::LT | opcode::SLT | opcode::GT | opcode::SGT) => {
                 if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
                     self.store_cmp(CmpOperands { op1, op2, pc: current_pc, address, opcode: op });
@@ -425,7 +429,7 @@ where
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let op = interp.bytecode.opcode();
         if matches!(op, opcode::JUMP | opcode::JUMPI) {
-            self.do_step(interp, context);
+            self.do_step(interp, context, op);
         }
         if self.cmp_log.is_some()
             && matches!(
@@ -433,7 +437,7 @@ where
                 opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO
             )
         {
-            self.do_cmp_step(interp);
+            self.do_cmp_step(interp, op);
         }
     }
 }
