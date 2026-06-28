@@ -311,10 +311,9 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
-            if let Ok(signers) = script_wallets.signers()
-                && signers.len() == 1
-            {
-                evm_opts.sender = signers[0];
+            let addresses = script_wallets.addresses();
+            if addresses.len() == 1 {
+                evm_opts.sender = addresses[0];
             } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
                 evm_opts.sender = signer
             }
