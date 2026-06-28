@@ -2545,9 +2545,9 @@ dependencies = [
 
 [[package]]
 name = "bon"
-version = "3.9.1"
+version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f47dbe92550676ee653353c310dfb9cf6ba17ee70396e1f7cf0a2020ad49b2fe"
+checksum = "a602c73c7b0148ec6d12af6fd5cc7a46e2eacc8878271a999abac56eed12f561"
 dependencies = [
  "bon-macros",
  "rustversion",
@@ -2555,9 +2555,9 @@ dependencies = [
 
 [[package]]
 name = "bon-macros"
-version = "3.9.1"
+version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "519bd3116aeeb42d5372c29d982d16d0170d3d4a5ed85fc7dd91642ffff3c67c"
+checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
  "darling 0.23.0",
  "ident_case",
@@ -6079,8 +6079,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -6133,18 +6133,6 @@ dependencies = [
  "rand_core 0.10.1",
  "wasip2",
  "wasip3",
-]
-
-[[package]]
-name = "getset"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cf0fc11e47561d47397154977bc219f4cf809b2974facc3ccb3b89e2436f912"
-dependencies = [
- "proc-macro-error2",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -6531,7 +6519,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -12907,9 +12895,9 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vergen"
-version = "10.0.0-beta.8"
+version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d7cb4a83971db3f6ae36f0aa41eaf5985d2e2b469581fa755c132f9c2a1ec89"
+checksum = "7bdf18a54cf91b4d98a8e8b67f6321606539fbcdcac02536286ad1de37b53fd2"
 dependencies = [
  "anyhow",
  "bon",
@@ -12920,9 +12908,9 @@ dependencies = [
 
 [[package]]
 name = "vergen-gitcl"
-version = "10.0.0-beta.8"
+version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bba14c9676943b2899cea2ed7ea194b89b3d13564a3c93a61882a978b123a41c"
+checksum = "4961429ed12888cb3c6dd20f7dc9508c821091a3ba5fec0156ed5a654c1c4572"
 dependencies = [
  "anyhow",
  "bon",
@@ -12934,13 +12922,12 @@ dependencies = [
 
 [[package]]
 name = "vergen-lib"
-version = "10.0.0-beta.8"
+version = "10.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb684e6d170ef15a9b3c20561779a50ba8c806f8acdaff47c0a2c5c4c6cadd43"
+checksum = "8cd42fd155c2c2971f6d00face12ec245fbb604fce011ccaf2306d014c2e97ca"
 dependencies = [
  "anyhow",
  "bon",
- "getset",
  "rustversion",
 ]
 
