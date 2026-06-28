@@ -707,7 +707,7 @@ async fn test_anvil_cli_tempo_t5_hardfork_precompile_smoke() {
     let endpoint = format!("http://127.0.0.1:{port}");
     let provider = http_provider(&endpoint);
     let mut ready = false;
-    for _ in 0..50 {
+    for _ in 0..100 {
         if provider.get_chain_id().await.is_ok() {
             ready = true;
             break;
@@ -757,7 +757,7 @@ async fn test_anvil_cli_tempo_t6_hardfork_receive_policy_guard_smoke() {
     let endpoint = format!("http://127.0.0.1:{port}");
     let provider = http_provider(&endpoint);
     let mut ready = false;
-    for _ in 0..50 {
+    for _ in 0..100 {
         if provider.get_chain_id().await.is_ok() {
             ready = true;
             break;

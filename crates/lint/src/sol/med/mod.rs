@@ -36,6 +36,15 @@ use unused_return::UNUSED_RETURN;
 mod locked_ether;
 use locked_ether::LOCKED_ETHER;
 
+mod mapping_deletion;
+use mapping_deletion::MAPPING_DELETION;
+
+mod non_reentrant_not_first;
+use non_reentrant_not_first::NON_REENTRANT_NOT_FIRST;
+
+mod tautological_compare;
+use tautological_compare::TAUTOLOGICAL_COMPARE;
+
 mod weak_prng;
 use weak_prng::WEAK_PRNG;
 
@@ -52,5 +61,8 @@ register_lints!(
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
     (UnusedReturn, late, (UNUSED_RETURN)),
     (LockedEther, late, (LOCKED_ETHER)),
-    (WeakPrng, early, (WEAK_PRNG))
+    (MappingDeletion, late, (MAPPING_DELETION)),
+    (NonReentrantNotFirst, late, (NON_REENTRANT_NOT_FIRST)),
+    (WeakPrng, early, (WEAK_PRNG)),
+    (TautologicalCompare, late, (TAUTOLOGICAL_COMPARE))
 );

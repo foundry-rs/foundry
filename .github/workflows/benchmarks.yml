@@ -34,6 +34,11 @@ env:
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
+  SYMBOLIC_REPOS: >-
+    Vectorized/solady:v0.1.26,
+    SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5,
+    farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b
+
   BUILD_REPOS: >-
     ithacaxyz/account:v0.5.7,
     vectorized/solady:v0.1.26,
@@ -62,7 +67,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config
+          sudo apt-get install -y build-essential pkg-config z3
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
@@ -116,6 +121,19 @@ jobs:
             --output-file forge_isolate_test_bench.md \
             --verbose
 
+      - name: Run forge symbolic benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          REPOS: ${{ github.event.inputs.repos || env.SYMBOLIC_REPOS }}
+        run: |
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions "$VERSIONS" \
+            --repos "$REPOS" \
+            --benchmarks forge_symbolic_test \
+            --output-file forge_symbolic_bench.md \
+            --verbose
+
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -155,6 +173,7 @@ jobs:
           path: |
             benches/forge_test_bench.md
             benches/forge_isolate_test_bench.md
+            benches/forge_symbolic_bench.md
             benches/forge_build_bench.md
             benches/forge_coverage_bench.md
             benches/LATEST.md

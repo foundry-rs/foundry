@@ -55,54 +55,61 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     drop(dotenv);
 }
 
-fn collect_debug_dump_internal_calls<'a>(
+fn collect_debug_dump_values<'a, T>(
     value: &'a serde_json::Value,
-    calls: &mut Vec<&'a serde_json::Value>,
+    collected: &mut Vec<T>,
+    collect_from_object: &mut impl FnMut(&'a serde_json::Map<String, serde_json::Value>, &mut Vec<T>),
 ) {
     match value {
         serde_json::Value::Array(values) => {
             for value in values {
-                collect_debug_dump_internal_calls(value, calls);
+                collect_debug_dump_values(value, collected, collect_from_object);
             }
         }
         serde_json::Value::Object(map) => {
-            if let Some(call) = map
-                .get("InternalCall")
-                .and_then(|value| value.as_array())
-                .and_then(|values| values.first())
-            {
-                calls.push(call);
-            }
+            collect_from_object(map, collected);
             for value in map.values() {
-                collect_debug_dump_internal_calls(value, calls);
+                collect_debug_dump_values(value, collected, collect_from_object);
             }
         }
         _ => {}
     }
 }
 
+fn collect_debug_dump_internal_calls<'a>(
+    value: &'a serde_json::Value,
+    calls: &mut Vec<&'a serde_json::Value>,
+) {
+    collect_debug_dump_values(value, calls, &mut |map, calls| {
+        if let Some(call) = map
+            .get("InternalCall")
+            .and_then(|value| value.as_array())
+            .and_then(|values| values.first())
+        {
+            calls.push(call);
+        }
+    });
+}
+
+fn collect_debug_dump_decoded_lines<'a>(value: &'a serde_json::Value, lines: &mut Vec<&'a str>) {
+    collect_debug_dump_values(value, lines, &mut |map, lines| {
+        if let Some(line) = map.get("Line").and_then(|value| value.as_str()) {
+            lines.push(line);
+        }
+    });
+}
+
 fn collect_debug_dump_storage_changes<'a>(
     value: &'a serde_json::Value,
     changes: &mut Vec<&'a serde_json::Value>,
 ) {
-    match value {
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_debug_dump_storage_changes(value, changes);
-            }
+    collect_debug_dump_values(value, changes, &mut |map, changes| {
+        if let Some(change) = map.get("storage_change")
+            && !change.is_null()
+        {
+            changes.push(change);
         }
-        serde_json::Value::Object(map) => {
-            if let Some(change) = map.get("storage_change")
-                && !change.is_null()
-            {
-                changes.push(change);
-            }
-            for value in map.values() {
-                collect_debug_dump_storage_changes(value, changes);
-            }
-        }
-        _ => {}
-    }
+    });
 }
 
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
@@ -914,6 +921,7 @@ Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -965,6 +973,114 @@ contract TransientTest is Test {
     );
 
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
+});
+
+forgetest_init!(setup_selfdestruct_deletes_same_tx_created_contracts, |prj, cmd| {
+    prj.add_test(
+        "SetupSelfdestruct.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract A {
+    function codeLength() public view returns (uint256) {
+        return address(this).code.length;
+    }
+
+    function kill() public {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract B {
+    uint256 private x;
+
+    constructor(uint256 x_) {
+        x = x_;
+    }
+}
+
+contract Factory {
+    function helloA() public returns (address) {
+        return address(new A());
+    }
+
+    function helloB() public returns (address) {
+        return address(new B(1337));
+    }
+
+    function kill() public {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract SetupSelfdestructTest is Test {
+    A private a;
+    B private b;
+    Factory private factory;
+
+    function setUp() public {
+        factory = new Factory{salt: keccak256(abi.encode("evil"))}();
+        a = A(factory.helloA());
+
+        (bool success, bytes memory data) = address(a).staticcall(abi.encodeCall(A.codeLength, ()));
+        assertTrue(success);
+        assertEq(abi.decode(data, (uint256)), address(a).code.length);
+
+        a.kill();
+        factory.kill();
+    }
+
+    function testMorphingContract() public {
+        assertEq(address(a).code.length, 0);
+        assertEq(address(factory).code.length, 0);
+
+        factory = new Factory{salt: keccak256(abi.encode("evil"))}();
+        b = B(factory.helloB());
+        assertEq(address(a), address(b));
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--match-path", "test/SetupSelfdestruct.t.sol", "--evm-version", "cancun"])
+        .assert_success();
+});
+
+forgetest_init!(selfdestruct_keeps_setup_created_contract_in_test_body, |prj, cmd| {
+    prj.add_test(
+        "SetupThenTestSelfdestruct.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract A {
+    function kill() public {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract SetupThenTestSelfdestructTest is Test {
+    A private a;
+
+    function setUp() public {
+        a = new A();
+    }
+
+    function testCodePersistsAcrossSetupBoundary() public {
+        a.kill();
+        assertGt(address(a).code.length, 0);
+    }
+}
+   "#,
+    );
+
+    cmd.args([
+        "test",
+        "--match-path",
+        "test/SetupThenTestSelfdestruct.t.sol",
+        "--evm-version",
+        "cancun",
+    ])
+    .assert_success();
 });
 
 forgetest_init!(
@@ -1071,6 +1187,7 @@ Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1186,6 +1303,7 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 Encountered a total of 2 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 
@@ -1211,6 +1329,7 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -1950,7 +2069,7 @@ Traces:
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [558945] PauseTracingTest::test()
+  [558957] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
     ├─ [48460] TraceGenerator::generate()
@@ -2579,6 +2698,12 @@ Error: 2 tests matched your criteria, but exactly 1 test must match in order to 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
+    cmd.forge_fuse().args(["test", "--evm-profile"]).assert_failure().stderr_eq(str![[r#"
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate an EVM profile.
+
+Use --match-contract and --match-path to further limit the search.
+
+"#]]);
 });
 
 // Test a script that calls vm.rememberKeys
@@ -2758,6 +2883,91 @@ contract Dummy {
     cmd.assert_success();
 
     assert!(dump_path.exists());
+});
+
+forgetest!(debug_dump_marks_precompile_call_steps, |prj, cmd| {
+    prj.add_test(
+        "PrecompileDebug.t.sol",
+        r#"
+contract PrecompileDebugTest {
+    function testSha256PrecompileDebug() public {
+        (bool ok, bytes memory output) = address(0x02).staticcall(hex"68656c6c6f");
+        require(ok, "sha256 precompile failed");
+        require(output.length == 32, "bad sha256 output");
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("precompile_dump.json");
+
+    cmd.args([
+        "test",
+        "--mt",
+        "testSha256PrecompileDebug",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut lines = Vec::new();
+    collect_debug_dump_decoded_lines(&dump, &mut lines);
+
+    assert!(
+        lines.iter().any(|line| {
+            *line == "precompile: PRECOMPILES::sha256(0x68656c6c6f) -> 0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        }),
+        "missing decoded precompile line in debugger dump: {lines:?}"
+    );
+});
+
+forgetest!(debug_dump_marks_tempo_precompile_call_steps, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T5".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoPrecompileDebug.t.sol",
+        r#"
+contract TempoPrecompileDebugTest {
+    address constant TIP_FEE_MANAGER = 0xfeEC000000000000000000000000000000000000;
+
+    function testTempoFeeManagerPrecompileDebug() public view {
+        (bool ok, bytes memory output) = TIP_FEE_MANAGER.staticcall(
+            abi.encodeWithSignature("userTokens(address)", address(0))
+        );
+        require(ok, "FeeManager precompile failed");
+        require(output.length == 32, "bad FeeManager output");
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("tempo_precompile_dump.json");
+
+    cmd.args([
+        "test",
+        "--mt",
+        "testTempoFeeManagerPrecompileDebug",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut lines = Vec::new();
+    collect_debug_dump_decoded_lines(&dump, &mut lines);
+
+    assert!(
+        lines.iter().any(|line| line.contains("precompile: FeeManager::userTokens(")),
+        "missing decoded Tempo precompile line in debugger dump: {lines:?}"
+    );
 });
 
 forgetest!(debug_dump_disambiguates_overloaded_internal_functions, |prj, cmd| {
@@ -3540,6 +3750,7 @@ Encountered 1 failing test in test/Foo.t.sol:ContractTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -3684,6 +3895,7 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 
@@ -3747,6 +3959,7 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -4456,6 +4669,7 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -4587,6 +4801,7 @@ Encountered 3 failing tests in test/NonContractCallRevertTest.t.sol:NonContractC
 Encountered a total of 3 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -4672,6 +4887,7 @@ Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonCo
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -4868,6 +5084,7 @@ Encountered 2 failing tests in test/Counter.t.sol:CounterTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -4956,6 +5173,7 @@ Encountered 1 failing test in test/MemoryLimit.t.sol:MemoryLimitTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });

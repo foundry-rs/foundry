@@ -3,7 +3,7 @@
 use crate::{
     ContractRunner, TestFilter,
     progress::TestsProgress,
-    result::{SuiteResult, SymbolicCounterexampleArtifact},
+    result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
         count_runnable_invariant_campaign_anchors, is_symbolic_entrypoint,
@@ -27,10 +27,10 @@ use foundry_evm::{
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
     fork::CreateFork,
-    fuzz::strategies::LiteralsDictionary,
+    fuzz::strategies::{EnumBounds, LiteralsDictionary},
     inspectors::CheatsConfig,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode},
+    traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
 
@@ -72,6 +72,10 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub analysis: Arc<solar::sema::Compiler>,
     /// Literals dictionary for fuzzing.
     pub fuzz_literals: LiteralsDictionary,
+    /// Literals dictionary for invariant fuzzing.
+    pub invariant_literals: LiteralsDictionary,
+    /// Variant counts for project enums, used to constrain fuzzed enum inputs.
+    pub enum_bounds: EnumBounds,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -101,11 +105,25 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         contract_id: &str,
         func: &Function,
     ) -> bool {
-        matches_test_function(filter, contract_id, func, self.config.symbolic.enabled)
+        matches_test_function(
+            filter,
+            contract_id,
+            func,
+            symbolic_entrypoints_enabled(
+                self.config.symbolic.enabled,
+                self.tcfg.symbolic_artifact_replay.as_ref(),
+            ),
+        )
     }
 
     fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-        matches_artifact(filter, id, abi, self.config.symbolic.enabled)
+        matches_artifact(
+            filter,
+            id,
+            abi,
+            self.config.symbolic.enabled,
+            self.tcfg.symbolic_artifact_replay.as_ref(),
+        )
     }
 
     /// Returns an iterator over all contracts that match the filter.
@@ -139,7 +157,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(|(_, c)| c.abi.functions())
             .filter(|func| {
-                func.is_any_test() || (self.config.symbolic.enabled && is_symbolic_entrypoint(func))
+                func.is_any_test()
+                    || (symbolic_entrypoints_enabled(
+                        self.config.symbolic.enabled,
+                        self.tcfg.symbolic_artifact_replay.as_ref(),
+                    ) && is_symbolic_entrypoint(func))
             })
     }
 
@@ -399,6 +421,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
     pub decode_internal: InternalTraceMode,
+    /// Whether to record every opcode step without debugger snapshots.
+    pub record_all_steps: bool,
     /// Whether to enable call isolation.
     pub isolation: bool,
     /// Whether to exit early on test failure or if test run interrupted.
@@ -430,6 +454,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         // self.line_coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
+        // self.record_all_steps = N/A;
 
         // TODO: self.evm_opts
         self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
@@ -449,7 +474,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             cheatcodes.config =
                 Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
         }
-        inspector.tracing(self.trace_mode());
+        inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.networks(self.evm_opts.networks);
@@ -482,7 +507,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                 stack
                     .logs(self.config.live_logs)
                     .cheatcodes(cheats_config)
-                    .trace_mode(self.trace_mode())
+                    .trace_requirements(self.trace_requirements())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .networks(self.evm_opts.networks)
@@ -495,10 +520,11 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .build(self.evm_env.clone(), self.tx_env.clone(), db)
     }
 
-    fn trace_mode(&self) -> TraceMode {
-        TraceMode::default()
+    const fn trace_requirements(&self) -> TraceRequirements {
+        TraceRequirements::none()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
+            .with_all_steps(self.record_all_steps)
             .with_verbosity(self.evm_opts.verbosity)
     }
 }
@@ -522,6 +548,8 @@ pub struct MultiContractRunnerBuilder {
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
     pub decode_internal: InternalTraceMode,
+    /// Whether to record every opcode step without debugger snapshots.
+    pub record_all_steps: bool,
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Whether to exit early on test failure.
@@ -545,6 +573,7 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
+            record_all_steps: Default::default(),
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
@@ -592,6 +621,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
+        self
+    }
+
+    pub const fn set_record_all_steps(mut self, enable: bool) -> Self {
+        self.record_all_steps = enable;
         self
     }
 
@@ -652,7 +686,10 @@ impl MultiContractRunnerBuilder {
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
                 && abi.functions().any(|func| {
                     func.name.is_any_test()
-                        || self.config.symbolic.enabled && is_symbolic_entrypoint(func)
+                        || symbolic_entrypoints_enabled(
+                            self.config.symbolic.enabled,
+                            self.symbolic_artifact_replay.as_ref(),
+                        ) && is_symbolic_entrypoint(func)
                 })
             {
                 linker.ensure_linked(contract, id)?;
@@ -700,11 +737,24 @@ impl MultiContractRunnerBuilder {
         })?;
 
         let analysis = Arc::new(analysis);
+        // Enum variant counts used to constrain fuzzed enum inputs to valid values.
+        let enum_bounds = EnumBounds::collect(&analysis);
+        let fuzz_max_literals = self.config.fuzz.dictionary.max_fuzz_dictionary_literals;
+        let invariant_max_literals = self.config.invariant.dictionary.max_fuzz_dictionary_literals;
         let fuzz_literals = LiteralsDictionary::new(
             Some(analysis.clone()),
             Some(self.config.project_paths()),
-            self.config.fuzz.dictionary.max_fuzz_dictionary_literals,
+            fuzz_max_literals,
         );
+        let invariant_literals = if invariant_max_literals == fuzz_max_literals {
+            fuzz_literals.clone()
+        } else {
+            LiteralsDictionary::new(
+                Some(analysis.clone()),
+                Some(self.config.project_paths()),
+                invariant_max_literals,
+            )
+        };
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -714,6 +764,8 @@ impl MultiContractRunnerBuilder {
             libraries,
             analysis,
             fuzz_literals,
+            invariant_literals,
+            enum_bounds,
 
             tcfg: TestRunnerConfig {
                 evm_opts,
@@ -724,6 +776,7 @@ impl MultiContractRunnerBuilder {
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
+                record_all_steps: self.record_all_steps,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
@@ -743,6 +796,7 @@ pub fn matches_artifact(
     id: &ArtifactId,
     abi: &JsonAbi,
     symbolic_enabled: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
 ) -> bool {
     matches_contract(
         filter,
@@ -750,8 +804,18 @@ pub fn matches_artifact(
         &id.name,
         &id.identifier(),
         abi.functions(),
-        symbolic_enabled,
+        symbolic_entrypoints_enabled(symbolic_enabled, symbolic_artifact_replay),
     )
+}
+
+pub fn symbolic_entrypoints_enabled(
+    symbolic_enabled: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
+) -> bool {
+    symbolic_enabled
+        || symbolic_artifact_replay.is_some_and(|artifact| {
+            artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
+        })
 }
 
 pub(crate) fn matches_contract(

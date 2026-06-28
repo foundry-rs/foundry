@@ -44,7 +44,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
 use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
-use foundry_config::FuzzCorpusConfig;
+use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
 use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
@@ -56,11 +56,11 @@ use foundry_evm_fuzz::{
     },
 };
 use proptest::{
-    prelude::{Just, Rng, Strategy},
-    prop_oneof,
+    prelude::{Rng, Strategy},
     strategy::{BoxedStrategy, ValueTree},
     test_runner::TestRunner,
 };
+use rand::distr::{Distribution, weighted::WeightedIndex};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -70,7 +70,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
@@ -84,6 +84,41 @@ const FAVORABILITY_THRESHOLD: f64 = 0.3;
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
+
+fn weighted_arg_mutation(
+    rng: &mut impl Rng,
+    distribution: Option<&WeightedIndex<u32>>,
+) -> Option<bool> {
+    distribution.map(|distribution| distribution.sample(rng) == 1)
+}
+
+fn weighted_mutation_type(rng: &mut impl Rng, distribution: &WeightedIndex<u32>) -> MutationType {
+    match distribution.sample(rng) {
+        0 => MutationType::Splice,
+        1 => MutationType::Repeat,
+        2 => MutationType::Interleave,
+        3 => MutationType::Prefix,
+        4 => MutationType::Suffix,
+        5 => MutationType::Abi,
+        6 => MutationType::Cmp,
+        _ => unreachable!("mutation distribution only has seven entries"),
+    }
+}
+
+fn validate_supported_mutation_weight_total(
+    mutation_weights: FuzzCorpusMutationWeights,
+) -> Result<()> {
+    let total = mutation_weights.total();
+    if total > u64::from(u32::MAX) {
+        return Err(eyre!(
+            "effective mutation weights sum to {total}, which exceeds the maximum supported \
+             total {}",
+            u32::MAX
+        ));
+    }
+
+    Ok(())
+}
 
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
@@ -203,6 +238,8 @@ pub(crate) enum CorpusInsertionMode {
 struct ReplayOutcome {
     keep_entry: bool,
     new_coverage: bool,
+    /// Whether replay hit a first-time edge (advances the per-worker "time since new edge" timer).
+    new_edge: bool,
     cmp_seq: Vec<Vec<CmpOperands>>,
     failed_replays: usize,
 }
@@ -236,6 +273,9 @@ pub(crate) struct WorkerCorpusSeed {
     failed_replays: usize,
     optimization_best_value: Option<I256>,
     optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Set if persisted-corpus replay hit a first-time edge, so the timer starts at the baseline
+    /// load instead of reading "never" while `cumulative_edges_seen` is non-zero.
+    last_new_edge_at: Option<Instant>,
 }
 
 impl WorkerCorpusSeed {
@@ -293,6 +333,7 @@ impl WorkerCorpusSeed {
             failed_replays: self.failed_replays,
             optimization_best_value: self.optimization_best_value,
             optimization_best_sequence: self.optimization_best_sequence.clone(),
+            last_new_edge_at: self.last_new_edge_at,
         }
     }
 
@@ -340,9 +381,13 @@ impl WorkerCorpusSeed {
                 sancov_history_map: &mut seed.sancov_history_map,
                 metrics: Some(&mut seed.metrics),
             };
-            let ReplayOutcome { keep_entry, cmp_seq, failed_replays, .. } =
+            let ReplayOutcome { keep_entry, new_edge, cmp_seq, failed_replays, .. } =
                 replay_corpus_sequence(&tx_seq, executor, target, coverage)?;
             seed.failed_replays += failed_replays;
+            // Start the timer at the baseline load if replay hit a first-time edge.
+            if new_edge {
+                seed.last_new_edge_at = Some(Instant::now());
+            }
             if !keep_entry {
                 continue;
             }
@@ -497,8 +542,12 @@ pub struct WorkerCorpus {
     pub(crate) metrics: CorpusMetrics,
     /// Fuzzed calls generator.
     tx_generator: BoxedStrategy<BasicTxDetails>,
-    /// Call sequence mutation strategy type generator used by stateful fuzzing.
-    mutation_generator: BoxedStrategy<MutationType>,
+    /// Call sequence mutation weights used by stateful fuzzing.
+    mutation_weights: FuzzCorpusMutationWeights,
+    /// Weighted stateful sequence mutation distribution.
+    mutation_distribution: WeightedIndex<u32>,
+    /// Weighted ABI/CMP argument mutation distribution used by stateless fuzzing.
+    arg_mutation_distribution: Option<WeightedIndex<u32>>,
     /// Identifier of current mutated entry for this worker.
     current_mutated_index: Option<usize>,
     /// Config
@@ -516,6 +565,12 @@ pub struct WorkerCorpus {
     optimization_best_value: Option<I256>,
     /// Optimization mode: the call sequence that produced the best value.
     optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Monotonic time the worker's local map last gained a first-time edge; `None` until then.
+    ///
+    /// Updated wherever the map grows: live fuzzing, startup replay, and cross-worker sync. Tracks
+    /// *local* discovery (an edge new to this worker), not globally unique discovery. Kept out of
+    /// [`CorpusMetrics`] since a timestamp is neither additive across workers nor serializable.
+    last_new_edge_at: Option<Instant>,
 }
 
 /// Refs used during corpus replay to register contracts deployed mid-sequence as fuzz targets,
@@ -609,6 +664,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     let mut cmp_seq = Vec::with_capacity(tx_seq.len());
     let mut failed_replays = 0;
     let mut new_coverage_for_entry = false;
+    let mut new_edge_for_entry = false;
     let mut created: Vec<Address> = Vec::new();
 
     for tx in tx_seq {
@@ -622,6 +678,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             );
             if new_coverage {
                 new_coverage_for_entry = true;
+                new_edge_for_entry |= is_edge;
                 if let Some(metrics) = coverage.metrics.as_deref_mut() {
                     metrics.update_seen(is_edge);
                 }
@@ -656,6 +713,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
                 return Ok(ReplayOutcome {
                     keep_entry: false,
                     new_coverage: new_coverage_for_entry,
+                    new_edge: new_edge_for_entry,
                     cmp_seq,
                     failed_replays,
                 });
@@ -667,6 +725,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     Ok(ReplayOutcome {
         keep_entry: true,
         new_coverage: new_coverage_for_entry,
+        new_edge: new_edge_for_entry,
         cmp_seq,
         failed_replays,
     })
@@ -694,7 +753,7 @@ impl WorkerCorpus {
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
-        Ok(Self::from_seed(id, config, tx_generator, seed))
+        Self::from_seed(id, config, tx_generator, seed)
     }
 
     pub(crate) fn from_seed(
@@ -702,17 +761,32 @@ impl WorkerCorpus {
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         seed: WorkerCorpusSeed,
-    ) -> Self {
-        let mutation_generator = prop_oneof![
-            Just(MutationType::Splice),
-            Just(MutationType::Repeat),
-            Just(MutationType::Interleave),
-            Just(MutationType::Prefix),
-            Just(MutationType::Suffix),
-            Just(MutationType::Abi),
-            Just(MutationType::Cmp),
-        ]
-        .boxed();
+    ) -> Result<Self> {
+        let mutation_weights = config.mutation_weights.effective();
+        validate_supported_mutation_weight_total(mutation_weights)?;
+        let mutation_distribution = WeightedIndex::new([
+            mutation_weights.mutation_weight_splice,
+            mutation_weights.mutation_weight_repeat,
+            mutation_weights.mutation_weight_interleave,
+            mutation_weights.mutation_weight_prefix,
+            mutation_weights.mutation_weight_suffix,
+            mutation_weights.mutation_weight_abi,
+            mutation_weights.mutation_weight_cmp,
+        ])
+        .map_err(|err| eyre!("invalid corpus mutation weights: {err}"))?;
+        let arg_mutation_distribution = if mutation_weights.mutation_weight_abi == 0
+            && mutation_weights.mutation_weight_cmp == 0
+        {
+            None
+        } else {
+            Some(
+                WeightedIndex::new([
+                    mutation_weights.mutation_weight_abi,
+                    mutation_weights.mutation_weight_cmp,
+                ])
+                .map_err(|err| eyre!("invalid argument mutation weights: {err}"))?,
+            )
+        };
 
         let worker_dir = config.corpus_dir.as_ref().map(|corpus_dir| {
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
@@ -726,7 +800,7 @@ impl WorkerCorpus {
             worker_dir
         });
 
-        Self {
+        Ok(Self {
             id,
             in_memory_corpus: seed.in_memory_corpus,
             history_map: seed.history_map,
@@ -735,7 +809,9 @@ impl WorkerCorpus {
             failed_replays: seed.failed_replays,
             metrics: seed.metrics,
             tx_generator,
-            mutation_generator,
+            mutation_weights,
+            mutation_distribution,
+            arg_mutation_distribution,
             current_mutated_index: None,
             config: config.into(),
             new_entry_indices: Default::default(),
@@ -744,7 +820,8 @@ impl WorkerCorpus {
             last_sync_metrics: Default::default(),
             optimization_best_value: seed.optimization_best_value,
             optimization_best_sequence: seed.optimization_best_sequence,
-        }
+            last_new_edge_at: seed.last_new_edge_at,
+        })
     }
 
     /// Updates stats for the given call sequence, if new coverage produced.
@@ -830,12 +907,17 @@ impl WorkerCorpus {
         // When the run is interesting only because of optimization (no new coverage),
         // add the best prefix to the corpus instead of the full run — the prefix is
         // the sequence that actually achieved the best value.
-        assert!(!inputs.is_empty());
-        let corpus_inputs = if improved_optimization && !new_coverage {
+        //
+        // `inputs` can be empty when every call was discarded/popped but new coverage was
+        // still recorded; there's nothing to persist, so skip without inserting an entry.
+        let corpus_inputs = if improved_optimization && (!new_coverage || inputs.is_empty()) {
             self.optimization_best_sequence.clone()
         } else {
             inputs.to_vec()
         };
+        if corpus_inputs.is_empty() {
+            return None;
+        }
         let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
             cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
@@ -931,8 +1013,19 @@ impl WorkerCorpus {
         );
         if new_coverage {
             self.metrics.update_seen(is_edge);
+            // Only a first-time edge (not a new hitcount bucket, i.e. a "feature") resets the
+            // timer.
+            if is_edge {
+                self.last_new_edge_at = Some(Instant::now());
+            }
         }
         new_coverage
+    }
+
+    /// Time since this worker last gained a first-time edge; `None` until it has seen one. See
+    /// [`WorkerCorpus::last_new_edge_at`] for the local-vs-global caveat.
+    pub(crate) fn time_since_new_edge(&self) -> Option<Duration> {
+        self.last_new_edge_at.map(|at| at.elapsed())
     }
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
@@ -956,11 +1049,8 @@ impl WorkerCorpus {
         if !self.in_memory_corpus.is_empty() {
             self.evict_oldest_corpus()?;
 
-            let mutation_type = self
-                .mutation_generator
-                .new_tree(test_runner)
-                .map_err(|err| eyre!("Could not generate mutation type {err}"))?
-                .current();
+            let mutation_type =
+                weighted_mutation_type(test_runner.rng(), &self.mutation_distribution);
 
             let rng = test_runner.rng();
             let corpus_len = self.in_memory_corpus.len();
@@ -1112,7 +1202,7 @@ impl WorkerCorpus {
                         }
                     }
 
-                    if !mutated {
+                    if !mutated && self.mutation_weights.mutation_weight_abi > 0 {
                         let tx = new_seq.get_mut(fallback_idx).unwrap();
                         if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
                             && !function.inputs.is_empty()
@@ -1149,7 +1239,12 @@ impl WorkerCorpus {
 
         self.evict_oldest_corpus()?;
 
-        let tx = if self.in_memory_corpus.is_empty() {
+        let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
+        let generate_fresh = self.in_memory_corpus.is_empty()
+            || (fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100));
+
+        let tx = if generate_fresh {
+            self.current_mutated_index = None;
             self.new_tx(test_runner)?
         } else {
             let corpus_index = test_runner.rng().random_range(0..self.in_memory_corpus.len());
@@ -1157,10 +1252,31 @@ impl WorkerCorpus {
             self.current_mutated_index = Some(corpus_index);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
-            if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
-                && !function.inputs.is_empty()
+            match weighted_arg_mutation(test_runner.rng(), self.arg_mutation_distribution.as_ref())
             {
-                self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+                Some(true)
+                    if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
+                        && self.mutation_weights.mutation_weight_abi > 0
+                        && !function.inputs.is_empty() =>
+                {
+                    self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+                }
+                Some(true) => {}
+                Some(false)
+                    if self.mutation_weights.mutation_weight_abi > 0
+                        && !function.inputs.is_empty() =>
+                {
+                    self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+                }
+                Some(false) if self.mutation_weights.mutation_weight_cmp > 0 => {
+                    let _ = Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?;
+                }
+                None => {
+                    // Stateless fuzz inputs cannot apply sequence-level mutation strategies.
+                    self.current_mutated_index = None;
+                    return Ok(self.new_tx(test_runner)?.call_details.calldata);
+                }
+                _ => {}
             }
             tx
         };
@@ -1310,7 +1426,9 @@ impl WorkerCorpus {
 
         // When running with coverage guided fuzzing enabled then generate new sequence if initial
         // sequence's length is less than depth or randomly, to occasionally intermix new txs.
-        if depth > sequence.len().saturating_sub(1) || test_runner.rng().random_ratio(1, 10) {
+        let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
+        let generate_fresh = fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100);
+        if depth >= sequence.len() || generate_fresh {
             return self.new_tx(test_runner);
         }
 
@@ -1355,9 +1473,9 @@ impl WorkerCorpus {
         test_runner: &mut TestRunner,
         fuzz_state: &impl FuzzStateReader,
     ) -> Result<()> {
-        // Mutate value with 15% probability for payable functions.
+        // Mutate value with configured probability for payable functions.
         if function.state_mutability == alloy_json_abi::StateMutability::Payable
-            && test_runner.rng().random_ratio(15, 100)
+            && test_runner.rng().random_ratio(self.config.payable_value_weight.min(100), 100)
         {
             tx.call_details.value = Some(generate_msg_value(test_runner));
         }
@@ -1546,7 +1664,7 @@ impl WorkerCorpus {
                 sancov_history_map: &mut self.sancov_history_map,
                 metrics: Some(&mut self.metrics),
             };
-            let ReplayOutcome { keep_entry, new_coverage, cmp_seq, .. } =
+            let ReplayOutcome { keep_entry, new_coverage, new_edge, cmp_seq, .. } =
                 replay_corpus_sequence_with_executor(
                     &tx_seq,
                     &mut executor,
@@ -1555,6 +1673,11 @@ impl WorkerCorpus {
                     true,
                     false,
                 )?;
+
+            // A synced edge is new to this worker's local map, so it advances the timer.
+            if new_edge {
+                self.last_new_edge_at = Some(Instant::now());
+            }
 
             let sync_path = &entry.path;
             if keep_entry && new_coverage {
@@ -1889,7 +2012,11 @@ fn unique_corpus_entries<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey};
     use alloy_dyn_abi::DynSolValue;
+    use foundry_config::FuzzDictionaryConfig;
+    use proptest::prelude::Just;
+    use revm::database::{CacheDB, EmptyDB};
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1903,6 +2030,38 @@ mod tests {
                 value: None,
             },
         }
+    }
+
+    fn basic_tx_with_calldata(calldata: impl Into<Bytes>) -> BasicTxDetails {
+        let mut tx = basic_tx();
+        tx.call_details.calldata = calldata.into();
+        tx
+    }
+
+    fn tx_for_function(
+        target: Address,
+        function: &Function,
+        args: &[DynSolValue],
+    ) -> BasicTxDetails {
+        BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: foundry_evm_fuzz::CallDetails {
+                target,
+                calldata: Bytes::from(function.abi_encode_input(args).unwrap()),
+                value: None,
+            },
+        }
+    }
+
+    fn empty_fuzz_state() -> EvmFuzzState {
+        EvmFuzzState::new(
+            &[],
+            &CacheDB::<EmptyDB>::default(),
+            FuzzDictionaryConfig::default(),
+            None,
+        )
     }
 
     fn temp_corpus_dir() -> PathBuf {
@@ -1923,6 +2082,16 @@ mod tests {
 
     fn worker_corpus(id: usize, corpus_root: PathBuf, seed: WorkerCorpusSeed) -> WorkerCorpus {
         WorkerCorpus::from_seed(id, corpus_config(corpus_root), Just(basic_tx()).boxed(), seed)
+            .unwrap()
+    }
+
+    fn worker_corpus_with_config(
+        id: usize,
+        config: FuzzCorpusConfig,
+        generated: BasicTxDetails,
+        seed: WorkerCorpusSeed,
+    ) -> WorkerCorpus {
+        WorkerCorpus::from_seed(id, config, Just(generated).boxed(), seed).unwrap()
     }
 
     fn empty_worker_corpus(id: usize, corpus_root: PathBuf) -> WorkerCorpus {
@@ -1976,6 +2145,126 @@ mod tests {
         assert_eq!(decoded[0].as_uint().unwrap().0, replacement);
     }
 
+    #[test]
+    fn stateless_new_input_honors_fresh_sequence_weight() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.corpus_random_sequence_weight = 100;
+        let generated = basic_tx_with_calldata(vec![0x22]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0x11])])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, generated, seed);
+        let mut runner = TestRunner::default();
+        let function = Function::parse("foo()").unwrap();
+
+        let input = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
+
+        assert_eq!(input, Bytes::from(vec![0x22]));
+        assert!(manager.current_mutated_index.is_none());
+    }
+
+    #[test]
+    fn stateless_new_input_does_not_fallback_to_disabled_arg_mutators() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.corpus_random_sequence_weight = 0;
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 1,
+            mutation_weight_repeat: 1,
+            mutation_weight_interleave: 1,
+            mutation_weight_prefix: 1,
+            mutation_weight_suffix: 1,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+        };
+        let generated = basic_tx_with_calldata(vec![0x44]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0x33])])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, generated, seed);
+        let mut runner = TestRunner::default();
+        let function = Function::parse("foo(uint256)").unwrap();
+
+        let input = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
+
+        assert_eq!(input, Bytes::from(vec![0x44]));
+        assert!(manager.current_mutated_index.is_none());
+    }
+
+    #[test]
+    fn generate_next_input_handles_empty_sequence_with_fresh_weight_disabled() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.corpus_random_sequence_weight = 0;
+        let generated = basic_tx_with_calldata(vec![0x55]);
+        let mut manager =
+            worker_corpus_with_config(0, config, generated.clone(), WorkerCorpusSeed::default());
+        let mut runner = TestRunner::default();
+
+        let input = manager.generate_next_input(&mut runner, &[], false, 0).unwrap();
+
+        assert_eq!(input.call_details.calldata, generated.call_details.calldata);
+    }
+
+    #[test]
+    fn mutation_weights_reject_overflowing_total() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: u32::MAX,
+            mutation_weight_repeat: 1,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+        };
+
+        let err = WorkerCorpus::from_seed(
+            0,
+            config,
+            Just(basic_tx()).boxed(),
+            WorkerCorpusSeed::default(),
+        )
+        .err()
+        .unwrap();
+
+        assert!(err.to_string().contains("effective mutation weights sum"));
+    }
+
+    #[test]
+    fn invariant_cmp_mutation_does_not_fallback_to_disabled_abi_mutation() {
+        let target = Address::from([0x42; 20]);
+        let function = Function::parse("foo(uint256)").unwrap();
+        let original = tx_for_function(target, &function, &[DynSolValue::Uint(U256::from(7), 256)]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![original.clone()])],
+            ..Default::default()
+        };
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
+        let mut runner = TestRunner::default();
+        let fuzz_state = empty_fuzz_state().into_invariant();
+        let targeted_contracts = targeted_contracts_with_selective_functions(
+            target,
+            vec![function.clone()],
+            [function.selector()],
+        );
+
+        let sequence = manager.new_inputs(&mut runner, &fuzz_state, &targeted_contracts).unwrap();
+
+        assert_eq!(sequence.len(), 1);
+        assert_eq!(sequence[0].call_details.calldata, original.call_details.calldata);
+    }
+
     fn new_manager_with_single_corpus() -> (WorkerCorpus, Uuid) {
         let corpus = CorpusEntry::new(vec![basic_tx()]);
         let seed_uuid = corpus.uuid;
@@ -2018,6 +2307,70 @@ mod tests {
         assert!(record.dedupe_by_coverage);
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.metrics.corpus_count, 1);
+        assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+    }
+
+    /// `RawCallResult` carrying a single edge hit, to drive `merge_edge_coverage` without the EVM.
+    fn edge_call(edge: EdgeKey, count: u8) -> RawCallResult {
+        RawCallResult {
+            edge_coverage: Some(EdgeCoverage::CollisionFree(vec![EdgeCovHit { edge, count }])),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_edge_coverage_advances_timer_only_for_new_edges() {
+        let corpus_root = temp_corpus_dir();
+        let mut manager = empty_worker_corpus(1, corpus_root);
+
+        // No edge seen yet.
+        assert!(manager.time_since_new_edge().is_none());
+        assert_eq!(manager.metrics.cumulative_edges_seen, 0);
+
+        let edge =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+
+        // First-time edge starts the timer.
+        assert!(manager.merge_edge_coverage(&mut edge_call(edge, 1)));
+        let first = manager.last_new_edge_at.expect("timer set after first new edge");
+        assert_eq!(manager.metrics.cumulative_edges_seen, 1);
+
+        // Same edge, higher bucket = a feature, not an edge: timer must not advance.
+        assert!(manager.merge_edge_coverage(&mut edge_call(edge, 8)));
+        assert_eq!(manager.last_new_edge_at, Some(first));
+        assert_eq!(manager.metrics.cumulative_edges_seen, 1);
+        assert_eq!(manager.metrics.cumulative_features_seen, 1);
+
+        // A distinct edge advances the timer.
+        let other =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 1, jump_dest: U256::from(20) };
+        assert!(manager.merge_edge_coverage(&mut edge_call(other, 1)));
+        let second = manager.last_new_edge_at.expect("timer present");
+        assert!(second >= first);
+        assert_eq!(manager.metrics.cumulative_edges_seen, 2);
+        assert!(manager.time_since_new_edge().is_some());
+    }
+
+    #[test]
+    fn empty_input_sequence_with_new_coverage_does_not_panic_or_insert() {
+        // A run where every executed call was discarded (magic assume) or popped (reverts
+        // without `fail_on_revert`, handler assertions) leaves no surviving inputs, yet
+        // `new_coverage` can still be true because edge coverage is collected before the
+        // input is popped. Processing must not panic and must not persist an entry.
+        let corpus_root = temp_corpus_dir();
+        let worker_subdir = corpus_root.join("worker1");
+        let mut manager = empty_worker_corpus(1, corpus_root);
+
+        let record = manager.process_inputs_for_campaign(&[], &[], true, None);
+
+        assert!(record.is_none());
+        assert_eq!(manager.in_memory_corpus.len(), 0);
+        assert_eq!(manager.metrics.corpus_count, 0);
+        assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+
+        // Live processing path must also tolerate the empty sequence.
+        manager.process_inputs(&[], &[], true, None);
+        assert_eq!(manager.in_memory_corpus.len(), 0);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
     }
 
@@ -2141,10 +2494,12 @@ mod tests {
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: tx_seq,
+            last_new_edge_at: None,
         };
 
         let manager =
-            WorkerCorpus::from_seed(1, corpus_config(corpus_root), Just(basic_tx()).boxed(), seed);
+            WorkerCorpus::from_seed(1, corpus_config(corpus_root), Just(basic_tx()).boxed(), seed)
+                .unwrap();
 
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.history_map, vec![1, 2, 3]);
@@ -2182,6 +2537,7 @@ mod tests {
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: vec![basic_tx()],
+            last_new_edge_at: None,
         };
 
         let worker_count = 3;
@@ -2402,7 +2758,8 @@ mod tests {
             no_corpus_config,
             Just(basic_tx()).boxed(),
             WorkerCorpusSeed::default(),
-        );
+        )
+        .unwrap();
         assert!(
             manager
                 .hoist_observed_calls(

@@ -2,7 +2,6 @@ use super::{install, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
-    diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
     multi_runner::{
         MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, matches_artifact,
@@ -17,6 +16,7 @@ use crate::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
+        speedscope,
     },
 };
 use alloy_primitives::U256;
@@ -24,8 +24,6 @@ use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
-    ExitCode,
-    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
@@ -33,7 +31,7 @@ use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
 };
 use foundry_compilers::{
-    CompilationError, ProjectCompileOutput,
+    ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
     compilers::{
         Language,
@@ -42,7 +40,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, InvariantWorkers, figment,
+    Config, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map, Value},
@@ -74,6 +72,7 @@ use std::{
 };
 use yansi::Paint;
 
+mod evm_profile_server;
 mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
@@ -84,6 +83,31 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
+
+/// Output format for EVM execution profiles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum EvmProfileFormat {
+    /// Speedscope format, opens in speedscope.app.
+    #[default]
+    Speedscope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TraceOutputKind {
+    Flamegraph,
+    Flamechart,
+    EvmProfile(EvmProfileFormat),
+}
+
+impl TraceOutputKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Flamegraph => "flamegraph",
+            Self::Flamechart => "flamechart",
+            Self::EvmProfile(_) => "EVM profile",
+        }
+    }
+}
 
 /// CLI mirror of `foundry_evm::executors::ShowmapDomain`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -105,6 +129,31 @@ impl From<ShowmapDomainArg> for ShowmapDomain {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TestExecutionOptions {
+    pub(crate) coverage: bool,
+    pub(crate) should_debug: bool,
+    pub(crate) decode_internal: InternalTraceMode,
+    pub(crate) multi_network: MultiNetworkConfig,
+    pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+}
+
+impl TestExecutionOptions {
+    pub(crate) fn default_run() -> Self {
+        Self {
+            coverage: false,
+            should_debug: false,
+            decode_internal: InternalTraceMode::None,
+            multi_network: MultiNetworkConfig::default(),
+            replay_symbolic_artifact: None,
+        }
+    }
+
+    pub(crate) fn coverage() -> Self {
+        Self { coverage: true, ..Self::default_run() }
+    }
+}
+
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
@@ -123,7 +172,7 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "evm_profile", "decode_internal", "rerun"])]
     debug: bool,
 
     /// Debugger layout to use.
@@ -134,15 +183,36 @@ pub struct TestArgs {
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
     /// are consuming the most gas overall in a sorted manner.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["flamechart", "evm_profile", "json", "junit", "list"])]
     flamegraph: bool,
 
     /// Generate a flamechart for a single test. Implies `--decode-internal`.
     ///
     /// A flame chart shows the gas usage over time, illustrating when each function is
     /// called (execution order) and how much gas it consumes at each point in the timeline.
-    #[arg(long, conflicts_with = "flamegraph")]
+    #[arg(long, conflicts_with_all = ["flamegraph", "evm_profile", "json", "junit", "list"])]
     flamechart: bool,
+
+    /// Generate an execution profile for a single test.
+    ///
+    /// Creates a profile where each EVM call is recorded with gas consumption.
+    /// Opens the profile in speedscope.app unless `--no-open` is passed.
+    /// Implies `--decode-internal`.
+    #[arg(
+        long,
+        value_name = "FORMAT",
+        num_args = 0..=1,
+        default_missing_value = "speedscope",
+        value_enum,
+        conflicts_with_all = ["flamegraph", "flamechart", "json", "junit", "list"]
+    )]
+    evm_profile: Option<EvmProfileFormat>,
+
+    /// Don't open the profile in the browser (for `--evm-profile`).
+    ///
+    /// The profile is saved to disk without starting the local viewer server.
+    #[arg(long, requires = "evm_profile")]
+    no_open: bool,
 
     /// Identify internal functions in traces.
     ///
@@ -225,9 +295,127 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_TIMEOUT", value_name = "TIMEOUT")]
     pub fuzz_timeout: Option<u64>,
 
+    /// Percent of fuzz calldata generated from the dictionary.
+    #[arg(long, env = "FOUNDRY_FUZZ_DICTIONARY_WEIGHT", value_name = "PERCENT")]
+    pub fuzz_dictionary_weight: Option<u32>,
+
+    /// Maximum fuzz dictionary addresses, or `max`.
+    #[arg(long, env = "FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_ADDRESSES", value_name = "N|max")]
+    pub fuzz_dictionary_addresses: Option<String>,
+
+    /// Maximum fuzz dictionary values, or `max`.
+    #[arg(long, env = "FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_VALUES", value_name = "N|max")]
+    pub fuzz_dictionary_values: Option<String>,
+
+    /// Maximum fuzz dictionary literals, or `max`.
+    #[arg(long, env = "FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_LITERALS", value_name = "N|max")]
+    pub fuzz_dictionary_literals: Option<String>,
+
+    /// Percent chance that coverage-guided fuzzing generates fresh input instead of mutating
+    /// corpus input.
+    #[arg(long, env = "FOUNDRY_FUZZ_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
+    pub fuzz_corpus_random_sequence_weight: Option<u32>,
+
+    /// Percent chance that fuzzed payable calls carry non-zero msg.value.
+    #[arg(long, env = "FOUNDRY_FUZZ_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
+    pub fuzz_payable_value_weight: Option<u32>,
+
+    /// Corpus mutation weight for splice.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_SPLICE", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_splice: Option<u32>,
+
+    /// Corpus mutation weight for repeat.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_REPEAT", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_repeat: Option<u32>,
+
+    /// Corpus mutation weight for interleave.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_INTERLEAVE", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_interleave: Option<u32>,
+
+    /// Corpus mutation weight for prefix replacement.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_PREFIX", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_prefix: Option<u32>,
+
+    /// Corpus mutation weight for suffix replacement.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_SUFFIX", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_suffix: Option<u32>,
+
+    /// Corpus mutation weight for ABI argument mutation.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_ABI", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_abi: Option<u32>,
+
+    /// Corpus mutation weight for comparison-operand mutation.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_CMP", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_cmp: Option<u32>,
+
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
+
+    /// Number of calls executed to try to break invariants in one run.
+    #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH", value_name = "DEPTH")]
+    pub invariant_depth: Option<u32>,
+
+    /// Minimum sampled invariant depth when `--invariant-depth-mode random` is active.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MIN_DEPTH", value_name = "DEPTH")]
+    pub invariant_min_depth: Option<u32>,
+
+    /// How invariant run depth is selected.
+    #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH_MODE", value_name = "fixed|random")]
+    pub invariant_depth_mode: Option<InvariantDepthMode>,
+
+    /// Percent of invariant calldata/senders generated from the dictionary.
+    #[arg(long, env = "FOUNDRY_INVARIANT_DICTIONARY_WEIGHT", value_name = "PERCENT")]
+    pub invariant_dictionary_weight: Option<u32>,
+
+    /// Maximum invariant dictionary addresses, or `max`.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MAX_FUZZ_DICTIONARY_ADDRESSES", value_name = "N|max")]
+    pub invariant_dictionary_addresses: Option<String>,
+
+    /// Maximum invariant dictionary values, or `max`.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MAX_FUZZ_DICTIONARY_VALUES", value_name = "N|max")]
+    pub invariant_dictionary_values: Option<String>,
+
+    /// Maximum invariant dictionary literals, or `max`.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MAX_FUZZ_DICTIONARY_LITERALS", value_name = "N|max")]
+    pub invariant_dictionary_literals: Option<String>,
+
+    /// Percent chance that coverage-guided invariant fuzzing injects fresh calls while extending
+    /// corpus sequences.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
+    pub invariant_corpus_random_sequence_weight: Option<u32>,
+
+    /// Percent chance that fuzzed payable invariant calls carry non-zero msg.value.
+    #[arg(long, env = "FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
+    pub invariant_payable_value_weight: Option<u32>,
+
+    /// Corpus mutation weight for splice.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_SPLICE", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_splice: Option<u32>,
+
+    /// Corpus mutation weight for repeat.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_REPEAT", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_repeat: Option<u32>,
+
+    /// Corpus mutation weight for interleave.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_INTERLEAVE", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_interleave: Option<u32>,
+
+    /// Corpus mutation weight for prefix replacement.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_PREFIX", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_prefix: Option<u32>,
+
+    /// Corpus mutation weight for suffix replacement.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_SUFFIX", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_suffix: Option<u32>,
+
+    /// Corpus mutation weight for ABI argument mutation.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_ABI", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_abi: Option<u32>,
+
+    /// Corpus mutation weight for comparison-operand mutation.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_cmp: Option<u32>,
 
     /// Run symbolic check*/prove*/invariant*/statefulFuzz* tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC")]
@@ -372,7 +560,7 @@ pub struct TestArgs {
         value_name = "DIR",
         value_hint = ValueHint::DirPath,
         help_heading = "Showmap replay",
-        conflicts_with_all = ["debug", "flamegraph", "flamechart", "rerun", "fuzz_input_file", "gas_report"],
+        conflicts_with_all = ["debug", "flamegraph", "flamechart", "evm_profile", "rerun", "fuzz_input_file", "gas_report"],
     )]
     pub showmap_out: Option<PathBuf>,
 
@@ -457,6 +645,14 @@ pub struct TestArgs {
     /// Analogous to `--invariant-timeout` for invariant campaigns.
     #[arg(long, value_name = "TIMEOUT", requires = "mutate")]
     pub mutation_timeout: Option<u32>,
+
+    /// Override optimizer runs for mutation testing compile-and-test runs.
+    #[arg(long, value_name = "RUNS", requires = "mutate")]
+    pub mutation_optimizer_runs: Option<u32>,
+
+    /// Override via-ir for mutation testing compile-and-test runs.
+    #[arg(long, default_missing_value = "true", num_args = 0..=1, requires = "mutate")]
+    pub mutation_via_ir: Option<bool>,
 }
 
 impl TestArgs {
@@ -559,50 +755,6 @@ impl TestArgs {
         Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
     }
 
-    /// Reject flags whose stdout shape conflicts with the NDJSON stream
-    /// contract under `--machine`. Called from the binary entry point so
-    /// `--watch` is also rejected.
-    pub(crate) fn reject_machine_unsupported_flags(&self) -> Result<()> {
-        if !foundry_cli::is_machine() {
-            return Ok(());
-        }
-        let unsupported = [
-            ("--watch", self.is_watch()),
-            ("--debug", self.debug),
-            ("--flamegraph", self.flamegraph),
-            ("--flamechart", self.flamechart),
-            ("--gas-report", self.gas_report),
-            ("--summary", self.summary),
-            ("--list", self.list),
-            ("--junit", self.junit),
-            ("--show-progress", self.show_progress),
-            ("--mutate", self.mutate.is_some()),
-            // `--live-logs` writes console.log straight to stdout; the
-            // `live_logs = true` config equivalent is overridden in
-            // `compile_and_run`.
-            ("--live-logs", self.evm.live_logs),
-            // Bails mid-suite on diff; config equivalent overridden in `compile_and_run`.
-            ("--gas-snapshot-check", self.gas_snapshot_check.unwrap_or(false)),
-            // Writes mid-suite to disk and can fail between test_result and
-            // suite_finished; config equivalent overridden in `compile_and_run`.
-            ("--gas-snapshot-emit", self.gas_snapshot_emit == Some(true)),
-        ]
-        .into_iter()
-        .filter_map(|(name, on)| on.then_some(name))
-        .collect::<Vec<_>>();
-        if !unsupported.is_empty() {
-            foundry_cli::machine::bail_machine_usage_with_details(
-                format!(
-                    "`forge test` under `--machine` does not yet support {}; \
-                     run without `--machine` or omit those flags.",
-                    unsupported.join(", ")
-                ),
-                serde_json::json!({ "unsupported_flags": unsupported }),
-            );
-        }
-        Ok(())
-    }
-
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
@@ -643,14 +795,11 @@ impl TestArgs {
         });
         let output = project.compile()?;
         if output.has_compiler_errors() {
-            // Mirror the main-compile typed envelope so agents don't see this
-            // path as `cli.unknown` + exit 1.
-            if foundry_cli::is_machine() {
-                emit_machine_compile_error(&output);
-            }
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
+
+        let symbolic_artifact_replay = self.load_symbolic_artifact_replay()?;
 
         // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
         // identifiers it constructs are project-relative. Match that here for the filter check
@@ -664,7 +813,13 @@ impl TestArgs {
                     return true;
                 }
                 let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-                matches_artifact(test_filter, &stripped, abi, config.symbolic.enabled)
+                matches_artifact(
+                    test_filter,
+                    &stripped,
+                    abi,
+                    config.symbolic.enabled,
+                    symbolic_artifact_replay.as_ref(),
+                )
             })
             .map(|(id, _)| id.source)
             .collect())
@@ -677,8 +832,6 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
-        let machine_mode = foundry_cli::is_machine();
-
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -690,21 +843,7 @@ impl TestArgs {
             config.cache = true;
         }
 
-        // Override foundry.toml knobs that would print outside the NDJSON
-        // stream or bail mid-suite; the CLI equivalents are rejected in
-        // `reject_machine_unsupported_flags`.
-        if machine_mode {
-            config.show_progress = false;
-            config.live_logs = false;
-            config.gas_snapshot_check = false;
-            config.gas_snapshot_emit = false;
-        }
-
-        // Skip implicit dep install: it prints to stdout. A missing dep then
-        // surfaces as a typed `compiler.solc.error` from the compile below.
-        if !machine_mode
-            && install::install_missing_dependencies(&mut config).await
-            && config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
@@ -714,9 +853,6 @@ impl TestArgs {
         let project = config.project()?;
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
-        if replay_symbolic_artifact.is_some() {
-            config.symbolic.enabled = true;
-        }
 
         let mut filter = self.filter(&config)?;
         if let Some(replay) = &replay_symbolic_artifact {
@@ -742,20 +878,11 @@ impl TestArgs {
         }
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let mut compiler = ProjectCompiler::new()
+        let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit || machine_mode)
+            .quiet(shell::is_json() || self.junit)
             .files(self.get_sources_to_compile(&config, &filter)?);
-        // Disable inner `bail` so a compile error returns the output and we
-        // can emit a typed envelope instead of an untyped `cli.unknown`.
-        if machine_mode {
-            compiler = compiler.bail(false);
-        }
         let output = compiler.compile(&project)?;
-
-        if machine_mode && output.has_compiler_errors() {
-            emit_machine_compile_error(&output);
-        }
 
         self.run_tests(
             &project.paths.root,
@@ -763,8 +890,10 @@ impl TestArgs {
             evm_opts,
             &output,
             &filter,
-            false,
-            replay_symbolic_artifact,
+            TestExecutionOptions {
+                replay_symbolic_artifact,
+                ..TestExecutionOptions::default_run()
+            },
         )
         .await
     }
@@ -772,16 +901,14 @@ impl TestArgs {
     /// Executes all the tests in the project.
     ///
     /// See [`Self::compile_and_run`] for more details.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn run_tests(
+    pub(crate) async fn run_tests(
         &mut self,
         project_root: &Path,
         mut config: Config,
         mut evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
-        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+        mut execution: TestExecutionOptions,
     ) -> Result<TestOutcome> {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -808,10 +935,13 @@ impl TestArgs {
             if self.flamechart {
                 conflicts.push("--flamechart");
             }
+            if self.evm_profile.is_some() {
+                conflicts.push("--evm-profile");
+            }
             if self.junit {
                 conflicts.push("--junit");
             }
-            if coverage {
+            if execution.coverage {
                 conflicts.push("coverage");
             }
             if self.showmap_out.is_some() {
@@ -845,16 +975,22 @@ impl TestArgs {
             .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
 
         // Create test options from general project settings and compiler output.
-        let should_debug = self.debug;
-        let should_draw = self.flamegraph || self.flamechart;
+        execution.should_debug = self.debug;
+        let trace_output = if self.flamegraph {
+            Some(TraceOutputKind::Flamegraph)
+        } else if self.flamechart {
+            Some(TraceOutputKind::Flamechart)
+        } else {
+            self.evm_profile.map(TraceOutputKind::EvmProfile)
+        };
 
         // Determine executor verbosity.
-        if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
+        if evm_opts.verbosity < 3 && (self.gas_report || trace_output.is_some()) {
             evm_opts.verbosity = 3;
         }
 
-        // Enable internal tracing for more informative flamegraph.
-        if should_draw && !self.decode_internal {
+        // Enable internal tracing for more informative flamegraph/profile.
+        if !self.decode_internal && trace_output.is_some() {
             self.decode_internal = true;
         }
 
@@ -878,34 +1014,17 @@ impl TestArgs {
         let inline_config = InlineConfig::new_parsed(output, &config)?;
         let override_networks = inline_config.referenced_override_networks(&config.profile);
 
-        // Multi-pass would emit `test_result*` + `suite_finished` once per
-        // pass for the same suite, violating "exactly one terminator per group".
-        if foundry_cli::is_machine() && !override_networks.is_empty() {
-            let networks: Vec<String> = override_networks.iter().map(|n| n.to_string()).collect();
-            foundry_cli::machine::bail_machine_usage_with_details(
-                "`forge test` under `--machine` does not yet support inline network \
-                 overrides; run without `--machine` or remove the inline `network` \
-                 annotations.",
-                serde_json::json!({
-                    "unsupported_features": ["inline_network_overrides"],
-                    "networks": networks,
-                }),
-            );
-        }
-
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
+            execution.decode_internal = decode_internal;
+            execution.multi_network = MultiNetworkConfig::default();
             self.dispatch_network(
                 &evm_opts,
                 config,
                 evm_opts.clone(),
                 output,
                 filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                MultiNetworkConfig::default(),
-                replay_symbolic_artifact.clone(),
+                execution.clone(),
             )
             .await?
         } else {
@@ -921,14 +1040,14 @@ impl TestArgs {
                     evm_opts.clone(),
                     output,
                     filter,
-                    coverage,
-                    should_debug,
-                    decode_internal,
-                    MultiNetworkConfig {
-                        all_override_networks: all_override_networks.clone(),
-                        pass_network: None,
+                    TestExecutionOptions {
+                        decode_internal,
+                        multi_network: MultiNetworkConfig {
+                            all_override_networks: all_override_networks.clone(),
+                            pass_network: None,
+                        },
+                        ..execution.clone()
                     },
-                    replay_symbolic_artifact.clone(),
                 )
                 .await?;
 
@@ -943,25 +1062,24 @@ impl TestArgs {
                         pass_evm_opts.clone(),
                         output,
                         filter,
-                        coverage,
-                        should_debug,
-                        decode_internal,
-                        MultiNetworkConfig {
-                            all_override_networks: all_override_networks.clone(),
-                            pass_network: Some(network),
+                        TestExecutionOptions {
+                            decode_internal,
+                            multi_network: MultiNetworkConfig {
+                                all_override_networks: all_override_networks.clone(),
+                                pass_network: Some(network),
+                            },
+                            ..execution.clone()
                         },
-                        replay_symbolic_artifact.clone(),
                     )
                     .await?;
                 merge_outcomes(&mut outcome, pass_outcome);
             }
 
             // Print the merged summary (per-pass summaries are suppressed in `run_tests_inner`).
-            // Machine mode emits a terminal envelope from the binary entry point instead.
-            if !self.summary && !shell::is_json() && !foundry_cli::is_machine() {
+            if !self.summary && !shell::is_json() {
                 sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
             }
-            if self.summary && !outcome.results.is_empty() && !foundry_cli::is_machine() {
+            if self.summary && !outcome.results.is_empty() {
                 let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
                 sh_println!("{}", &summary_report)?;
             }
@@ -969,7 +1087,7 @@ impl TestArgs {
             (libraries, outcome)
         };
 
-        if let Some(replay) = &replay_symbolic_artifact {
+        if let Some(replay) = &execution.replay_symbolic_artifact {
             let replayed = outcome.tests().count();
             if replayed == 0 {
                 bail!(
@@ -988,48 +1106,140 @@ impl TestArgs {
             }
         }
 
-        if should_draw {
-            let (suite_name, test_name, mut test_result) =
-                outcome.remove_first().ok_or_eyre("no tests were executed")?;
-
-            let (_, arena) = test_result
-                .traces
-                .iter_mut()
-                .find(|(kind, _)| *kind == TraceKind::Execution)
-                .unwrap();
-
-            // Decode traces.
-            let decoder = outcome.last_run_decoder.as_ref().unwrap();
-            decode_trace_arena(arena, decoder).await;
-            let mut fst = folded_stack_trace::build(arena, self.evm.isolate);
-
-            let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
-            let contract = suite_name.split(':').next_back().unwrap();
-            let test_name = test_name.trim_end_matches("()");
-            let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
-            let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
-            let file = std::io::BufWriter::new(file);
-
-            let mut options = inferno::flamegraph::Options::default();
-            options.title = format!("{label} {contract}::{test_name}");
-            options.count_name = "gas".to_string();
-            if self.flamechart {
-                options.flame_chart = true;
-                fst.reverse();
+        if let Some(trace_output) = trace_output {
+            enum RenderedTraceOutput {
+                Flame {
+                    file_name: String,
+                    title: String,
+                    flame_chart: bool,
+                    folded_stack_trace: Vec<String>,
+                },
+                EvmProfile {
+                    profile_json: Vec<u8>,
+                    test_name: String,
+                    contract: String,
+                },
             }
 
-            // Generate SVG.
-            inferno::flamegraph::from_lines(&mut options, fst.iter().map(String::as_str), file)
-                .wrap_err("failed to write svg")?;
-            sh_println!("Saved to {file_name}")?;
+            let rendered = {
+                let output_label = trace_output.label();
+                let no_tests = match trace_output {
+                    TraceOutputKind::EvmProfile(_) => {
+                        "cannot generate EVM profile: no tests were executed"
+                    }
+                    TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
+                        "no tests were executed"
+                    }
+                };
+                if !outcome.results.values().any(|suite| !suite.test_results.is_empty()) {
+                    return Err(eyre::eyre!("{no_tests}"));
+                }
+                let decoder = outcome.last_run_decoder.clone().ok_or_else(|| {
+                    eyre::eyre!("cannot generate {output_label}: missing trace decoder")
+                })?;
+                let (suite_name, test_name, test_result) = outcome
+                    .results
+                    .iter_mut()
+                    .find_map(|(suite_name, suite)| {
+                        suite.test_results.iter_mut().next().map(|(test_name, result)| {
+                            (suite_name.as_str(), test_name.as_str(), result)
+                        })
+                    })
+                    .ok_or_else(|| eyre::eyre!("{no_tests}"))?;
+                let contract = suite_name.split(':').next_back().unwrap();
+                let test_name_trimmed = test_name.trim_end_matches("()");
 
-            // Open SVG in default program.
-            if let Err(e) = opener::open(&file_name) {
-                sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
+                let (_, arena) = test_result
+                    .traces
+                    .iter_mut()
+                    .find(|(kind, _)| *kind == TraceKind::Execution)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "cannot generate {output_label} for {contract}::{test_name_trimmed}: \
+                             no execution trace (test may have failed in setUp/constructor or been \
+                             skipped)"
+                        )
+                    })?;
+
+                // Decode traces.
+                decode_trace_arena(arena, &decoder).await;
+
+                match trace_output {
+                    TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
+                        let mut folded_stack_trace =
+                            folded_stack_trace::build(arena, self.evm.isolate);
+                        let flame_chart = matches!(trace_output, TraceOutputKind::Flamechart);
+                        if flame_chart {
+                            folded_stack_trace.reverse();
+                        }
+                        let label = trace_output.label();
+                        RenderedTraceOutput::Flame {
+                            file_name: format!("cache/{label}_{contract}_{test_name_trimmed}.svg"),
+                            title: format!("{label} {contract}::{test_name_trimmed}"),
+                            flame_chart,
+                            folded_stack_trace,
+                        }
+                    }
+                    TraceOutputKind::EvmProfile(EvmProfileFormat::Speedscope) => {
+                        let profile = speedscope::builder::build(
+                            arena,
+                            test_name_trimmed,
+                            contract,
+                            self.evm.isolate,
+                        );
+                        RenderedTraceOutput::EvmProfile {
+                            profile_json: serde_json::to_vec(&profile)?,
+                            test_name: test_name_trimmed.to_string(),
+                            contract: contract.to_string(),
+                        }
+                    }
+                }
+            };
+
+            match rendered {
+                RenderedTraceOutput::Flame {
+                    file_name,
+                    title,
+                    flame_chart,
+                    folded_stack_trace,
+                } => {
+                    let file =
+                        std::fs::File::create(&file_name).wrap_err("failed to create file")?;
+                    let file = std::io::BufWriter::new(file);
+
+                    let mut options = inferno::flamegraph::Options::default();
+                    options.title = title;
+                    options.count_name = "gas".to_string();
+                    options.flame_chart = flame_chart;
+
+                    inferno::flamegraph::from_lines(
+                        &mut options,
+                        folded_stack_trace.iter().map(String::as_str),
+                        file,
+                    )
+                    .wrap_err("failed to write svg")?;
+                    sh_println!("Saved to {file_name}")?;
+
+                    if let Err(e) = opener::open(&file_name) {
+                        sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
+                    }
+                }
+                RenderedTraceOutput::EvmProfile { profile_json, test_name, contract } => {
+                    let profile_path = format!("cache/evm_profile_{contract}_{test_name}.json");
+                    fs::write(&profile_path, &profile_json)?;
+
+                    sh_println!("Profile saved to {profile_path}")?;
+
+                    if self.no_open {
+                        return Ok(outcome);
+                    }
+
+                    evm_profile_server::serve_and_open(profile_json, &test_name, &contract).await?;
+                }
             }
         }
 
-        if should_debug {
+        if execution.should_debug {
             // Get first non-empty suite result. We will have only one such entry.
             let (_, _, test_result) =
                 outcome.remove_first().ok_or_eyre("no tests were executed")?;
@@ -1039,7 +1249,7 @@ impl TestArgs {
 
             // Prefer execution traces for normal debug runs, but when execution never starts
             // (for example if `setUp()` reverts), fall back to available setup/deployment traces.
-            let traces = {
+            let mut traces = {
                 let execution = test_result
                     .traces
                     .iter()
@@ -1048,6 +1258,11 @@ impl TestArgs {
                     .collect::<Vec<_>>();
                 if execution.is_empty() { test_result.traces.clone() } else { execution }
             };
+            if let Some(decoder) = &outcome.last_run_decoder {
+                for (_, arena) in &mut traces {
+                    decode_trace_arena(arena, decoder).await;
+                }
+            }
 
             // Run the debugger.
             let mut builder = Debugger::builder()
@@ -1244,6 +1459,9 @@ impl TestArgs {
                 );
             }
 
+            let mut config_for_mutation = config_for_mutation;
+            apply_mutation_compiler_overrides(&mut config_for_mutation);
+
             let json_output = shell::is_json();
             let selected_sources_relative = self
                 .get_sources_to_compile(&config_for_mutation, filter)?
@@ -1300,18 +1518,13 @@ impl TestArgs {
     }
 
     /// Build the test runner and execute tests for a specific network type.
-    #[allow(clippy::too_many_arguments)]
     async fn build_and_run_tests<FEN: FoundryEvmNetwork>(
         &self,
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
-        should_debug: bool,
-        decode_internal: InternalTraceMode,
-        multi_network: MultiNetworkConfig,
-        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+        execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork_block) =
@@ -1320,17 +1533,18 @@ impl TestArgs {
         let config = Arc::new(config);
         let showmap = self.showmap_config();
         let runner = MultiContractRunnerBuilder::new(config.clone())
-            .set_debug(should_debug)
-            .set_decode_internal(decode_internal)
+            .set_debug(execution.should_debug)
+            .set_decode_internal(execution.decode_internal)
+            .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
-            .set_coverage(coverage)
-            .with_multi_network(multi_network)
+            .set_coverage(execution.coverage)
+            .with_multi_network(execution.multi_network)
             .with_showmap(showmap)
-            .with_symbolic_artifact_replay(replay_symbolic_artifact)
+            .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
@@ -1339,7 +1553,6 @@ impl TestArgs {
     }
 
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
-    #[allow(clippy::too_many_arguments)]
     async fn dispatch_network(
         &self,
         dispatch_opts: &EvmOpts,
@@ -1347,54 +1560,22 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
-        should_debug: bool,
-        decode_internal: InternalTraceMode,
-        multi_network: MultiNetworkConfig,
-        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+        execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         if dispatch_opts.networks.is_tempo() {
-            self.build_and_run_tests::<TempoEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                multi_network,
-                replay_symbolic_artifact,
-            )
-            .await
+            self.build_and_run_tests::<TempoEvmNetwork>(config, evm_opts, output, filter, execution)
+                .await
         } else {
             #[cfg(feature = "optimism")]
             if dispatch_opts.networks.is_optimism() {
                 return self
                     .build_and_run_tests::<OpEvmNetwork>(
-                        config,
-                        evm_opts,
-                        output,
-                        filter,
-                        coverage,
-                        should_debug,
-                        decode_internal,
-                        multi_network,
-                        replay_symbolic_artifact,
+                        config, evm_opts, output, filter, execution,
                     )
                     .await;
             }
-            self.build_and_run_tests::<EthEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                multi_network,
-                replay_symbolic_artifact,
-            )
-            .await
+            self.build_and_run_tests::<EthEvmNetwork>(config, evm_opts, output, filter, execution)
+                .await
         }
     }
 
@@ -1414,12 +1595,8 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
-        let machine_mode = foundry_cli::is_machine();
-
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        // Machine mode is also a structured stream and must not interleave human output.
-        let silent = machine_mode
-            || self.gas_report && shell::is_json()
+        let silent = self.gas_report && shell::is_json()
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
 
@@ -1431,33 +1608,35 @@ impl TestArgs {
             } else {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
-            if !machine_mode {
-                if total_tests == 0 {
-                    sh_println!(
-                        "No tests found in project! Forge looks for functions that start with `test`"
-                    )?;
-                } else {
-                    let mut msg = format!("no tests match the provided pattern:\n{filter}");
-                    // Try to suggest a test when there's no match.
-                    if let Some(test_pattern) = &filter.args().test_pattern {
-                        let test_name = test_pattern.as_str();
-                        // Filter contracts but not test functions.
-                        let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                        if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                            write!(msg, "\nDid you mean `{suggestion}`?")?;
-                        }
+            if total_tests == 0 {
+                sh_println!(
+                    "No tests found in project! Forge looks for functions that start with `test`"
+                )?;
+            } else {
+                let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                // Try to suggest a test when there's no match.
+                if let Some(test_pattern) = &filter.args().test_pattern {
+                    let test_name = test_pattern.as_str();
+                    // Filter contracts but not test functions.
+                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                        write!(msg, "\nDid you mean `{suggestion}`?")?;
                     }
-                    sh_warn!("{msg}")?;
                 }
+                sh_warn!("{msg}")?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
-        if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
+        if num_filtered != 1
+            && (self.debug || self.flamegraph || self.flamechart || self.evm_profile.is_some())
+        {
             let action = if self.flamegraph {
                 "generate a flamegraph"
             } else if self.flamechart {
                 "generate a flamechart"
+            } else if self.evm_profile.is_some() {
+                "generate an EVM profile"
             } else {
                 "run the debugger"
             };
@@ -1478,13 +1657,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        // Agent stream wins over `--json`.
-        if self.mutate.is_none()
-            && !machine_mode
-            && !self.gas_report
-            && !self.summary
-            && shell::is_json()
-        {
+        if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
             for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
@@ -1598,7 +1771,8 @@ impl TestArgs {
                 || self.gas_report
                 || self.debug
                 || self.flamegraph
-                || self.flamechart;
+                || self.flamechart
+                || self.evm_profile.is_some();
 
             // Print suite header.
             if !silent {
@@ -1641,10 +1815,6 @@ impl TestArgs {
                             sh_println!()?;
                         }
                     }
-                }
-
-                if machine_mode {
-                    emit_test_result_event(&contract_name, name, result)?;
                 }
 
                 // We shouldn't break out of the outer loop directly here so that we finish
@@ -1849,17 +2019,6 @@ impl TestArgs {
                 sh_println!("{}", suite_result.summary())?;
             }
 
-            if machine_mode {
-                for warning in &suite_result.warnings {
-                    emit_warning_event(&contract_name, warning)?;
-                }
-                // Terminator follows any record for the group; warning-only
-                // suites get a zero-count `suite_finished`.
-                if has_tests || !suite_result.warnings.is_empty() {
-                    emit_suite_finished_event(&contract_name, &suite_result)?;
-                }
-            }
-
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
 
@@ -1879,11 +2038,11 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !is_multi_pass && !self.summary && !shell::is_json() && !machine_mode {
+        if !is_multi_pass && !self.summary && !shell::is_json() {
             sh_println!("{}", outcome.summary(duration))?;
         }
 
-        if !is_multi_pass && self.summary && !outcome.results.is_empty() && !machine_mode {
+        if !is_multi_pass && self.summary && !outcome.results.is_empty() {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
             sh_println!("{summary_report}")?;
         }
@@ -1945,124 +2104,6 @@ impl TestArgs {
     }
 }
 
-/// Terminal `forge test` envelope payload under `--machine`. Counts are
-/// aggregated across every suite; times are in milliseconds.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct TestSummaryData {
-    pub suites: usize,
-    pub passed: usize,
-    pub failed: usize,
-    pub skipped: usize,
-    pub duration_ms: u128,
-}
-
-impl TestSummaryData {
-    pub fn from_outcome(outcome: &TestOutcome, wall_clock: Duration) -> Self {
-        Self {
-            suites: outcome.results.len(),
-            passed: outcome.passed(),
-            failed: outcome.failed(),
-            skipped: outcome.skipped(),
-            duration_ms: wall_clock.as_millis(),
-        }
-    }
-}
-
-#[derive(serde::Serialize)]
-struct TestResultEvent<'a> {
-    suite: &'a str,
-    name: &'a str,
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<&'a str>,
-    duration_ms: u128,
-}
-
-#[derive(serde::Serialize)]
-struct SuiteFinishedEvent<'a> {
-    suite: &'a str,
-    passed: usize,
-    failed: usize,
-    skipped: usize,
-    duration_ms: u128,
-}
-
-#[derive(serde::Serialize)]
-struct WarningEvent<'a> {
-    suite: &'a str,
-    code: &'static str,
-    message: &'a str,
-}
-
-const fn status_str(status: TestStatus) -> &'static str {
-    match status {
-        TestStatus::Success => "passed",
-        TestStatus::Failure => "failed",
-        TestStatus::Skipped => "skipped",
-    }
-}
-
-fn emit_test_result_event(
-    suite: &str,
-    name: &str,
-    result: &crate::result::TestResult,
-) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "test_result",
-        TestResultEvent {
-            suite,
-            name,
-            status: status_str(result.status),
-            reason: result.reason.as_deref(),
-            duration_ms: result.duration.as_millis(),
-        },
-    )?;
-    Ok(())
-}
-
-fn emit_suite_finished_event(suite: &str, result: &SuiteResult) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "suite_finished",
-        SuiteFinishedEvent {
-            suite,
-            passed: result.passed(),
-            failed: result.failed(),
-            skipped: result.skipped(),
-            duration_ms: result.duration.as_millis(),
-        },
-    )?;
-    Ok(())
-}
-
-fn emit_warning_event(suite: &str, message: &str) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "warning",
-        WarningEvent { suite, code: foundry_cli::diagnostic::test::WARNING, message },
-    )?;
-    Ok(())
-}
-
-/// Emit a `compiler.solc.error` envelope and exit `Build (4)`. Shared by the
-/// precompile and main-compile sites under `--machine`.
-fn emit_machine_compile_error(output: &ProjectCompileOutput) -> ! {
-    let errors: Vec<JsonMessage> = output
-        .output()
-        .errors
-        .iter()
-        .filter(|e| e.is_error())
-        .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
-        .collect();
-    // Best-effort: bubbling on a broken stdout would demote exit `4` to `1`.
-    let _ = print_json(&JsonEnvelope::<()>::failure(errors));
-    std::process::exit(ExitCode::Build.to_i32());
-}
-
 impl Provider for TestArgs {
     fn metadata(&self) -> Metadata {
         Metadata::named("Core Build Args Provider")
@@ -2087,16 +2128,133 @@ impl Provider for TestArgs {
         if let Some(fuzz_timeout) = self.fuzz_timeout {
             fuzz_dict.insert("timeout".to_string(), fuzz_timeout.into());
         }
+        if let Some(fuzz_dictionary_weight) = self.fuzz_dictionary_weight {
+            fuzz_dict.insert("dictionary_weight".to_string(), fuzz_dictionary_weight.into());
+        }
+        if let Some(fuzz_dictionary_addresses) = self.fuzz_dictionary_addresses.clone() {
+            fuzz_dict.insert(
+                "max_fuzz_dictionary_addresses".to_string(),
+                fuzz_dictionary_addresses.into(),
+            );
+        }
+        if let Some(fuzz_dictionary_values) = self.fuzz_dictionary_values.clone() {
+            fuzz_dict
+                .insert("max_fuzz_dictionary_values".to_string(), fuzz_dictionary_values.into());
+        }
+        if let Some(fuzz_dictionary_literals) = self.fuzz_dictionary_literals.clone() {
+            fuzz_dict.insert(
+                "max_fuzz_dictionary_literals".to_string(),
+                fuzz_dictionary_literals.into(),
+            );
+        }
+        if let Some(fuzz_corpus_random_sequence_weight) = self.fuzz_corpus_random_sequence_weight {
+            fuzz_dict.insert(
+                "corpus_random_sequence_weight".to_string(),
+                fuzz_corpus_random_sequence_weight.into(),
+            );
+        }
+        if let Some(fuzz_payable_value_weight) = self.fuzz_payable_value_weight {
+            fuzz_dict.insert("payable_value_weight".to_string(), fuzz_payable_value_weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_splice {
+            fuzz_dict.insert("mutation_weight_splice".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_repeat {
+            fuzz_dict.insert("mutation_weight_repeat".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_interleave {
+            fuzz_dict.insert("mutation_weight_interleave".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_prefix {
+            fuzz_dict.insert("mutation_weight_prefix".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_suffix {
+            fuzz_dict.insert("mutation_weight_suffix".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_abi {
+            fuzz_dict.insert("mutation_weight_abi".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_cmp {
+            fuzz_dict.insert("mutation_weight_cmp".to_string(), weight.into());
+        }
         if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
             fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
+        let mut invariant_dict = Dict::default();
+        if let Some(invariant_depth) = self.invariant_depth {
+            invariant_dict.insert("depth".to_string(), invariant_depth.into());
+        }
+        if let Some(invariant_min_depth) = self.invariant_min_depth {
+            invariant_dict.insert("min_depth".to_string(), invariant_min_depth.into());
+        }
+        if let Some(invariant_depth_mode) = self.invariant_depth_mode {
+            invariant_dict
+                .insert("depth_mode".to_string(), Value::serialize(invariant_depth_mode)?);
+        }
         if let Some(invariant_workers) = self.invariant_workers {
-            dict.insert(
-                "invariant".to_string(),
-                Dict::from([("workers".to_string(), Value::serialize(invariant_workers)?)]).into(),
+            invariant_dict.insert("workers".to_string(), Value::serialize(invariant_workers)?);
+        }
+        if let Some(invariant_dictionary_weight) = self.invariant_dictionary_weight {
+            invariant_dict
+                .insert("dictionary_weight".to_string(), invariant_dictionary_weight.into());
+        }
+        if let Some(invariant_dictionary_addresses) = self.invariant_dictionary_addresses.clone() {
+            invariant_dict.insert(
+                "max_fuzz_dictionary_addresses".to_string(),
+                invariant_dictionary_addresses.into(),
             );
+        }
+        if let Some(invariant_dictionary_values) = self.invariant_dictionary_values.clone() {
+            invariant_dict.insert(
+                "max_fuzz_dictionary_values".to_string(),
+                invariant_dictionary_values.into(),
+            );
+        }
+        if let Some(invariant_dictionary_literals) = self.invariant_dictionary_literals.clone() {
+            invariant_dict.insert(
+                "max_fuzz_dictionary_literals".to_string(),
+                invariant_dictionary_literals.into(),
+            );
+        }
+        if let Some(invariant_corpus_random_sequence_weight) =
+            self.invariant_corpus_random_sequence_weight
+        {
+            invariant_dict.insert(
+                "corpus_random_sequence_weight".to_string(),
+                invariant_corpus_random_sequence_weight.into(),
+            );
+            invariant_dict
+                .insert("corpus_random_sequence_weight_configured".to_string(), true.into());
+        }
+        if let Some(invariant_payable_value_weight) = self.invariant_payable_value_weight {
+            invariant_dict
+                .insert("payable_value_weight".to_string(), invariant_payable_value_weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_splice {
+            invariant_dict.insert("mutation_weight_splice".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_repeat {
+            invariant_dict.insert("mutation_weight_repeat".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_interleave {
+            invariant_dict.insert("mutation_weight_interleave".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_prefix {
+            invariant_dict.insert("mutation_weight_prefix".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_suffix {
+            invariant_dict.insert("mutation_weight_suffix".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_abi {
+            invariant_dict.insert("mutation_weight_abi".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_cmp {
+            invariant_dict.insert("mutation_weight_cmp".to_string(), weight.into());
+        }
+        if !invariant_dict.is_empty() {
+            dict.insert("invariant".to_string(), invariant_dict.into());
         }
 
         let mut symbolic_dict = Dict::default();
@@ -2171,13 +2329,39 @@ impl Provider for TestArgs {
         }
 
         // Mutation-testing CLI overrides
-        if let Some(timeout) = self.mutation_timeout {
+        if self.mutation_timeout.is_some()
+            || self.mutation_optimizer_runs.is_some()
+            || self.mutation_via_ir.is_some()
+        {
             let mut mutation_dict = Dict::default();
-            mutation_dict.insert("timeout".to_string(), timeout.into());
+            if let Some(timeout) = self.mutation_timeout {
+                mutation_dict.insert("timeout".to_string(), timeout.into());
+            }
+            if let Some(optimizer_runs) = self.mutation_optimizer_runs {
+                mutation_dict.insert("optimizer_runs".to_string(), optimizer_runs.into());
+            }
+            if let Some(via_ir) = self.mutation_via_ir {
+                mutation_dict.insert("via_ir".to_string(), via_ir.into());
+            }
             dict.insert("mutation".to_string(), mutation_dict.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+const fn apply_mutation_compiler_overrides(config: &mut Config) {
+    if let Some(optimizer_runs) = config.mutation.optimizer_runs {
+        let default_optimizer_settings =
+            matches!(config.optimizer, Some(false)) && matches!(config.optimizer_runs, Some(200));
+        config.optimizer_runs = Some(optimizer_runs as usize);
+        if default_optimizer_settings {
+            config.optimizer = None;
+        }
+        config.normalize_optimizer_settings();
+    }
+    if let Some(via_ir) = config.mutation.via_ir {
+        config.via_ir = via_ir;
     }
 }
 
@@ -2528,6 +2712,61 @@ mod tests {
     }
 
     #[test]
+    fn mutation_compiler_overrides_are_extracted() {
+        let args = TestArgs::parse_from([
+            "foundry-cli",
+            "--mutate",
+            "--mutation-optimizer-runs",
+            "1",
+            "--mutation-via-ir",
+            "false",
+        ]);
+        assert_eq!(args.mutation_optimizer_runs, Some(1));
+        assert_eq!(args.mutation_via_ir, Some(false));
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(figment.extract_inner::<u32>("mutation.optimizer_runs").unwrap(), 1);
+        assert!(!figment.extract_inner::<bool>("mutation.via_ir").unwrap());
+    }
+
+    #[test]
+    fn mutation_compiler_overrides_update_only_mutation_config_clone() {
+        let mut config = Config {
+            optimizer_runs: Some(999),
+            via_ir: true,
+            mutation: foundry_config::MutationConfig {
+                optimizer_runs: Some(1),
+                via_ir: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        apply_mutation_compiler_overrides(&mut config);
+
+        assert_eq!(config.optimizer_runs, Some(1));
+        assert!(!config.via_ir);
+    }
+
+    #[test]
+    fn mutation_optimizer_runs_normalize_default_optimizer_settings() {
+        let mut config = Config {
+            optimizer: Some(false),
+            optimizer_runs: Some(200),
+            mutation: foundry_config::MutationConfig {
+                optimizer_runs: Some(1),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        apply_mutation_compiler_overrides(&mut config);
+
+        assert_eq!(config.optimizer, Some(true));
+        assert_eq!(config.optimizer_runs, Some(1));
+    }
+
+    #[test]
     fn invariant_workers() {
         let args = TestArgs::parse_from(["foundry-cli", "--invariant-workers", "4"]);
         assert_eq!(
@@ -2575,6 +2814,122 @@ mod tests {
         }
 
         assert_eq!(args.unwrap().invariant_workers, Some(InvariantWorkers::Auto));
+    }
+
+    #[test]
+    fn fuzz_and_invariant_config_flags() {
+        let args = TestArgs::parse_from([
+            "foundry-cli",
+            "--fuzz-dictionary-weight",
+            "35",
+            "--fuzz-dictionary-addresses",
+            "max",
+            "--fuzz-dictionary-values",
+            "1234",
+            "--fuzz-dictionary-literals",
+            "4321",
+            "--fuzz-corpus-random-sequence-weight",
+            "55",
+            "--fuzz-payable-value-weight",
+            "12",
+            "--fuzz-mutation-weight-splice",
+            "4",
+            "--fuzz-mutation-weight-abi",
+            "3",
+            "--fuzz-mutation-weight-cmp",
+            "5",
+            "--invariant-depth",
+            "300",
+            "--invariant-min-depth",
+            "20",
+            "--invariant-depth-mode",
+            "random",
+            "--invariant-dictionary-weight",
+            "45",
+            "--invariant-dictionary-addresses",
+            "8765",
+            "--invariant-dictionary-values",
+            "max",
+            "--invariant-dictionary-literals",
+            "6789",
+            "--invariant-corpus-random-sequence-weight",
+            "25",
+            "--invariant-payable-value-weight",
+            "34",
+            "--invariant-mutation-weight-splice",
+            "2",
+            "--invariant-mutation-weight-cmp",
+            "7",
+        ]);
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.dictionary_weight").unwrap(), 35);
+        assert_eq!(
+            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_addresses").unwrap(),
+            "max"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_values").unwrap(),
+            "1234"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_literals").unwrap(),
+            "4321"
+        );
+        assert_eq!(figment.extract_inner::<u32>("fuzz.corpus_random_sequence_weight").unwrap(), 55);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.payable_value_weight").unwrap(), 12);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_cmp").unwrap(), 5);
+        assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 300);
+        assert_eq!(figment.extract_inner::<u32>("invariant.min_depth").unwrap(), 20);
+        assert_eq!(
+            figment.extract_inner::<InvariantDepthMode>("invariant.depth_mode").unwrap(),
+            InvariantDepthMode::Random
+        );
+        assert_eq!(figment.extract_inner::<u32>("invariant.dictionary_weight").unwrap(), 45);
+        assert_eq!(
+            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_addresses").unwrap(),
+            "8765"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_values").unwrap(),
+            "max"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_literals").unwrap(),
+            "6789"
+        );
+        assert_eq!(
+            figment.extract_inner::<u32>("invariant.corpus_random_sequence_weight").unwrap(),
+            25
+        );
+        assert_eq!(figment.extract_inner::<u32>("invariant.payable_value_weight").unwrap(), 34);
+        assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_splice").unwrap(), 2);
+        assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_cmp").unwrap(), 7);
+
+        let config = Config::default().merge_inline_provider(&args).unwrap();
+        assert_eq!(config.fuzz.dictionary.dictionary_weight, 35);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_addresses, usize::MAX);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, 1234);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_literals, 4321);
+        assert_eq!(config.fuzz.corpus.corpus_random_sequence_weight, 55);
+        assert_eq!(config.fuzz.corpus.payable_value_weight, 12);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_cmp, 5);
+        assert_eq!(config.invariant.depth, 300);
+        assert_eq!(config.invariant.min_depth, 20);
+        assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
+        assert_eq!(config.invariant.dictionary.dictionary_weight, 45);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_addresses, 8765);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_values, usize::MAX);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_literals, 6789);
+        assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
+        assert!(config.invariant.corpus_random_sequence_weight_configured);
+        assert_eq!(config.invariant.corpus.payable_value_weight, 34);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
     }
 
     #[test]

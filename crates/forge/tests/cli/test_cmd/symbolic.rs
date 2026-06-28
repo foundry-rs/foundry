@@ -1,31 +1,15 @@
+use alloy_primitives::{hex, keccak256};
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use serde_json::Value;
-use std::{path::PathBuf, process::Command};
+use std::process::Command;
 
-use super::symbolic_helpers::{assert_relevant_lines, assert_symbolic};
+use super::symbolic_helpers::{
+    assert_relevant_lines, assert_symbolic, json_test_result, read_artifact_ref,
+};
 
 fn z3_available() -> bool {
     Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
-}
-
-fn json_test_result(stdout: &[u8], signature: &str) -> Value {
-    let json: Value = serde_json::from_slice(stdout).expect("forge test --json output");
-    let suites = json.as_object().expect("top-level suites object");
-    for suite in suites.values() {
-        if let Some(result) = suite["test_results"].get(signature) {
-            return result.clone();
-        }
-    }
-    panic!("missing JSON test result for {signature}: {json}");
-}
-
-fn read_artifact_ref(artifact_ref: &Value) -> Value {
-    let artifact_path = artifact_ref["path"].as_str().expect("symbolic artifact path");
-    let artifact_path = PathBuf::from(artifact_path);
-    let artifact = std::fs::read_to_string(&artifact_path)
-        .unwrap_or_else(|err| panic!("failed to read artifact {}: {err}", artifact_path.display()));
-    serde_json::from_str(&artifact).expect("symbolic counterexample artifact")
 }
 
 fn read_artifact(symbolic: &Value) -> Value {
@@ -56,6 +40,123 @@ contract SymbolicIgnored {
 No tests found
 "#]],
     );
+});
+
+forgetest_init!(symbolic_single_call_artifact_replay_honors_env_fields, |prj, cmd| {
+    prj.add_test(
+        "SymbolicSingleCallArtifactEnv.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicSingleCallArtifactEnv is Test {
+    address constant BOB = address(0xB0B);
+
+    function setUp() public {
+        vm.warp(1000);
+        vm.roll(2000);
+        vm.deal(BOB, 2 ether);
+    }
+
+    function checkEnv() public payable {
+        if (
+            msg.sender == BOB
+                && msg.value == 2 ether
+                && block.timestamp == 1007
+                && block.number == 2011
+        ) {
+            revert("artifact env replayed");
+        }
+    }
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("single-call-env-artifact.json");
+    let selector = keccak256(b"checkEnv()");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "single_call",
+        "test": {
+            "contract": "test/SymbolicSingleCallArtifactEnv.t.sol:SymbolicSingleCallArtifactEnv",
+            "test": "checkEnv()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 0,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": "0x7",
+            "roll": "0xb",
+            "sender": "0x0000000000000000000000000000000000000b0b",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": format!("0x{}", hex::encode(&selector[..4])),
+            "value": format!("{:#x}", 3_000_000_000_000_000_000u128),
+            "contract_name": "SymbolicSingleCallArtifactEnv",
+            "function_name": "checkEnv",
+            "signature": "checkEnv()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("artifact env replayed"), "{stdout}");
 });
 
 forgetest_init!(symbolic_passes_scalar_test, |prj, cmd| {
@@ -276,8 +377,14 @@ contract SymbolicJsonCounterexample {
     assert_eq!(symbolic["counterexample"]["args"], "42");
     assert_eq!(symbolic["counterexample"]["raw_args"], "42");
     assert_eq!(symbolic["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
-    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 2);
     assert_eq!(result["counterexample_artifacts"][0], symbolic["artifact"]);
+    assert_eq!(symbolic["minimization"]["minimized"], symbolic["artifact"]);
+    assert_eq!(symbolic["minimization"]["accepted"], 0);
+    assert_eq!(symbolic["minimization"]["original_calldata_bytes"], 36);
+    assert_eq!(symbolic["minimization"]["minimized_calldata_bytes"], 36);
+    let original_artifact = read_artifact_ref(&symbolic["minimization"]["original"]);
+    assert_eq!(original_artifact["calls"][0]["args"], "42");
     let artifact_path = symbolic["artifact"]["path"].as_str().unwrap().to_string();
     let artifact = read_artifact(symbolic);
     assert_eq!(artifact["schema_version"], 1);
@@ -286,6 +393,7 @@ contract SymbolicJsonCounterexample {
     assert_eq!(artifact["test"]["test"], "checkRejectsFortyTwo(uint256)");
     assert_eq!(artifact["replay"]["status"], "confirmed");
     assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
+    assert_eq!(original_artifact["calls"][0]["sender"], artifact["calls"][0]["sender"]);
     assert!(artifact["calls"][0]["calldata"].as_str().unwrap().starts_with("0x"));
     assert_eq!(artifact["calls"][0]["args"], "42");
     assert_eq!(artifact["calls"][0]["raw_args"], "42");
@@ -300,7 +408,7 @@ contract SymbolicJsonCounterexample {
     assert_relevant_lines(
         &replay_stdout,
         foundry_test_utils::str![[r#"
-[FAIL;
+[FAIL:
 "#]],
     );
     assert_relevant_lines(
@@ -313,35 +421,6 @@ args=[42]
         !replay_stdout.contains("SymbolicJsonCounterexampleDuplicate.t.sol"),
         "{replay_stdout}"
     );
-
-    let mut invalid_artifact = artifact.clone();
-    invalid_artifact["calls"][0]["value"] = serde_json::json!("0x1");
-    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&invalid_artifact).unwrap()).unwrap();
-    let invalid_stdout = cmd
-        .forge_fuse()
-        .args(["test", "--replay-symbolic-artifact", &artifact_path])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert!(
-        invalid_stdout
-            .contains("single-call symbolic artifact replay does not support non-zero value"),
-        "{invalid_stdout}"
-    );
-    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
-
-    let mut invalid_artifact = artifact.clone();
-    invalid_artifact["calls"][0]["sender"] =
-        serde_json::json!("0x0000000000000000000000000000000000000001");
-    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&invalid_artifact).unwrap()).unwrap();
-    let invalid_stdout = cmd
-        .forge_fuse()
-        .args(["test", "--replay-symbolic-artifact", &artifact_path])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert!(invalid_stdout.contains("single-call symbolic artifact sender"), "{invalid_stdout}");
-    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
 
     prj.add_test(
         "SymbolicJsonCounterexample.t.sol",
@@ -371,6 +450,208 @@ contract SymbolicJsonCounterexample {
     assert!(
         stale_stderr.contains("checkRejectsFortyTwo(uint256)` was not found"),
         "{stale_stderr}"
+    );
+});
+
+forgetest_init!(symbolic_minimizes_replayed_counterexample_artifact, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_minimizes_replayed_counterexample_artifact because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMinimizeCounterexample.t.sol",
+        r#"
+contract SymbolicMinimizeCounterexample {
+    /// forge-config: default.symbolic.array_lengths = [33]
+    function checkMinimize(uint256 x, bytes memory data) public pure {
+        if ((x & 0x2a) == 0x2a && data.length >= 2 && data[1] == 0x42) {
+            assert(false);
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkMinimize"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkMinimize(uint256,bytes)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 2);
+    assert_eq!(symbolic["minimization"]["minimized"], symbolic["artifact"]);
+    assert!(
+        symbolic["minimization"]["attempts"].as_u64().unwrap()
+            > symbolic["minimization"]["accepted"].as_u64().unwrap()
+    );
+    assert!(symbolic["minimization"]["accepted"].as_u64().unwrap() > 0);
+    assert!(
+        symbolic["minimization"]["minimized_calldata_bytes"].as_u64().unwrap()
+            < symbolic["minimization"]["original_calldata_bytes"].as_u64().unwrap()
+    );
+
+    let original = read_artifact_ref(&symbolic["minimization"]["original"]);
+    let minimized = read_artifact(symbolic);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_ne!(original["calls"][0]["calldata"], minimized["calls"][0]["calldata"]);
+    assert_eq!(minimized["calls"][0]["args"], "42, 0x0042");
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--replay-symbolic-artifact",
+            symbolic["artifact"]["path"].as_str().unwrap(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[42, 0x0042]
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_minimizer_skips_reasonless_failure_flag, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_minimizer_skips_reasonless_failure_flag because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMinimizeFailureFlag.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicMinimizeFailureFlag is Test {
+    function checkFailureFlag(uint256 x) public {
+        if (x == 0) revert("candidate-revert");
+        if (x == 42) fail();
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkFailureFlag"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkFailureFlag(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(symbolic["replay"]["status"], "confirmed");
+    assert_eq!(symbolic["counterexample"]["raw_args"], "42");
+    assert!(symbolic["minimization"].is_null());
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
+
+    let artifact = read_artifact(symbolic);
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"][0]["raw_args"], "42");
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--replay-symbolic-artifact",
+            symbolic["artifact"]["path"].as_str().unwrap(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[42]
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_minimizes_echidna_address_array_duplicate_fixture, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_minimizes_echidna_address_array_duplicate_fixture because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMinimizeAddressArrayDuplicate.t.sol",
+        r#"
+library AddressArrayUtilsBug {
+    function hasDuplicate(address[] memory xs) internal pure returns (bool) {
+        for (uint256 i = 0; i < xs.length; i++) {
+            for (uint256 j = i + 1; j < xs.length; j++) {
+                if (xs[i] == xs[j]) return true;
+            }
+        }
+        return false;
+    }
+}
+
+contract SymbolicMinimizeAddressArrayDuplicate {
+    /// forge-config: default.symbolic.array_lengths = [6]
+    function checkNoDuplicate(address[] memory xs) public pure {
+        assert(!AddressArrayUtilsBug.hasDuplicate(xs));
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNoDuplicate"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkNoDuplicate(address[])");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 2);
+    assert!(symbolic["minimization"]["accepted"].as_u64().unwrap() > 0);
+    assert_eq!(symbolic["minimization"]["original_calldata_bytes"], 260);
+    assert_eq!(symbolic["minimization"]["minimized_calldata_bytes"], 132);
+
+    let original = read_artifact_ref(&symbolic["minimization"]["original"]);
+    let minimized = read_artifact(symbolic);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_ne!(original["calls"][0]["calldata"], minimized["calls"][0]["calldata"]);
+    assert_eq!(
+        minimized["calls"][0]["args"],
+        "[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]"
+    );
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--replay-symbolic-artifact",
+            symbolic["artifact"]["path"].as_str().unwrap(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]]
+"#]],
     );
 });
 
@@ -1061,10 +1342,25 @@ contract SymbolicInvariantSequenceArtifact is Test {
     let failures = result["invariant_failures"].as_array().expect("invariant failures");
     let failure = failures.first().expect("invariant failure");
     assert_eq!(failure["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
-    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
-    assert_eq!(result["counterexample_artifacts"][0], failure["artifact"]);
+    let minimization = &failure["minimization"];
+    assert_eq!(failure["artifact"], minimization["minimized"]);
+    assert_eq!(minimization["minimized_sequence_len"], 1);
+    assert!(
+        minimization["original_sequence_len"].as_u64().unwrap()
+            > minimization["minimized_sequence_len"].as_u64().unwrap()
+    );
+    let artifacts = result["counterexample_artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(artifacts[0], failure["artifact"]);
+    assert_eq!(artifacts[1], minimization["original"]);
     let artifact_path = failure["artifact"]["path"].as_str().unwrap().to_string();
 
+    let original = read_artifact_ref(&minimization["original"]);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert!(
+        original["calls"].as_array().unwrap().len()
+            > minimization["minimized_sequence_len"].as_u64().unwrap() as usize
+    );
     let artifact = read_artifact_ref(&failure["artifact"]);
     assert_eq!(artifact["schema_version"], 1);
     assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
@@ -1097,6 +1393,133 @@ invariant_counterNeverEleven()
         &replay_stdout,
         foundry_test_utils::str![[r#"
 args=[7]
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_json_reports_minimized_sequence_counterexample, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_reports_minimized_sequence_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantSequenceMinimize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicSequenceMinTarget {
+    bool primed;
+    bool fired;
+
+    function prime(uint256 x) external {
+        if (x > 40) {
+            primed = true;
+        }
+    }
+
+    function fire(uint256 y) external {
+        if (y > 100) {
+            fired = true;
+        }
+    }
+
+    function broken() external view returns (bool) {
+        return primed && fired;
+    }
+}
+
+contract SymbolicInvariantSequenceMinimize is Test {
+    SymbolicSequenceMinTarget target;
+    uint256[] public fixture_x = [1000];
+    uint256[] public fixture_y = [5000];
+
+    function setUp() public {
+        target = new SymbolicSequenceMinTarget();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = SymbolicSequenceMinTarget.prime.selector;
+        selectors[1] = SymbolicSequenceMinTarget.fire.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 20
+    /// forge-config: default.invariant.check_interval = 0
+    /// forge-config: default.invariant.shrink_run_limit = 5000
+    function invariant_targetNeverBroken() public view {
+        assertEq(target.broken(), false);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "invariant_targetNeverBroken",
+            "--fuzz-seed",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "invariant_targetNeverBroken()");
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    let failure = failures.first().expect("invariant failure");
+    let minimization = &failure["minimization"];
+    assert_eq!(failure["artifact"], minimization["minimized"]);
+    assert_eq!(minimization["original_sequence_len"], 20);
+    assert_eq!(minimization["minimized_sequence_len"], 2);
+    assert!(minimization["accepted"].as_u64().unwrap() > 0);
+    assert!(
+        minimization["minimized_calldata_bytes"].as_u64().unwrap()
+            < minimization["original_calldata_bytes"].as_u64().unwrap()
+    );
+    let artifacts = result["counterexample_artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert!(artifacts.contains(&failure["artifact"]));
+    assert!(artifacts.contains(&minimization["original"]));
+
+    let original = read_artifact_ref(&minimization["original"]);
+    let minimized = read_artifact_ref(&minimization["minimized"]);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_eq!(original["calls"].as_array().unwrap().len(), 20);
+    assert_eq!(minimized["calls"].as_array().unwrap().len(), 2);
+
+    let calls = minimized["calls"].as_array().unwrap();
+    let prime = calls.iter().find(|call| call["function_name"] == "prime").unwrap();
+    let fire = calls.iter().find(|call| call["function_name"] == "fire").unwrap();
+    assert_eq!(prime["args"], "41");
+    assert_eq!(fire["args"], "101");
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--replay-symbolic-artifact",
+            minimization["minimized"]["path"].as_str().unwrap(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+invariant_targetNeverBroken()
 "#]],
     );
 });
@@ -1179,7 +1602,11 @@ contract SymbolicArtifactFailOnRevert is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1342,7 +1769,11 @@ contract SymbolicArtifactBracketPath is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1445,7 +1876,11 @@ contract SymbolicArtifactStaleTarget is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1572,7 +2007,11 @@ contract SymbolicArtifactForbiddenSender is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1722,7 +2161,11 @@ contract SymbolicArtifactCreatedTarget is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1842,7 +2285,11 @@ contract SymbolicArtifactNetworkReplay is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
