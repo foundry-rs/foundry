@@ -5845,7 +5845,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=f1b8a2777cddb8ffa7c59de45065fa29bc307b15#f1b8a2777cddb8ffa7c59de45065fa29bc307b15"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=d79879c950c97737f80911e916bda3d7fd45fb13#d79879c950c97737f80911e916bda3d7fd45fb13"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -6079,8 +6079,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
 ]
 
 [[package]]
@@ -6531,7 +6531,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
