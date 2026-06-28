@@ -187,7 +187,7 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
 ) -> Result<Option<&'a Function>> {
-    let inner_sequence = invariant_inner_sequence(executor);
+    let mut inner_sequence = None;
     let mut first_broken: Option<&'a Function> = None;
     let ctx = InvariantRunCtx {
         contract: invariant_contract,
@@ -208,8 +208,10 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
             invariant.abi_encode_input(&[])?.into(),
         )?;
         if !success {
+            let inner_sequence =
+                inner_sequence.get_or_insert_with(|| invariant_inner_sequence(executor));
             let case =
-                ctx.failed_case(invariant, *fail_on_revert, false, call_result, &inner_sequence);
+                ctx.failed_case(invariant, *fail_on_revert, false, call_result, inner_sequence);
             invariant_failures.record_failure(invariant, InvariantFuzzError::BrokenInvariant(case));
             if first_broken.is_none() {
                 first_broken = Some(*invariant);
