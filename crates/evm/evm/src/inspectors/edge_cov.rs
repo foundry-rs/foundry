@@ -26,6 +26,10 @@ const MAX_CMP_LOG_SITES: usize = 1024;
 // detection threshold so a hot loop can be classified without filling the whole log.
 const MAX_CMP_OBSERVATIONS_PER_SITE: u8 = 8;
 
+// Collision-free coverage is collected into a fresh inspector clone for each raw call. Pre-sizing
+// the per-call dense map avoids repeated small-table growth in coverage-guided invariant runs.
+const INITIAL_DENSE_EDGE_CAPACITY: usize = 256;
+
 /// Edge coverage collection kind.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EdgeCovKind {
@@ -255,6 +259,16 @@ impl EdgeCovInspector {
     /// Number of unique collision-free edges discovered so far.
     pub fn edge_count(&self) -> usize {
         self.dense_hitcount.len()
+    }
+
+    /// Prepare per-call coverage buffers before EVM execution starts.
+    pub fn prepare_for_execution(&mut self) {
+        if self.config.kind == EdgeCovKind::CollisionFree
+            && self.dense_hitcount.capacity() < INITIAL_DENSE_EDGE_CAPACITY
+        {
+            self.dense_hitcount
+                .reserve(INITIAL_DENSE_EDGE_CAPACITY - self.dense_hitcount.capacity());
+        }
     }
 
     /// Mark the edge `(address, depth, pc, jump_dest)` as hit.
