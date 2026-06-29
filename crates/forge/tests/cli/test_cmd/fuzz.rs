@@ -801,7 +801,11 @@ forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
 
     let show = cmd.args(["fuzz", "show", "corpus"]).assert_success();
     let stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
-    assert_eq!(stdout.matches("corpus/worker").count(), 1, "{stdout}");
+    assert_eq!(
+        stdout.matches(&format!("corpus{}worker", std::path::MAIN_SEPARATOR)).count(),
+        1,
+        "{stdout}"
+    );
 });
 
 forgetest_init!(forge_fuzz_replay_error_on_zero_replay, |prj, cmd| {
@@ -1012,10 +1016,9 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
 
     let show = cmd.forge_fuse().args(["fuzz", "show", "fuzz_corpus"]).assert_success();
     let show_stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
-    assert!(
-        show_stdout.contains("fuzz_corpus/ForgeFuzzGeneratedCorpusTest/testFuzz_SetNumber"),
-        "{show_stdout}"
-    );
+    let fuzz_corpus_path = ["fuzz_corpus", "ForgeFuzzGeneratedCorpusTest", "testFuzz_SetNumber"]
+        .join(std::path::MAIN_SEPARATOR_STR);
+    assert!(show_stdout.contains(&fuzz_corpus_path), "{show_stdout}");
 
     let replay = cmd
         .forge_fuse()
@@ -1041,10 +1044,10 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
     let invariant_show =
         cmd.forge_fuse().args(["fuzz", "show", "invariant_corpus"]).assert_success();
     let invariant_stdout = String::from_utf8(invariant_show.get_output().stdout.clone()).unwrap();
-    assert!(
-        invariant_stdout.contains("invariant_corpus/ForgeFuzzGeneratedCorpusTest/worker0/corpus"),
-        "{invariant_stdout}"
-    );
+    let invariant_corpus_path =
+        ["invariant_corpus", "ForgeFuzzGeneratedCorpusTest", "worker0", "corpus"]
+            .join(std::path::MAIN_SEPARATOR_STR);
+    assert!(invariant_stdout.contains(&invariant_corpus_path), "{invariant_stdout}");
 });
 
 forgetest_init!(forge_fuzz_replay_scopes_generated_corpus_root_to_target, |prj, cmd| {
