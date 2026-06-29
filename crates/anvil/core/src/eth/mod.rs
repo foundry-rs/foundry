@@ -192,7 +192,11 @@ pub enum EthRequest {
     EthSimulateV1(SimulatePayload, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_createAccessList")]
-    EthCreateAccessList(WithOtherFields<TransactionRequest>, #[serde(default)] Option<BlockId>),
+    EthCreateAccessList(
+        WithOtherFields<TransactionRequest>,
+        #[serde(default)] Option<BlockId>,
+        #[serde(default)] Option<StateOverride>,
+    ),
 
     #[serde(rename = "eth_estimateGas")]
     EthEstimateGas(
@@ -834,6 +838,13 @@ mod tests {
     #[test]
     fn test_eth_block_number() {
         let s = r#"{"method": "eth_blockNumber", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_create_access_list_with_state_override() {
+        let s = r#"{"method":"eth_createAccessList","params":[{"to":"0x0000000000000000000000000000000000000001"},"latest",{"0x0000000000000000000000000000000000000001":{"code":"0x60005400"}}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
