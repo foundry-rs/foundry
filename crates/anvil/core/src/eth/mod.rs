@@ -630,6 +630,13 @@ pub enum EthRequest {
     #[serde(rename = "txpool_content", with = "empty_params")]
     TxPoolContent(()),
 
+    /// Returns the details of all transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only, filtered
+    /// by sender.
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_contentFrom>
+    #[serde(rename = "txpool_contentFrom", with = "sequence")]
+    TxPoolContentFrom(Address),
+
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
     /// <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
@@ -836,6 +843,20 @@ mod tests {
         let s = r#"{"method": "eth_blockNumber", "params":[]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_txpool_content_from() {
+        let address = "0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842";
+        let s = format!(r#"{{"method": "txpool_contentFrom", "params":["{address}"]}}"#);
+        let value: serde_json::Value = serde_json::from_str(&s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::TxPoolContentFrom(from) => {
+                assert_eq!(from, address.parse::<Address>().unwrap());
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
