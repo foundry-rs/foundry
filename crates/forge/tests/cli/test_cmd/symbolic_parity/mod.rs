@@ -7,7 +7,10 @@
 //! engine finds the same counterexamples (or proves the property) the
 //! corresponding fuzzers do on these benchmarks.
 
-pub use crate::test_cmd::symbolic_helpers::{assert_symbolic, assert_symbolic_witness};
+pub use crate::test_cmd::symbolic_helpers::{
+    assert_relevant_lines, assert_symbolic, assert_symbolic_witness, json_test_result,
+    read_artifact_ref,
+};
 
 mod crytic;
 mod devdacian;

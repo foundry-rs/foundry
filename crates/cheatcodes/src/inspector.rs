@@ -355,6 +355,10 @@ pub struct GasMetering {
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
 
+    /// Cache of the amount of gas used in previous call or create frame.
+    /// This is used by the `lastFrameGas` cheatcode.
+    pub last_frame_gas: Option<crate::Vm::Gas>,
+
     /// True if gas recording is enabled.
     pub recording: bool,
     /// The gas used in the last frame.
@@ -1654,6 +1658,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
                 if needs_processing {
                     let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                    let clear_last_frame_gas =
+                        matches!(expected_revert.kind, ExpectedRevertKind::Default);
                     return match revert_handlers::handle_expect_revert(
                         cheatcode_call,
                         false,
@@ -1672,6 +1678,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
                                 self.expected_revert = Some(expected_revert);
+                            }
+                            if clear_last_frame_gas {
+                                self.gas_metering.last_frame_gas = None;
                             }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
@@ -1695,16 +1704,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
-        // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
-        // retrieve the gas usage of the last call.
+        // Record the gas usage of the call, this allows the `lastFrameGas` cheatcode to
+        // retrieve the gas usage of the last call or create.
         let gas = outcome.result.gas;
-        self.gas_metering.last_call_gas = Some(crate::Vm::Gas {
+        let frame_gas = crate::Vm::Gas {
             gasLimit: gas.limit(),
             gasTotalUsed: gas.total_gas_spent(),
             gasMemoryUsed: 0,
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
-        });
+        };
+        self.gas_metering.last_call_gas = Some(frame_gas.clone());
+        self.gas_metering.last_frame_gas = Some(frame_gas);
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
@@ -2166,6 +2177,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         outcome.result.result = InstructionResult::Return;
                         outcome.result.output = retdata;
                         outcome.address = address;
+                        self.gas_metering.last_frame_gas = None;
                     }
                     Err(err) => {
                         outcome.result.result = InstructionResult::Revert;
@@ -2173,6 +2185,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     }
                 };
             }
+        }
+
+        if curr_depth > 0 {
+            // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
+            // retrieve the gas usage of the last call or create.
+            let gas = outcome.result.gas;
+            self.gas_metering.last_frame_gas = Some(crate::Vm::Gas {
+                gasLimit: gas.limit(),
+                gasTotalUsed: gas.total_gas_spent(),
+                gasMemoryUsed: 0,
+                gasRefunded: gas.refunded(),
+                gasRemaining: gas.remaining(),
+            });
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -2548,15 +2573,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let address = interpreter.input.target_address;
 
                 // Try to include present value for informational purposes, otherwise assume
-                // it's not set (zero value)
-                // Try to load the account and the slot's present value
-                let present_value = if ecx.journal_mut().load_account(address).is_ok()
-                    && let Some(previous) = ecx.sload(address, key)
-                {
-                    previous.data
-                } else {
-                    U256::ZERO
-                };
+                // it's not set (zero value). Revert the checkpoint so this read does not warm the
+                // slot for the actual SLOAD opcode.
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let present_value =
+                    ecx.sload(address, key).map(|previous| previous.data).unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
                 let access = crate::Vm::StorageAccess {
                     account: interpreter.input.target_address,
                     slot: key.into(),
@@ -2572,6 +2594,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             op::SSTORE => {
                 let Some(last) = account_accesses.last_mut() else { return };
 
+                // TODO: avoid warming cold SSTORE slots while recording state diffs.
                 let key = try_or_return!(interpreter.stack.peek(0));
                 let value = try_or_return!(interpreter.stack.peek(1));
                 let address = interpreter.input.target_address;
@@ -2600,6 +2623,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
             // Record account accesses via the EXT family of opcodes
             op::EXTCODECOPY | op::EXTCODESIZE | op::EXTCODEHASH | op::BALANCE => {
+                // TODO: avoid warming cold accounts while recording EXT*/BALANCE state diffs.
                 let kind = match interpreter.bytecode.opcode() {
                     op::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
                     op::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,

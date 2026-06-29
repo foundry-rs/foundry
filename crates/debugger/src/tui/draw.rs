@@ -282,10 +282,10 @@ impl TUIContext<'_> {
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
         };
-        let title = format!(
-            "{} {} ",
+        let title = source_pane_title(
             call_kind_text,
-            source_name.map(|s| format!("| {s}")).unwrap_or_default()
+            source_name,
+            self.current_step_notice_text().map(step_notice_title),
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });
@@ -436,6 +436,13 @@ impl TUIContext<'_> {
             .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 
+    fn current_step_notice_text(&self) -> Option<&str> {
+        let DecodedTraceStep::Line(line) = self.current_step().decoded.as_deref()? else {
+            return None;
+        };
+        (!line.is_empty()).then_some(line.as_str())
+    }
+
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
         let debug_steps = self.debug_steps();
         let max_pc = debug_steps.iter().map(|step| step.pc).max().unwrap_or(0);
@@ -507,15 +514,22 @@ impl TUIContext<'_> {
     fn draw_variables(&mut self, f: &mut Frame<'_>, area: Rect) {
         let variables = self.scope_variables();
         let storage_access = self.current_storage_access_line();
+        let step_notice = self.current_step_notice_line();
         let known = variables.iter().filter(|variable| variable.value.is_some()).count();
-        let title = if variables.is_empty() && storage_access.is_none() {
-            "Variables".to_string()
-        } else {
-            let storage_suffix = if storage_access.is_some() { " | Storage" } else { "" };
-            format!("Variables: {known}/{}{storage_suffix}", variables.len())
-        };
+        let title = variables_title(
+            variables.len(),
+            known,
+            storage_access.is_some(),
+            step_notice.is_some(),
+        );
 
         let mut text = variables.into_iter().map(scope_variable_line).collect::<Vec<_>>();
+        if let Some(step_notice) = step_notice {
+            if !text.is_empty() {
+                text.push(Line::from(""));
+            }
+            text.push(step_notice);
+        }
         if let Some(storage_access) = storage_access {
             if !text.is_empty() {
                 text.push(Line::from(""));
@@ -533,6 +547,10 @@ impl TUIContext<'_> {
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
+    }
+
+    fn current_step_notice_line(&self) -> Option<Line<'static>> {
+        self.current_step_notice_text().map(step_notice_line)
     }
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
@@ -713,6 +731,8 @@ struct ActiveInternalCall<'a> {
     end_step: usize,
     decoded: &'a DecodedInternalCall,
 }
+
+const PRECOMPILE_NOTICE_PREFIX: &str = "precompile:";
 
 impl ScopeVariableKind {
     const fn label(self) -> &'static str {
@@ -909,6 +929,50 @@ impl TUIContext<'_> {
     fn absolute_current_step(&self) -> usize {
         self.debug_call().step_offset.saturating_add(self.current_step)
     }
+}
+
+fn source_pane_title(
+    call_kind_text: &str,
+    source_name: Option<&str>,
+    step_notice: Option<&str>,
+) -> String {
+    let mut title = call_kind_text.to_string();
+    if let Some(step_notice) = step_notice {
+        write!(title, " | {step_notice}").unwrap();
+    }
+    if let Some(source_name) = source_name {
+        write!(title, " | {source_name}").unwrap();
+    }
+    title.push(' ');
+    title
+}
+
+fn variables_title(
+    total_variables: usize,
+    known_variables: usize,
+    has_storage_access: bool,
+    has_step_notice: bool,
+) -> String {
+    if total_variables == 0 && !has_storage_access && !has_step_notice {
+        return "Variables".to_string();
+    }
+
+    let mut title = format!("Variables: {known_variables}/{total_variables}");
+    if has_step_notice {
+        title.push_str(" | Trace");
+    }
+    if has_storage_access {
+        title.push_str(" | Storage");
+    }
+    title
+}
+
+fn step_notice_title(line: &str) -> &'static str {
+    if line.starts_with(PRECOMPILE_NOTICE_PREFIX) { "precompile call" } else { "decoded step" }
+}
+
+fn step_notice_line(line: &str) -> Line<'static> {
+    Line::from(Span::styled(line.to_string(), Style::new().fg(Color::Magenta)))
 }
 
 fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
@@ -1569,6 +1633,49 @@ mod tests {
         let variable = DebugVariable { name: None, declaration: 0..1, scope: 0..2 };
 
         assert_eq!(super::variable_name(&variable, 2, "arg"), "arg2");
+    }
+
+    #[test]
+    fn current_step_notice_text_reads_decoded_line_steps() {
+        let mut step = trace_step(Vec::new());
+        step.decoded = Some(Box::new(DecodedTraceStep::Line(
+            "precompile: PRECOMPILES::sha256(0x68656c6c6f)".to_string(),
+        )));
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![step])]);
+        let tui = TUIContext::new(&mut context);
+
+        assert_eq!(
+            tui.current_step_notice_text(),
+            Some("precompile: PRECOMPILES::sha256(0x68656c6c6f)")
+        );
+    }
+
+    #[test]
+    fn source_pane_title_includes_precompile_notice_before_source() {
+        assert_eq!(
+            super::source_pane_title(
+                "Contract call",
+                Some("test/Precompile.t.sol"),
+                Some("precompile call")
+            ),
+            "Contract call | precompile call | test/Precompile.t.sol "
+        );
+    }
+
+    #[test]
+    fn variables_title_tracks_decoded_step_notices() {
+        assert_eq!(super::variables_title(0, 0, false, false), "Variables");
+        assert_eq!(super::variables_title(0, 0, false, true), "Variables: 0/0 | Trace");
+        assert_eq!(super::variables_title(2, 1, true, true), "Variables: 1/2 | Trace | Storage");
+    }
+
+    #[test]
+    fn step_notice_line_highlights_precompile_clue() {
+        let line = super::step_notice_line("precompile: PRECOMPILES::sha256(0x68656c6c6f)");
+
+        assert_eq!(line_text(&line), "precompile: PRECOMPILES::sha256(0x68656c6c6f)");
+        assert_eq!(line.spans[0].style, Style::new().fg(Color::Magenta));
+        assert_eq!(super::step_notice_title(&line_text(&line)), "precompile call");
     }
 
     #[test]

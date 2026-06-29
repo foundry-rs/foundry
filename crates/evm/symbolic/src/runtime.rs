@@ -1,6 +1,7 @@
 use super::{abi::*, *};
 
 mod address;
+mod bytes;
 mod calldata;
 mod cheatcodes;
 mod control;
@@ -10,8 +11,10 @@ mod memory;
 mod precompiles;
 mod solver;
 mod state;
+mod symbols;
 
 pub(crate) use address::*;
+pub(crate) use bytes::*;
 pub(crate) use calldata::*;
 pub(crate) use cheatcodes::*;
 pub(crate) use control::*;
@@ -25,13 +28,14 @@ pub(crate) use solver::{
 };
 #[cfg(test)]
 pub(crate) use solver::{
-    SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, expr_contains_hard_arith,
-    fallback_single_var_model, hard_arith_fallback_model, named_solver_command,
-    normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
-    parse_model, product_monotonic_unsat, solver_commands_for_config, split_solver_command,
+    SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, fallback_single_var_model,
+    hard_arith_fallback_model, named_solver_command, normalize_bool_for_solver,
+    normalize_constraints_for_solver, normalize_expr_for_solver, parse_model,
+    product_monotonic_unsat, solver_commands_for_config, split_solver_command,
     validate_solver_model_output,
 };
 pub(crate) use state::*;
+pub(crate) use symbols::*;
 
 pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
@@ -103,7 +107,6 @@ pub enum SymbolicError {
 }
 
 impl SymbolicError {
-    /// Implements the `stop_reason` symbolic runtime helper.
     pub(super) const fn stop_reason(&self) -> SymbolicStopReason {
         match self {
             Self::Unsupported(_)
@@ -126,7 +129,6 @@ impl SymbolicError {
 }
 
 impl fmt::Display for SymbolicRunResult {
-    /// Implements the `fmt` symbolic runtime helper.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Safe(stats) => write!(f, "safe after {} paths", stats.paths),

@@ -97,7 +97,6 @@ Encountered 2 failing tests in test/InvariantAfterInvariant.t.sol:InvariantAfter
 Encountered a total of 2 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -177,7 +176,6 @@ Encountered 1 failing test in test/InvariantAssume.t.sol:InvariantAssume
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -189,7 +187,8 @@ forgetest!(invariant_calldata_dictionary, |prj, cmd| {
     prj.insert_utils();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(1));
-        config.invariant.depth = 10;
+        config.invariant.runs = 1000;
+        config.invariant.depth = 20;
     });
 
     prj.add_test(
@@ -309,7 +308,6 @@ Encountered 1 failing test in test/InvariantCalldataDictionary.t.sol:InvariantCa
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -381,7 +379,6 @@ Encountered 1 failing test in test/InvariantCustomError.t.sol:InvariantCustomErr
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -549,7 +546,6 @@ Encountered 1 failing test in test/InvariantFixtures.t.sol:InvariantFixtures
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -638,7 +634,6 @@ Encountered 1 failing test in test/InvariantLiterals.t.sol:InvariantLiterals
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -713,7 +708,6 @@ Encountered 1 failing test in test/InvariantHandlerFailure.t.sol:InvariantHandle
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -799,7 +793,6 @@ Encountered 1 failing test in test/InvariantInnerContract.t.sol:InvariantInnerCo
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -909,7 +902,6 @@ Encountered 1 failing test in test/InvariantPreserveState.t.sol:InvariantPreserv
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1004,7 +996,6 @@ Encountered 1 failing test in test/InvariantReentrancy.t.sol:InvariantReentrancy
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1119,7 +1110,6 @@ Encountered 1 failing test in test/InvariantReentrancyEtherStore.t.sol:Invariant
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1221,7 +1211,6 @@ Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkStat
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1323,7 +1312,6 @@ Encountered 1 failing test in test/InvariantScrapeValues.t.sol:FindFromReturnVal
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -2085,6 +2073,80 @@ Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantR
 "#]]);
 });
 
+forgetest_init!(invariant_replay_persists_initial_after_invariant_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+    });
+
+    prj.add_test(
+        "InvariantReplayInitialAfterInvariantFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InitialAfterInvariantHandler {
+    uint256 public count;
+
+    function inc() external {
+        count += 1;
+    }
+}
+
+contract InvariantReplayInitialAfterInvariantFailure is Test {
+    InitialAfterInvariantHandler handler;
+
+    function setUp() public {
+        handler = new InitialAfterInvariantHandler();
+        handler.inc();
+        handler.inc();
+        targetContract(address(handler));
+    }
+
+    function afterInvariant() public view {
+        assertTrue(handler.count() < 2, "afterInvariant initial assertion");
+    }
+
+    function invariant_success() public view {
+        require(handler.count() < 10, "invariant should not fail");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantReplayInitialAfterInvariantFailure.t.sol:InvariantReplayInitialAfterInvariantFailure
+[FAIL: afterInvariant initial assertion]
+	[SEQUENCE]
+ invariant_success() ([RUNS])
+...
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantReplayInitialAfterInvariantFailure.t.sol:InvariantReplayInitialAfterInvariantFailure
+[FAIL: afterInvariant initial assertion]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[..] calldata=inc() args=[]
+ invariant_success() (runs: 1, calls: 1, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantReplayInitialAfterInvariantFailure.t.sol:InvariantReplayInitialAfterInvariantFailure
+[FAIL: afterInvariant initial assertion]
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[..] calldata=inc() args=[]
+ invariant_success() (runs: 1, calls: 1, reverts: 0)
+...
+"#]]);
+});
+
 forgetest_init!(invariant_test1, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.depth = 10;
@@ -2170,7 +2232,6 @@ InvariantTest invariants: 2/2 invariants broken
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
