@@ -1,7 +1,62 @@
-use alloy_primitives::U256;
+use alloy_json_abi::JsonAbi;
+use alloy_primitives::{U256, hex};
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
+use serde_json::Value;
+use std::path::Path;
+
+const DEFAULT_SENDER: &str = "0x0000000000000000000000000000000000000001";
+const DEFAULT_TEST_TARGET: &str = "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496";
+
+fn find_first_json(root: &std::path::Path) -> std::path::PathBuf {
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "json") {
+                return path;
+            }
+        }
+    }
+    panic!("no json corpus entry under {}", root.display());
+}
+
+fn artifact_abi(root: &Path, artifact: &str) -> JsonAbi {
+    let artifact = std::fs::read_to_string(root.join(artifact)).unwrap();
+    let artifact: Value = serde_json::from_str(&artifact).unwrap();
+    serde_json::from_value(artifact["abi"].clone()).unwrap()
+}
+
+fn calldata_for(abi: &JsonAbi, function_name: &str, arg: u64) -> String {
+    let function = abi.functions().find(|function| function.name == function_name).unwrap();
+    format!("0x{}{:064x}", hex::encode(function.selector()), arg)
+}
+
+fn corpus_entry(calldata: &str) -> String {
+    format!(
+        r#"[{{
+  "sender":"{DEFAULT_SENDER}",
+  "target":"{DEFAULT_TEST_TARGET}",
+  "calldata":"{calldata}",
+  "value":"0x0"
+}}]"#
+    )
+}
+
+fn write_corpus_entry(corpus: &Path, name: &str, calldata: &str) {
+    std::fs::write(corpus.join(name), corpus_entry(calldata)).unwrap();
+}
+
+fn has_regular_file(root: &Path) -> bool {
+    root.exists()
+        && std::fs::read_dir(root).unwrap().any(|entry| {
+            let path = entry.unwrap().path();
+            path.is_file() || (path.is_dir() && has_regular_file(&path))
+        })
+}
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
     prj.update_config(|config| config.optimizer = Some(true));
@@ -55,6 +110,990 @@ contract FuzzerDictTest is Test {
     cmd.forge_fuse()
         .args(["test", "--fuzz-seed", "119", "--mt", "testStorageOwner"])
         .assert_failure();
+});
+
+forgetest_init!(forge_fuzz_run_skips_unit_tests, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRun.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunTest is Test {
+    function test_unit() public pure {}
+
+    /// forge-config: default.fuzz.runs = 2
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzRunTest"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/ForgeFuzzRun.t.sol:ForgeFuzzRunTest
+[PASS] testFuzz_value(uint256) (runs: 2, [AVG_GAS])
+[SKIP: not runnable in fuzz mode] test_unit() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 1 skipped (2 total tests)
+
+"#]]);
+});
+
+forgetest_init!(forge_fuzz_skips_unit_only_failing_setup, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzUnitOnly.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzUnitOnlyTest is Test {
+    function setUp() public pure {
+        revert("setUp should not run");
+    }
+
+    function test_unit() public pure {}
+}
+   "#,
+    );
+
+    let run =
+        cmd.forge_fuse().args(["fuzz", "run", "--mc", "ForgeFuzzUnitOnlyTest"]).assert_success();
+    let stdout = String::from_utf8(run.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("setUp should not run"), "{stdout}");
+
+    let replay =
+        cmd.forge_fuse().args(["fuzz", "replay", "--mc", "ForgeFuzzUnitOnlyTest"]).assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("setUp should not run"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_reports_missing_corpus, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzReplayTest is Test {
+    function test_unit() public pure {}
+
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "replay", "--mc", "ForgeFuzzReplayTest"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/ForgeFuzzReplay.t.sol:ForgeFuzzReplayTest
+[SKIP: no persisted fuzz failure found at cache/fuzz/failures/ForgeFuzzReplayTest/testFuzz_value] testFuzz_value(uint256) (runs: 0, [AVG_GAS])
+[SKIP: not runnable in replay mode] test_unit() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 2 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
+
+"#
+    ]]);
+});
+
+// `forge fuzz replay` (without `--corpus-dir`) must not start a fresh invariant
+// campaign when there is no persisted failure to replay; it should skip instead.
+forgetest_init!(forge_fuzz_replay_invariant_skips_without_persisted_failure, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzReplayInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzReplayInvariantTest is Test {
+    uint256 total;
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function doThing(uint256 x) public {
+        total += x;
+    }
+
+    function invariant_holds() public view {
+        assertGe(total, 0);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "replay", "--mc", "ForgeFuzzReplayInvariantTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForgeFuzzReplayInvariant.t.sol:ForgeFuzzReplayInvariantTest
+[SKIP: no persisted invariant failure reproduced for invariant_holds] invariant_holds() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+});
+
+forgetest_init!(forge_fuzz_replay_replays_persisted_fuzz_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzReplayFailure.t.sol",
+        r#"
+contract ForgeFuzzReplayFailureTest {
+    function test_unit() public pure {}
+
+    function testFuzz_reverts(uint256 value) public pure {
+        require(value > 200);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayFailureTest", "-q"]).assert_failure();
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("[FAIL: EvmError: Revert; counterexample: calldata=0x")
+            && stdout.contains("args=[200]] testFuzz_reverts(uint256) (runs: 0,"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts(200)"), "{stdout}");
+    assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_does_not_fuzz_after_assume_reject, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzReplayAssumeReject.t.sol",
+        r#"
+contract ForgeFuzzReplayAssumeRejectTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        require(value > 200);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayAssumeRejectTest", "-q"]).assert_failure();
+
+    prj.add_test(
+        "ForgeFuzzReplayAssumeReject.t.sol",
+        r#"
+interface Vm {
+    function assume(bool) external;
+}
+
+contract ForgeFuzzReplayAssumeRejectTest {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testFuzz_reverts(uint256 value) public {
+        vm.assume(value != 200);
+        require(false, "fresh unrelated failure");
+    }
+}
+   "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayAssumeRejectTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForgeFuzzReplayAssumeReject.t.sol:ForgeFuzzReplayAssumeRejectTest
+[SKIP: persisted fuzz failure rejected by `vm.assume`] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+});
+
+forgetest_init!(forge_fuzz_replay_treats_persisted_skip_as_skip, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzReplaySkip.t.sol",
+        r#"
+contract ForgeFuzzReplaySkipTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        require(value > 200);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplaySkipTest", "-q"]).assert_failure();
+
+    prj.add_test(
+        "ForgeFuzzReplaySkip.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzReplaySkipTest is Test {
+    function testFuzz_reverts(uint256 value) public {
+        value;
+        vm.skip(true, "disabled");
+    }
+}
+   "#,
+    );
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplaySkipTest"])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[SKIP: disabled] testFuzz_reverts(uint256)"), "{stdout}");
+    assert!(!stdout.contains("[FAIL"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_does_not_treat_user_skip_payload_as_skip, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzReplayUserSkipPayload.t.sol",
+        r#"
+contract ForgeFuzzReplayUserSkipPayloadTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        require(value > 200);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayUserSkipPayloadTest", "-q"]).assert_failure();
+
+    prj.add_test(
+        "ForgeFuzzReplayUserSkipPayload.t.sol",
+        r#"
+contract ForgeFuzzReplayUserSkipPayloadTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        value;
+        bytes memory reason = bytes("FOUNDRY::SKIPnot cheatcode");
+        assembly {
+            revert(add(reason, 32), mload(reason))
+        }
+    }
+}
+   "#,
+    );
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayUserSkipPayloadTest"])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[FAIL:"), "{stdout}");
+    assert!(!stdout.contains("[SKIP: not cheatcode]"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_junit_output_stays_xml_only_on_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzJunitFailure.t.sol",
+        r#"
+contract ForgeFuzzJunitFailureTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        value;
+        require(false);
+    }
+}
+   "#,
+    );
+
+    let run = cmd
+        .forge_fuse()
+        .args(["fuzz", "run", "--junit", "--mc", "ForgeFuzzJunitFailureTest"])
+        .assert_failure();
+    let stdout = String::from_utf8(run.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("<testsuites"), "{stdout}");
+    assert!(!stdout.contains("Failing tests:"), "{stdout}");
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--junit", "--mc", "ForgeFuzzJunitFailureTest"])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("<testsuites"), "{stdout}");
+    assert!(!stdout.contains("Failing tests:"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_rejects_watch, |prj, cmd| {
+    let run = cmd.forge_fuse().args(["fuzz", "run", "--watch"]).assert_failure();
+    let stderr = String::from_utf8(run.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("`--watch` is not supported for `forge fuzz run`"), "{stderr}");
+
+    let replay = cmd.forge_fuse().args(["fuzz", "replay", "--watch"]).assert_failure();
+    let stderr = String::from_utf8(replay.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("`--watch` is not supported for `forge fuzz replay`"), "{stderr}");
+});
+
+forgetest_init!(forge_showmap_skips_symbolic_tests, |prj, cmd| {
+    prj.add_test(
+        "ForgeShowmapSymbolic.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeShowmapSymbolicTest is Test {
+    function check_symbolic(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    let assert = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--showmap-out",
+            "showmap",
+            "--mc",
+            "ForgeShowmapSymbolicTest",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("[SKIP: not runnable in showmap mode] check_symbolic(uint256)"),
+        "{stdout}"
+    );
+});
+
+forgetest_init!(forge_fuzz_show_corpus_files, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzShowTarget.t.sol",
+        r#"
+contract ForgeFuzzShowTargetTest {
+    function testFuzz_setNumber(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let calldata = "0x938872f7000000000000000000000000000000000000000000000000000000000000002a";
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", calldata);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", calldata);
+
+    cmd.forge_fuse()
+        .args(["fuzz", "show", "corpus"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+corpus/00000000-0000-0000-0000-000000000001-1.json (1 txs)
+  0: ForgeFuzzShowTargetTest.testFuzz_setNumber(42) sender=0x0000000000000000000000000000000000000001 target=0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 value=0
+corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
+  0: ForgeFuzzShowTargetTest.testFuzz_setNumber(42) sender=0x0000000000000000000000000000000000000001 target=0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 value=0
+
+"#]]);
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzShowTargetTest", "--corpus-dir", "corpus"])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] testFuzz_setNumber(uint256) (replay: 2 entries"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_invariant_fail_on_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test(
+        "ForgeFuzzInvariantFailOnRevertReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
+    bool ok = true;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = this.revertHandler.selector;
+        selectors[1] = this.breakInvariant.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function revertHandler(uint256 value) external pure {
+        value;
+        revert("boom");
+    }
+
+    function breakInvariant() external {
+        ok = false;
+    }
+
+    function invariant_ok() public view {
+        assertTrue(ok);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzInvariantFailOnRevertReplay.t.sol/ForgeFuzzInvariantFailOnRevertReplayTest.json",
+    );
+    let revert_handler = calldata_for(&abi, "revertHandler", 1);
+    let break_invariant = format!(
+        "0x{}",
+        hex::encode(
+            abi.functions().find(|function| function.name == "breakInvariant").unwrap().selector()
+        )
+    );
+    let corpus = prj.root().join("invariant_corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    std::fs::write(
+        corpus.join("00000000-0000-0000-0000-000000000001-1.json"),
+        format!(
+            r#"[{{
+  "sender":"{DEFAULT_SENDER}",
+  "target":"{DEFAULT_TEST_TARGET}",
+  "calldata":"{revert_handler}",
+  "value":"0x0"
+}},{{
+  "sender":"{DEFAULT_SENDER}",
+  "target":"{DEFAULT_TEST_TARGET}",
+  "calldata":"{break_invariant}",
+  "value":"0x0"
+}}]"#
+        ),
+    )
+    .unwrap();
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzInvariantFailOnRevertReplayTest",
+            "--mt",
+            "invariant_ok",
+            "--corpus-dir",
+            "invariant_corpus",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("failed during replay: invariant `invariant_ok` failed on handler "),
+        "{stdout}"
+    );
+
+    let showmap = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ForgeFuzzInvariantFailOnRevertReplayTest",
+            "--mt",
+            "invariant_ok",
+            "--showmap-out",
+            "showmap",
+            "--showmap-corpus-dir",
+            "invariant_corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(showmap.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] invariant_ok() (replay: 1 entries"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_invariant_sequence_checks, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1u32));
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.check_interval = 0;
+        config.invariant.corpus.corpus_dir = Some("seed_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "ForgeFuzzInvariantReplaySequence.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzInvariantReplaySequenceTest is Test {
+    bool checksEnabled;
+    bool ok = true;
+    bool afterFails;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](3);
+        selectors[0] = this.enableChecks.selector;
+        selectors[1] = this.setOk.selector;
+        selectors[2] = this.armAfterInvariant.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function enableChecks() external {
+        checksEnabled = true;
+    }
+
+    function setOk(bool value) external {
+        ok = value;
+    }
+
+    function armAfterInvariant(uint256 value) external {
+        if (value == 0xdeadbeef) {
+            afterFails = true;
+        }
+    }
+
+    function invariant_ok() public view {
+        if (checksEnabled) {
+            assertTrue(ok);
+        }
+    }
+
+    function afterInvariant() external view {
+        if (checksEnabled && !ok) {
+            revert("after");
+        }
+        if (afterFails) {
+            revert("after");
+        }
+    }
+}
+   "#,
+    );
+    cmd.args([
+        "test",
+        "--mc",
+        "ForgeFuzzInvariantReplaySequenceTest",
+        "--mt",
+        "invariant_ok",
+        "-q",
+    ])
+    .assert_success();
+
+    let seed_entry =
+        std::fs::read_to_string(find_first_json(&prj.root().join("seed_corpus"))).unwrap();
+    let seed_entry: Value = serde_json::from_str(&seed_entry).unwrap();
+    let tx = &seed_entry.as_array().unwrap()[0];
+    let sender = tx["sender"].as_str().unwrap();
+    let target = tx["target"].as_str().unwrap();
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzInvariantReplaySequence.t.sol/ForgeFuzzInvariantReplaySequenceTest.json",
+    );
+    let selector = |name: &str| {
+        let function = abi.functions().find(|function| function.name == name).unwrap();
+        hex::encode(function.selector())
+    };
+    let enable_checks = format!("0x{}", selector("enableChecks"));
+    let set_ok_false = format!("0x{}{:064x}", selector("setOk"), 0);
+    let set_ok_true = format!("0x{}{:064x}", selector("setOk"), 1);
+    let arm_after_invariant = format!("0x{}{:064x}", selector("armAfterInvariant"), 0xdeadbeefu64);
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry = format!(
+        r#"[{{
+  "sender":"{sender}",
+  "target":"{target}",
+  "calldata":"{enable_checks}",
+  "value":"0x0"
+}},{{
+  "sender":"{sender}",
+  "target":"{target}",
+  "calldata":"{set_ok_false}",
+  "value":"0x0"
+}},{{
+  "sender":"{sender}",
+  "target":"{target}",
+  "calldata":"{set_ok_true}",
+  "value":"0x0"
+}}]"#
+    );
+    std::fs::write(corpus.join("check-interval.json"), entry).unwrap();
+    let entry = format!(
+        r#"[{{
+  "sender":"{sender}",
+  "target":"{target}",
+  "calldata":"{arm_after_invariant}",
+  "value":"0x0"
+}}]"#
+    );
+    std::fs::write(corpus.join("after-invariant.json"), entry).unwrap();
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzInvariantReplaySequenceTest",
+            "--mt",
+            "invariant_ok",
+            "--corpus-dir",
+            "corpus/check-interval.json",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] invariant_ok() (replay: 1 entries"), "{stdout}");
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzInvariantReplaySequenceTest",
+            "--mt",
+            "invariant_ok",
+            "--corpus-dir",
+            "corpus/after-invariant.json",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("failed during replay: afterInvariant broken"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
+    let worker0 = prj.root().join("corpus/worker0/corpus");
+    let worker1 = prj.root().join("corpus/worker1/corpus");
+    std::fs::create_dir_all(&worker0).unwrap();
+    std::fs::create_dir_all(&worker1).unwrap();
+    let entry = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x0000000000000000000000000000000000000002",
+  "calldata":"0x12345678"
+}]"#;
+    let name = "00000000-0000-0000-0000-000000000001-1.json";
+    std::fs::write(worker0.join(name), entry).unwrap();
+    std::fs::write(worker1.join(name), entry).unwrap();
+
+    let show = cmd.args(["fuzz", "show", "corpus"]).assert_success();
+    let stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
+    assert_eq!(stdout.matches("corpus/worker").count(), 1, "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_error_on_zero_replay, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzZeroReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzZeroReplayTest is Test {
+    function testFuzz_branch(uint256 value) public pure {
+        value;
+    }
+
+    function testFuzz_assumeAlways(uint256 value) public {
+        value;
+        vm.assume(false);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        "0x003919a00000000000000000000000000000000000000000000000000000000000000001",
+    );
+
+    let wrong_corpus = prj.root().join("wrong-corpus");
+    std::fs::create_dir_all(&wrong_corpus).unwrap();
+    write_corpus_entry(
+        &wrong_corpus,
+        "00000000-0000-0000-0000-000000000002-2.json",
+        "0xdeadbeef0000000000000000000000000000000000000000000000000000000000000001",
+    );
+
+    let zero_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_branch",
+            "--corpus-dir",
+            "wrong-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(zero_replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[SKIP: replayed 0 corpus entries from wrong-corpus]"), "{stdout}");
+    assert!(!stdout.contains("[PASS] testFuzz_branch(uint256) (replay: 0 entries"), "{stdout}");
+
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzZeroReplay.t.sol/ForgeFuzzZeroReplayTest.json");
+    let assume_corpus = prj.root().join("assume-corpus");
+    std::fs::create_dir_all(&assume_corpus).unwrap();
+    write_corpus_entry(
+        &assume_corpus,
+        "00000000-0000-0000-0000-000000000003-3.json",
+        &calldata_for(&abi, "testFuzz_assumeAlways", 1),
+    );
+    let all_assume_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_assumeAlways",
+            "--corpus-dir",
+            "assume-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(all_assume_replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[SKIP: replayed 0 corpus entries from assume-corpus]"), "{stdout}");
+    assert!(
+        !stdout.contains("[PASS] testFuzz_assumeAlways(uint256) (replay: 1 entries"),
+        "{stdout}"
+    );
+    let all_assume_showmap = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_assumeAlways",
+            "--showmap-out",
+            "assume-showmap",
+            "--showmap-corpus-dir",
+            "assume-corpus",
+            "--showmap-per-input",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(all_assume_showmap.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("(replay: 0 entries, 0 files, 1 skipped)"), "{stdout}");
+    assert!(!has_regular_file(&prj.root().join("assume-showmap")));
+
+    prj.add_test(
+        "ForgeFuzzSkipReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzSkipReplayTest is Test {
+    function testFuzz_skipEven(uint256 value) public {
+        if (value % 2 == 0) {
+            vm.skip(true, "even");
+        }
+    }
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["build", "-q"]).assert_success();
+
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzSkipReplay.t.sol/ForgeFuzzSkipReplayTest.json");
+    let skip_corpus = prj.root().join("skip-corpus");
+    std::fs::create_dir_all(&skip_corpus).unwrap();
+    write_corpus_entry(
+        &skip_corpus,
+        "00000000-0000-0000-0000-000000000004-4.json",
+        &calldata_for(&abi, "testFuzz_skipEven", 8),
+    );
+    let all_skip_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzSkipReplayTest",
+            "--mt",
+            "testFuzz_skipEven",
+            "--corpus-dir",
+            "skip-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(all_skip_replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[SKIP: replayed 0 corpus entries from skip-corpus]"), "{stdout}");
+    assert!(!stdout.contains("corpus replay failed"), "{stdout}");
+
+    let malformed_corpus = prj.root().join("malformed-corpus");
+    std::fs::create_dir_all(&malformed_corpus).unwrap();
+    std::fs::write(malformed_corpus.join("00000000-0000-0000-0000-000000000004-4.json"), "{")
+        .unwrap();
+    write_corpus_entry(
+        &malformed_corpus,
+        "00000000-0000-0000-0000-000000000005-5.json",
+        "0xdeadbeef0000000000000000000000000000000000000000000000000000000000000001",
+    );
+    let malformed_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_branch",
+            "--corpus-dir",
+            "malformed-corpus",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(malformed_replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("failed to read 1 corpus entries from malformed-corpus"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_commands_read_generated_corpus_roots, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| {
+        config.fuzz.runs = 8;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+        config.fuzz.corpus.corpus_gzip = false;
+        config.invariant.runs = 4;
+        config.invariant.depth = 4;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "ForgeFuzzGeneratedCorpus.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract ForgeFuzzGeneratedCorpusTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function test_unit() public pure {}
+
+    function testFuzz_SetNumber(uint256 value) public {
+        counter.setNumber(value);
+        assertEq(counter.number(), value);
+    }
+
+    function invariant_counter_is_reachable() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzGeneratedCorpusTest"]).assert_success();
+
+    let show = cmd.forge_fuse().args(["fuzz", "show", "fuzz_corpus"]).assert_success();
+    let show_stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
+    assert!(
+        show_stdout.contains("fuzz_corpus/ForgeFuzzGeneratedCorpusTest/testFuzz_SetNumber"),
+        "{show_stdout}"
+    );
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzGeneratedCorpusTest",
+            "--corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_success();
+    let replay_stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(
+        replay_stdout.contains("[PASS] testFuzz_SetNumber(uint256) (replay:"),
+        "{replay_stdout}"
+    );
+    assert!(
+        !replay_stdout.contains("[PASS] testFuzz_SetNumber(uint256) (replay: 0 entries"),
+        "{replay_stdout}"
+    );
+
+    let invariant_show =
+        cmd.forge_fuse().args(["fuzz", "show", "invariant_corpus"]).assert_success();
+    let invariant_stdout = String::from_utf8(invariant_show.get_output().stdout.clone()).unwrap();
+    assert!(
+        invariant_stdout.contains("invariant_corpus/ForgeFuzzGeneratedCorpusTest/worker0/corpus"),
+        "{invariant_stdout}"
+    );
+});
+
+forgetest_init!(forge_fuzz_replay_scopes_generated_corpus_root_to_target, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzGeneratedRootScope.t.sol",
+        r#"
+contract GeneratedCorpusATest {
+    function testFuzz_same(uint256 value) public pure {
+        require(value == 1);
+    }
+}
+
+contract GeneratedCorpusBTest {
+    function testFuzz_same(uint256 value) public pure {
+        require(value == 2);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzGeneratedRootScope.t.sol/GeneratedCorpusBTest.json");
+    let selector = calldata_for(&abi, "testFuzz_same", 0);
+    let selector = &selector[..10];
+
+    let corpus_root = prj.root().join("fuzz_corpus");
+    let a_corpus = corpus_root.join("GeneratedCorpusATest/testFuzz_same/worker0/corpus");
+    let b_corpus = corpus_root.join("GeneratedCorpusBTest/testFuzz_same/worker0/corpus");
+    std::fs::create_dir_all(&a_corpus).unwrap();
+    std::fs::create_dir_all(&b_corpus).unwrap();
+    write_corpus_entry(
+        &a_corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        &format!("{selector}{:064x}", 1),
+    );
+    write_corpus_entry(
+        &b_corpus,
+        "00000000-0000-0000-0000-000000000002-2.json",
+        &format!("{selector}{:064x}", 2),
+    );
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "GeneratedCorpusBTest", "--corpus-dir", "fuzz_corpus"])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] testFuzz_same(uint256) (replay: 1 entries"), "{stdout}");
+    assert!(!stdout.contains("corpus replay failed"), "{stdout}");
 });
 
 // tests that inline max-test-rejects config is properly applied
@@ -198,7 +1237,180 @@ Ran 2 tests for test/CounterTest.t.sol:CounterTest
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/CounterTest.t.sol:CounterTest
+[FAIL: assertion failed: [..]; counterexample: calldata=[..] args=[..]] testFuzz_SetNumberAssert(uint256) (runs: 0, [AVG_GAS])
+[FAIL: EvmError: Revert; counterexample: calldata=[..] args=[..]] testFuzz_SetNumberRequire(uint256) (runs: 0, [AVG_GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
+});
+
+forgetest_init!(forge_fuzz_replay_respects_fuzz_fail_on_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.fail_on_revert = true;
+    });
+    prj.add_source(
+        "Reverter.sol",
+        r#"
+contract Reverter {
+    function boom(uint256 value) public pure {
+        value;
+        revert("boom");
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "ForgeFuzzReplayFailOnRevert.t.sol",
+        r#"
+import {Reverter} from "../src/Reverter.sol";
+
+contract ForgeFuzzReplayFailOnRevertTest {
+    Reverter reverter;
+
+    function setUp() public {
+        reverter = new Reverter();
+    }
+
+    function testFuzz_callsReverter(uint256 value) public view {
+        reverter.boom(value);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzReplayFailOnRevert.t.sol/ForgeFuzzReplayFailOnRevertTest.json",
+    );
+    let calldata = calldata_for(&abi, "testFuzz_callsReverter", 1);
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &calldata);
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzReplayFailOnRevertTest",
+            "--corpus-dir",
+            "corpus",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("failed during replay: fuzz call"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_replays_persisted_handler_failures, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "AlwaysAssert.sol",
+        r#"
+contract AlwaysAssert {
+    function boom() external { assert(false); }
+}
+   "#,
+    );
+    prj.add_test(
+        "ForgeFuzzReplayHandlerFailure.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {AlwaysAssert} from "../src/AlwaysAssert.sol";
+
+contract ForgeFuzzReplayHandlerFailureTest is Test {
+    AlwaysAssert h;
+
+    function setUp() public {
+        h = new AlwaysAssert();
+        targetContract(address(h));
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ForgeFuzzReplayHandlerFailureTest", "--mt", "invariant_ok"])
+        .assert_failure();
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzReplayHandlerFailureTest",
+            "--mt",
+            "invariant_ok",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("Assertion Tests: 1 assertion bug(s) found"), "{stdout}");
+    assert!(!stdout.contains("[SKIP: no persisted invariant failure reproduced"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_replays_non_anchor_invariant_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "ForgeFuzzReplayNonAnchorInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzReplayNonAnchorInvariantTest is Test {
+    uint256 count;
+
+    function setUp() public {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = this.tick.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function tick() external {
+        count++;
+    }
+
+    function invariant_a_first() public view {
+        require(count >= 0, "a");
+    }
+
+    function invariant_b_middle() public view {
+        require(count < 1, "middle broken");
+    }
+
+    function invariant_c_last() public view {
+        require(count >= 0, "c");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ForgeFuzzReplayNonAnchorInvariantTest", "-q"]).assert_failure();
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayNonAnchorInvariantTest"])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[FAIL: middle broken]"), "{stdout}");
+    assert!(!stdout.contains("[SKIP: no persisted invariant failure reproduced"), "{stdout}");
 });
 
 // Test 256 runs regardless number of test rejects.

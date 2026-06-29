@@ -73,7 +73,13 @@ mod showmap;
 mod trace;
 
 pub use corpus::{DynamicTargetCtx, persist_corpus_seed};
-pub use showmap::{ShowmapDomain, ShowmapOpts, ShowmapStats, replay_corpus_to_showmap};
+pub use corpus_io::{
+    CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
+};
+pub use showmap::{
+    InvariantReplayOptions, ReplayFailure, ShowmapDomain, ShowmapOpts, ShowmapReplayTarget,
+    ShowmapStats, replay_corpus_to_showmap,
+};
 pub use trace::TracingExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
@@ -1168,10 +1174,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
                     for hit in hits.drain(..) {
                         let edge_index = edge_indices.edge_index(hit.edge);
                         if history_map.len() <= edge_index {
-                            debug_assert_eq!(history_map.len(), edge_index);
-                            // `Vec::push` already amortizes geometric growth; no need
-                            // to pre-reserve a single slot.
-                            history_map.push(0);
+                            history_map.resize(edge_index + 1, 0);
                         }
                         Self::merge_edge_count(
                             hit.count,
@@ -1505,6 +1508,24 @@ mod tests {
             (false, false)
         );
         assert_eq!(history, [1, 1]);
+    }
+
+    #[test]
+    fn collision_free_edge_merge_handles_sparse_observation_indices() {
+        let first =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+        let second =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(20) };
+        let mut edge_indices = EdgeIndexMap::default();
+        edge_indices.edge_index(first);
+        edge_indices.edge_index(second);
+        let mut history = Vec::new();
+
+        assert_eq!(
+            dense_call(second).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [0, 1]);
     }
 
     #[test]

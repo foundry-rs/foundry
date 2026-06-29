@@ -27,6 +27,53 @@ contract Target {
     fallback() external {}
 }
 
+contract StorageGasTarget {
+    uint256[256] private slots;
+
+    function fill() public {
+        for (uint256 i; i < 256; ++i) {
+            slots[i] = i + 1;
+        }
+    }
+
+    function writeAll() public {
+        for (uint256 i; i < 256; ++i) {
+            slots[i] = i + 2;
+        }
+    }
+
+    function sum() public view returns (uint256 s) {
+        for (uint256 i; i < 256; ++i) {
+            s += slots[i];
+        }
+    }
+}
+
+contract AccountGasTarget {
+    function balanceOf(address account) public view returns (uint256) {
+        return account.balance;
+    }
+
+    function codeSizeOf(address account) public view returns (uint256 size) {
+        assembly {
+            size := extcodesize(account)
+        }
+    }
+
+    function codeHashOf(address account) public view returns (bytes32 hash) {
+        assembly {
+            hash := extcodehash(account)
+        }
+    }
+
+    function copyCodeOf(address account) public view returns (bytes32 word) {
+        assembly {
+            extcodecopy(account, 0, 0, 0x20)
+            word := mload(0)
+        }
+    }
+}
+
 contract TargetCreate2 {
     uint256 public value;
 
@@ -211,6 +258,90 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         _setup();
         _performRefund();
         _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21380, gasMemoryUsed: 0, gasRefunded: 4800}));
+    }
+
+    function testStateDiffRecordingDoesNotWarmStorageReads() public {
+        StorageGasTarget recordingOff = new StorageGasTarget();
+        recordingOff.fill();
+        recordingOff.sum();
+        uint64 gasRecordingOff = vm.lastCallGas().gasTotalUsed;
+
+        StorageGasTarget recordingOn = new StorageGasTarget();
+        recordingOn.fill();
+        vm.startStateDiffRecording();
+        recordingOn.sum();
+
+        assertEq(vm.lastCallGas().gasTotalUsed, gasRecordingOff);
+    }
+
+    function testStateDiffRecordingDoesNotWarmStorageWrites() public {
+        StorageGasTarget recordingOff = new StorageGasTarget();
+        recordingOff.fill();
+        recordingOff.writeAll();
+        uint64 gasRecordingOff = vm.lastCallGas().gasTotalUsed;
+
+        StorageGasTarget recordingOn = new StorageGasTarget();
+        recordingOn.fill();
+        vm.startStateDiffRecording();
+        recordingOn.writeAll();
+
+        assertEq(vm.lastCallGas().gasTotalUsed, gasRecordingOff);
+    }
+
+    function testStateDiffRecordingDoesNotWarmBalanceReads() public {
+        AccountGasTarget recordingOff = new AccountGasTarget();
+        Target accountOff = new Target();
+        recordingOff.balanceOf(address(accountOff));
+        uint64 gasRecordingOff = vm.lastCallGas().gasTotalUsed;
+
+        AccountGasTarget recordingOn = new AccountGasTarget();
+        Target accountOn = new Target();
+        vm.startStateDiffRecording();
+        recordingOn.balanceOf(address(accountOn));
+
+        assertEq(vm.lastCallGas().gasTotalUsed, gasRecordingOff);
+    }
+
+    function testStateDiffRecordingDoesNotWarmExtcodesizeReads() public {
+        AccountGasTarget recordingOff = new AccountGasTarget();
+        Target accountOff = new Target();
+        recordingOff.codeSizeOf(address(accountOff));
+        uint64 gasRecordingOff = vm.lastCallGas().gasTotalUsed;
+
+        AccountGasTarget recordingOn = new AccountGasTarget();
+        Target accountOn = new Target();
+        vm.startStateDiffRecording();
+        recordingOn.codeSizeOf(address(accountOn));
+
+        assertEq(vm.lastCallGas().gasTotalUsed, gasRecordingOff);
+    }
+
+    function testStateDiffRecordingDoesNotWarmExtcodehashReads() public {
+        AccountGasTarget recordingOff = new AccountGasTarget();
+        Target accountOff = new Target();
+        recordingOff.codeHashOf(address(accountOff));
+        uint64 gasRecordingOff = vm.lastCallGas().gasTotalUsed;
+
+        AccountGasTarget recordingOn = new AccountGasTarget();
+        Target accountOn = new Target();
+        vm.startStateDiffRecording();
+        recordingOn.codeHashOf(address(accountOn));
+
+        assertEq(vm.lastCallGas().gasTotalUsed, gasRecordingOff);
+    }
+
+    function testStateDiffRecordingDoesNotWarmExtcodecopyReads() public {
+        AccountGasTarget recordingOff = new AccountGasTarget();
+        Target accountOff = new Target();
+        recordingOff.copyCodeOf(address(accountOff));
+        uint64 gasRecordingOff = vm.lastCallGas().gasTotalUsed;
+
+        AccountGasTarget recordingOn = new AccountGasTarget();
+        Target accountOn = new Target();
+        vm.startStateDiffRecording();
+        recordingOn.copyCodeOf(address(accountOn));
+
+        assertEq(vm.lastCallGas().gasTotalUsed, gasRecordingOff);
     }
 }
 

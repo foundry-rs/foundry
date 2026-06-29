@@ -110,18 +110,23 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             contract_id,
             func,
             symbolic_entrypoints_enabled(
-                self.config.symbolic.enabled,
+                self.contract_symbolic_enabled(contract_id),
                 self.tcfg.symbolic_artifact_replay.as_ref(),
             ),
         )
     }
 
+    fn contract_symbolic_enabled(&self, contract_id: &str) -> bool {
+        contract_symbolic_enabled(&self.config, &self.inline_config, contract_id)
+    }
+
     fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
+        let identifier = id.identifier();
         matches_artifact(
             filter,
             id,
             abi,
-            self.config.symbolic.enabled,
+            self.contract_symbolic_enabled(&identifier),
             self.tcfg.symbolic_artifact_replay.as_ref(),
         )
     }
@@ -155,13 +160,14 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         self.contracts
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| {
-                func.is_any_test()
-                    || (symbolic_entrypoints_enabled(
-                        self.config.symbolic.enabled,
-                        self.tcfg.symbolic_artifact_replay.as_ref(),
-                    ) && is_symbolic_entrypoint(func))
+            .flat_map(move |(id, c)| {
+                let symbolic_enabled = symbolic_entrypoints_enabled(
+                    self.contract_symbolic_enabled(&id.identifier()),
+                    self.tcfg.symbolic_artifact_replay.as_ref(),
+                );
+                c.abi.functions().filter(move |func| {
+                    func.is_any_test() || (symbolic_enabled && is_symbolic_entrypoint(func))
+                })
             })
     }
 
@@ -175,6 +181,8 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                 let tests = c
                     .abi
                     .functions()
+                    // TODO(@mablr): in fuzz-only mode, make `--list` mirror execution
+                    // by hiding unit/table/symbolic tests that `forge fuzz run/replay` skips.
                     .filter(|func| self.matches_test_function(filter, &identifier, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
@@ -383,6 +391,8 @@ pub struct ShowmapConfig {
     /// Optional override for the corpus directory to replay from.
     /// When unset, the per-test corpus dir derived from config is used.
     pub corpus_dir: Option<PathBuf>,
+    /// Whether replay should emit showmap files.
+    pub emit_files: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -433,6 +443,10 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     /// When set, fuzz/invariant tests run in corpus replay mode and emit
     /// AFL-`afl-showmap`-style files instead of running a campaign.
     pub showmap: Option<ShowmapConfig>,
+    /// Run only fuzz and invariant tests.
+    pub fuzz_only: bool,
+    /// Replay persisted fuzz failures without running a new fuzz campaign.
+    pub fuzz_failure_replay: bool,
 
     /// When set, run only the matching test and replay this artifact's concrete payload.
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
@@ -557,6 +571,10 @@ pub struct MultiContractRunnerBuilder {
     pub multi_network: MultiNetworkConfig,
     /// Showmap replay mode (CLI-only, off by default).
     pub showmap: Option<ShowmapConfig>,
+    /// Run only fuzz and invariant tests.
+    pub fuzz_only: bool,
+    /// Replay persisted fuzz failures without running a new fuzz campaign.
+    pub fuzz_failure_replay: bool,
     /// Symbolic artifact replay mode (CLI-only, off by default).
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
@@ -576,12 +594,24 @@ impl MultiContractRunnerBuilder {
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
+            fuzz_only: false,
+            fuzz_failure_replay: false,
             symbolic_artifact_replay: None,
         }
     }
 
     pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
         self.showmap = showmap;
+        self
+    }
+
+    pub const fn with_fuzz_only(mut self, fuzz_only: bool) -> Self {
+        self.fuzz_only = fuzz_only;
+        self
+    }
+
+    pub const fn with_fuzz_failure_replay(mut self, fuzz_failure_replay: bool) -> Self {
+        self.fuzz_failure_replay = fuzz_failure_replay;
         self
     }
 
@@ -674,19 +704,22 @@ impl MultiContractRunnerBuilder {
         )?;
 
         let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
+        let inline_config = Arc::new(InlineConfig::new_parsed(output, &self.config)?);
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
         for (id, contract) in linked_contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else { continue };
+            let symbolic_enabled =
+                contract_symbolic_enabled(&self.config, &inline_config, &id.identifier());
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
                 && abi.functions().any(|func| {
                     func.name.is_any_test()
                         || symbolic_entrypoints_enabled(
-                            self.config.symbolic.enabled,
+                            symbolic_enabled,
                             self.symbolic_artifact_replay.as_ref(),
                         ) && is_symbolic_entrypoint(func)
                 })
@@ -776,11 +809,13 @@ impl MultiContractRunnerBuilder {
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 record_all_steps: self.record_all_steps,
-                inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
+                inline_config,
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
                 showmap: self.showmap,
+                fuzz_only: self.fuzz_only,
+                fuzz_failure_replay: self.fuzz_failure_replay,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,
             },
@@ -815,6 +850,17 @@ pub fn symbolic_entrypoints_enabled(
         || symbolic_artifact_replay.is_some_and(|artifact| {
             artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
         })
+}
+
+fn contract_symbolic_enabled(
+    config: &Config,
+    inline_config: &InlineConfig,
+    contract_id: &str,
+) -> bool {
+    config
+        .merge_inline_provider(inline_config.provide(contract_id, ""))
+        .map(|config| config.symbolic.enabled)
+        .unwrap_or(config.symbolic.enabled)
 }
 
 pub(crate) fn matches_contract(
