@@ -53,6 +53,7 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
+    pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
@@ -3481,6 +3482,42 @@ impl EthApi<FoundryNetwork> {
                 if let Ok(Some(txn)) = this.transaction_by_hash(hash).await
                     && tx.send(txn).is_err()
                 {
+                    break;
+                }
+            }
+        });
+
+        rx
+    }
+
+    /// Returns a listener for new block receipts.
+    pub fn transaction_receipts_subscription(
+        &self,
+        filter: TransactionReceiptsParams,
+    ) -> UnboundedReceiver<Vec<FoundryTxReceipt>> {
+        let (tx, rx) = unbounded_channel();
+        let mut blocks = self.new_block_notifications();
+        let this = self.clone();
+
+        tokio::spawn(async move {
+            while let Some(block) = blocks.next().await {
+                let Ok(Some(mut receipts)) =
+                    this.block_receipts(BlockId::Hash(block.hash.into())).await
+                else {
+                    continue;
+                };
+
+                if let Some(hashes) = &filter.transaction_hashes
+                    && !hashes.is_empty()
+                {
+                    receipts.retain(|receipt| hashes.contains(&receipt.transaction_hash()));
+                }
+
+                if receipts.is_empty() {
+                    continue;
+                }
+
+                if tx.send(receipts).is_err() {
                     break;
                 }
             }
