@@ -89,7 +89,8 @@ pub struct CreateArgs {
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
-    /// The Etherscan license type code or SPDX identifier to include with the verification request.
+    /// The Etherscan license type code or SPDX identifier to include with the verification
+    /// request.
     ///
     /// Accepts either an Etherscan numeric license code or a common SPDX identifier such as `MIT`.
     /// This is only used for Etherscan-style verifiers when `--verify` is enabled.
