@@ -193,6 +193,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
 
     let mut stats =
         ShowmapStats { sancov_requested: opts.domain.includes_sancov(), ..Default::default() };
+    // TODO(@mablr): cap collected replay failure details and append an overflow summary so
+    // pathological corpora cannot allocate one formatted error string per failed entry.
     let mut replay_failures = Vec::new();
     // Reused per call. In aggregate mode it accumulates across all entries; in per-input mode it
     // is cleared after each entry's file is written.
