@@ -41,6 +41,7 @@ use std::{
 };
 
 type EvmShowmap = HashMap<(B256, u32), u64>;
+const MAX_REPORTED_REPLAY_FAILURES: usize = 20;
 
 /// Which coverage bitmap(s) to dump.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -193,9 +194,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
 
     let mut stats =
         ShowmapStats { sancov_requested: opts.domain.includes_sancov(), ..Default::default() };
-    // TODO(@mablr): cap collected replay failure details and append an overflow summary so
-    // pathological corpora cannot allocate one formatted error string per failed entry.
     let mut replay_failures = Vec::new();
+    let mut failed_entries = 0usize;
     // Reused per call. In aggregate mode it accumulates across all entries; in per-input mode it
     // is cleared after each entry's file is written.
     let mut evm_buf = EvmShowmap::new();
@@ -335,10 +335,13 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         }
         if let Some(failure) = entry_failure {
             rollback_replay_created(target.fuzzed_contracts, created);
-            replay_failures.push(format!(
-                "corpus entry {} failed during replay: {failure}",
-                entry.path.display()
-            ));
+            failed_entries += 1;
+            if replay_failures.len() < MAX_REPORTED_REPLAY_FAILURES {
+                replay_failures.push(format!(
+                    "corpus entry {} failed during replay: {failure}",
+                    entry.path.display()
+                ));
+            }
             continue;
         }
         rollback_replay_created(target.fuzzed_contracts, created);
@@ -372,11 +375,26 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         )?;
     }
 
-    if !replay_failures.is_empty() {
-        return Err(eyre::eyre!("corpus replay failed:\n{}", replay_failures.join("\n")));
+    if failed_entries > 0 {
+        return Err(eyre::eyre!(
+            "corpus replay failed:\n{}",
+            replay_failure_report(&replay_failures, failed_entries)
+        ));
     }
 
     Ok(stats)
+}
+
+fn replay_failure_report(replay_failures: &[String], failed_entries: usize) -> String {
+    let mut report = replay_failures.join("\n");
+    let unreported = failed_entries.saturating_sub(replay_failures.len());
+    if unreported > 0 {
+        if !report.is_empty() {
+            report.push('\n');
+        }
+        report.push_str(&format!("... and {unreported} more failed corpus entries"));
+    }
+    report
 }
 
 /// Returns a [`ReplayFailure::Handler`] if a handler call should be treated as a
@@ -607,6 +625,19 @@ mod tests {
         let err = write_showmap_file(&path, &evm, &[]).unwrap_err();
         assert!(err.to_string().contains("File exists"), "{err:?}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me");
+    }
+
+    #[test]
+    fn replay_failure_report_caps_details() {
+        let failures = (0..MAX_REPORTED_REPLAY_FAILURES)
+            .map(|idx| format!("corpus entry {idx} failed during replay: fuzz call failed"))
+            .collect::<Vec<_>>();
+        let report = replay_failure_report(&failures, MAX_REPORTED_REPLAY_FAILURES + 3);
+
+        assert!(report.contains("corpus entry 0 failed during replay"), "{report}");
+        assert!(report.contains("corpus entry 19 failed during replay"), "{report}");
+        assert!(report.contains("... and 3 more failed corpus entries"), "{report}");
+        assert!(!report.contains("corpus entry 20 failed during replay"), "{report}");
     }
 
     #[test]
