@@ -1050,7 +1050,7 @@ forgetest_init!(invariant_selector_focus_worker_exercises_targeted_selector, |pr
         config.invariant.depth = 1;
         config.invariant.workers =
             foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::from(1u32));
+        config.fuzz.seed = Some(U256::ZERO);
     });
     prj.add_test(
         "InvariantSelectorFocusTest.t.sol",
