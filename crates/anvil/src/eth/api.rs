@@ -39,9 +39,9 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, NetworkTransactionBuilder,
-    ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse,
-    eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, BlockResponse, Network,
+    NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder, TransactionBuilder4844,
+    TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
@@ -882,6 +882,14 @@ impl<N: Network> EthApi<N> {
         self.backend.block_by_hash(hash).await
     }
 
+    /// Returns block header with given hash.
+    ///
+    /// Handler for ETH RPC call: `eth_getHeaderByHash`
+    pub async fn header_by_hash(&self, hash: B256) -> Result<Option<AnyRpcHeader>> {
+        node_info!("eth_getHeaderByHash");
+        Ok(self.backend.block_by_hash(hash).await?.map(|block| block.header.clone()))
+    }
+
     /// Returns a _full_ block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
@@ -1546,6 +1554,7 @@ impl EthApi<FoundryNetwork> {
                     self.block_by_hash(hash).await.to_rpc_result()
                 }
             }
+            EthRequest::EthGetHeaderByHash(hash) => self.header_by_hash(hash).await.to_rpc_result(),
             EthRequest::EthGetBlockByNumber(num, full) => {
                 if full {
                     self.block_by_number_full(num).await.to_rpc_result()

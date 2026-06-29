@@ -9,7 +9,8 @@ use alloy_consensus::{
     TxEip1559,
 };
 use alloy_network::{
-    EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync,
+    AnyRpcHeader, EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844,
+    TxSignerSync,
 };
 use alloy_primitives::{
     Address, B256, ChainId, U256, b256, bytes,
@@ -142,6 +143,33 @@ async fn can_get_block_by_number() {
 
     let block = provider.get_block(BlockId::hash(block.header.hash)).full().await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_header_by_hash() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let header: Option<AnyRpcHeader> =
+        provider.client().request("eth_getHeaderByHash", (block.header.hash,)).await.unwrap();
+    let header = header.unwrap();
+    assert_eq!(header.hash, block.header.hash);
+    assert_eq!(header.number, block.header.number);
+    assert_eq!(header.transactions_root, block.header.transactions_root);
+
+    let missing: Option<AnyRpcHeader> =
+        provider.client().request("eth_getHeaderByHash", (B256::ZERO,)).await.unwrap();
+    assert_eq!(missing, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
