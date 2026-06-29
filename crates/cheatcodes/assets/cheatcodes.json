@@ -6926,6 +6926,26 @@
     },
     {
       "func": {
+        "id": "isIsolateMode",
+        "description": "Returns true if isolated test execution is enabled.",
+        "declaration": "function isIsolateMode() external view returns (bool result);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isIsolateMode()",
+        "selector": "0x17a5dbab",
+        "selectorBytes": [
+          23,
+          165,
+          219,
+          171
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "isPersistent",
         "description": "Returns true if the account is marked as persistent.",
         "declaration": "function isPersistent(address account) external view returns (bool persistent);",

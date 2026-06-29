@@ -1958,6 +1958,16 @@ impl SymbolicExecutor {
                     .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?;
                 return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(value)]));
             }
+            isIsolateModeCall::SELECTOR => {
+                let isolate = executor
+                    .inspector()
+                    .cheatcodes
+                    .as_ref()
+                    .is_some_and(|cheats| cheats.config.isolate);
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
+                    isolate,
+                ))]));
+            }
             isContextCall::SELECTOR => {
                 let context = read_abi_concrete_word_arg(
                     &state.memory,
