@@ -10,6 +10,8 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use anvil::{NodeConfig, spawn};
 use futures::StreamExt;
+use serde_json::Value;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads() {
@@ -245,6 +247,23 @@ async fn test_subscriptions() {
         .collect::<Vec<_>>();
 
     assert_eq!(blocks, vec![1, 2, 3])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sub_syncing_delivers_initial_status() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = connect_pubsub(&handle.ws_endpoint()).await;
+    let sub_id = provider.raw_request("eth_subscribe".into(), ["syncing"]).await.unwrap();
+    let stream: Subscription<Value> = provider.get_subscription(sub_id).await.unwrap();
+    let mut stream = stream.into_stream();
+
+    let initial = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .expect("timed out waiting for initial sync status")
+        .expect("subscription ended unexpectedly");
+
+    assert_eq!(initial, serde_json::json!(false));
 }
 
 #[expect(clippy::disallowed_macros)]
