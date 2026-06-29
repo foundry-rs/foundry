@@ -298,7 +298,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 ..Default::default()
             });
         }
-        if let Some(reason) = SkipReason::decode(&call.result) {
+        if call.reverter == Some(CHEATCODE_ADDRESS)
+            && let Some(reason) = SkipReason::decode(&call.result)
+        {
             return Ok(FuzzTestResult { skipped: true, reason: reason.0, ..Default::default() });
         }
 

@@ -374,6 +374,48 @@ contract ForgeFuzzReplaySkipTest is Test {
     assert!(!stdout.contains("[FAIL"), "{stdout}");
 });
 
+forgetest_init!(forge_fuzz_replay_does_not_treat_user_skip_payload_as_skip, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzReplayUserSkipPayload.t.sol",
+        r#"
+contract ForgeFuzzReplayUserSkipPayloadTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        require(value > 200);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayUserSkipPayloadTest", "-q"]).assert_failure();
+
+    prj.add_test(
+        "ForgeFuzzReplayUserSkipPayload.t.sol",
+        r#"
+contract ForgeFuzzReplayUserSkipPayloadTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        value;
+        bytes memory reason = bytes("FOUNDRY::SKIPnot cheatcode");
+        assembly {
+            revert(add(reason, 32), mload(reason))
+        }
+    }
+}
+   "#,
+    );
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayUserSkipPayloadTest"])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[FAIL:"), "{stdout}");
+    assert!(!stdout.contains("[SKIP: not cheatcode]"), "{stdout}");
+});
+
 forgetest_init!(forge_fuzz_junit_output_stays_xml_only_on_failure, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.runs = 1;
@@ -1003,6 +1045,55 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
         invariant_stdout.contains("invariant_corpus/ForgeFuzzGeneratedCorpusTest/worker0/corpus"),
         "{invariant_stdout}"
     );
+});
+
+forgetest_init!(forge_fuzz_replay_scopes_generated_corpus_root_to_target, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzGeneratedRootScope.t.sol",
+        r#"
+contract GeneratedCorpusATest {
+    function testFuzz_same(uint256 value) public pure {
+        require(value == 1);
+    }
+}
+
+contract GeneratedCorpusBTest {
+    function testFuzz_same(uint256 value) public pure {
+        require(value == 2);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzGeneratedRootScope.t.sol/GeneratedCorpusBTest.json");
+    let selector = calldata_for(&abi, "testFuzz_same", 0);
+    let selector = &selector[..10];
+
+    let corpus_root = prj.root().join("fuzz_corpus");
+    let a_corpus = corpus_root.join("GeneratedCorpusATest/testFuzz_same/worker0/corpus");
+    let b_corpus = corpus_root.join("GeneratedCorpusBTest/testFuzz_same/worker0/corpus");
+    std::fs::create_dir_all(&a_corpus).unwrap();
+    std::fs::create_dir_all(&b_corpus).unwrap();
+    write_corpus_entry(
+        &a_corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        &format!("{selector}{:064x}", 1),
+    );
+    write_corpus_entry(
+        &b_corpus,
+        "00000000-0000-0000-0000-000000000002-2.json",
+        &format!("{selector}{:064x}", 2),
+    );
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "GeneratedCorpusBTest", "--corpus-dir", "fuzz_corpus"])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] testFuzz_same(uint256) (replay: 1 entries"), "{stdout}");
+    assert!(!stdout.contains("corpus replay failed"), "{stdout}");
 });
 
 // tests that inline max-test-rejects config is properly applied

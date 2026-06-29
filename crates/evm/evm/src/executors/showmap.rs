@@ -181,9 +181,6 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     target: ShowmapReplayTarget<'_>,
     opts: &ShowmapOpts,
 ) -> Result<ShowmapStats> {
-    // TODO(@mablr): if `corpus_dir` points at a generated corpus root, first narrow it
-    // to the selected contract/test corpus path so selector collisions in sibling contracts do not
-    // contaminate replay. Keep accepting flat/manual corpus directories as-is.
     let entries = read_corpus_tree(corpus_dir)?;
     if opts.emit_files && entries.is_empty() {
         return Err(eyre::eyre!("corpus directory not found: {}", corpus_dir.display()));
@@ -230,10 +227,11 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             let mut call_result = execute_tx(&mut executor, tx)?;
             // Snapshot the edge fingerprint before any coverage merge zeroes the buffer.
             let fingerprint = snapshot_edge_fingerprint(&call_result);
-            // `vm.assume` rejects and `vm.skip` are discarded by the campaign: the call is not
-            // committed, checked, or counted toward coverage.
+            // `vm.assume` rejects and cheatcode `vm.skip` are discarded by the campaign: the call
+            // is not committed, checked, or counted toward coverage.
             if call_result.result.as_ref() == MAGIC_ASSUME
-                || SkipReason::decode(&call_result.result).is_some()
+                || (call_result.reverter == Some(CHEATCODE_ADDRESS)
+                    && SkipReason::decode(&call_result.result).is_some())
             {
                 continue;
             }

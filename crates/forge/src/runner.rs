@@ -2351,7 +2351,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Showmap replay mode: replay the persisted corpus and emit coverage
         // files instead of running the invariant campaign.
         if let Some(showmap) = self.cr.mcr.tcfg.showmap.clone() {
-            let corpus_dir = showmap.corpus_dir.clone().or(resolved_corpus_dir);
+            let corpus_dir = showmap
+                .corpus_dir
+                .clone()
+                .map(|corpus_dir| {
+                    narrow_generated_invariant_corpus_root(
+                        corpus_dir,
+                        self.cr.name,
+                        func.name.as_str(),
+                        is_optimization,
+                    )
+                })
+                .or(resolved_corpus_dir);
 
             // Reconstruct the per-test target selection that the campaign loop normally builds.
             if let Err(e) = evm.select_contract_artifacts(self.address) {
@@ -3096,8 +3107,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Showmap replay mode: replay the persisted corpus and emit coverage
         // files instead of running the fuzz campaign.
         if let Some(showmap) = self.cr.mcr.tcfg.showmap.clone() {
-            let corpus_dir =
-                showmap.corpus_dir.clone().or_else(|| fuzz_config.corpus.corpus_dir.clone());
+            let corpus_dir = showmap
+                .corpus_dir
+                .clone()
+                .map(|corpus_dir| {
+                    narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &func.name)
+                })
+                .or_else(|| fuzz_config.corpus.corpus_dir.clone());
             return self.run_showmap(
                 func,
                 corpus_dir,
@@ -3530,6 +3546,16 @@ fn test_paths(
     (failures_dir, failure_file)
 }
 
+fn narrow_generated_fuzz_corpus_root(
+    corpus_dir: PathBuf,
+    contract_name: &str,
+    test_name: &str,
+) -> PathBuf {
+    let contract = contract_name.split(':').next_back().unwrap();
+    let target_dir = corpus_dir.join(contract).join(test_name);
+    narrow_generated_corpus_root(corpus_dir, target_dir)
+}
+
 /// Sets the invariant corpus directory and returns the contract-level failure directory.
 fn invariant_suite_paths(
     corpus_config: &mut FuzzCorpusConfig,
@@ -3549,6 +3575,26 @@ fn invariant_suite_paths(
     }
 
     failure_dir
+}
+
+fn narrow_generated_invariant_corpus_root(
+    corpus_dir: PathBuf,
+    contract_name: &str,
+    invariant_name: &str,
+    is_optimization: bool,
+) -> PathBuf {
+    let contract = invariant_contract_name(contract_name);
+    let mut target_dir = corpus_dir.join(contract);
+    if is_optimization {
+        target_dir = target_dir.join(invariant_name);
+    }
+    narrow_generated_corpus_root(corpus_dir, target_dir)
+}
+
+fn narrow_generated_corpus_root(corpus_dir: PathBuf, target_dir: PathBuf) -> PathBuf {
+    let target_is_dir =
+        std::fs::symlink_metadata(&target_dir).is_ok_and(|metadata| metadata.file_type().is_dir());
+    if target_is_dir { canonicalized(target_dir) } else { corpus_dir }
 }
 
 /// Returns the contract-level invariant failure directory.
