@@ -623,7 +623,7 @@ mod tests {
         let mut evm = EvmShowmap::new();
         evm.insert((h, 7u32), 5u64);
         let err = write_showmap_file(&path, &evm, &[]).unwrap_err();
-        assert!(err.to_string().contains("File exists"), "{err:?}");
+        assert!(err.to_string().contains("pick a different --showmap-trial"), "{err:?}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me");
     }
 
