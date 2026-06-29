@@ -331,6 +331,31 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     );
 });
 
+forgetest_init!(is_isolate_mode_uses_effective_isolation, |prj, cmd| {
+    prj.update_config(|config| config.isolate = false);
+    prj.add_test(
+        "effective_isolation.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract EffectiveIsolationTest is Test {
+            function test_isolate_mode_disabled_by_config() public view {
+                assertFalse(vm.isIsolateMode());
+            }
+
+            function test_gas_report_enables_isolate_mode() public view {
+                assertTrue(vm.isIsolateMode());
+            }
+        }
+    "#,
+    );
+
+    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--gas-report", "--match-test", "test_gas_report_enables_isolate_mode"])
+        .assert_success();
+});
+
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
     prj.add_test(
         "inline.sol",
