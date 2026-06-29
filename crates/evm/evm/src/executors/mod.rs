@@ -11,6 +11,7 @@ use crate::inspectors::{
     cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_eips::eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
@@ -46,6 +47,7 @@ use revm::{
     },
     database::{DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
+    primitives::hardfork::SpecId,
 };
 use sancov::SancovGuard;
 use std::{
@@ -145,6 +147,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 ..Default::default()
             },
         );
+
+        if !backend.is_in_forking_mode() && evm_env.cfg_env.spec.into() >= SpecId::PRAGUE {
+            let mut account =
+                backend.basic_ref(HISTORY_STORAGE_ADDRESS).unwrap_or_default().unwrap_or_default();
+            account.code_hash = keccak256(&HISTORY_STORAGE_CODE);
+            account.code = Some(Bytecode::new_raw(HISTORY_STORAGE_CODE.clone()));
+            backend.insert_account_info(HISTORY_STORAGE_ADDRESS, account);
+        }
 
         Self {
             backend: Arc::new(backend),
@@ -1467,10 +1477,7 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
-    use revm::{
-        context::{Cfg, TxEnv},
-        primitives::hardfork::SpecId,
-    };
+    use revm::context::{Cfg, TxEnv};
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
         RawCallResult {

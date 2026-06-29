@@ -975,6 +975,98 @@ contract TransientTest is Test {
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
 });
 
+forgetest_init!(eip2935_history_storage_in_prague_tests, |prj, cmd| {
+    prj.add_test(
+        "EIP2935.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract EIP2935Test is Test {
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+
+    function testHistoryContractDeployed() public {
+        assertGt(HISTORY.code.length, 0, "history contract missing");
+    }
+
+    function testRollStoresParentBlockHash() public {
+        vm.roll(1000);
+        bytes32 expected = keccak256("parent");
+        vm.setBlockhash(1000, expected);
+
+        vm.roll(1001);
+
+        (bool ok, bytes memory ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(1000))));
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+        assertEq(bytes32(ret), expected, "stored parent hash");
+    }
+
+    function testSetBlockhashPopulatesHistory() public {
+        vm.roll(2000);
+        bytes32 expected = keccak256("history");
+        vm.setBlockhash(1999, expected);
+
+        assertEq(blockhash(1999), expected);
+
+        (bool ok, bytes memory ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(1999))));
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+        assertEq(bytes32(ret), expected, "stored history hash");
+    }
+
+    function testSetBlockhashUpdatesCachedHistorySlot() public {
+        vm.roll(2000);
+
+        (bool ok, bytes memory ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(1998))));
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+        assertEq(bytes32(ret), bytes32(0), "history precondition");
+
+        bytes32 expected = keccak256("cached history");
+        vm.setBlockhash(1998, expected);
+
+        (ok, ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(1998))));
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+        assertEq(bytes32(ret), expected, "cached history hash");
+    }
+
+    function testSetBlockhashDoesNotCorruptHistoryRing() public {
+        vm.roll(20000);
+        bytes32 ancient = keccak256("ancient");
+        vm.setBlockhash(0, ancient);
+
+        (bool ok, bytes memory ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(16382))));
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+        assertNotEq(bytes32(ret), ancient, "ring collision");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version", "prague"]).assert_success();
+});
+
+forgetest_init!(eip2935_history_storage_not_deployed_before_prague, |prj, cmd| {
+    prj.add_test(
+        "EIP2935.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract EIP2935Test is Test {
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+
+    function testHistoryContractNotDeployed() public {
+        assertEq(HISTORY.code.length, 0, "history contract deployed before Prague");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version", "cancun"]).assert_success();
+});
+
 forgetest_init!(setup_selfdestruct_deletes_same_tx_created_contracts, |prj, cmd| {
     prj.add_test(
         "SetupSelfdestruct.t.sol",

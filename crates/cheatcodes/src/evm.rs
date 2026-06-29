@@ -5,6 +5,7 @@ use crate::{
     Vm::*, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::transaction::SignerRecoverable;
+use alloy_eips::eip2935::{HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS};
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
@@ -608,6 +609,16 @@ impl Cheatcode for getBlobhashesCall {
 impl Cheatcode for rollCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newHeight } = self;
+        let current_height = ccx.ecx.block().number();
+        if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE
+            && *newHeight > current_height
+            && !newHeight.is_zero()
+        {
+            let parent_number = *newHeight - U256::from(1);
+            let parent_hash =
+                ccx.ecx.db_mut().block_hash(parent_number.saturating_to()).unwrap_or_default();
+            set_eip2935_blockhash(ccx.ecx, parent_number, parent_hash)?;
+        }
         ccx.ecx.block_mut().set_number(*newHeight);
         Ok(Default::default())
     }
@@ -1183,6 +1194,12 @@ impl Cheatcode for setBlockhashCall {
         );
 
         ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
+        if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE
+            && blockNumber + U256::from(HISTORY_SERVE_WINDOW)
+                >= U256::from(ccx.ecx.block().number())
+        {
+            set_eip2935_blockhash(ccx.ecx, blockNumber, blockHash)?;
+        }
 
         Ok(Default::default())
     }
@@ -1734,6 +1751,24 @@ pub(super) fn ensure_loaded_account<CTX: ContextTr<Db: Database<Error = Database
 ) -> Result<()> {
     ecx.journal_mut().load_account(addr)?;
     ecx.journal_mut().touch_account(addr);
+    Ok(())
+}
+
+fn set_eip2935_blockhash<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+>(
+    ecx: &mut CTX,
+    block_number: U256,
+    block_hash: B256,
+) -> Result<()> {
+    ensure_loaded_account(ecx, HISTORY_STORAGE_ADDRESS)?;
+    ecx.journal_mut()
+        .sstore(
+            HISTORY_STORAGE_ADDRESS,
+            block_number % U256::from(HISTORY_SERVE_WINDOW),
+            U256::from_be_bytes(block_hash.0),
+        )
+        .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {:?}", e))?;
     Ok(())
 }
 
