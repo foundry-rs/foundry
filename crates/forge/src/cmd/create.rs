@@ -10,7 +10,7 @@ use alloy_signer::{Signature, Signer};
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, parse_etherscan_license_type};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{
@@ -89,11 +89,17 @@ pub struct CreateArgs {
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
-    /// The Etherscan license type code to include with the verification request.
+    /// The Etherscan license type code or SPDX identifier to include with the verification request.
     ///
-    /// See Etherscan's supported `licenseType` values. This is only used for Etherscan-style
-    /// verifiers when `--verify` is enabled.
-    #[arg(long, requires = "verify", value_name = "CODE", help_heading = "Verifier options")]
+    /// Accepts either an Etherscan numeric license code or a common SPDX identifier such as `MIT`.
+    /// This is only used for Etherscan-style verifiers when `--verify` is enabled.
+    #[arg(
+        long,
+        requires = "verify",
+        value_name = "LICENSE",
+        help_heading = "Verifier options",
+        value_parser = parse_etherscan_license_type,
+    )]
     license_type: Option<String>,
 
     /// Timeout to use for broadcasting transactions.
@@ -934,6 +940,32 @@ mod tests {
         assert_eq!(args.retry.delay, 30);
         assert_eq!(args.license_type.as_deref(), Some("13"));
     }
+
+    #[test]
+    fn can_parse_create_license_type_spdx() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "MIT",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn errors_on_invalid_create_license_type() {
+        let err = CreateArgs::try_parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "definitely-not-a-license",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("unsupported Etherscan license type"));
+    }
+
     #[test]
     fn can_parse_chain_id() {
         let args: CreateArgs = CreateArgs::parse_from([
