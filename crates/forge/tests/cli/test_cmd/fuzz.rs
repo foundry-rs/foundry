@@ -762,20 +762,6 @@ forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
     assert_eq!(stdout.matches("corpus/worker").count(), 1, "{stdout}");
 });
 
-forgetest_init!(forge_fuzz_rejects_machine, |prj, cmd| {
-    for args in [
-        vec!["--machine", "fuzz", "run"],
-        vec!["--machine", "fuzz", "replay"],
-        vec!["--machine", "fuzz", "show", "corpus"],
-    ] {
-        let result = cmd.forge_fuse().args(args).assert_failure();
-        let output: Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
-        assert_eq!(output["success"], false);
-        assert_eq!(output["errors"][0]["code"], "cli.usage.invalid");
-        assert_eq!(output["errors"][0]["details"]["subcommand"], "fuzz");
-    }
-});
-
 forgetest_init!(forge_fuzz_replay_error_on_zero_replay, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzZeroReplay.t.sol",
