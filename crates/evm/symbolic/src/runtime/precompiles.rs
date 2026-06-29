@@ -70,36 +70,39 @@ pub(crate) fn execute_precompile(
 
 pub(crate) fn execute_symbolic_precompile(
     address: Address,
-    input: Vec<SymExpr>,
+    input: SymBytes,
     input_len: SymExpr,
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     if let Some(input_len) = input_len.as_const()
         && let Ok(input_len) = usize::try_from(input_len)
         && input_len <= input.len()
-        && let Ok(input) = input[..input_len].concrete_bytes("symbolic precompile input")
+        && let Ok(input) =
+            input.slice_concrete(0, input_len).concrete_bytes("symbolic precompile input")
     {
         return execute_precompile(address, &input, spec_id);
     }
 
     match precompile_number_for_spec(address, spec_id) {
         Some(1) => {
+            let input = input.materialize();
             let word = symbolic_hash_word_with_len("ecrecover", input, input_len);
             let mut bytes = vec![SymExpr::zero(); 12];
             bytes.extend((12..32).map(|idx| byte_word(U256::from(idx), word.clone())));
-            Ok(Some(SymReturnData::from_symbolic_bytes(bytes)))
+            Ok(Some(SymReturnData::from_byte_exprs(bytes)))
         }
-        Some(2) => Ok(Some(SymReturnData::from_symbolic_bytes(
-            symbolic_hash_word_with_len("sha256", input, input_len).into_bytes(),
+        Some(2) => Ok(Some(SymReturnData::from_byte_exprs(
+            symbolic_hash_word_with_len("sha256", input.materialize(), input_len).into_byte_exprs(),
         ))),
         Some(3) => {
+            let input = input.materialize();
             let word = symbolic_hash_word_with_len("ripemd160", input, input_len);
             let mut bytes = vec![SymExpr::zero(); 12];
             bytes.extend((12..32).map(|idx| byte_word(U256::from(idx), word.clone())));
-            Ok(Some(SymReturnData::from_symbolic_bytes(bytes)))
+            Ok(Some(SymReturnData::from_byte_exprs(bytes)))
         }
-        Some(4) => Ok(Some(SymReturnData::from_symbolic_bytes_with_len(input, input_len))),
-        Some(5) => symbolic_modexp_precompile(input, input_len),
+        Some(4) => Ok(Some(SymReturnData::from_bytes_with_len(input, input_len))),
+        Some(5) => symbolic_modexp_precompile(&input, input_len),
         Some(6) => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
             if input_len > input.len() {
@@ -110,7 +113,7 @@ pub(crate) fn execute_symbolic_precompile(
                     "symbolic bn254 precompile validity not modeled",
                 ));
             }
-            Ok(Some(symbolic_fixed_len_precompile_output("bn254_add", input, input_len, 64)))
+            Ok(Some(symbolic_fixed_len_precompile_output("bn254_add", &input, input_len, 64)))
         }
         Some(7) => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
@@ -122,7 +125,7 @@ pub(crate) fn execute_symbolic_precompile(
                     "symbolic bn254 precompile validity not modeled",
                 ));
             }
-            Ok(Some(symbolic_fixed_len_precompile_output("bn254_mul", input, input_len, 64)))
+            Ok(Some(symbolic_fixed_len_precompile_output("bn254_mul", &input, input_len, 64)))
         }
         Some(8) => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
@@ -137,7 +140,7 @@ pub(crate) fn execute_symbolic_precompile(
                     "symbolic bn254 precompile validity not modeled",
                 ));
             }
-            Ok(Some(symbolic_fixed_len_precompile_output("bn254_pairing", input, input_len, 32)))
+            Ok(Some(symbolic_fixed_len_precompile_output("bn254_pairing", &input, input_len, 32)))
         }
         Some(9) => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
@@ -147,43 +150,37 @@ pub(crate) fn execute_symbolic_precompile(
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
-            match input.get(212) {
-                Some(flag)
-                    if flag
-                        .as_const()
-                        .is_some_and(|flag| flag.is_zero() || flag == U256::from(1)) => {}
-                Some(flag) if flag.as_const().is_some() => return Ok(None),
-                Some(_) => {
+            let flag = input.byte(212);
+            match flag.as_const() {
+                Some(flag) if flag.is_zero() || flag == U256::from(1) => {}
+                Some(_) => return Ok(None),
+                None => {
                     return Err(SymbolicError::Unsupported(
                         "symbolic blake2f precompile final flag not modeled",
                     ));
                 }
-                None => {
-                    return Err(SymbolicError::Unsupported(
-                        "out-of-bounds symbolic precompile input",
-                    ));
-                }
             }
-            Ok(Some(symbolic_fixed_len_precompile_output("blake2f", input, input_len, 64)))
+            Ok(Some(symbolic_fixed_len_precompile_output("blake2f", &input, input_len, 64)))
         }
         Some(10) => Err(SymbolicError::Unsupported("KZG handled by execute_kzg_precompile_call")),
         _ => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
-            let input = input
-                .get(..input_len)
-                .ok_or(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"))?
-                .concrete_bytes("symbolic precompile input")?;
+            if input_len > input.len() {
+                return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
+            }
+            let input =
+                input.slice_concrete(0, input_len).concrete_bytes("symbolic precompile input")?;
             execute_precompile(address, &input, spec_id)
         }
     }
 }
 
-fn input_has_symbolic_bytes(input: &[SymExpr], input_len: usize) -> bool {
-    input.iter().take(input_len).any(|byte| byte.as_const().is_none())
+fn input_has_symbolic_bytes(input: &SymBytes, input_len: usize) -> bool {
+    (0..input_len).any(|idx| input.byte(idx).as_const().is_none())
 }
 
 pub(crate) fn symbolic_modexp_precompile(
-    input: Vec<SymExpr>,
+    input: &SymBytes,
     input_len: SymExpr,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     let input_len = input_len.into_usize("symbolic precompile input")?;
@@ -191,7 +188,7 @@ pub(crate) fn symbolic_modexp_precompile(
         return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
     }
 
-    let modulus_len = concrete_precompile_word_at(&input, 64)?;
+    let modulus_len = concrete_precompile_word_at(input, 64)?;
     let modulus_len = usize::try_from(modulus_len)
         .ok()
         .ok_or(SymbolicError::Unsupported("symbolic modexp output length"))?;
@@ -202,31 +199,28 @@ pub(crate) fn symbolic_modexp_precompile(
 }
 
 pub(crate) fn concrete_precompile_word_at(
-    input: &[SymExpr],
+    input: &SymBytes,
     offset: usize,
 ) -> Result<U256, SymbolicError> {
     let mut bytes = [0u8; 32];
     for (idx, byte) in bytes.iter_mut().enumerate() {
-        *byte = match input.get(offset + idx) {
-            Some(word) => match word.as_const() {
-                Some(byte) => byte.to::<u8>(),
-                None => {
-                    return Err(SymbolicError::Unsupported("symbolic precompile length header"));
-                }
-            },
-            None => 0,
-        };
+        let word = input.byte(offset + idx);
+        *byte = word
+            .as_const()
+            .ok_or(SymbolicError::Unsupported("symbolic precompile length header"))?
+            .to::<u8>();
     }
     Ok(U256::from_be_bytes(bytes))
 }
 
 pub(crate) fn symbolic_fixed_len_precompile_output(
     algorithm: &'static str,
-    input: Vec<SymExpr>,
+    input: &SymBytes,
     input_len: usize,
     output_len: usize,
 ) -> SymReturnData {
     let input_len_word = SymExpr::constant(U256::from(input_len));
+    let input = input.materialize();
     let mut bytes = Vec::with_capacity(output_len);
     for chunk in 0..output_len.div_ceil(32) {
         let mut chunk_input = Vec::with_capacity(input.len() + 1);
@@ -234,9 +228,9 @@ pub(crate) fn symbolic_fixed_len_precompile_output(
         chunk_input.extend(input.iter().cloned());
         bytes.extend(
             symbolic_hash_word_with_len(algorithm, chunk_input, input_len_word.clone())
-                .into_bytes(),
+                .into_byte_exprs(),
         );
     }
     bytes.truncate(output_len);
-    SymReturnData::from_symbolic_bytes(bytes)
+    SymReturnData::from_byte_exprs(bytes)
 }

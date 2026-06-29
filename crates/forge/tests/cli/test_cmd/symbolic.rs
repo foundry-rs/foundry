@@ -120,7 +120,11 @@ contract SymbolicSingleCallArtifactEnv is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1598,7 +1602,11 @@ contract SymbolicArtifactFailOnRevert is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1761,7 +1769,11 @@ contract SymbolicArtifactBracketPath is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1864,7 +1876,11 @@ contract SymbolicArtifactStaleTarget is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -1991,7 +2007,11 @@ contract SymbolicArtifactForbiddenSender is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -2141,7 +2161,11 @@ contract SymbolicArtifactCreatedTarget is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],
@@ -2261,7 +2285,11 @@ contract SymbolicArtifactNetworkReplay is Test {
                 "sat_cache_hits": 0,
                 "model_cache_hits": 0,
                 "heuristic_witnesses": 0,
-                "solver_time_ms": 0
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
             }
         },
         "assumptions": [],

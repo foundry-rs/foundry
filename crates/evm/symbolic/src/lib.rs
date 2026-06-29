@@ -412,6 +412,18 @@ pub struct SymbolicStats {
     /// Wall-clock time spent waiting on backend solver subprocesses, in milliseconds.
     #[serde(default)]
     pub solver_time_ms: u64,
+    /// Total SMT-LIB input bytes sent to backend solver subprocesses.
+    #[serde(default)]
+    pub smt_input_bytes: u64,
+    /// Largest single SMT-LIB query input sent to a backend solver subprocess, in bytes.
+    #[serde(default)]
+    pub smt_max_query_bytes: u64,
+    /// Wall-clock time spent building SMT-LIB query strings, in milliseconds.
+    #[serde(default)]
+    pub smt_build_time_ms: u64,
+    /// Longest single backend solver subprocess query, in milliseconds.
+    #[serde(default)]
+    pub smt_max_query_time_ms: u64,
 }
 
 /// SMT-LIB-backed symbolic executor.

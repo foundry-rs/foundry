@@ -44,15 +44,15 @@ impl SymbolicExecutor {
     pub(super) fn solver_upper_bound_usize(
         &mut self,
         state: &PathState,
-        word: &SymExpr,
+        expr: &SymExpr,
         max: usize,
         reason: &'static str,
     ) -> Result<usize, SymbolicError> {
-        if word.contains_gasleft() {
+        if expr.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let mut above_max = state.constraints.clone();
-        above_max.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ugt, word, U256::from(max)));
+        above_max.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ugt, expr, U256::from(max)));
         if self.solver.is_sat(&above_max)? {
             return Err(SymbolicError::Unsupported(reason));
         }
@@ -62,7 +62,7 @@ impl SymbolicExecutor {
         while low < high {
             let mid = low + (high - low) / 2;
             let mut above_mid = state.constraints.clone();
-            above_mid.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ugt, word, U256::from(mid)));
+            above_mid.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ugt, expr, U256::from(mid)));
             if self.solver.is_sat(&above_mid)? {
                 low = mid + 1;
             } else {
@@ -72,16 +72,16 @@ impl SymbolicExecutor {
         Ok(low)
     }
 
-    pub(super) fn assume_word_at_least(
+    pub(super) fn assume_expr_at_least(
         &mut self,
         state: &mut PathState,
-        word: &SymExpr,
+        expr: &SymExpr,
         min: usize,
     ) -> Result<bool, SymbolicError> {
-        if word.contains_gasleft() {
+        if expr.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let condition = SymBoolExpr::cmp_word_const(SymBoolExprOp::Uge, word, U256::from(min));
+        let condition = SymBoolExpr::cmp_word_const(SymBoolExprOp::Uge, expr, U256::from(min));
         match condition.as_const() {
             Some(value) => Ok(value),
             None => {

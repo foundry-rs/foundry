@@ -2,7 +2,6 @@ use super::{install, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
-    diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
     multi_runner::{
         MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, matches_artifact,
@@ -17,6 +16,7 @@ use crate::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
+        speedscope,
     },
 };
 use alloy_primitives::U256;
@@ -24,8 +24,6 @@ use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
-    ExitCode,
-    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
@@ -33,7 +31,7 @@ use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
 };
 use foundry_compilers::{
-    CompilationError, ProjectCompileOutput,
+    ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
     compilers::{
         Language,
@@ -74,6 +72,7 @@ use std::{
 };
 use yansi::Paint;
 
+mod evm_profile_server;
 mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
@@ -84,6 +83,31 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
+
+/// Output format for EVM execution profiles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum EvmProfileFormat {
+    /// Speedscope format, opens in speedscope.app.
+    #[default]
+    Speedscope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TraceOutputKind {
+    Flamegraph,
+    Flamechart,
+    EvmProfile(EvmProfileFormat),
+}
+
+impl TraceOutputKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Flamegraph => "flamegraph",
+            Self::Flamechart => "flamechart",
+            Self::EvmProfile(_) => "EVM profile",
+        }
+    }
+}
 
 /// CLI mirror of `foundry_evm::executors::ShowmapDomain`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -148,7 +172,7 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "evm_profile", "decode_internal", "rerun"])]
     debug: bool,
 
     /// Debugger layout to use.
@@ -159,15 +183,36 @@ pub struct TestArgs {
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
     /// are consuming the most gas overall in a sorted manner.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["flamechart", "evm_profile", "json", "junit", "list"])]
     flamegraph: bool,
 
     /// Generate a flamechart for a single test. Implies `--decode-internal`.
     ///
     /// A flame chart shows the gas usage over time, illustrating when each function is
     /// called (execution order) and how much gas it consumes at each point in the timeline.
-    #[arg(long, conflicts_with = "flamegraph")]
+    #[arg(long, conflicts_with_all = ["flamegraph", "evm_profile", "json", "junit", "list"])]
     flamechart: bool,
+
+    /// Generate an execution profile for a single test.
+    ///
+    /// Creates a profile where each EVM call is recorded with gas consumption.
+    /// Opens the profile in speedscope.app unless `--no-open` is passed.
+    /// Implies `--decode-internal`.
+    #[arg(
+        long,
+        value_name = "FORMAT",
+        num_args = 0..=1,
+        default_missing_value = "speedscope",
+        value_enum,
+        conflicts_with_all = ["flamegraph", "flamechart", "json", "junit", "list"]
+    )]
+    evm_profile: Option<EvmProfileFormat>,
+
+    /// Don't open the profile in the browser (for `--evm-profile`).
+    ///
+    /// The profile is saved to disk without starting the local viewer server.
+    #[arg(long, requires = "evm_profile")]
+    no_open: bool,
 
     /// Identify internal functions in traces.
     ///
@@ -515,7 +560,7 @@ pub struct TestArgs {
         value_name = "DIR",
         value_hint = ValueHint::DirPath,
         help_heading = "Showmap replay",
-        conflicts_with_all = ["debug", "flamegraph", "flamechart", "rerun", "fuzz_input_file", "gas_report"],
+        conflicts_with_all = ["debug", "flamegraph", "flamechart", "evm_profile", "rerun", "fuzz_input_file", "gas_report"],
     )]
     pub showmap_out: Option<PathBuf>,
 
@@ -710,50 +755,6 @@ impl TestArgs {
         Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
     }
 
-    /// Reject flags whose stdout shape conflicts with the NDJSON stream
-    /// contract under `--machine`. Called from the binary entry point so
-    /// `--watch` is also rejected.
-    pub(crate) fn reject_machine_unsupported_flags(&self) -> Result<()> {
-        if !foundry_cli::is_machine() {
-            return Ok(());
-        }
-        let unsupported = [
-            ("--watch", self.is_watch()),
-            ("--debug", self.debug),
-            ("--flamegraph", self.flamegraph),
-            ("--flamechart", self.flamechart),
-            ("--gas-report", self.gas_report),
-            ("--summary", self.summary),
-            ("--list", self.list),
-            ("--junit", self.junit),
-            ("--show-progress", self.show_progress),
-            ("--mutate", self.mutate.is_some()),
-            // `--live-logs` writes console.log straight to stdout; the
-            // `live_logs = true` config equivalent is overridden in
-            // `compile_and_run`.
-            ("--live-logs", self.evm.live_logs),
-            // Bails mid-suite on diff; config equivalent overridden in `compile_and_run`.
-            ("--gas-snapshot-check", self.gas_snapshot_check.unwrap_or(false)),
-            // Writes mid-suite to disk and can fail between test_result and
-            // suite_finished; config equivalent overridden in `compile_and_run`.
-            ("--gas-snapshot-emit", self.gas_snapshot_emit == Some(true)),
-        ]
-        .into_iter()
-        .filter_map(|(name, on)| on.then_some(name))
-        .collect::<Vec<_>>();
-        if !unsupported.is_empty() {
-            foundry_cli::machine::bail_machine_usage_with_details(
-                format!(
-                    "`forge test` under `--machine` does not yet support {}; \
-                     run without `--machine` or omit those flags.",
-                    unsupported.join(", ")
-                ),
-                serde_json::json!({ "unsupported_flags": unsupported }),
-            );
-        }
-        Ok(())
-    }
-
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
@@ -794,11 +795,6 @@ impl TestArgs {
         });
         let output = project.compile()?;
         if output.has_compiler_errors() {
-            // Mirror the main-compile typed envelope so agents don't see this
-            // path as `cli.unknown` + exit 1.
-            if foundry_cli::is_machine() {
-                emit_machine_compile_error(&output);
-            }
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
@@ -836,8 +832,6 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
-        let machine_mode = foundry_cli::is_machine();
-
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -849,21 +843,7 @@ impl TestArgs {
             config.cache = true;
         }
 
-        // Override foundry.toml knobs that would print outside the NDJSON
-        // stream or bail mid-suite; the CLI equivalents are rejected in
-        // `reject_machine_unsupported_flags`.
-        if machine_mode {
-            config.show_progress = false;
-            config.live_logs = false;
-            config.gas_snapshot_check = false;
-            config.gas_snapshot_emit = false;
-        }
-
-        // Skip implicit dep install: it prints to stdout. A missing dep then
-        // surfaces as a typed `compiler.solc.error` from the compile below.
-        if !machine_mode
-            && install::install_missing_dependencies(&mut config).await
-            && config.auto_detect_remappings
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
@@ -898,20 +878,11 @@ impl TestArgs {
         }
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let mut compiler = ProjectCompiler::new()
+        let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit || machine_mode)
+            .quiet(shell::is_json() || self.junit)
             .files(self.get_sources_to_compile(&config, &filter)?);
-        // Disable inner `bail` so a compile error returns the output and we
-        // can emit a typed envelope instead of an untyped `cli.unknown`.
-        if machine_mode {
-            compiler = compiler.bail(false);
-        }
         let output = compiler.compile(&project)?;
-
-        if machine_mode && output.has_compiler_errors() {
-            emit_machine_compile_error(&output);
-        }
 
         self.run_tests(
             &project.paths.root,
@@ -964,6 +935,9 @@ impl TestArgs {
             if self.flamechart {
                 conflicts.push("--flamechart");
             }
+            if self.evm_profile.is_some() {
+                conflicts.push("--evm-profile");
+            }
             if self.junit {
                 conflicts.push("--junit");
             }
@@ -1002,15 +976,21 @@ impl TestArgs {
 
         // Create test options from general project settings and compiler output.
         execution.should_debug = self.debug;
-        let should_draw = self.flamegraph || self.flamechart;
+        let trace_output = if self.flamegraph {
+            Some(TraceOutputKind::Flamegraph)
+        } else if self.flamechart {
+            Some(TraceOutputKind::Flamechart)
+        } else {
+            self.evm_profile.map(TraceOutputKind::EvmProfile)
+        };
 
         // Determine executor verbosity.
-        if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
+        if evm_opts.verbosity < 3 && (self.gas_report || trace_output.is_some()) {
             evm_opts.verbosity = 3;
         }
 
-        // Enable internal tracing for more informative flamegraph.
-        if should_draw && !self.decode_internal {
+        // Enable internal tracing for more informative flamegraph/profile.
+        if !self.decode_internal && trace_output.is_some() {
             self.decode_internal = true;
         }
 
@@ -1033,21 +1013,6 @@ impl TestArgs {
         // Parse inline config early to detect per-test network annotations.
         let inline_config = InlineConfig::new_parsed(output, &config)?;
         let override_networks = inline_config.referenced_override_networks(&config.profile);
-
-        // Multi-pass would emit `test_result*` + `suite_finished` once per
-        // pass for the same suite, violating "exactly one terminator per group".
-        if foundry_cli::is_machine() && !override_networks.is_empty() {
-            let networks: Vec<String> = override_networks.iter().map(|n| n.to_string()).collect();
-            foundry_cli::machine::bail_machine_usage_with_details(
-                "`forge test` under `--machine` does not yet support inline network \
-                 overrides; run without `--machine` or remove the inline `network` \
-                 annotations.",
-                serde_json::json!({
-                    "unsupported_features": ["inline_network_overrides"],
-                    "networks": networks,
-                }),
-            );
-        }
 
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
@@ -1111,11 +1076,10 @@ impl TestArgs {
             }
 
             // Print the merged summary (per-pass summaries are suppressed in `run_tests_inner`).
-            // Machine mode emits a terminal envelope from the binary entry point instead.
-            if !self.summary && !shell::is_json() && !foundry_cli::is_machine() {
+            if !self.summary && !shell::is_json() {
                 sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
             }
-            if self.summary && !outcome.results.is_empty() && !foundry_cli::is_machine() {
+            if self.summary && !outcome.results.is_empty() {
                 let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
                 sh_println!("{}", &summary_report)?;
             }
@@ -1142,44 +1106,136 @@ impl TestArgs {
             }
         }
 
-        if should_draw {
-            let (suite_name, test_name, mut test_result) =
-                outcome.remove_first().ok_or_eyre("no tests were executed")?;
-
-            let (_, arena) = test_result
-                .traces
-                .iter_mut()
-                .find(|(kind, _)| *kind == TraceKind::Execution)
-                .unwrap();
-
-            // Decode traces.
-            let decoder = outcome.last_run_decoder.as_ref().unwrap();
-            decode_trace_arena(arena, decoder).await;
-            let mut fst = folded_stack_trace::build(arena, self.evm.isolate);
-
-            let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
-            let contract = suite_name.split(':').next_back().unwrap();
-            let test_name = test_name.trim_end_matches("()");
-            let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
-            let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
-            let file = std::io::BufWriter::new(file);
-
-            let mut options = inferno::flamegraph::Options::default();
-            options.title = format!("{label} {contract}::{test_name}");
-            options.count_name = "gas".to_string();
-            if self.flamechart {
-                options.flame_chart = true;
-                fst.reverse();
+        if let Some(trace_output) = trace_output {
+            enum RenderedTraceOutput {
+                Flame {
+                    file_name: String,
+                    title: String,
+                    flame_chart: bool,
+                    folded_stack_trace: Vec<String>,
+                },
+                EvmProfile {
+                    profile_json: Vec<u8>,
+                    test_name: String,
+                    contract: String,
+                },
             }
 
-            // Generate SVG.
-            inferno::flamegraph::from_lines(&mut options, fst.iter().map(String::as_str), file)
-                .wrap_err("failed to write svg")?;
-            sh_println!("Saved to {file_name}")?;
+            let rendered = {
+                let output_label = trace_output.label();
+                let no_tests = match trace_output {
+                    TraceOutputKind::EvmProfile(_) => {
+                        "cannot generate EVM profile: no tests were executed"
+                    }
+                    TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
+                        "no tests were executed"
+                    }
+                };
+                if !outcome.results.values().any(|suite| !suite.test_results.is_empty()) {
+                    return Err(eyre::eyre!("{no_tests}"));
+                }
+                let decoder = outcome.last_run_decoder.clone().ok_or_else(|| {
+                    eyre::eyre!("cannot generate {output_label}: missing trace decoder")
+                })?;
+                let (suite_name, test_name, test_result) = outcome
+                    .results
+                    .iter_mut()
+                    .find_map(|(suite_name, suite)| {
+                        suite.test_results.iter_mut().next().map(|(test_name, result)| {
+                            (suite_name.as_str(), test_name.as_str(), result)
+                        })
+                    })
+                    .ok_or_else(|| eyre::eyre!("{no_tests}"))?;
+                let contract = suite_name.split(':').next_back().unwrap();
+                let test_name_trimmed = test_name.trim_end_matches("()");
 
-            // Open SVG in default program.
-            if let Err(e) = opener::open(&file_name) {
-                sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
+                let (_, arena) = test_result
+                    .traces
+                    .iter_mut()
+                    .find(|(kind, _)| *kind == TraceKind::Execution)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "cannot generate {output_label} for {contract}::{test_name_trimmed}: \
+                             no execution trace (test may have failed in setUp/constructor or been \
+                             skipped)"
+                        )
+                    })?;
+
+                // Decode traces.
+                decode_trace_arena(arena, &decoder).await;
+
+                match trace_output {
+                    TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
+                        let mut folded_stack_trace =
+                            folded_stack_trace::build(arena, self.evm.isolate);
+                        let flame_chart = matches!(trace_output, TraceOutputKind::Flamechart);
+                        if flame_chart {
+                            folded_stack_trace.reverse();
+                        }
+                        let label = trace_output.label();
+                        RenderedTraceOutput::Flame {
+                            file_name: format!("cache/{label}_{contract}_{test_name_trimmed}.svg"),
+                            title: format!("{label} {contract}::{test_name_trimmed}"),
+                            flame_chart,
+                            folded_stack_trace,
+                        }
+                    }
+                    TraceOutputKind::EvmProfile(EvmProfileFormat::Speedscope) => {
+                        let profile = speedscope::builder::build(
+                            arena,
+                            test_name_trimmed,
+                            contract,
+                            self.evm.isolate,
+                        );
+                        RenderedTraceOutput::EvmProfile {
+                            profile_json: serde_json::to_vec(&profile)?,
+                            test_name: test_name_trimmed.to_string(),
+                            contract: contract.to_string(),
+                        }
+                    }
+                }
+            };
+
+            match rendered {
+                RenderedTraceOutput::Flame {
+                    file_name,
+                    title,
+                    flame_chart,
+                    folded_stack_trace,
+                } => {
+                    let file =
+                        std::fs::File::create(&file_name).wrap_err("failed to create file")?;
+                    let file = std::io::BufWriter::new(file);
+
+                    let mut options = inferno::flamegraph::Options::default();
+                    options.title = title;
+                    options.count_name = "gas".to_string();
+                    options.flame_chart = flame_chart;
+
+                    inferno::flamegraph::from_lines(
+                        &mut options,
+                        folded_stack_trace.iter().map(String::as_str),
+                        file,
+                    )
+                    .wrap_err("failed to write svg")?;
+                    sh_println!("Saved to {file_name}")?;
+
+                    if let Err(e) = opener::open(&file_name) {
+                        sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
+                    }
+                }
+                RenderedTraceOutput::EvmProfile { profile_json, test_name, contract } => {
+                    let profile_path = format!("cache/evm_profile_{contract}_{test_name}.json");
+                    fs::write(&profile_path, &profile_json)?;
+
+                    sh_println!("Profile saved to {profile_path}")?;
+
+                    if self.no_open {
+                        return Ok(outcome);
+                    }
+
+                    evm_profile_server::serve_and_open(profile_json, &test_name, &contract).await?;
+                }
             }
         }
 
@@ -1193,7 +1249,7 @@ impl TestArgs {
 
             // Prefer execution traces for normal debug runs, but when execution never starts
             // (for example if `setUp()` reverts), fall back to available setup/deployment traces.
-            let traces = {
+            let mut traces = {
                 let execution = test_result
                     .traces
                     .iter()
@@ -1202,6 +1258,11 @@ impl TestArgs {
                     .collect::<Vec<_>>();
                 if execution.is_empty() { test_result.traces.clone() } else { execution }
             };
+            if let Some(decoder) = &outcome.last_run_decoder {
+                for (_, arena) in &mut traces {
+                    decode_trace_arena(arena, decoder).await;
+                }
+            }
 
             // Run the debugger.
             let mut builder = Debugger::builder()
@@ -1474,6 +1535,7 @@ impl TestArgs {
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(execution.should_debug)
             .set_decode_internal(execution.decode_internal)
+            .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
@@ -1533,12 +1595,8 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
-        let machine_mode = foundry_cli::is_machine();
-
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        // Machine mode is also a structured stream and must not interleave human output.
-        let silent = machine_mode
-            || self.gas_report && shell::is_json()
+        let silent = self.gas_report && shell::is_json()
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
 
@@ -1550,33 +1608,35 @@ impl TestArgs {
             } else {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
-            if !machine_mode {
-                if total_tests == 0 {
-                    sh_println!(
-                        "No tests found in project! Forge looks for functions that start with `test`"
-                    )?;
-                } else {
-                    let mut msg = format!("no tests match the provided pattern:\n{filter}");
-                    // Try to suggest a test when there's no match.
-                    if let Some(test_pattern) = &filter.args().test_pattern {
-                        let test_name = test_pattern.as_str();
-                        // Filter contracts but not test functions.
-                        let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                        if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                            write!(msg, "\nDid you mean `{suggestion}`?")?;
-                        }
+            if total_tests == 0 {
+                sh_println!(
+                    "No tests found in project! Forge looks for functions that start with `test`"
+                )?;
+            } else {
+                let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                // Try to suggest a test when there's no match.
+                if let Some(test_pattern) = &filter.args().test_pattern {
+                    let test_name = test_pattern.as_str();
+                    // Filter contracts but not test functions.
+                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                        write!(msg, "\nDid you mean `{suggestion}`?")?;
                     }
-                    sh_warn!("{msg}")?;
                 }
+                sh_warn!("{msg}")?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
-        if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
+        if num_filtered != 1
+            && (self.debug || self.flamegraph || self.flamechart || self.evm_profile.is_some())
+        {
             let action = if self.flamegraph {
                 "generate a flamegraph"
             } else if self.flamechart {
                 "generate a flamechart"
+            } else if self.evm_profile.is_some() {
+                "generate an EVM profile"
             } else {
                 "run the debugger"
             };
@@ -1597,13 +1657,7 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        // Agent stream wins over `--json`.
-        if self.mutate.is_none()
-            && !machine_mode
-            && !self.gas_report
-            && !self.summary
-            && shell::is_json()
-        {
+        if self.mutate.is_none() && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
             for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
@@ -1713,8 +1767,11 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // Some outputs need trace identities even if the textual trace is not rendered.
-            let always_identify_traces =
-                self.gas_report || self.debug || self.flamegraph || self.flamechart;
+            let always_identify_traces = self.gas_report
+                || self.debug
+                || self.flamegraph
+                || self.flamechart
+                || self.evm_profile.is_some();
 
             // Print suite header.
             if !silent {
@@ -1767,10 +1824,6 @@ impl TestArgs {
                             sh_println!()?;
                         }
                     }
-                }
-
-                if machine_mode {
-                    emit_test_result_event(&contract_name, name, result)?;
                 }
 
                 // We shouldn't break out of the outer loop directly here so that we finish
@@ -1979,17 +2032,6 @@ impl TestArgs {
                 sh_println!("{}", suite_result.summary())?;
             }
 
-            if machine_mode {
-                for warning in &suite_result.warnings {
-                    emit_warning_event(&contract_name, warning)?;
-                }
-                // Terminator follows any record for the group; warning-only
-                // suites get a zero-count `suite_finished`.
-                if has_tests || !suite_result.warnings.is_empty() {
-                    emit_suite_finished_event(&contract_name, &suite_result)?;
-                }
-            }
-
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
 
@@ -2009,11 +2051,11 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !is_multi_pass && !self.summary && !shell::is_json() && !machine_mode {
+        if !is_multi_pass && !self.summary && !shell::is_json() {
             sh_println!("{}", outcome.summary(duration))?;
         }
 
-        if !is_multi_pass && self.summary && !outcome.results.is_empty() && !machine_mode {
+        if !is_multi_pass && self.summary && !outcome.results.is_empty() {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
             sh_println!("{summary_report}")?;
         }
@@ -2077,124 +2119,6 @@ impl TestArgs {
 
 const fn should_render_trace_output(silent: bool, show_traces: bool) -> bool {
     !silent && show_traces
-}
-
-/// Terminal `forge test` envelope payload under `--machine`. Counts are
-/// aggregated across every suite; times are in milliseconds.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct TestSummaryData {
-    pub suites: usize,
-    pub passed: usize,
-    pub failed: usize,
-    pub skipped: usize,
-    pub duration_ms: u128,
-}
-
-impl TestSummaryData {
-    pub fn from_outcome(outcome: &TestOutcome, wall_clock: Duration) -> Self {
-        Self {
-            suites: outcome.results.len(),
-            passed: outcome.passed(),
-            failed: outcome.failed(),
-            skipped: outcome.skipped(),
-            duration_ms: wall_clock.as_millis(),
-        }
-    }
-}
-
-#[derive(serde::Serialize)]
-struct TestResultEvent<'a> {
-    suite: &'a str,
-    name: &'a str,
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<&'a str>,
-    duration_ms: u128,
-}
-
-#[derive(serde::Serialize)]
-struct SuiteFinishedEvent<'a> {
-    suite: &'a str,
-    passed: usize,
-    failed: usize,
-    skipped: usize,
-    duration_ms: u128,
-}
-
-#[derive(serde::Serialize)]
-struct WarningEvent<'a> {
-    suite: &'a str,
-    code: &'static str,
-    message: &'a str,
-}
-
-const fn status_str(status: TestStatus) -> &'static str {
-    match status {
-        TestStatus::Success => "passed",
-        TestStatus::Failure => "failed",
-        TestStatus::Skipped => "skipped",
-    }
-}
-
-fn emit_test_result_event(
-    suite: &str,
-    name: &str,
-    result: &crate::result::TestResult,
-) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "test_result",
-        TestResultEvent {
-            suite,
-            name,
-            status: status_str(result.status),
-            reason: result.reason.as_deref(),
-            duration_ms: result.duration.as_millis(),
-        },
-    )?;
-    Ok(())
-}
-
-fn emit_suite_finished_event(suite: &str, result: &SuiteResult) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "suite_finished",
-        SuiteFinishedEvent {
-            suite,
-            passed: result.passed(),
-            failed: result.failed(),
-            skipped: result.skipped(),
-            duration_ms: result.duration.as_millis(),
-        },
-    )?;
-    Ok(())
-}
-
-fn emit_warning_event(suite: &str, message: &str) -> Result<()> {
-    foundry_cli::json::print_stream_record(
-        crate::introspect::TEST_EVENT_SCHEMA,
-        "forge.test",
-        "warning",
-        WarningEvent { suite, code: foundry_cli::diagnostic::test::WARNING, message },
-    )?;
-    Ok(())
-}
-
-/// Emit a `compiler.solc.error` envelope and exit `Build (4)`. Shared by the
-/// precompile and main-compile sites under `--machine`.
-fn emit_machine_compile_error(output: &ProjectCompileOutput) -> ! {
-    let errors: Vec<JsonMessage> = output
-        .output()
-        .errors
-        .iter()
-        .filter(|e| e.is_error())
-        .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
-        .collect();
-    // Best-effort: bubbling on a broken stdout would demote exit `4` to `1`.
-    let _ = print_json(&JsonEnvelope::<()>::failure(errors));
-    std::process::exit(ExitCode::Build.to_i32());
 }
 
 impl Provider for TestArgs {

@@ -32,6 +32,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | resumeGasMeteringCall::SELECTOR
         | resetGasMeteringCall::SELECTOR
         | lastCallGasCall::SELECTOR
+        | lastFrameGasCall::SELECTOR
         | stopExpectSafeMemoryCall::SELECTOR
         | stopSnapshotGas_0Call::SELECTOR
         | getEvmVersionCall::SELECTOR
@@ -116,6 +117,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | txGasPriceCall::SELECTOR
         | getLabelCall::SELECTOR
         | snapshotGasLastCall_0Call::SELECTOR
+        | snapshotGasLastFrame_0Call::SELECTOR
         | startSnapshotGas_0Call::SELECTOR
         | stopSnapshotGas_1Call::SELECTOR
         | coolCall::SELECTOR
@@ -162,6 +164,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | labelCall::SELECTOR
         | snapshotValue_0Call::SELECTOR
         | snapshotGasLastCall_1Call::SELECTOR
+        | snapshotGasLastFrame_1Call::SELECTOR
         | startSnapshotGas_1Call::SELECTOR
         | stopSnapshotGas_2Call::SELECTOR
         | warmSlotCall::SELECTOR
@@ -273,11 +276,11 @@ pub(crate) fn abi_bytes_return(bytes: Vec<SymExpr>) -> SymReturnData {
 }
 
 pub(crate) fn abi_bytes_return_with_len(len: SymExpr, bytes: Vec<SymExpr>) -> SymReturnData {
-    let mut out = SymExpr::constant(U256::from(32)).into_bytes();
-    out.extend(len.into_bytes());
+    let mut out = SymExpr::constant(U256::from(32)).into_byte_exprs();
+    out.extend(len.into_byte_exprs());
     out.extend(bytes.iter().cloned());
     out.resize(64 + bytes.len().next_multiple_of(32), SymExpr::zero());
-    SymReturnData::from_symbolic_bytes(out)
+    SymReturnData::from_byte_exprs(out)
 }
 
 pub(crate) fn abi_concrete_bytes_return(bytes: &[u8]) -> SymReturnData {
@@ -285,7 +288,7 @@ pub(crate) fn abi_concrete_bytes_return(bytes: &[u8]) -> SymReturnData {
 }
 
 pub(crate) fn abi_concrete_value_return(value: DynSolValue) -> SymReturnData {
-    SymReturnData::from_symbolic_bytes(
+    SymReturnData::from_byte_exprs(
         value.abi_encode().into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
     )
 }
@@ -300,7 +303,7 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                     .iter()
                     .cloned()
                     .map(|topic| SymbolicAbiValue::FixedBytes {
-                        bytes: topic.into_bytes().into(),
+                        bytes: topic.into_bytes(),
                         size: 32,
                     })
                     .collect();
@@ -316,7 +319,7 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
             })
             .collect(),
     };
-    SymReturnData::from_symbolic_bytes(encode_sequence(std::iter::once(&value)))
+    SymReturnData::from_bytes(encode_sequence(std::iter::once(&value)))
 }
 
 pub(crate) fn recorded_logs_json_return_data(
@@ -350,8 +353,8 @@ pub(crate) fn recorded_logs_json_return_data(
         if len > data.len() {
             return Err(SymbolicError::Unsupported("symbolic vm.getRecordedLogsJson data length"));
         }
-        for byte in data.iter().take(len).cloned() {
-            push_hex_byte(&mut bytes, byte);
+        for idx in 0..len {
+            push_hex_byte(&mut bytes, data.byte(idx));
         }
 
         push_ascii(&mut bytes, "\",\"emitter\":\"");
@@ -369,7 +372,7 @@ pub(crate) fn accesses_return_data(
     let reads = record.map(|record| record.read_slots(target)).unwrap_or_default();
     let writes = record.map(|record| record.write_slots(target)).unwrap_or_default();
     let values = [storage_slots_abi_array(reads), storage_slots_abi_array(writes)];
-    SymReturnData::from_symbolic_bytes(encode_sequence(values.iter()))
+    SymReturnData::from_bytes(encode_sequence(values.iter()))
 }
 
 pub(crate) fn complete_cheatcode_call(
@@ -388,7 +391,7 @@ pub(crate) fn storage_slots_abi_array(slots: Vec<SymExpr>) -> SymbolicAbiValue {
     SymbolicAbiValue::Array {
         elements: slots
             .into_iter()
-            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: slot.into_bytes().into(), size: 32 })
+            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: slot.into_bytes(), size: 32 })
             .collect(),
     }
 }
@@ -398,7 +401,7 @@ pub(crate) fn push_ascii(out: &mut Vec<SymExpr>, value: &str) {
 }
 
 pub(crate) fn push_hex_word(out: &mut Vec<SymExpr>, word: SymExpr) {
-    for byte in word.into_bytes() {
+    for byte in word.into_byte_exprs() {
         push_hex_byte(out, byte);
     }
 }
@@ -534,7 +537,7 @@ pub(crate) fn read_abi_bytes4_words_arg(
     args_offset: usize,
     index: usize,
 ) -> Vec<SymExpr> {
-    memory.read_bytes(args_offset + index * 32, 4)
+    memory.read_byte_exprs(args_offset + index * 32, 4)
 }
 
 pub(crate) fn read_abi_dynamic_bytes_arg(
@@ -557,7 +560,7 @@ pub(crate) fn read_abi_symbolic_dynamic_bytes_arg(
     index: usize,
     max_len: usize,
     reason: &'static str,
-) -> Result<Vec<SymExpr>, SymbolicError> {
+) -> Result<SymBytes, SymbolicError> {
     let offset = read_abi_word_arg(&state.memory, args_offset, index)?;
     let offset = state.expect_constrained_usize(offset, reason)?;
     let len_offset = args_offset.checked_add(offset).ok_or(SymbolicError::Unsupported(reason))?;
@@ -570,6 +573,17 @@ pub(crate) fn read_abi_symbolic_dynamic_bytes_arg(
     Ok(state.memory.read_bytes(data_offset, len))
 }
 
+pub(crate) fn read_abi_symbolic_dynamic_byte_exprs_arg(
+    state: &PathState,
+    args_offset: usize,
+    index: usize,
+    max_len: usize,
+    reason: &'static str,
+) -> Result<Vec<SymExpr>, SymbolicError> {
+    Ok(read_abi_symbolic_dynamic_bytes_arg(state, args_offset, index, max_len, reason)?
+        .materialize())
+}
+
 pub(crate) fn read_abi_dynamic_return_data_arg(
     state: &PathState,
     args_offset: usize,
@@ -577,7 +591,7 @@ pub(crate) fn read_abi_dynamic_return_data_arg(
     max_len: usize,
     reason: &'static str,
 ) -> Result<SymReturnData, SymbolicError> {
-    Ok(SymReturnData::from_symbolic_bytes(read_abi_symbolic_dynamic_bytes_arg(
+    Ok(SymReturnData::from_bytes(read_abi_symbolic_dynamic_bytes_arg(
         state,
         args_offset,
         index,
@@ -630,9 +644,7 @@ pub(crate) fn read_abi_symbolic_dynamic_bytes_array_arg(
         let data_offset = len_offset
             .checked_add(32)
             .ok_or(SymbolicError::Unsupported("symbolic vm.mockCalls returns element offset"))?;
-        values.push(SymReturnData::from_symbolic_bytes(
-            state.memory.read_bytes(data_offset, value_len),
-        ));
+        values.push(SymReturnData::from_bytes(state.memory.read_bytes(data_offset, value_len)));
     }
 
     Ok(values)
@@ -760,10 +772,7 @@ pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert
 
     let reverter = dyn_address(reverter)?;
     let reverter = (reverter != Address::ZERO).then(|| SymExpr::constant(address_word(reverter)));
-    let revert_data = dyn_bytes(revert_data)?
-        .into_iter()
-        .map(|byte| SymExpr::constant(U256::from(byte)))
-        .collect();
+    let revert_data = SymBytes::concrete(dyn_bytes(revert_data)?);
     let data = if dyn_bool(partial_match)? {
         ExpectedRevertData::prefix(revert_data)
     } else {
