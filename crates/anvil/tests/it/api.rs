@@ -491,9 +491,36 @@ async fn can_send_raw_tx_sync() {
     let mut encoded = Vec::new();
     tx.eip2718_encode(&mut encoded);
 
-    let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
+    let receipt = api.send_raw_transaction_sync(encoded.into(), None).await.unwrap();
     assert_eq!(receipt.from(), wallets[1].address());
     assert_eq!(receipt.to(), tx.to());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_parse_raw_tx_sync_timeout() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let one_arg: Result<serde_json::Value, _> = provider
+        .client()
+        .request("eth_sendRawTransactionSync", (alloy_primitives::Bytes::default(),))
+        .await;
+    assert!(one_arg.unwrap_err().to_string().contains("Empty transaction data"));
+
+    let null_timeout: Result<serde_json::Value, _> = provider
+        .client()
+        .request(
+            "eth_sendRawTransactionSync",
+            (alloy_primitives::Bytes::default(), Option::<u64>::None),
+        )
+        .await;
+    assert!(null_timeout.unwrap_err().to_string().contains("Empty transaction data"));
+
+    let timeout: Result<serde_json::Value, _> = provider
+        .client()
+        .request("eth_sendRawTransactionSync", (alloy_primitives::Bytes::default(), 1u64))
+        .await;
+    assert!(timeout.unwrap_err().to_string().contains("Empty transaction data"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

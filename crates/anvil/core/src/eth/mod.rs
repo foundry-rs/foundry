@@ -174,8 +174,8 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
 
-    #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
-    EthSendRawTransactionSync(Bytes),
+    #[serde(rename = "eth_sendRawTransactionSync")]
+    EthSendRawTransactionSync(Bytes, #[serde(default)] Option<u64>),
 
     #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
     AnvilClassifyTransaction(Bytes),
@@ -843,6 +843,42 @@ mod tests {
         let s = r#"{"method": "eth_maxPriorityFeePerGas", "params":[]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_send_raw_transaction_sync() {
+        let s = r#"{"method": "eth_sendRawTransactionSync", "params":["0xdeadbeef"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EthSendRawTransactionSync(tx, timeout) => {
+                assert_eq!(tx, Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]));
+                assert_eq!(timeout, None);
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "eth_sendRawTransactionSync", "params":["0xdeadbeef", null]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EthSendRawTransactionSync(tx, timeout) => {
+                assert_eq!(tx, Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]));
+                assert_eq!(timeout, None);
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "eth_sendRawTransactionSync", "params":["0xdeadbeef", 1]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EthSendRawTransactionSync(tx, timeout) => {
+                assert_eq!(tx, Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]));
+                assert_eq!(timeout, Some(1));
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
