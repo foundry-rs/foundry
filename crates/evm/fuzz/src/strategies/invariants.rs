@@ -107,8 +107,8 @@ pub fn invariant_strat(
         if cond { any::<U256>().prop_map(Some).boxed() } else { Just(None).boxed() }
     };
 
-    any::<prop::sample::Index>()
-        .prop_flat_map(move |index| {
+    any::<prop::sample::Selector>()
+        .prop_flat_map(move |selector| {
             let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
             let call_details = {
                 let generation = contracts.fuzzed_functions_generation();
@@ -131,7 +131,7 @@ pub fn invariant_strat(
                         .collect();
                     planned_calls.generation = generation;
                 }
-                planned_calls.calls[index.index(planned_calls.calls.len())].clone()
+                selector.select(planned_calls.calls.iter()).clone()
             };
 
             let warp = warp_roll_strat(config.max_time_delay.is_some());
