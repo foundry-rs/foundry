@@ -2501,6 +2501,85 @@ contract PackedStruct {
 "#]]);
 });
 
+// Internal function pointers are 8 bytes in Solidity storage; external are 24 bytes.
+// With both in the same struct, iptr (8B) and eptr (24B) fill slot 0 exactly,
+// and flag must land at slot 1 offset 0 — not slot 1 offset 24 (the bug).
+forgetest!(can_inspect_erc7201_function_type_sizes, |prj, cmd| {
+    prj.add_source(
+        "FnPtr.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract FnPtr {
+    /// @custom:storage-location erc7201:test.fnptr
+    struct FnPtrStorage {
+        function() internal iptr; // 8 bytes;  offset 0
+        function() external eptr; // 24 bytes; offset 8  (8+24=32, fills slot)
+        uint8 flag;               // 1 byte;   slot 1 offset 0
+    }
+
+    function _storage() private pure returns (FnPtrStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.fnptr")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "FnPtr", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "FnPtr [erc7201:test.fnptr]",
+      "label": "iptr",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "function () internal"
+    },
+    {
+      "astId": 0,
+      "contract": "FnPtr [erc7201:test.fnptr]",
+      "label": "eptr",
+      "offset": 8,
+      "slot": "[..]",
+      "type": "function () external"
+    },
+    {
+      "astId": 0,
+      "contract": "FnPtr [erc7201:test.fnptr]",
+      "label": "flag",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "uint8"
+    }
+  ],
+  "types": {
+    "function () external": {
+      "encoding": "inplace",
+      "label": "function () external",
+      "numberOfBytes": "24"
+    },
+    "function () internal": {
+      "encoding": "inplace",
+      "label": "function () internal",
+      "numberOfBytes": "8"
+    },
+    "uint8": {
+      "encoding": "inplace",
+      "label": "uint8",
+      "numberOfBytes": "1"
+    }
+  }
+}
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();

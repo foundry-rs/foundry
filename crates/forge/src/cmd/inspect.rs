@@ -25,6 +25,7 @@ use serde_json::{Map, Value};
 use solar::sema::{
     Gcx,
     eval::ConstantEvaluator,
+    ast::Visibility,
     hir::{ElementaryType, ItemId, NatSpecKind, TypeKind, VariableId},
     interface::source_map::FileName,
 };
@@ -507,7 +508,10 @@ fn hir_type_label<'hir>(gcx: Gcx<'hir>, kind: &TypeKind<'hir>) -> String {
                 u.name.as_str().to_string()
             }
         }
-        TypeKind::Function(_) => "function".to_string(),
+        TypeKind::Function(f) => match f.visibility {
+            Visibility::External | Visibility::Public => "function () external".to_string(),
+            _ => "function () internal".to_string(),
+        },
         TypeKind::Custom(_) | TypeKind::Err(_) => "unknown".to_string(),
     }
 }
@@ -575,7 +579,13 @@ fn hir_type_storage_info<'hir>(
             let (_, bytes, slots, encoding) = hir_type_storage_info(gcx, &hir.udvt(*id).ty.kind);
             (bytes, slots, encoding)
         }
-        TypeKind::Function(_) => (24, 0, "inplace"),
+        TypeKind::Function(f) => {
+            let bytes = match f.visibility {
+                Visibility::External | Visibility::Public => 24,
+                _ => 8,
+            };
+            (bytes, 0, "inplace")
+        }
         TypeKind::Custom(_) | TypeKind::Err(_) => (32, 1, "inplace"),
     };
     (label, byte_size, slot_count, encoding)
