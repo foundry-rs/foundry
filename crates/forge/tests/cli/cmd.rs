@@ -2409,6 +2409,98 @@ contract Packed {
 "#]]);
 });
 
+// Struct member packing: two uint128 fields share a single 32-byte slot.
+// lo → slot 0 offset 0, hi → slot 0 offset 16.  numberOfBytes for the struct must be "32".
+forgetest!(can_inspect_erc7201_packed_struct_members, |prj, cmd| {
+    prj.add_source(
+        "PackedStruct.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract PackedStruct {
+    struct HalfWord {
+        uint128 lo;
+        uint128 hi;
+    }
+
+    /// @custom:storage-location erc7201:test.packedstruct
+    struct PackedStructStorage {
+        HalfWord word;   // 2 × 16B → 1 slot; lo at offset 0, hi at offset 16
+        uint256 next;    // must be at base+1, not base+0
+    }
+
+    function _storage() private pure returns (PackedStructStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.packedstruct")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "PackedStruct", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "PackedStruct [erc7201:test.packedstruct]",
+      "label": "word",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "struct PackedStruct.HalfWord"
+    },
+    {
+      "astId": 0,
+      "contract": "PackedStruct [erc7201:test.packedstruct]",
+      "label": "next",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "uint256"
+    }
+  ],
+  "types": {
+    "struct PackedStruct.HalfWord": {
+      "encoding": "inplace",
+      "label": "struct PackedStruct.HalfWord",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct PackedStruct.HalfWord",
+          "label": "lo",
+          "offset": 0,
+          "slot": "0",
+          "type": "uint128"
+        },
+        {
+          "astId": 0,
+          "contract": "struct PackedStruct.HalfWord",
+          "label": "hi",
+          "offset": 16,
+          "slot": "0",
+          "type": "uint128"
+        }
+      ]
+    },
+    "uint128": {
+      "encoding": "inplace",
+      "label": "uint128",
+      "numberOfBytes": "16"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();
