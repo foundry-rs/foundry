@@ -53,6 +53,28 @@ if ! command -v "$CHISEL" &>/dev/null; then
   exit 1
 fi
 
+# When TEMPO_ROTATE_WALLET=1, generate a fresh wallet and use it instead of the
+# configured one. The faucet funds it below (TEMPO_AUTO_FUND).
+TEMPO_ROTATE_WALLET="${TEMPO_ROTATE_WALLET:-0}"
+if [ "$TEMPO_ROTATE_WALLET" = "1" ]; then
+  echo "Rotating to a fresh ephemeral MPP wallet"
+  if ! command -v jq &>/dev/null; then
+    echo "ERROR: jq is required for TEMPO_ROTATE_WALLET=1"
+    exit 1
+  fi
+  NEW_WALLET_JSON=$("$CAST" wallet new --json)
+  TEMPO_PRIVATE_KEY=$(printf '%s' "$NEW_WALLET_JSON" | jq -r '(.data // .)[0].private_key')
+  if [ -z "$TEMPO_PRIVATE_KEY" ] || [ "$TEMPO_PRIVATE_KEY" = "null" ]; then
+    echo "ERROR: failed to parse private key from 'cast wallet new --json'"
+    exit 1
+  fi
+  export TEMPO_PRIVATE_KEY
+  # Drop any pre-seeded wallet/channel state so the fresh key is used as-is.
+  unset TEMPO_KEYS_TOML_B64 2>/dev/null || true
+  rm -f "${TEMPO_HOME:-$HOME/.tempo}/wallet/keys.toml" 2>/dev/null || true
+  rm -f "${TEMPO_HOME:-$HOME/.tempo}/channels.db" 2>/dev/null || true
+fi
+
 KEYS_FILE="${TEMPO_HOME:-$HOME/.tempo}/wallet/keys.toml"
 if [ -n "${TEMPO_PRIVATE_KEY:-}" ]; then
   WALLET=$("$CAST" wallet address --private-key "$TEMPO_PRIVATE_KEY")
@@ -79,7 +101,12 @@ if [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ] && [ "$TEMPO_AUTO_FUND" = "1" ]; then
   while [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ] && [ "$ATTEMPT" -lt "$TEMPO_AUTO_FUND_ATTEMPTS" ]; do
     ATTEMPT=$((ATTEMPT + 1))
     echo "Faucet attempt $ATTEMPT/$TEMPO_AUTO_FUND_ATTEMPTS"
-    "$CAST" rpc tempo_fundAddress "$WALLET_LOWER" --rpc-url "$RPC" >/dev/null
+    # Retry on a transient faucet error instead of aborting (set -e).
+    if ! "$CAST" rpc tempo_fundAddress "$WALLET_LOWER" --rpc-url "$RPC" >/dev/null; then
+      echo "Faucet RPC failed on attempt $ATTEMPT, retrying..."
+      sleep 2
+      continue
+    fi
     sleep 2
     BEFORE=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC")
     echo "$BEFORE"
