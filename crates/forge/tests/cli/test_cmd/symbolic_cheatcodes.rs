@@ -3691,7 +3691,6 @@ interface SymbolicVmCompat {
 
     function readCallers() external view returns (CallerMode callerMode, address msgSender, address txOrigin);
     function isContext(ForgeContext context) external view returns (bool result);
-    function isIsolateMode() external view returns (bool result);
 }
 
 contract SymbolicBoundSkip is Test {
@@ -3760,7 +3759,7 @@ contract SymbolicBoundSkip is Test {
         assertTrue(compat.isContext(SymbolicVmCompat.ForgeContext.TestGroup));
         assertTrue(compat.isContext(SymbolicVmCompat.ForgeContext.Test));
         assertFalse(compat.isContext(SymbolicVmCompat.ForgeContext.ScriptGroup));
-        assertTrue(compat.isIsolateMode());
+        assertTrue(vm.isIsolateMode());
     }
 
     function checkRuntimeNoopsAndArrayAssertions() public {

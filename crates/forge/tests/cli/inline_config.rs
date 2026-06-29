@@ -210,11 +210,6 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
         r#"
         import {Test} from "forge-std/Test.sol";
 
-        // TODO: Remove once forge-std's Vm interface includes `isIsolateMode`.
-        interface VmIsolate {
-            function isIsolateMode() external view returns (bool result);
-        }
-
         contract Dummy {
             uint256 public number;
 
@@ -224,7 +219,6 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
         }
 
         contract FunctionConfig is Test {
-            VmIsolate constant isolateVm = VmIsolate(VM_ADDRESS);
             Dummy dummy;
 
             function setUp() public {
@@ -233,14 +227,14 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
 
             /// forge-config: default.isolate = false
             function test_non_isolate() public {
-                assertFalse(isolateVm.isIsolateMode());
+                assertFalse(vm.isIsolateMode());
                 vm.startSnapshotGas("testNonIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
 
             function test_isolate() public {
-                assertTrue(isolateVm.isIsolateMode());
+                assertTrue(vm.isIsolateMode());
                 vm.startSnapshotGas("testIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
@@ -249,7 +243,6 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
 
         /// forge-config: default.isolate = false
         contract ContractConfig is Test {
-            VmIsolate constant isolateVm = VmIsolate(VM_ADDRESS);
             Dummy dummy;
 
             function setUp() public {
@@ -257,7 +250,7 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             }
 
             function test_non_isolate() public {
-                assertFalse(isolateVm.isIsolateMode());
+                assertFalse(vm.isIsolateMode());
                 vm.startSnapshotGas("testNonIsolatedContract");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
