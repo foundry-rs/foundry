@@ -984,6 +984,25 @@ import {Test} from "forge-std/Test.sol";
 contract EIP2935Test is Test {
     address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
 
+    function firstAccessGas(address target) internal view returns (uint256 used, bytes32 codehash) {
+        assembly {
+            let gasBefore := gas()
+            codehash := extcodehash(target)
+            used := sub(gasBefore, gas())
+        }
+    }
+
+    function historyReadGas(uint256 blockNumber) internal view returns (uint256 used) {
+        bytes memory data = abi.encodePacked(bytes32(blockNumber));
+        bool ok;
+        bytes memory ret;
+        uint256 gasBefore = gasleft();
+        (ok, ret) = HISTORY.staticcall(data);
+        used = gasBefore - gasleft();
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+    }
+
     function testHistoryContractDeployed() public {
         assertGt(HISTORY.code.length, 0, "history contract missing");
     }
@@ -1052,6 +1071,16 @@ contract EIP2935Test is Test {
         assertEq(bytes32(ret), keccak256("block 1000"), "block 1000 hash");
     }
 
+    function testRollDoesNotWarmHistoryAccountOrSlot() public {
+        vm.roll(3000);
+
+        (uint256 accountGas, bytes32 codehash) = firstAccessGas(HISTORY);
+        assertNotEq(codehash, bytes32(0), "history code hash");
+        assertGt(accountGas, 2000, "history account warm after roll");
+        uint256 firstRead = historyReadGas(2999);
+        assertGt(firstRead, 2000, "history slot warm after roll");
+    }
+
     function testSetBlockhashDoesNotCorruptHistoryRing() public {
         vm.roll(20000);
         bytes32 ancient = keccak256("ancient");
@@ -1075,6 +1104,17 @@ contract EIP2935Test is Test {
         assertTrue(ok, "history call failed");
         assertEq(ret.length, 32, "history return length");
         assertEq(bytes32(ret), oldest, "oldest slot corrupted");
+    }
+
+    function testSetBlockhashDoesNotWarmHistoryAccountOrSlot() public {
+        vm.roll(4000);
+        vm.setBlockhash(3999, keccak256("warmth"));
+
+        (uint256 accountGas, bytes32 codehash) = firstAccessGas(HISTORY);
+        assertNotEq(codehash, bytes32(0), "history code hash");
+        assertGt(accountGas, 2000, "history account warm after setBlockhash");
+        uint256 firstRead = historyReadGas(3999);
+        assertGt(firstRead, 2000, "history slot warm after setBlockhash");
     }
 
     function testRollDoesNotPopulateReplacedHistoryContract() public {

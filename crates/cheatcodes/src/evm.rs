@@ -1765,21 +1765,43 @@ fn set_eip2935_blockhash<
     block_number: U256,
     block_hash: B256,
 ) -> Result<()> {
-    ensure_loaded_account(ecx, HISTORY_STORAGE_ADDRESS)?;
+    let account_was_cold = ecx.journal_mut().load_account(HISTORY_STORAGE_ADDRESS)?.is_cold;
     let account =
         ecx.journal_mut().evm_state().get(&HISTORY_STORAGE_ADDRESS).expect("account is loaded");
     if account.info.code_hash != keccak256(&HISTORY_STORAGE_CODE) {
+        restore_eip2935_cold_state(ecx, account_was_cold, None);
         return Ok(());
     }
 
-    ecx.journal_mut()
-        .sstore(
-            HISTORY_STORAGE_ADDRESS,
-            history_storage_slot(block_number),
-            history_storage_value(block_hash),
-        )
-        .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {:?}", e))?;
+    let slot = history_storage_slot(block_number);
+    let slot_was_cold = ecx
+        .journal_mut()
+        .sstore(HISTORY_STORAGE_ADDRESS, slot, history_storage_value(block_hash))
+        .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {:?}", e))?
+        .is_cold;
+    restore_eip2935_cold_state(ecx, account_was_cold, Some((slot, slot_was_cold)));
     Ok(())
+}
+
+fn restore_eip2935_cold_state<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+>(
+    ecx: &mut CTX,
+    account_was_cold: bool,
+    slot_state: Option<(U256, bool)>,
+) {
+    let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&HISTORY_STORAGE_ADDRESS) else {
+        return;
+    };
+    if account_was_cold {
+        account.mark_cold();
+    }
+    if let Some((slot, slot_was_cold)) = slot_state
+        && slot_was_cold
+        && let Some(storage_slot) = account.storage.get_mut(&slot)
+    {
+        storage_slot.is_cold = true;
+    }
 }
 
 // Tempo TIP-1026 stores logoURI in TIP-20 storage slot 5, reusing the
