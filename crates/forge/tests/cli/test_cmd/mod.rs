@@ -988,6 +988,15 @@ contract EIP2935Test is Test {
         assertGt(HISTORY.code.length, 0, "history contract missing");
     }
 
+    function testInitialHistoryWindowSeeded() public {
+        bytes32 expected = blockhash(99);
+
+        (bool ok, bytes memory ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(99))));
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+        assertEq(bytes32(ret), expected, "initial history hash");
+    }
+
     function testRollStoresParentBlockHash() public {
         vm.roll(1000);
         bytes32 expected = keccak256("parent");
@@ -1016,19 +1025,31 @@ contract EIP2935Test is Test {
 
     function testSetBlockhashUpdatesCachedHistorySlot() public {
         vm.roll(2000);
+        bytes32 expected = keccak256("cached history");
 
         (bool ok, bytes memory ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(1998))));
         assertTrue(ok, "history call failed");
         assertEq(ret.length, 32, "history return length");
-        assertEq(bytes32(ret), bytes32(0), "history precondition");
+        assertNotEq(bytes32(ret), expected, "history precondition");
 
-        bytes32 expected = keccak256("cached history");
         vm.setBlockhash(1998, expected);
 
         (ok, ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(1998))));
         assertTrue(ok, "history call failed");
         assertEq(ret.length, 32, "history return length");
         assertEq(bytes32(ret), expected, "cached history hash");
+    }
+
+    function testLargeRollBackfillsHistoryWindow() public {
+        vm.roll(1000);
+        vm.setBlockhash(1000, keccak256("block 1000"));
+
+        vm.roll(2000);
+
+        (bool ok, bytes memory ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(1000))));
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+        assertEq(bytes32(ret), keccak256("block 1000"), "block 1000 hash");
     }
 
     function testSetBlockhashDoesNotCorruptHistoryRing() public {
@@ -1040,6 +1061,20 @@ contract EIP2935Test is Test {
         assertTrue(ok, "history call failed");
         assertEq(ret.length, 32, "history return length");
         assertNotEq(bytes32(ret), ancient, "ring collision");
+    }
+
+    function testSetBlockhashCurrentBlockDoesNotCorruptOldestSlot() public {
+        vm.roll(8192);
+        bytes32 oldest = keccak256("oldest");
+        bytes32 current = keccak256("current");
+        vm.setBlockhash(1, oldest);
+
+        vm.setBlockhash(8192, current);
+
+        (bool ok, bytes memory ret) = HISTORY.staticcall(abi.encodePacked(bytes32(uint256(1))));
+        assertTrue(ok, "history call failed");
+        assertEq(ret.length, 32, "history return length");
+        assertEq(bytes32(ret), oldest, "oldest slot corrupted");
     }
 
     function testRollDoesNotPopulateReplacedHistoryContract() public {
@@ -1065,7 +1100,7 @@ contract EIP2935Test is Test {
 "#,
     );
 
-    cmd.args(["test", "--evm-version", "prague"]).assert_success();
+    cmd.args(["test", "--evm-version", "prague", "--block-number", "100"]).assert_success();
 });
 
 forgetest_init!(eip2935_history_storage_not_deployed_before_prague, |prj, cmd| {

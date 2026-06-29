@@ -5,7 +5,6 @@ use crate::{
     Vm::*, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_eips::eip2935::{HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE};
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
@@ -28,6 +27,10 @@ use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
+    eip2935::{
+        HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
+        history_storage_slot, history_storage_value,
+    },
     env::FoundryContextExt,
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
@@ -610,14 +613,14 @@ impl Cheatcode for rollCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newHeight } = self;
         let current_height = ccx.ecx.block().number();
-        if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE
-            && *newHeight > current_height
-            && !newHeight.is_zero()
-        {
-            let parent_number = *newHeight - U256::from(1);
-            let parent_hash =
-                ccx.ecx.db_mut().block_hash(parent_number.saturating_to()).unwrap_or_default();
-            set_eip2935_blockhash(ccx.ecx, parent_number, parent_hash)?;
+        if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE && *newHeight > current_height {
+            let mut block_number = forward_fill_start(current_height, *newHeight);
+            while block_number < *newHeight {
+                let block_hash =
+                    ccx.ecx.db_mut().block_hash(block_number.saturating_to()).unwrap_or_default();
+                set_eip2935_blockhash(ccx.ecx, block_number, block_hash)?;
+                block_number += U256::from(1);
+            }
         }
         ccx.ecx.block_mut().set_number(*newHeight);
         Ok(Default::default())
@@ -1194,9 +1197,10 @@ impl Cheatcode for setBlockhashCall {
         );
 
         ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
+        let current_block = U256::from(ccx.ecx.block().number());
         if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE
-            && blockNumber + U256::from(HISTORY_SERVE_WINDOW)
-                >= U256::from(ccx.ecx.block().number())
+            && blockNumber < current_block
+            && current_block - blockNumber <= U256::from(HISTORY_SERVE_WINDOW)
         {
             set_eip2935_blockhash(ccx.ecx, blockNumber, blockHash)?;
         }
@@ -1771,8 +1775,8 @@ fn set_eip2935_blockhash<
     ecx.journal_mut()
         .sstore(
             HISTORY_STORAGE_ADDRESS,
-            block_number % U256::from(HISTORY_SERVE_WINDOW),
-            U256::from_be_bytes(block_hash.0),
+            history_storage_slot(block_number),
+            history_storage_value(block_hash),
         )
         .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {:?}", e))?;
     Ok(())

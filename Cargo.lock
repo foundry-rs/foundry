@@ -5117,7 +5117,6 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
- "alloy-eips",
  "alloy-ens",
  "alloy-evm",
  "alloy-genesis",
@@ -5501,7 +5500,6 @@ name = "foundry-evm"
 version = "1.7.2"
 dependencies = [
  "alloy-dyn-abi",
- "alloy-eips",
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-rpc-types",
@@ -5554,6 +5552,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
  "alloy-hardforks",

@@ -11,7 +11,6 @@ use crate::inspectors::{
     cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
-use alloy_eips::eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
@@ -29,6 +28,10 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
+    eip2935::{
+        HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, history_storage_slot, history_storage_value,
+        history_window_start,
+    },
     evm::{
         EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor,
         TxEnvFor,
@@ -40,12 +43,12 @@ use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
-    context::Transaction,
+    context::{Block, Transaction},
     context_interface::{
         result::{ExecutionResult, Output, ResultAndState},
         transaction::SignedAuthorization,
     },
-    database::{DatabaseCommit, DatabaseRef},
+    database::{Database, DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
     primitives::hardfork::SpecId,
 };
@@ -160,6 +163,17 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             account.code_hash = keccak256(&HISTORY_STORAGE_CODE);
             account.code = Some(Bytecode::new_raw(HISTORY_STORAGE_CODE.clone()));
             backend.insert_account_info(HISTORY_STORAGE_ADDRESS, account);
+
+            let current_block = evm_env.block_env.number();
+            let mut block_number = history_window_start(current_block);
+            while block_number < current_block {
+                let block_hash =
+                    backend.block_hash(block_number.saturating_to()).unwrap_or_default();
+                let slot = history_storage_slot(block_number);
+                let value = history_storage_value(block_hash);
+                let _ = backend.insert_account_storage(HISTORY_STORAGE_ADDRESS, slot, value);
+                block_number += U256::from(1);
+            }
         }
 
         Self {
