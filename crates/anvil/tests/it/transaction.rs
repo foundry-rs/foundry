@@ -964,6 +964,57 @@ async fn can_get_raw_receipts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let first = TransactionRequest::default()
+        .from(accounts[0].address())
+        .value(U256::from(1))
+        .to(Address::random());
+    let second = TransactionRequest::default()
+        .from(accounts[1].address())
+        .value(U256::from(2))
+        .to(Address::random());
+
+    let first = provider.send_transaction(WithOtherFields::new(first)).await.unwrap();
+    let second = provider.send_transaction(WithOtherFields::new(second)).await.unwrap();
+    let first_hash = *first.tx_hash();
+    let second_hash = *second.tx_hash();
+
+    api.mine_one().await;
+    let first_receipt = first.get_receipt().await.unwrap();
+    let second_receipt = second.get_receipt().await.unwrap();
+    assert_eq!(first_receipt.block_number, Some(1));
+    assert_eq!(second_receipt.block_number, Some(1));
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let raw_by_number: Vec<Bytes> =
+        provider.client().request("debug_getRawTransactions", (BlockId::number(1),)).await.unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+    let missing: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::number(999),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), 2);
+    assert!(missing.is_empty());
+
+    let first_raw = api.raw_transaction(first_hash).await.unwrap().unwrap();
+    let second_raw = api.raw_transaction(second_hash).await.unwrap().unwrap();
+    assert!(raw_by_number.contains(&first_raw));
+    assert!(raw_by_number.contains(&second_raw));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_first_nonce_is_zero() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 

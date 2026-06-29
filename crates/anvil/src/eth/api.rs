@@ -1735,6 +1735,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DebugGetRawReceipts(block) => {
                 self.raw_receipts(block).await.to_rpc_result()
             }
+            EthRequest::DebugGetRawTransactions(block) => {
+                self.raw_transactions(block).await.to_rpc_result()
+            }
             // non eth-standard rpc calls
             EthRequest::DebugClearTxpool(_) => self.debug_clear_txpool().await.to_rpc_result(),
             // non eth-standard rpc calls
@@ -3078,6 +3081,17 @@ impl EthApi<FoundryNetwork> {
             .mined_receipts(block.header.hash_slow())
             .ok_or(BlockchainError::BlockNotFound)?;
         Ok(receipts.into_iter().map(|receipt| receipt.encoded_2718().into()).collect())
+    }
+
+    /// Returns EIP-2718 encoded raw transactions for the block.
+    ///
+    /// Handler for RPC call: `debug_getRawTransactions`.
+    pub async fn raw_transactions(&self, block: BlockId) -> Result<Vec<Bytes>> {
+        node_info!("debug_getRawTransactions");
+        let Some(block) = self.backend.get_block(block) else {
+            return Ok(Vec::new());
+        };
+        Ok(block.body.transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect())
     }
 
     /// Returns EIP-2718 encoded raw transaction by block hash and index
