@@ -2,7 +2,7 @@ use crate::{
     abi::{Greeter, Multicall, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
-use alloy_consensus::Transaction;
+use alloy_consensus::{Header, Transaction};
 use alloy_network::{
     AnyRpcTransaction, EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse,
     eip2718::Decodable2718,
@@ -11,6 +11,7 @@ use alloy_primitives::{
     Address, B256, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
 };
 use alloy_provider::{Provider, WsConnect};
+use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     AccessList, AccessListItem, AccessListResult, BlockId, BlockNumberOrTag, BlockOverrides,
     BlockTransactions, TransactionRequest,
@@ -1012,6 +1013,32 @@ async fn can_get_raw_transactions() {
     let second_raw = api.raw_transaction(second_hash).await.unwrap().unwrap();
     assert!(raw_by_number.contains(&first_raw));
     assert!(raw_by_number.contains(&second_raw));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_header() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).value(U256::from(1)).to(Address::random());
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let raw_by_number: Bytes =
+        provider.client().request("debug_getRawHeader", (BlockId::number(1),)).await.unwrap();
+    let raw_by_hash: Bytes = provider
+        .client()
+        .request("debug_getRawHeader", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert!(!raw_by_number.is_empty());
+
+    let decoded = Header::decode(&mut raw_by_number.as_ref()).unwrap();
+    assert_eq!(decoded.number, 1);
+    assert_eq!(decoded.hash_slow(), block.header.hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
