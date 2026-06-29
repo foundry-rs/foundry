@@ -407,6 +407,20 @@ fn invariant_worker_runner(
     }
 }
 
+fn invariant_focus_seed(
+    runner: &mut TestRunner,
+    configured_seed: Option<U256>,
+    worker_count: usize,
+) -> Option<U256> {
+    if invariant_focus_worker_count(worker_count) == 0 {
+        return None;
+    }
+    configured_seed.or_else(|| {
+        let mut rng = runner.new_rng();
+        Some(U256::from_be_bytes(rng.random::<[u8; 32]>()))
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InvariantCorpusPersistence {
     /// Preserve the legacy single-worker behavior: each interesting input is written immediately.
@@ -893,7 +907,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let setup_contracts = self.setup_contracts;
         let project_contracts = self.project_contracts;
         let base_executor = self.executor.clone();
-        let focus_seed = self.fuzz_seed;
+        let focus_seed = invariant_focus_seed(&mut runner, self.fuzz_seed, actual_worker_count);
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
@@ -2278,6 +2292,31 @@ mod tests {
             first_generated_u64(&mut worker),
             first_generated_u64(&mut worker_from_advanced_parent)
         );
+    }
+
+    #[test]
+    fn invariant_focus_seed_preserves_configured_seed() {
+        let configured_seed = U256::from(0x1234);
+        let mut parent = test_runner();
+
+        assert_eq!(
+            invariant_focus_seed(&mut parent, Some(configured_seed), 2),
+            Some(configured_seed)
+        );
+        assert_eq!(invariant_focus_seed(&mut parent, Some(configured_seed), 1), None);
+    }
+
+    #[test]
+    fn invariant_focus_seed_uses_parent_rng_when_unconfigured() {
+        let mut parent = seeded_test_runner(U256::from(1));
+        let mut matching_parent = seeded_test_runner(U256::from(1));
+        let mut different_parent = seeded_test_runner(U256::from(2));
+
+        let focus_seed = invariant_focus_seed(&mut parent, None, 2).unwrap();
+
+        assert_eq!(focus_seed, invariant_focus_seed(&mut matching_parent, None, 2).unwrap());
+        assert_ne!(focus_seed, invariant_focus_seed(&mut different_parent, None, 2).unwrap());
+        assert_eq!(invariant_focus_seed(&mut parent, None, 1), None);
     }
 
     #[test]
