@@ -2573,15 +2573,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let address = interpreter.input.target_address;
 
                 // Try to include present value for informational purposes, otherwise assume
-                // it's not set (zero value)
-                // Try to load the account and the slot's present value
-                let present_value = if ecx.journal_mut().load_account(address).is_ok()
-                    && let Some(previous) = ecx.sload(address, key)
-                {
-                    previous.data
-                } else {
-                    U256::ZERO
-                };
+                // it's not set (zero value). Revert the checkpoint so this read does not warm the
+                // slot for the actual SLOAD opcode.
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let present_value =
+                    ecx.sload(address, key).map(|previous| previous.data).unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
                 let access = crate::Vm::StorageAccess {
                     account: interpreter.input.target_address,
                     slot: key.into(),
@@ -2597,6 +2594,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             op::SSTORE => {
                 let Some(last) = account_accesses.last_mut() else { return };
 
+                // TODO: avoid warming cold SSTORE slots while recording state diffs.
                 let key = try_or_return!(interpreter.stack.peek(0));
                 let value = try_or_return!(interpreter.stack.peek(1));
                 let address = interpreter.input.target_address;
@@ -2625,6 +2623,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
             // Record account accesses via the EXT family of opcodes
             op::EXTCODECOPY | op::EXTCODESIZE | op::EXTCODEHASH | op::BALANCE => {
+                // TODO: avoid warming cold accounts while recording EXT*/BALANCE state diffs.
                 let kind = match interpreter.bytecode.opcode() {
                     op::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
                     op::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
