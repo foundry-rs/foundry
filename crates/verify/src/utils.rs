@@ -97,8 +97,8 @@ pub fn build_project(
 
     if args.contract.path.is_some() {
         let contract = PathOrContractInfo::ContractInfo(args.contract.clone());
-        let target_path = project.root().join(contract.path().unwrap()).canonicalize()?;
-        let mut output = compiler.files([target_path.clone()]).compile(&project)?;
+        let target_path = project.root().join(contract.path().unwrap());
+        let mut output = compiler.files([target_path.canonicalize()?]).compile(&project)?;
         let artifact =
             find_matching_contract_artifact(&mut output, &target_path, Some(&args.contract.name))?;
         return Ok(artifact.into_contract_bytecode());

@@ -233,7 +233,7 @@ contract ShowmapCounterTest is Test {
         ])
         .assert_failure();
     let stdout = String::from_utf8(retry.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("File exists"), "{stdout}");
+    assert!(stdout.contains("pick a different --showmap-trial"), "{stdout}");
     assert_eq!(std::fs::read_to_string(&t1).unwrap(), before);
 });
 
