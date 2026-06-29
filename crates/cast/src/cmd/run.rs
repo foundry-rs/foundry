@@ -7,7 +7,7 @@ use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::{
-    Address, Bytes, U256,
+    Address, B256, Bytes, U256,
     map::{AddressHashMap, AddressSet},
 };
 use alloy_provider::{Provider, ext::DebugApi};
@@ -265,8 +265,8 @@ impl RunArgs {
 
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
-        if spec_id.is_enabled_in(SpecId::CANCUN)
-            && let Some(parent_beacon_block_root) = parent_beacon_block_root
+        if let Some(parent_beacon_block_root) =
+            parent_beacon_block_root_for_spec(spec_id, parent_beacon_block_root)?
         {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
@@ -410,6 +410,21 @@ impl RunArgs {
     }
 }
 
+fn parent_beacon_block_root_for_spec(
+    spec_id: SpecId,
+    parent_beacon_block_root: Option<B256>,
+) -> Result<Option<B256>> {
+    if !spec_id.is_enabled_in(SpecId::CANCUN) {
+        return Ok(None);
+    }
+
+    parent_beacon_block_root.map(Some).ok_or_else(|| {
+        eyre::eyre!(
+            "MissingParentBeaconBlockRoot: missing parent beacon block root for Cancun block"
+        )
+    })
+}
+
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     result: &TraceResult,
@@ -466,5 +481,24 @@ impl figment::Provider for RunArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), map)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_beacon_block_root_is_required_for_cancun() {
+        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None).unwrap_err();
+        assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
+
+        let root = B256::repeat_byte(0x42);
+        assert_eq!(
+            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root)).unwrap(),
+            Some(root),
+        );
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
     }
 }
