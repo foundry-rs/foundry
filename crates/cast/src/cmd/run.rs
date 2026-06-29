@@ -45,7 +45,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use futures::TryFutureExt;
-use revm::{DatabaseRef, context::Block};
+use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -213,8 +213,10 @@ impl RunArgs {
         evm_env.cfg_env.limit_contract_code_size = None;
         evm_env.block_env.set_number(U256::from(tx_block_number));
 
+        let mut parent_beacon_block_root = None;
         if let Some(block) = &block {
             evm_env.block_env = block_env_from_header(block.header());
+            parent_beacon_block_root = block.header().parent_beacon_block_root();
 
             // Resolve the correct spec for the block using the same approach as reth: walk
             // known chain activation conditions to find the latest active fork. Falls back
@@ -260,6 +262,14 @@ impl RunArgs {
         )?;
 
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
+
+        let spec_id = (*evm_env.cfg_env.spec()).into();
+
+        if spec_id.is_enabled_in(SpecId::CANCUN)
+            && let Some(parent_beacon_block_root) = parent_beacon_block_root
+        {
+            executor.apply_beacon_root(parent_beacon_block_root)?;
+        }
 
         // Set the state to the moment right before the transaction.
         //

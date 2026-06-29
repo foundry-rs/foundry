@@ -578,6 +578,21 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.transact_with_env(evm_env, tx_env)
     }
 
+    /// Applies the EIP-4788 beacon roots system call (Cancun+).
+    /// <https://eips.ethereum.org/EIPS/eip-4788>
+    pub fn apply_beacon_root(
+        &mut self,
+        parent_beacon_block_root: alloy_primitives::B256,
+    ) -> eyre::Result<()> {
+        let _ = self.transact_raw(
+            alloy_eips::eip4788::SYSTEM_ADDRESS,
+            alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
+            Bytes::copy_from_slice(parent_beacon_block_root.as_slice()),
+            U256::ZERO,
+        )?;
+        Ok(())
+    }
+
     /// Execute the transaction configured in `tx_env`.
     ///
     /// The state after the call is **not** persisted.
