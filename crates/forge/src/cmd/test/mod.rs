@@ -81,6 +81,8 @@ use filter::{RerunFailure, RerunFailures};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
+const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
 
@@ -1640,14 +1642,24 @@ impl TestArgs {
             } else {
                 "run the debugger"
             };
-            let filter = if filter.is_empty() {
+            let filter_hint = if filter.is_empty() {
                 String::new()
             } else {
                 format!("\n\nFilter used:\n{filter}")
             };
+            let matching_tests_hint = if self.debug {
+                format_matching_debug_tests(&runner.list(filter)).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let narrowing_hint = if self.debug {
+                "Use --match-test <TEST_NAME>, --match-contract, and --match-path to further limit the search."
+            } else {
+                "Use --match-contract and --match-path to further limit the search."
+            };
             eyre::bail!(
-                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
-                 Use --match-contract and --match-path to further limit the search.{filter}",
+                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.{matching_tests_hint}\n\n\
+                 {narrowing_hint}{filter_hint}",
             );
         }
 
@@ -2407,6 +2419,42 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
     if let Some(decoder) = other.last_run_decoder {
         base.last_run_decoder = Some(decoder);
     }
+}
+
+fn format_matching_debug_tests(
+    matching_tests: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+) -> Option<String> {
+    let mut output = String::from("\n\nMatching tests:");
+    let mut total = 0;
+    let mut shown = 0;
+
+    for (source, contracts) in matching_tests {
+        for (contract, tests) in contracts {
+            for test in tests {
+                total += 1;
+
+                if shown < DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT {
+                    output.push_str("\n  ");
+                    output.push_str(source);
+                    output.push(':');
+                    output.push_str(contract);
+                    output.push('.');
+                    output.push_str(test);
+                    shown += 1;
+                }
+            }
+        }
+    }
+
+    if total == 0 {
+        return None;
+    }
+
+    if total > shown {
+        output.push_str(&format!("\n  ... and {} more", total - shown));
+    }
+
+    Some(output)
 }
 
 struct LastRunFailures {
