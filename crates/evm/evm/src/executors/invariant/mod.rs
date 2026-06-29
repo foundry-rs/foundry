@@ -1454,18 +1454,20 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let Some(failure) = error.as_handler_assertion_mut() else {
                 continue;
             };
-            shrink::reset_shrink_progress(
+            let shrink_progress = shrink::ShrinkProgress::new(
                 config,
                 progress,
                 &format!("handler {:#x}::{}", failure.reverter, failure.selector),
                 Some((idx + 1, total)),
+                None,
+                false,
             );
             match shrink::shrink_handler_sequence(
                 config,
                 &failure.call_sequence,
                 failure.edge_fingerprint,
                 executor,
-                progress,
+                &shrink_progress,
                 early_exit,
             ) {
                 Ok(shrunk) if !shrunk.is_empty() => {
