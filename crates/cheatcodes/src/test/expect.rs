@@ -141,15 +141,15 @@ impl EmitMismatch {
                 let Some(expected) = expected else {
                     return "log != expected log".to_string();
                 };
-                let (expected_decoded, actual_decoded) = if !anonymous {
+                let (expected_decoded, actual_decoded) = if anonymous {
+                    (None, None)
+                } else {
                     state
                         .signatures_identifier()
                         .map(|identifier| {
                             (decode_event(identifier, expected), decode_event(identifier, actual))
                         })
                         .unwrap_or_default()
-                } else {
-                    (None, None)
                 };
                 get_emit_mismatch_message(
                     checks,

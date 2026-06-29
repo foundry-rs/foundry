@@ -2039,7 +2039,6 @@ impl TestResult {
             deployed_libs: _,
             reason,
             skipped,
-            deployment_failure: _,
             ..
         } = setup;
         Self {

@@ -1691,13 +1691,13 @@ impl<FEN: FoundryEvmNetwork> DerefMut for InspectorStack<FEN> {
 
 impl InspectorStackInner {
     #[inline]
-    fn refresh_static_opcode_dispatch(&mut self) {
+    const fn refresh_static_opcode_dispatch(&mut self) {
         self.refresh_static_step_dispatch();
         self.refresh_static_step_end_dispatch();
     }
 
     #[inline]
-    fn refresh_static_step_dispatch(&mut self) {
+    const fn refresh_static_step_dispatch(&mut self) {
         self.static_step_dispatch = if self.edge_coverage.is_none()
             && self.line_coverage.is_none()
             && self.printer.is_none()
@@ -1716,7 +1716,7 @@ impl InspectorStackInner {
     }
 
     #[inline]
-    fn refresh_static_step_end_dispatch(&mut self) {
+    const fn refresh_static_step_end_dispatch(&mut self) {
         self.has_static_step_end_inspectors = self.chisel_state.is_some()
             || self.printer.is_some()
             || self.revert_diag.is_some()
