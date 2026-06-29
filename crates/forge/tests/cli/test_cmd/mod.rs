@@ -1041,6 +1041,26 @@ contract EIP2935Test is Test {
         assertEq(ret.length, 32, "history return length");
         assertNotEq(bytes32(ret), ancient, "ring collision");
     }
+
+    function testRollDoesNotPopulateReplacedHistoryContract() public {
+        vm.etch(HISTORY, hex"00");
+
+        uint256 parent = 3000;
+        vm.roll(parent + 1);
+
+        assertEq(vm.load(HISTORY, bytes32(parent % 8191)), bytes32(0), "replaced history slot");
+    }
+
+    function testSetBlockhashDoesNotPopulateReplacedHistoryContract() public {
+        vm.etch(HISTORY, hex"00");
+
+        uint256 blockNumber = 3999;
+        vm.roll(blockNumber + 1);
+        vm.setBlockhash(blockNumber, keccak256("replaced"));
+
+        assertEq(blockhash(blockNumber), keccak256("replaced"));
+        assertEq(vm.load(HISTORY, bytes32(blockNumber % 8191)), bytes32(0), "replaced history slot");
+    }
 }
 "#,
     );

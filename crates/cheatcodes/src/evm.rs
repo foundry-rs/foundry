@@ -5,7 +5,7 @@ use crate::{
     Vm::*, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_eips::eip2935::{HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS};
+use alloy_eips::eip2935::{HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE};
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
@@ -1762,6 +1762,12 @@ fn set_eip2935_blockhash<
     block_hash: B256,
 ) -> Result<()> {
     ensure_loaded_account(ecx, HISTORY_STORAGE_ADDRESS)?;
+    let account =
+        ecx.journal_mut().evm_state().get(&HISTORY_STORAGE_ADDRESS).expect("account is loaded");
+    if account.info.code_hash != keccak256(&HISTORY_STORAGE_CODE) {
+        return Ok(());
+    }
+
     ecx.journal_mut()
         .sstore(
             HISTORY_STORAGE_ADDRESS,
