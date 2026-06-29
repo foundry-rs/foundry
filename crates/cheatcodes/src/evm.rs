@@ -1936,7 +1936,8 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
             .filter(|account_access| {
                 !account_access.storageAccesses.is_empty()
                     || account_access.oldBalance != account_access.newBalance
-                    || account_access.oldNonce != account_access.newNonce
+                    || (!account_access.reverted
+                        && account_access.oldNonce != account_access.newNonce)
             })
             .for_each(|account_access| {
                 // Record account balance diffs.
@@ -1961,7 +1962,7 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                 }
 
                 // Record account nonce diffs.
-                if account_access.oldNonce != account_access.newNonce {
+                if account_access.oldNonce != account_access.newNonce && !account_access.reverted {
                     let account_diff =
                         state_diffs.entry(account_access.account).or_insert_with(|| {
                             AccountStateDiffs {
