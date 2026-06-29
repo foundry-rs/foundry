@@ -42,6 +42,49 @@ No tests found
     );
 });
 
+forgetest_init!(symbolic_contract_inline_config_enables_check_entrypoints, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_contract_inline_config_enables_check_entrypoints because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicContractInlineConfig.t.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+/// forge-config: default.symbolic.enabled = true
+contract SymbolicContractInlineConfig {
+    function checkEnabledByContractConfig(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--match-test", "checkEnabledByContractConfig"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkEnabledByContractConfig(uint256)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_single_call_artifact_replay_honors_env_fields, |prj, cmd| {
     prj.add_test(
         "SymbolicSingleCallArtifactEnv.t.sol",

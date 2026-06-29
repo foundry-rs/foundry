@@ -69,10 +69,10 @@ contract ShowmapCounterTest is Test {
         ])
         .assert_success();
 
-    // Verify files were produced. Invariant tests share one corpus per contract, so
-    // the approach dir omits the function name; fuzz tests keep per-function dirs.
+    // Verify files were produced. Both fuzz and invariant tests get a per-(anchor)
+    // function approach dir so contracts with multiple campaigns don't collide.
     let out = prj.root().join("showmap_out");
-    let invariant_dir = find_approach_dir(&out, "ShowmapCounterTest");
+    let invariant_dir = find_approach_dir(&out, "ShowmapCounterTest__invariant_counter_called");
     let fuzz_dir = find_approach_dir(&out, "ShowmapCounterTest__testFuzz_SetNumber");
     let invariant_file = invariant_dir.join("t1.txt");
     let fuzz_file = fuzz_dir.join("t1.txt");
@@ -157,7 +157,7 @@ contract ShowmapCounterTest is Test {
 
     // Per-input mode writes one file per corpus entry inside the test's approach dir.
     let out = prj.root().join("showmap_out");
-    let approach_dir = find_approach_dir(&out, "ShowmapCounterTest");
+    let approach_dir = find_approach_dir(&out, "ShowmapCounterTest__invariant_counter_called");
     let entries: Vec<_> = std::fs::read_dir(&approach_dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -213,9 +213,90 @@ contract ShowmapCounterTest is Test {
 
     // Distinct trials become side-by-side files inside the same per-test approach dir.
     let out = prj.root().join("showmap_out");
-    let approach_dir = find_approach_dir(&out, "ShowmapCounterTest");
+    let approach_dir = find_approach_dir(&out, "ShowmapCounterTest__invariant_counter_called");
     let t1 = approach_dir.join("t1.txt");
     let t2 = approach_dir.join("t2.txt");
     assert!(t1.exists(), "missing trial 1 file {}", t1.display());
     assert!(t2.exists(), "missing trial 2 file {}", t2.display());
+
+    let before = std::fs::read_to_string(&t1).unwrap();
+    let retry = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ShowmapCounterTest",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-trial",
+            "t1",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(retry.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("File exists"), "{stdout}");
+    assert_eq!(std::fs::read_to_string(&t1).unwrap(), before);
+});
+
+forgetest_init!(showmap_replay_rejects_path_component_names, |prj, cmd| {
+    prj.add_test(
+        "ShowmapCounter.t.sol",
+        r#"
+contract ShowmapCounterTest {
+    function invariant_counter_called() public view {}
+}
+   "#,
+    );
+
+    for args in [
+        vec![
+            "test",
+            "--mc",
+            "ShowmapCounterTest",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-approach",
+            "../outside",
+        ],
+        vec![
+            "test",
+            "--mc",
+            "ShowmapCounterTest",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-trial",
+            "../../victim",
+        ],
+    ] {
+        let result = cmd.forge_fuse().args(args).assert_failure();
+        let stderr = String::from_utf8(result.get_output().stderr.clone()).unwrap();
+        assert!(stderr.contains("expected a single file-name component"), "{stderr}");
+    }
+});
+
+forgetest_init!(showmap_replay_rejects_empty_corpus_dir, |prj, cmd| {
+    prj.add_test(
+        "ShowmapCounter.t.sol",
+        r#"
+contract ShowmapCounterTest {
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+    std::fs::create_dir_all(prj.root().join("empty_corpus")).unwrap();
+
+    let result = cmd
+        .args([
+            "test",
+            "--mc",
+            "ShowmapCounterTest",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-corpus-dir",
+            "empty_corpus",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(result.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("corpus directory not found: empty_corpus"), "{stdout}");
 });

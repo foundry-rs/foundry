@@ -1336,7 +1336,7 @@ contract SequenceNoReverts {
     uint256 public count;
 
     function work(uint256 x) public {
-        require(x % 2 != 0);
+        x;
         count++;
     }
 }

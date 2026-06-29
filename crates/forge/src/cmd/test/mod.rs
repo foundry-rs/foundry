@@ -86,6 +86,21 @@ const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
 
+fn validate_showmap_name(kind: &str, name: &str) -> Result<()> {
+    let path = Path::new(name);
+    if name.is_empty()
+        || path.is_absolute()
+        || path.components().count() != 1
+        || name.contains(['/', '\\'])
+        || matches!(name, "." | "..")
+    {
+        bail!(
+            "invalid {kind} `{name}`: expected a single file-name component without path separators"
+        );
+    }
+    Ok(())
+}
+
 /// Output format for EVM execution profiles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum EvmProfileFormat {
@@ -160,6 +175,18 @@ impl TestExecutionOptions {
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
+    /// Internal mode used by `forge fuzz`.
+    #[arg(skip)]
+    pub(crate) fuzz_only: bool,
+
+    /// Internal showmap/replay override used by `forge fuzz replay`.
+    #[arg(skip)]
+    pub(crate) showmap_override: Option<ShowmapConfig>,
+
+    /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
+    #[arg(skip)]
+    pub(crate) fuzz_failure_replay: bool,
+
     // Include global options for users of this struct.
     #[command(flatten)]
     pub global: GlobalArgs,
@@ -664,7 +691,11 @@ impl TestArgs {
     }
 
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
-    fn showmap_config(&self) -> Option<ShowmapConfig> {
+    fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
+        if let Some(showmap) = self.showmap_override.clone() {
+            return Ok(Some(showmap));
+        }
+
         // Default trial id uses nanosecond precision so back-to-back invocations
         // don't collide and overwrite each other's output files.
         let trial = self.showmap_trial.clone().unwrap_or_else(|| {
@@ -674,14 +705,34 @@ impl TestArgs {
                 .unwrap_or(0);
             format!("trial-{ns}")
         });
-        Some(ShowmapConfig {
-            out_dir: self.showmap_out.clone()?,
+        let Some(out_dir) = self.showmap_out.clone() else { return Ok(None) };
+        validate_showmap_name("showmap approach", &self.showmap_approach)?;
+        validate_showmap_name("showmap trial", &trial)?;
+        Ok(Some(ShowmapConfig {
+            out_dir,
             approach: self.showmap_approach.clone(),
             trial,
             per_input: self.showmap_per_input,
             domain: self.showmap_domain.into(),
             corpus_dir: self.showmap_corpus_dir.clone(),
-        })
+            emit_files: true,
+        }))
+    }
+
+    /// Restricts this test invocation to fuzz and invariant tests.
+    pub(crate) const fn enable_fuzz_only(&mut self) {
+        self.fuzz_only = true;
+    }
+
+    /// Overrides showmap config for callers that reuse replay mode without the
+    /// `forge test --showmap-*` CLI flags.
+    pub(crate) fn set_showmap_override(&mut self, showmap: ShowmapConfig) {
+        self.showmap_override = Some(showmap);
+    }
+
+    /// Replays persisted fuzz failures without running a new fuzz campaign.
+    pub(crate) const fn enable_fuzz_failure_replay(&mut self) {
+        self.fuzz_failure_replay = true;
     }
 
     fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
@@ -834,6 +885,32 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
+        let (project_root, config, evm_opts, output, filter, replay_symbolic_artifact) =
+            self.compile_project().await?;
+        self.run_tests(
+            &project_root,
+            config,
+            evm_opts,
+            &output,
+            &filter,
+            TestExecutionOptions {
+                replay_symbolic_artifact,
+                ..TestExecutionOptions::default_run()
+            },
+        )
+        .await
+    }
+
+    async fn compile_project(
+        &mut self,
+    ) -> Result<(
+        PathBuf,
+        Config,
+        EvmOpts,
+        ProjectCompileOutput,
+        ProjectPathsAwareFilter,
+        Option<SymbolicArtifactReplayConfig>,
+    )> {
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -853,6 +930,7 @@ impl TestArgs {
 
         // Set up the project.
         let project = config.project()?;
+        let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
 
@@ -886,18 +964,7 @@ impl TestArgs {
             .files(self.get_sources_to_compile(&config, &filter)?);
         let output = compiler.compile(&project)?;
 
-        self.run_tests(
-            &project.paths.root,
-            config,
-            evm_opts,
-            &output,
-            &filter,
-            TestExecutionOptions {
-                replay_symbolic_artifact,
-                ..TestExecutionOptions::default_run()
-            },
-        )
-        .await
+        Ok((project_root, config, evm_opts, output, filter, replay_symbolic_artifact))
     }
 
     /// Executes all the tests in the project.
@@ -1533,7 +1600,7 @@ impl TestArgs {
             evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
         let config = Arc::new(config);
-        let showmap = self.showmap_config();
+        let showmap = self.showmap_config()?;
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(execution.should_debug)
             .set_decode_internal(execution.decode_internal)
@@ -1546,6 +1613,8 @@ impl TestArgs {
             .set_coverage(execution.coverage)
             .with_multi_network(execution.multi_network)
             .with_showmap(showmap)
+            .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
