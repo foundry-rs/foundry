@@ -1096,6 +1096,80 @@ contract GeneratedCorpusBTest {
     assert!(!stdout.contains("corpus replay failed"), "{stdout}");
 });
 
+forgetest_init!(forge_fuzz_replay_scopes_generated_invariant_root_to_target, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test(
+        "ForgeFuzzGeneratedInvariantRootScope.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract GeneratedInvariantCorpusATest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function setValue(uint256 value) external {
+        require(value == 1);
+    }
+
+    function invariant_ok() public pure {}
+}
+
+contract GeneratedInvariantCorpusBTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function setValue(uint256 value) external {
+        require(value == 2);
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzGeneratedInvariantRootScope.t.sol/GeneratedInvariantCorpusBTest.json",
+    );
+    let corpus_root = prj.root().join("invariant_corpus");
+    let a_corpus = corpus_root.join("GeneratedInvariantCorpusATest/worker0/corpus");
+    let b_corpus = corpus_root.join("GeneratedInvariantCorpusBTest/worker0/corpus");
+    std::fs::create_dir_all(&a_corpus).unwrap();
+    std::fs::create_dir_all(&b_corpus).unwrap();
+    write_corpus_entry(
+        &a_corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        &calldata_for(&abi, "setValue", 1),
+    );
+    write_corpus_entry(
+        &b_corpus,
+        "00000000-0000-0000-0000-000000000002-2.json",
+        &calldata_for(&abi, "setValue", 2),
+    );
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "GeneratedInvariantCorpusBTest",
+            "--mt",
+            "invariant_ok",
+            "--corpus-dir",
+            "invariant_corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] invariant_ok() (replay: 1 entries"), "{stdout}");
+    assert!(!stdout.contains("corpus replay failed"), "{stdout}");
+});
+
 // tests that inline max-test-rejects config is properly applied
 forgetest_init!(test_inline_max_test_rejects, |prj, cmd| {
     prj.add_test(

@@ -11,6 +11,8 @@ use crate::inspectors::{
     cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
+use alloy_evm::Evm;
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
@@ -29,8 +31,8 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     evm::{
-        EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor,
-        TxEnvFor,
+        EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor,
+        IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -576,6 +578,35 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env.set_signed_authorization(authorization_list);
         tx_env.set_tx_type(4);
         self.transact_with_env(evm_env, tx_env)
+    }
+
+    /// Applies the EIP-4788 beacon roots system call (Cancun+).
+    /// <https://eips.ethereum.org/EIPS/eip-4788>
+    pub fn apply_beacon_root(
+        &mut self,
+        parent_beacon_block_root: alloy_primitives::B256,
+    ) -> eyre::Result<()> {
+        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let mut evm_env = self.evm_env.clone();
+        let inspector = self.inspector().clone();
+        let mut state = {
+            let mut backend = CowBackend::new_borrowed(self.backend());
+            let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
+                &mut backend,
+                evm_env.clone(),
+                inspector,
+            );
+            let result =
+                evm.transact_system_call(SYSTEM_ADDRESS, BEACON_ROOTS_ADDRESS, calldata)?;
+            evm_env = evm.finish().1;
+            result.state
+        };
+        state.retain(|address, _| *address == BEACON_ROOTS_ADDRESS);
+
+        self.backend_mut().commit(state);
+        self.inspector_mut().set_block(evm_env.block_env);
+
+        Ok(())
     }
 
     /// Execute the transaction configured in `tx_env`.
@@ -1588,6 +1619,25 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn beacon_root_system_call_does_not_persist_system_address() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().spec_id(SpecId::CANCUN).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let before = executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap();
+
+        executor.apply_beacon_root(B256::repeat_byte(0x11)).unwrap();
+
+        assert_eq!(
+            executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap(),
+            before,
+            "EIP-4788 system calls must not persist the system caller account",
+        );
     }
 
     /// Regression test for `pre_override_blob_hashes` restoration.

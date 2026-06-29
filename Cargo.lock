@@ -5500,6 +5500,8 @@ name = "foundry-evm"
 version = "1.7.2"
 dependencies = [
  "alloy-dyn-abi",
+ "alloy-eips",
+ "alloy-evm",
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-rpc-types",

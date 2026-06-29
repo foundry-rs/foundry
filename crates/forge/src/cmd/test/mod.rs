@@ -101,6 +101,11 @@ fn validate_showmap_name(kind: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_showmap_config(showmap: &ShowmapConfig) -> Result<()> {
+    validate_showmap_name("showmap approach", &showmap.approach)?;
+    validate_showmap_name("showmap trial", &showmap.trial)
+}
+
 /// Output format for EVM execution profiles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum EvmProfileFormat {
@@ -705,6 +710,7 @@ impl TestArgs {
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
     fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
         if let Some(showmap) = self.showmap_override.clone() {
+            validate_showmap_config(&showmap)?;
             return Ok(Some(showmap));
         }
 
@@ -718,9 +724,7 @@ impl TestArgs {
             format!("trial-{ns}")
         });
         let Some(out_dir) = self.showmap_out.clone() else { return Ok(None) };
-        validate_showmap_name("showmap approach", &self.showmap_approach)?;
-        validate_showmap_name("showmap trial", &trial)?;
-        Ok(Some(ShowmapConfig {
+        let showmap = ShowmapConfig {
             out_dir,
             approach: self.showmap_approach.clone(),
             trial,
@@ -728,7 +732,9 @@ impl TestArgs {
             domain: self.showmap_domain.into(),
             corpus_dir: self.showmap_corpus_dir.clone(),
             emit_files: true,
-        }))
+        };
+        validate_showmap_config(&showmap)?;
+        Ok(Some(showmap))
     }
 
     /// Restricts this test invocation to fuzz and invariant tests.
@@ -2831,6 +2837,23 @@ mod tests {
     fn fuzz_seed() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
+    }
+
+    #[test]
+    fn showmap_override_validates_path_component_names() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.set_showmap_override(ShowmapConfig {
+            out_dir: PathBuf::from("showmap"),
+            approach: "../outside".to_string(),
+            trial: "trial".to_string(),
+            per_input: false,
+            domain: ShowmapDomain::Evm,
+            corpus_dir: None,
+            emit_files: false,
+        });
+
+        let err = args.showmap_config().unwrap_err().to_string();
+        assert!(err.contains("expected a single file-name component"), "{err}");
     }
 
     #[test]
