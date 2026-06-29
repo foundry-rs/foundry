@@ -305,8 +305,8 @@ pub enum EthRequest {
 
     /// Creates a filter in the node, to notify when new pending transactions arrive.
     /// To check if the state has changed, call `eth_getFilterChanges`.
-    #[serde(rename = "eth_newPendingTransactionFilter", with = "empty_params")]
-    EthNewPendingTransactionFilter(()),
+    #[serde(rename = "eth_newPendingTransactionFilter", with = "optional_sequence")]
+    EthNewPendingTransactionFilter(Option<bool>),
 
     /// Returns an array of all logs matching filter with given id.
     #[serde(rename = "eth_getFilterLogs", with = "sequence")]
@@ -1626,6 +1626,29 @@ mod tests {
 ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"knownAccounts":{}}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_new_pending_transaction_filter() {
+        let s = r#"{"method": "eth_newPendingTransactionFilter", "params":[],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::EthNewPendingTransactionFilter(None)));
+
+        let s = r#"{"method": "eth_newPendingTransactionFilter", "params":[null],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::EthNewPendingTransactionFilter(None)));
+
+        let s = r#"{"method": "eth_newPendingTransactionFilter", "params":[false],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::EthNewPendingTransactionFilter(Some(false))));
+
+        let s = r#"{"method": "eth_newPendingTransactionFilter", "params":[true],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::EthNewPendingTransactionFilter(Some(true))));
     }
 
     #[test]

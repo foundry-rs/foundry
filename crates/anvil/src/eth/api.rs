@@ -1886,8 +1886,8 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthNewFilter(filter) => self.new_filter(filter).await.to_rpc_result(),
             EthRequest::EthGetFilterChanges(id) => self.get_filter_changes(&id).await,
             EthRequest::EthNewBlockFilter(_) => self.new_block_filter().await.to_rpc_result(),
-            EthRequest::EthNewPendingTransactionFilter(_) => {
-                self.new_pending_transaction_filter().await.to_rpc_result()
+            EthRequest::EthNewPendingTransactionFilter(full) => {
+                self.new_pending_transaction_filter(full.unwrap_or(false)).await.to_rpc_result()
             }
             EthRequest::EthGetFilterLogs(id) => self.get_filter_logs(&id).await.to_rpc_result(),
             EthRequest::EthUninstallFilter(id) => self.uninstall_filter(&id).await.to_rpc_result(),
@@ -3012,9 +3012,13 @@ impl EthApi<FoundryNetwork> {
     /// Creates a filter in the node, to notify when new pending transactions arrive.
     ///
     /// Handler for ETH RPC call: `eth_newPendingTransactionFilter`
-    pub async fn new_pending_transaction_filter(&self) -> Result<String> {
+    pub async fn new_pending_transaction_filter(&self, full: bool) -> Result<String> {
         node_info!("eth_newPendingTransactionFilter");
-        let filter = EthFilter::PendingTransactions(self.new_ready_transactions());
+        let filter = if full {
+            EthFilter::FullPendingTransactions(self.full_pending_transactions())
+        } else {
+            EthFilter::PendingTransactions(self.new_ready_transactions())
+        };
         Ok(self.filters.add_filter(filter).await)
     }
 
