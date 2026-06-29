@@ -520,14 +520,13 @@ impl FuzzDictionary {
             return;
         }
 
+        let Some(code) = &account_info.code else {
+            return;
+        };
         self.insert_address(*address);
         if self.values_full() {
             return;
         }
-
-        let Some(code) = &account_info.code else {
-            return;
-        };
         if self.push_bytecode_hashes.insert(account_info.code_hash) {
             self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
         }
@@ -852,6 +851,24 @@ mod tests {
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
         assert_eq!(dictionary.addresses.len(), 2);
         assert_eq!(dictionary.hits, hits_after_first_scan);
+    }
+
+    #[test]
+    fn no_code_account_does_not_block_later_push_byte_scan() {
+        let mut dictionary = FuzzDictionary::default();
+        let address = Address::repeat_byte(0x33);
+        let account_without_code = AccountInfo { code: None, ..Default::default() };
+
+        dictionary.insert_push_bytes_values(&address, &account_without_code);
+
+        assert!(!dictionary.addresses.contains(&address));
+        assert_eq!(dictionary.push_bytecode_hashes.len(), 0);
+
+        dictionary.insert_push_bytes_values(&address, &account_with_code(&[0x60, 0x04]));
+
+        assert!(dictionary.addresses.contains(&address));
+        assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
+        assert!(dictionary.state_values.contains(&B256::from(U256::from(4))));
     }
 
     #[test]
