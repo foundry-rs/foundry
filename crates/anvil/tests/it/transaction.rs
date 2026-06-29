@@ -7,7 +7,7 @@ use alloy_network::{
     AnyRpcTransaction, EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse,
 };
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
+    Address, B256, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
 };
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
@@ -63,6 +63,45 @@ async fn can_transfer_eth() {
     let to_balance = provider.get_balance(to).await.unwrap();
 
     assert_eq!(balance_before.saturating_add(amount), to_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_pending_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let other_sender = accounts[1].address();
+    let recipient = accounts[2].address();
+
+    let sender_tx =
+        TransactionRequest::default().from(sender).to(recipient).value(U256::from(1)).nonce(0);
+    let sender_tx = provider.send_transaction(WithOtherFields::new(sender_tx)).await.unwrap();
+
+    let queued_tx =
+        TransactionRequest::default().from(sender).to(recipient).value(U256::from(2)).nonce(2);
+    let queued_tx = provider.send_transaction(WithOtherFields::new(queued_tx)).await.unwrap();
+
+    let other_tx = TransactionRequest::default()
+        .from(other_sender)
+        .to(recipient)
+        .value(U256::from(3))
+        .nonce(0);
+    let other_tx = provider.send_transaction(WithOtherFields::new(other_tx)).await.unwrap();
+
+    let pending: Vec<AnyRpcTransaction> =
+        provider.client().request("eth_pendingTransactions", ()).await.unwrap();
+    let hashes = pending.iter().map(|tx| B256::from(*tx.inner.tx_hash())).collect::<B256HashSet>();
+
+    assert_eq!(pending.len(), 2);
+    assert!(hashes.contains(sender_tx.tx_hash()));
+    assert!(hashes.contains(other_tx.tx_hash()));
+    assert!(!hashes.contains(queued_tx.tx_hash()));
+    assert!(pending.iter().any(|tx| tx.from() == sender));
+    assert!(pending.iter().any(|tx| tx.from() == other_sender));
 }
 
 #[tokio::test(flavor = "multi_thread")]
