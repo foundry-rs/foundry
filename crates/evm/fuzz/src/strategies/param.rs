@@ -582,7 +582,7 @@ mod tests {
         let state = EvmFuzzState::test();
         let strategy = proptest::prop_oneof![
             60 => fuzz_calldata(func.clone(), &FuzzFixtures::default()),
-            40 => fuzz_calldata_from_state(func, &state),
+            40 => fuzz_calldata_from_state(func, &state, &FuzzFixtures::default()),
         ];
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let mut runner = proptest::test_runner::TestRunner::new(cfg);

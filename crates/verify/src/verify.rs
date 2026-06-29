@@ -381,11 +381,19 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub via_ir: bool,
 
-    /// The Etherscan license type code to include with the verification request.
+    /// The Etherscan license type code or SPDX identifier to include with the verification
+    /// request.
     ///
-    /// See Etherscan's supported `licenseType` values. This is only used for Etherscan-style
-    /// verifiers.
-    #[arg(long, value_name = "CODE", help_heading = "Verifier options")]
+    /// Accepts either an Etherscan numeric license code (see
+    /// <https://etherscan.io/contract-license-types>) or a common SPDX identifier such as
+    /// `MIT`, `Apache-2.0`, `GPL-3.0-or-later`, or `AGPL-3.0-or-later`. Only used for
+    /// Etherscan-style verifiers.
+    #[arg(
+        long,
+        value_name = "LICENSE",
+        help_heading = "Verifier options",
+        value_parser = parse_etherscan_license_type,
+    )]
     pub license_type: Option<String>,
 
     /// The EVM version to use.
@@ -421,6 +429,71 @@ pub struct VerifyArgs {
     /// Defaults to `solidity` if none provided.
     #[arg(long, value_enum)]
     pub language: Option<ContractLanguage>,
+}
+
+fn parse_etherscan_license_type(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("license type cannot be empty".into());
+    }
+
+    if let Ok(code) = value.parse::<u32>() {
+        return Ok(code.to_string());
+    }
+
+    let normalized = normalize_license_type(value);
+    let code = match normalized.as_str() {
+        "none" | "no-license" | "unlicensed" => 1,
+        "unlicense" | "the-unlicense" => 2,
+        "mit" | "mit-license" => 3,
+        "gpl-2.0" | "gpl-2.0+" | "gpl-2.0-only" | "gpl-2.0-or-later" | "gplv2" | "gnu-gplv2" => 4,
+        "gpl-3.0" | "gpl-3.0+" | "gpl-3.0-only" | "gpl-3.0-or-later" | "gplv3" | "gnu-gplv3" => 5,
+        "lgpl-2.1" | "lgpl-2.1+" | "lgpl-2.1-only" | "lgpl-2.1-or-later" | "lgplv2.1"
+        | "gnu-lgplv2.1" => 6,
+        "lgpl-3.0" | "lgpl-3.0+" | "lgpl-3.0-only" | "lgpl-3.0-or-later" | "lgplv3"
+        | "gnu-lgplv3" => 7,
+        "bsd-2-clause" => 8,
+        "bsd-3-clause" => 9,
+        "mpl-2.0" => 10,
+        "osl-3.0" => 11,
+        "apache-2.0" | "apache-license-2.0" => 12,
+        "agpl-3.0" | "agpl-3.0+" | "agpl-3.0-only" | "agpl-3.0-or-later" | "agplv3"
+        | "gnu-agplv3" => 13,
+        "bsl-1.1" | "busl-1.1" | "business-source-license-1.1" => 14,
+        _ => {
+            return Err(format!(
+                "unsupported Etherscan license type `{value}`; expected a numeric code or a \
+                 supported SPDX identifier such as MIT, Apache-2.0, GPL-3.0-or-later, or \
+                 AGPL-3.0-or-later"
+            ));
+        }
+    };
+
+    Ok(code.to_string())
+}
+
+fn normalize_license_type(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut last_was_dash = false;
+
+    for ch in value.trim().chars() {
+        let ch = match ch {
+            '_' | ' ' | '\t' | '\n' | '\r' => '-',
+            _ => ch.to_ascii_lowercase(),
+        };
+
+        if ch == '-' {
+            if !last_was_dash {
+                normalized.push(ch);
+            }
+            last_was_dash = true;
+        } else {
+            normalized.push(ch);
+            last_was_dash = false;
+        }
+    }
+
+    normalized.trim_matches('-').to_string()
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -916,6 +989,77 @@ mod tests {
         ]);
         assert!(args.via_ir);
         assert_eq!(args.license_type.as_deref(), Some("13"));
+    }
+
+    #[test]
+    fn can_parse_verify_contract_license_type_spdx() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "AGPL-3.0-or-later",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "MIT",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("3"));
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "apache 2.0",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("12"));
+    }
+
+    #[test]
+    fn verify_contract_license_type_is_case_insensitive() {
+        for variant in ["mit", "MIT", "Mit", "mIt"] {
+            let args: VerifyArgs = VerifyArgs::parse_from([
+                "foundry-cli",
+                "0x0000000000000000000000000000000000000000",
+                "src/Domains.sol:Domains",
+                "--license-type",
+                variant,
+            ]);
+            assert_eq!(args.license_type.as_deref(), Some("3"), "input: {variant}");
+        }
+    }
+
+    #[test]
+    fn verify_contract_license_type_accepts_numeric_codes() {
+        for (code, expected) in [("1", "1"), ("14", "14"), ("15", "15")] {
+            let args: VerifyArgs = VerifyArgs::parse_from([
+                "foundry-cli",
+                "0x0000000000000000000000000000000000000000",
+                "src/Domains.sol:Domains",
+                "--license-type",
+                code,
+            ]);
+            assert_eq!(args.license_type.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn errors_on_invalid_verify_contract_license_type() {
+        let err = VerifyArgs::try_parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "Unknown-License",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("unsupported Etherscan license type"));
     }
 
     #[test]

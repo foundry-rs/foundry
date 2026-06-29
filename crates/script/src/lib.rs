@@ -61,7 +61,7 @@ use foundry_evm::{
     },
     opts::EvmOpts,
     revm::interpreter::InstructionResult,
-    traces::{TraceMode, Traces},
+    traces::{TraceRequirements, Traces},
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
@@ -311,10 +311,9 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
-            if let Ok(signers) = script_wallets.signers()
-                && signers.len() == 1
-            {
-                evm_opts.sender = signers[0];
+            let addresses = script_wallets.addresses();
+            if addresses.len() == 1 {
+                evm_opts.sender = addresses[0];
             } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
                 evm_opts.sender = signer
             }
@@ -869,7 +868,9 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
-                    .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                    .trace_requirements(
+                        TraceRequirements::none().with_calls(true).with_debug(debug),
+                    )
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })

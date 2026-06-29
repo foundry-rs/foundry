@@ -551,7 +551,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let calldata_strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state, fuzz_fixtures),
         ];
         let value_strategy = if func.state_mutability == alloy_json_abi::StateMutability::Payable {
             fuzz_msg_value(self.config.corpus.payable_value_weight).boxed()

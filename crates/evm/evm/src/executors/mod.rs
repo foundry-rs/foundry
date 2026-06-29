@@ -36,7 +36,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::ObservedCall;
-use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
     context::Transaction,
@@ -371,8 +371,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, mode: TraceMode) -> &mut Self {
-        self.inspector_mut().tracing(mode);
+    pub fn set_trace_requirements(&mut self, requirements: TraceRequirements) -> &mut Self {
+        self.inspector_mut().tracing_requirements(requirements);
         self
     }
 

@@ -38,6 +38,7 @@ tempo-alloy.workspace = true
 [dev-dependencies]
 foundry-macros.workspace = true
 similar-asserts.workspace = true
+proptest.workspace = true
 
 [features]
 default = ["optimism"]
