@@ -2683,7 +2683,11 @@ forgetest_init!(requires_single_test, |prj, cmd| {
     cmd.args(["test", "--debug"]).assert_failure().stderr_eq(str![[r#"
 Error: 2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
 
-Use --match-contract and --match-path to further limit the search.
+Matching tests:
+  test/Counter.t.sol:CounterTest.testFuzz_SetNumber
+  test/Counter.t.sol:CounterTest.test_Increment
+
+Use --match-test <TEST_NAME>, --match-contract, and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamegraph"]).assert_failure().stderr_eq(str![[r#"
