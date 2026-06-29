@@ -2594,19 +2594,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             op::SSTORE => {
                 let Some(last) = account_accesses.last_mut() else { return };
 
-                // TODO: avoid warming cold SSTORE slots while recording state diffs.
                 let key = try_or_return!(interpreter.stack.peek(0));
                 let value = try_or_return!(interpreter.stack.peek(1));
                 let address = interpreter.input.target_address;
                 // Try to load the account and the slot's previous value, otherwise, assume it's
-                // not set (zero value)
-                let previous_value = if ecx.journal_mut().load_account(address).is_ok()
-                    && let Some(previous) = ecx.sload(address, key)
-                {
-                    previous.data
-                } else {
-                    U256::ZERO
-                };
+                // not set (zero value). Revert the checkpoint so this read does not warm the slot
+                // for the actual SSTORE opcode.
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let previous_value =
+                    ecx.sload(address, key).map(|previous| previous.data).unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
 
                 let access = crate::Vm::StorageAccess {
                     account: address,
@@ -2623,7 +2620,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
             // Record account accesses via the EXT family of opcodes
             op::EXTCODECOPY | op::EXTCODESIZE | op::EXTCODEHASH | op::BALANCE => {
-                // TODO: avoid warming cold accounts while recording EXT*/BALANCE state diffs.
                 let kind = match interpreter.bytecode.opcode() {
                     op::EXTCODECOPY => crate::Vm::AccountAccessKind::Extcodecopy,
                     op::EXTCODESIZE => crate::Vm::AccountAccessKind::Extcodesize,
@@ -2633,12 +2629,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 };
                 let address =
                     Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
-                let (initialized, balance, nonce) =
-                    if let Ok(acc) = ecx.journal_mut().load_account(address) {
-                        (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
-                    } else {
-                        (false, U256::ZERO, 0)
-                    };
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let (initialized, balance, nonce) = ecx
+                    .journal_mut()
+                    .load_account(address)
+                    .map(|acc| (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce))
+                    .unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
                 let curr_depth =
                     ecx.journal().depth().try_into().expect("journaled state depth exceeds u64");
                 let account_access = crate::Vm::AccountAccess {
