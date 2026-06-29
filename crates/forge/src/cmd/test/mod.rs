@@ -16,6 +16,7 @@ use crate::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
+        speedscope,
     },
 };
 use alloy_primitives::U256;
@@ -71,6 +72,7 @@ use std::{
 };
 use yansi::Paint;
 
+mod evm_profile_server;
 mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
@@ -81,6 +83,31 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
+
+/// Output format for EVM execution profiles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum EvmProfileFormat {
+    /// Speedscope format, opens in speedscope.app.
+    #[default]
+    Speedscope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TraceOutputKind {
+    Flamegraph,
+    Flamechart,
+    EvmProfile(EvmProfileFormat),
+}
+
+impl TraceOutputKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Flamegraph => "flamegraph",
+            Self::Flamechart => "flamechart",
+            Self::EvmProfile(_) => "EVM profile",
+        }
+    }
+}
 
 /// CLI mirror of `foundry_evm::executors::ShowmapDomain`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -145,7 +172,7 @@ pub struct TestArgs {
     ///
     /// If the matching test is a fuzz test, then it will open the debugger on the first failure
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
-    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
+    #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "evm_profile", "decode_internal", "rerun"])]
     debug: bool,
 
     /// Debugger layout to use.
@@ -156,15 +183,36 @@ pub struct TestArgs {
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
     /// are consuming the most gas overall in a sorted manner.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["flamechart", "evm_profile", "json", "junit", "list"])]
     flamegraph: bool,
 
     /// Generate a flamechart for a single test. Implies `--decode-internal`.
     ///
     /// A flame chart shows the gas usage over time, illustrating when each function is
     /// called (execution order) and how much gas it consumes at each point in the timeline.
-    #[arg(long, conflicts_with = "flamegraph")]
+    #[arg(long, conflicts_with_all = ["flamegraph", "evm_profile", "json", "junit", "list"])]
     flamechart: bool,
+
+    /// Generate an execution profile for a single test.
+    ///
+    /// Creates a profile where each EVM call is recorded with gas consumption.
+    /// Opens the profile in speedscope.app unless `--no-open` is passed.
+    /// Implies `--decode-internal`.
+    #[arg(
+        long,
+        value_name = "FORMAT",
+        num_args = 0..=1,
+        default_missing_value = "speedscope",
+        value_enum,
+        conflicts_with_all = ["flamegraph", "flamechart", "json", "junit", "list"]
+    )]
+    evm_profile: Option<EvmProfileFormat>,
+
+    /// Don't open the profile in the browser (for `--evm-profile`).
+    ///
+    /// The profile is saved to disk without starting the local viewer server.
+    #[arg(long, requires = "evm_profile")]
+    no_open: bool,
 
     /// Identify internal functions in traces.
     ///
@@ -512,7 +560,7 @@ pub struct TestArgs {
         value_name = "DIR",
         value_hint = ValueHint::DirPath,
         help_heading = "Showmap replay",
-        conflicts_with_all = ["debug", "flamegraph", "flamechart", "rerun", "fuzz_input_file", "gas_report"],
+        conflicts_with_all = ["debug", "flamegraph", "flamechart", "evm_profile", "rerun", "fuzz_input_file", "gas_report"],
     )]
     pub showmap_out: Option<PathBuf>,
 
@@ -887,6 +935,9 @@ impl TestArgs {
             if self.flamechart {
                 conflicts.push("--flamechart");
             }
+            if self.evm_profile.is_some() {
+                conflicts.push("--evm-profile");
+            }
             if self.junit {
                 conflicts.push("--junit");
             }
@@ -925,15 +976,21 @@ impl TestArgs {
 
         // Create test options from general project settings and compiler output.
         execution.should_debug = self.debug;
-        let should_draw = self.flamegraph || self.flamechart;
+        let trace_output = if self.flamegraph {
+            Some(TraceOutputKind::Flamegraph)
+        } else if self.flamechart {
+            Some(TraceOutputKind::Flamechart)
+        } else {
+            self.evm_profile.map(TraceOutputKind::EvmProfile)
+        };
 
         // Determine executor verbosity.
-        if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
+        if evm_opts.verbosity < 3 && (self.gas_report || trace_output.is_some()) {
             evm_opts.verbosity = 3;
         }
 
-        // Enable internal tracing for more informative flamegraph.
-        if should_draw && !self.decode_internal {
+        // Enable internal tracing for more informative flamegraph/profile.
+        if !self.decode_internal && trace_output.is_some() {
             self.decode_internal = true;
         }
 
@@ -1049,44 +1106,136 @@ impl TestArgs {
             }
         }
 
-        if should_draw {
-            let (suite_name, test_name, mut test_result) =
-                outcome.remove_first().ok_or_eyre("no tests were executed")?;
-
-            let (_, arena) = test_result
-                .traces
-                .iter_mut()
-                .find(|(kind, _)| *kind == TraceKind::Execution)
-                .unwrap();
-
-            // Decode traces.
-            let decoder = outcome.last_run_decoder.as_ref().unwrap();
-            decode_trace_arena(arena, decoder).await;
-            let mut fst = folded_stack_trace::build(arena, self.evm.isolate);
-
-            let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
-            let contract = suite_name.split(':').next_back().unwrap();
-            let test_name = test_name.trim_end_matches("()");
-            let file_name = format!("cache/{label}_{contract}_{test_name}.svg");
-            let file = std::fs::File::create(&file_name).wrap_err("failed to create file")?;
-            let file = std::io::BufWriter::new(file);
-
-            let mut options = inferno::flamegraph::Options::default();
-            options.title = format!("{label} {contract}::{test_name}");
-            options.count_name = "gas".to_string();
-            if self.flamechart {
-                options.flame_chart = true;
-                fst.reverse();
+        if let Some(trace_output) = trace_output {
+            enum RenderedTraceOutput {
+                Flame {
+                    file_name: String,
+                    title: String,
+                    flame_chart: bool,
+                    folded_stack_trace: Vec<String>,
+                },
+                EvmProfile {
+                    profile_json: Vec<u8>,
+                    test_name: String,
+                    contract: String,
+                },
             }
 
-            // Generate SVG.
-            inferno::flamegraph::from_lines(&mut options, fst.iter().map(String::as_str), file)
-                .wrap_err("failed to write svg")?;
-            sh_println!("Saved to {file_name}")?;
+            let rendered = {
+                let output_label = trace_output.label();
+                let no_tests = match trace_output {
+                    TraceOutputKind::EvmProfile(_) => {
+                        "cannot generate EVM profile: no tests were executed"
+                    }
+                    TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
+                        "no tests were executed"
+                    }
+                };
+                if !outcome.results.values().any(|suite| !suite.test_results.is_empty()) {
+                    return Err(eyre::eyre!("{no_tests}"));
+                }
+                let decoder = outcome.last_run_decoder.clone().ok_or_else(|| {
+                    eyre::eyre!("cannot generate {output_label}: missing trace decoder")
+                })?;
+                let (suite_name, test_name, test_result) = outcome
+                    .results
+                    .iter_mut()
+                    .find_map(|(suite_name, suite)| {
+                        suite.test_results.iter_mut().next().map(|(test_name, result)| {
+                            (suite_name.as_str(), test_name.as_str(), result)
+                        })
+                    })
+                    .ok_or_else(|| eyre::eyre!("{no_tests}"))?;
+                let contract = suite_name.split(':').next_back().unwrap();
+                let test_name_trimmed = test_name.trim_end_matches("()");
 
-            // Open SVG in default program.
-            if let Err(e) = opener::open(&file_name) {
-                sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
+                let (_, arena) = test_result
+                    .traces
+                    .iter_mut()
+                    .find(|(kind, _)| *kind == TraceKind::Execution)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "cannot generate {output_label} for {contract}::{test_name_trimmed}: \
+                             no execution trace (test may have failed in setUp/constructor or been \
+                             skipped)"
+                        )
+                    })?;
+
+                // Decode traces.
+                decode_trace_arena(arena, &decoder).await;
+
+                match trace_output {
+                    TraceOutputKind::Flamegraph | TraceOutputKind::Flamechart => {
+                        let mut folded_stack_trace =
+                            folded_stack_trace::build(arena, self.evm.isolate);
+                        let flame_chart = matches!(trace_output, TraceOutputKind::Flamechart);
+                        if flame_chart {
+                            folded_stack_trace.reverse();
+                        }
+                        let label = trace_output.label();
+                        RenderedTraceOutput::Flame {
+                            file_name: format!("cache/{label}_{contract}_{test_name_trimmed}.svg"),
+                            title: format!("{label} {contract}::{test_name_trimmed}"),
+                            flame_chart,
+                            folded_stack_trace,
+                        }
+                    }
+                    TraceOutputKind::EvmProfile(EvmProfileFormat::Speedscope) => {
+                        let profile = speedscope::builder::build(
+                            arena,
+                            test_name_trimmed,
+                            contract,
+                            self.evm.isolate,
+                        );
+                        RenderedTraceOutput::EvmProfile {
+                            profile_json: serde_json::to_vec(&profile)?,
+                            test_name: test_name_trimmed.to_string(),
+                            contract: contract.to_string(),
+                        }
+                    }
+                }
+            };
+
+            match rendered {
+                RenderedTraceOutput::Flame {
+                    file_name,
+                    title,
+                    flame_chart,
+                    folded_stack_trace,
+                } => {
+                    let file =
+                        std::fs::File::create(&file_name).wrap_err("failed to create file")?;
+                    let file = std::io::BufWriter::new(file);
+
+                    let mut options = inferno::flamegraph::Options::default();
+                    options.title = title;
+                    options.count_name = "gas".to_string();
+                    options.flame_chart = flame_chart;
+
+                    inferno::flamegraph::from_lines(
+                        &mut options,
+                        folded_stack_trace.iter().map(String::as_str),
+                        file,
+                    )
+                    .wrap_err("failed to write svg")?;
+                    sh_println!("Saved to {file_name}")?;
+
+                    if let Err(e) = opener::open(&file_name) {
+                        sh_err!("Failed to open {file_name}; please open it manually: {e}")?;
+                    }
+                }
+                RenderedTraceOutput::EvmProfile { profile_json, test_name, contract } => {
+                    let profile_path = format!("cache/evm_profile_{contract}_{test_name}.json");
+                    fs::write(&profile_path, &profile_json)?;
+
+                    sh_println!("Profile saved to {profile_path}")?;
+
+                    if self.no_open {
+                        return Ok(outcome);
+                    }
+
+                    evm_profile_server::serve_and_open(profile_json, &test_name, &contract).await?;
+                }
             }
         }
 
@@ -1386,6 +1535,7 @@ impl TestArgs {
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(execution.should_debug)
             .set_decode_internal(execution.decode_internal)
+            .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
@@ -1478,11 +1628,15 @@ impl TestArgs {
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
-        if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
+        if num_filtered != 1
+            && (self.debug || self.flamegraph || self.flamechart || self.evm_profile.is_some())
+        {
             let action = if self.flamegraph {
                 "generate a flamegraph"
             } else if self.flamechart {
                 "generate a flamechart"
+            } else if self.evm_profile.is_some() {
+                "generate an EVM profile"
             } else {
                 "run the debugger"
             };
@@ -1617,7 +1771,8 @@ impl TestArgs {
                 || self.gas_report
                 || self.debug
                 || self.flamegraph
-                || self.flamechart;
+                || self.flamechart
+                || self.evm_profile.is_some();
 
             // Print suite header.
             if !silent {
