@@ -2338,6 +2338,77 @@ contract Recursive {
 "#]]);
 });
 
+// erc7201("test.packedarray") = 0x...
+// Packed fixed arrays: uint8[4] fits in 1 slot so numberOfBytes should be "32", not "4".
+// The field after the array must start on a fresh slot (not offset into the array's slot).
+forgetest!(can_inspect_erc7201_packed_fixed_array_bytes, |prj, cmd| {
+    prj.add_source(
+        "Packed.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Packed {
+    /// @custom:storage-location erc7201:test.packedarray
+    struct PackedStorage {
+        uint8[4] nibbles; // 4 × 1B packed → 1 slot, numberOfBytes=32
+        uint256 sentinel; // must be at base+1, not base+0 with offset 4
+    }
+
+    function _storage() private pure returns (PackedStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.packedarray")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Packed", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Packed [erc7201:test.packedarray]",
+      "label": "nibbles",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "uint8[4]"
+    },
+    {
+      "astId": 0,
+      "contract": "Packed [erc7201:test.packedarray]",
+      "label": "sentinel",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "uint256"
+    }
+  ],
+  "types": {
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "uint8": {
+      "encoding": "inplace",
+      "label": "uint8",
+      "numberOfBytes": "1"
+    },
+    "uint8[4]": {
+      "encoding": "inplace",
+      "label": "uint8[4]",
+      "numberOfBytes": "32",
+      "base": "uint8"
+    }
+  }
+}
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();

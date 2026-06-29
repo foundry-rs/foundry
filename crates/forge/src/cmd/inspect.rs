@@ -554,7 +554,7 @@ fn hir_type_storage_info<'hir>(
                         // elements_per_slot = floor(32 / elem_bytes), minimum 1.
                         let per_slot = (32u64 / elem_bytes).max(1);
                         let slots = n.div_ceil(per_slot);
-                        (n * elem_bytes, slots, "inplace")
+                        (slots * 32, slots, "inplace")
                     } else {
                         // Slot-boundary element (e.g. T is itself an array or struct).
                         let slots = n * elem_slots;
