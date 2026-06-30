@@ -1073,23 +1073,34 @@ ensure_rust_foundryup() {
   install_rust_foundryup "$_bin"
 }
 
-# True if the args request -U/--update. Skips the values of options that take an
-# argument (mirroring main's parser) so a value of `--update` is not a match, and
-# stops at the `--` sentinel.
-wants_update() {
+# Classifies the requested command for the migration shim, scanning args
+# left-to-right for the first terminal flag exactly as main's parser does (where
+# -U/-h/-v/-l/-u execute and exit immediately, so the first one wins). Prints:
+#   - "update"  for -U/--update,
+#   - "help"    for -h/--help,
+#   - "version" for -v/--version,
+#   - "local"   for -l/--list, -u/--use (served by the sidecar if installed, else
+#               the legacy bash path; never bootstraps the Rust sidecar),
+#   - "normal"  otherwise.
+# Skips the values of options that take an argument (so `--branch --list` is not
+# a match) and stops at the `--` sentinel.
+shim_action() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --) return 1 ;;
-      -U|--update) return 0 ;;
-      -r|--repo|-b|--branch|-i|--install|-u|--use|-p|--path|-P|--pr|\
+      --) break ;;
+      -U|--update)  printf 'update\n';  return ;;
+      -h|--help)    printf 'help\n';    return ;;
+      -v|--version) printf 'version\n'; return ;;
+      -l|--list|-u|--use) printf 'local\n'; return ;;
+      -r|--repo|-b|--branch|-i|--install|-p|--path|-P|--pr|\
       -C|--commit|-j|--jobs|-n|--network|--arch|--platform)
         shift
-        [ "$#" -gt 0 ] || return 1
+        [ "$#" -gt 0 ] || break
         ;;
     esac
     shift
   done
-  return 1
+  printf 'normal\n'
 }
 
 # Updates this launcher in place from HEAD if a newer version exists, then
@@ -1127,15 +1138,38 @@ update_shim() {
 # Bootstraps the Rust foundryup sidecar and execs it. `--update` is handled here
 # (update this launcher, then the sidecar), never by the Rust binary itself.
 migrate_and_exec() {
-  if wants_update "$@"; then
-    update_shim "$@"
-    if ensure_rust_foundryup; then
-      say "foundryup is up to date" >&2
-    else
-      warn "could not refresh the Rust foundryup; it will be retried on the next run"
-    fi
-    exit 0
-  fi
+  case "$(shim_action "$@")" in
+    update)
+      update_shim "$@"
+      if ensure_rust_foundryup; then
+        say "foundryup is up to date" >&2
+      else
+        warn "could not refresh the Rust foundryup; it will be retried on the next run"
+      fi
+      exit 0
+      ;;
+    help)
+      # Help and version are basic, always-available commands: serve them from
+      # the shim directly so they never depend on the sidecar or the network.
+      usage
+      exit 0
+      ;;
+    version)
+      version
+      ;;
+    local)
+      # --list/--use must not bootstrap the Rust sidecar. If it is already
+      # installed, exec it (the Rust binary owns these); otherwise serve them
+      # from the legacy bash path without attempting to download the sidecar.
+      local _local_bin
+      _local_bin="$(rust_foundryup_bin)"
+      if [ -x "$_local_bin" ]; then
+        exec "$_local_bin" "$@"
+      fi
+      main "$@"
+      return
+      ;;
+  esac
 
   # Best-effort: if bootstrap fails (offline, missing asset), fall back to the
   # legacy bash path so the user still has a working foundryup.

@@ -237,18 +237,28 @@ printf '#!/usr/bin/env sh\nexit 3\n' > "$fake_bin"; chmod +x "$fake_bin"
 ensure_rust_foundryup
 check_eq "failing sidecar --version triggers reinstall" "1" "$(wc -l < "$install_marker" | tr -d ' ')"
 
-# --- update detection -----------------------------------------------------
+# --- shim action classification -------------------------------------------
 
-wants_update -U && r=yes || r=no
-check_eq "wants_update detects -U" "yes" "$r"
-wants_update --install stable --update && r=yes || r=no
-check_eq "wants_update detects --update among args" "yes" "$r"
-wants_update --install stable && r=yes || r=no
-check_eq "wants_update false without update flag" "no" "$r"
-wants_update -- --update && r=yes || r=no
-check_eq "wants_update stops at -- sentinel" "no" "$r"
-wants_update --install --update && r=yes || r=no
-check_eq "wants_update skips option values" "no" "$r"
+check_eq "shim_action update for -U" "update" "$(shim_action -U)"
+check_eq "shim_action update among args" "update" "$(shim_action --install stable --update)"
+check_eq "shim_action help for --help" "help" "$(shim_action --help)"
+check_eq "shim_action version for -v" "version" "$(shim_action -v)"
+check_eq "shim_action local for --list" "local" "$(shim_action --list)"
+check_eq "shim_action local for --use" "local" "$(shim_action --use v1.0.0)"
+check_eq "shim_action normal for install" "normal" "$(shim_action --install stable)"
+check_eq "shim_action normal for bare" "normal" "$(shim_action)"
+# Option values are skipped, not treated as commands.
+check_eq "shim_action skips option values (update)" "normal" "$(shim_action --install --update)"
+check_eq "shim_action skips option values (version)" "normal" "$(shim_action --branch --version)"
+# The `--` sentinel ends scanning.
+check_eq "shim_action stops at -- (update)" "normal" "$(shim_action -- --update)"
+check_eq "shim_action stops at -- (list)" "normal" "$(shim_action -- --list)"
+# Left-to-right: the first terminal flag wins (matches main's parser), so a
+# leading terminal command is not overridden by a trailing --update and vice versa.
+check_eq "shim_action version wins before update" "version" "$(shim_action --version --update)"
+check_eq "shim_action update wins before version" "update" "$(shim_action --update --version)"
+check_eq "shim_action list wins before update" "local" "$(shim_action --list --update)"
+check_eq "shim_action use wins before update" "local" "$(shim_action --use v1.0.0 --update)"
 
 # --- platform binary names ------------------------------------------------
 
@@ -339,6 +349,51 @@ check_eq "install_rust_foundryup returns nonzero when download fails" "1" "$rc"
 download() { printf '404: Not Found\n' > "$2"; return 0; }
 rc=0; ( install_rust_foundryup "$FOUNDRYUP_RUST_HOME/bin/foundryup" 2>/dev/null ) || rc=$?
 check_eq "install_rust_foundryup rejects non-script installer body" "1" "$rc"
+rm -rf "$FOUNDRYUP_RUST_HOME"
+
+# --- migrate_and_exec serves local commands without bootstrapping ----------
+
+# --help/--version are served by the shim; --list/--use reach the sidecar (if
+# installed) or the legacy bash path. None of them may attempt a bootstrap, even
+# when the network is unavailable.
+mae_marker="$(mktemp)"
+trap 'rm -f "$api_marker" "$install_marker" "$mae_marker"; rm -rf "$sidecar_home"' EXIT
+
+FOUNDRYUP_RUST_HOME="$(mktemp -d)"
+mkdir -p "$FOUNDRYUP_RUST_HOME/bin"
+sidecar_bin="$FOUNDRYUP_RUST_HOME/bin/foundryup"
+# A bootstrap or legacy-install attempt would call these; record so we can assert
+# it never happens. The stubs that stand in for process-replacing/exiting calls
+# exit the subshell so execution does not fall through to the bootstrap path.
+install_rust_foundryup() { echo install >> "$mae_marker"; return 1; }
+download() { echo download >> "$mae_marker"; return 1; }
+main() { echo "main $*" >> "$mae_marker"; }
+usage() { echo "usage" >> "$mae_marker"; exit 0; }
+version() { echo "version" >> "$mae_marker"; exit 0; }
+exec() { echo "exec $*" >> "$mae_marker"; exit 0; }
+
+# --help/--version are handled in the shim: no sidecar, no main, no bootstrap.
+: > "$mae_marker"
+( migrate_and_exec --help )
+check_eq "--help handled in shim, no bootstrap" "usage" "$(cat "$mae_marker")"
+
+: > "$mae_marker"
+( migrate_and_exec --version )
+check_eq "--version handled in shim, no bootstrap" "version" "$(cat "$mae_marker")"
+
+# No sidecar installed: --list/--use use the legacy bash path, no download.
+: > "$mae_marker"
+( migrate_and_exec --list )
+check_eq "list without sidecar uses legacy main, no bootstrap" \
+  "main --list" "$(cat "$mae_marker")"
+
+# Sidecar installed: --list/--use exec it directly, no bootstrap.
+: > "$mae_marker"
+printf '#!/usr/bin/env sh\n:\n' > "$sidecar_bin"; chmod +x "$sidecar_bin"
+( migrate_and_exec --list )
+check_eq "list with sidecar execs it, no bootstrap" \
+  "exec $sidecar_bin --list" "$(cat "$mae_marker")"
+
 rm -rf "$FOUNDRYUP_RUST_HOME"
 
 # --- summary --------------------------------------------------------------
