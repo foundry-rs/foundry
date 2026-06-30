@@ -18,7 +18,10 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     sh_eprintln, sh_println,
 };
-use foundry_config::{FuzzCorpusConfig, InvariantConfig, InvariantDepthMode, InvariantWorkers};
+use foundry_config::{
+    FuzzCorpusConfig, InvariantConfig, InvariantCorpusSyncConfig, InvariantDepthMode,
+    InvariantWorkers,
+};
 use foundry_evm_core::{
     FoundryBlock,
     constants::{
@@ -68,6 +71,15 @@ use campaign::{
     InvariantCampaignAggregator, InvariantCampaignSpec, InvariantCampaignState,
     InvariantWorkerOutput, InvariantWorkerPlan,
 };
+
+mod corpus_exchange;
+use corpus_exchange::{InvariantCorpusExchange, InvariantCorpusSyncState};
+
+struct InvariantCorpusSyncMeta<'a> {
+    worker_id: u32,
+    new_coverage: bool,
+    sync_config: &'a InvariantCorpusSyncConfig,
+}
 
 mod replay;
 pub use replay::{replay_error, replay_run};
@@ -318,6 +330,15 @@ impl InvariantCorpusPersistence {
     const fn is_deferred(self) -> bool {
         matches!(self, Self::Deferred)
     }
+}
+
+fn invariant_corpus_sync_enabled(
+    config: &InvariantConfig,
+    corpus_persistence: InvariantCorpusPersistence,
+) -> bool {
+    config.corpus_sync.is_enabled()
+        && corpus_persistence.is_deferred()
+        && !config.timeout.is_some_and(|timeout| timeout <= config.corpus_sync.plateau_seconds)
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -800,6 +821,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let base_executor = self.executor.clone();
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
+        let corpus_exchange = invariant_corpus_sync_enabled(&self.config, corpus_persistence)
+            .then(|| Arc::new(InvariantCorpusExchange::new()));
 
         let worker_outputs = if corpus_persistence.is_deferred() {
             let worker_jobs = worker_plans
@@ -838,6 +861,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         fuzz_state.fork(),
                         progress,
                         &campaign_state,
+                        corpus_exchange.as_deref(),
                         campaign_seed.clone(),
                         corpus_seed.clone_for_worker(
                             worker_plan.worker_id as usize,
@@ -874,6 +898,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 fuzz_state,
                 progress,
                 &campaign_state,
+                corpus_exchange.as_deref(),
                 campaign_seed,
                 corpus_seed.clone_for_worker(
                     worker_plan.worker_id as usize,
@@ -928,6 +953,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
         campaign_state: &InvariantCampaignState,
+        corpus_exchange: Option<&InvariantCorpusExchange>,
         campaign_seed: InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
         corpus_persistence: InvariantCorpusPersistence,
@@ -954,6 +980,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut corpus_entries = Vec::new();
 
         let mut runs = 0;
+        let mut corpus_sync_state = InvariantCorpusSyncState::new(Instant::now());
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
@@ -1283,6 +1310,28 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     optimization,
                 );
             }
+            if let Some(corpus_exchange) = corpus_exchange {
+                Self::sync_invariant_worker_corpus(
+                    &mut corpus_manager,
+                    corpus_exchange,
+                    &mut corpus_sync_state,
+                    &executor,
+                    ReplayTarget {
+                        fuzzed_function: None,
+                        fuzzed_contracts: Some(&invariant_test.targeted_contracts),
+                        dynamic: Some(&DynamicTargetCtx {
+                            project_contracts,
+                            setup_contracts,
+                            artifact_filters: &campaign_seed.artifact_filters,
+                        }),
+                    },
+                    InvariantCorpusSyncMeta {
+                        worker_id: plan.worker_id,
+                        new_coverage: current_run.new_coverage,
+                        sync_config: &config.corpus_sync,
+                    },
+                )?;
+            }
 
             // Call `afterInvariant` only if declared and the current run produced no new
             // failure. Multi-predicate campaigns keep running after earlier failures, but the
@@ -1435,6 +1484,44 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             plan
         };
         Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result, corpus_entries })
+    }
+
+    fn sync_invariant_worker_corpus(
+        corpus_manager: &mut WorkerCorpus,
+        corpus_exchange: &InvariantCorpusExchange,
+        sync_state: &mut InvariantCorpusSyncState,
+        executor: &Executor<FEN>,
+        target: ReplayTarget<'_>,
+        meta: InvariantCorpusSyncMeta<'_>,
+    ) -> Result<()> {
+        corpus_exchange.publish(meta.worker_id, corpus_manager.export_for_exchange());
+
+        let now = Instant::now();
+        sync_state.record_completed_run(meta.new_coverage, now);
+        if !sync_state.should_sync(meta.sync_config, now) {
+            return Ok(());
+        }
+
+        let (entries, newest_epoch) =
+            corpus_exchange.import_since(meta.worker_id, sync_state.last_seen_epoch());
+        sync_state.set_last_seen_epoch(newest_epoch);
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let stats = corpus_manager.import_shared_entries(entries, executor, target)?;
+        if stats.accepted > 0 {
+            sync_state.record_import_progress(now);
+        }
+        trace!(
+            target: "corpus",
+            worker_id = meta.worker_id,
+            accepted = stats.accepted,
+            rejected = stats.rejected,
+            newest_epoch,
+            "synced invariant worker corpus"
+        );
+        Ok(())
     }
 
     fn shrink_handler_failures(
@@ -2459,6 +2546,28 @@ mod tests {
         assert!(should_continue_invariant_worker(&timed, 0, plan));
         assert!(should_continue_invariant_worker(&timed, 1, plan));
         assert!(should_continue_invariant_worker(&timed, 10_000, plan));
+    }
+
+    #[test]
+    fn invariant_corpus_sync_skips_timed_campaigns_shorter_than_plateau() {
+        let mut config = InvariantConfig { timeout: Some(1_800), ..InvariantConfig::default() };
+        config.corpus_sync.plateau_seconds = 1_800;
+
+        assert!(!invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
+
+        config.timeout = Some(config.corpus_sync.plateau_seconds + 1);
+        assert!(invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
+    }
+
+    #[test]
+    fn invariant_corpus_sync_requires_enabled_deferred_campaign() {
+        let mut config = InvariantConfig::default();
+
+        assert!(!invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Live));
+        assert!(invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
+
+        config.corpus_sync.mode = foundry_config::InvariantCorpusSyncMode::Off;
+        assert!(!invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
     }
 
     #[test]

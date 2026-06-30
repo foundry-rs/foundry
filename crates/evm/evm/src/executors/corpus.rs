@@ -228,6 +228,41 @@ pub(crate) struct CampaignCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
+/// Campaign-local corpus candidate exchanged between invariant workers.
+#[derive(Debug, Clone)]
+pub(crate) struct SharedCorpusEntry {
+    tx_seq: Vec<BasicTxDetails>,
+    cmp_seq: Vec<Vec<CmpOperands>>,
+    dedupe_by_coverage: bool,
+}
+
+impl SharedCorpusEntry {
+    pub(crate) const fn new(
+        tx_seq: Vec<BasicTxDetails>,
+        cmp_seq: Vec<Vec<CmpOperands>>,
+        dedupe_by_coverage: bool,
+    ) -> Self {
+        Self { tx_seq, cmp_seq, dedupe_by_coverage }
+    }
+
+    fn to_corpus_entry(&self, uuid: Uuid) -> CorpusEntry {
+        CorpusEntry::new_with_cmp(self.tx_seq.clone(), self.cmp_seq.clone(), uuid)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingCorpusEntry {
+    index: usize,
+    dedupe_by_coverage: bool,
+}
+
+/// Summary of campaign-local corpus imports accepted by one worker.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CorpusImportStats {
+    pub(crate) accepted: usize,
+    pub(crate) rejected: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CorpusInsertionMode {
     Live,
@@ -552,8 +587,8 @@ pub struct WorkerCorpus {
     current_mutated_index: Option<usize>,
     /// Config
     config: Arc<FuzzCorpusConfig>,
-    /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
-    new_entry_indices: Vec<usize>,
+    /// New entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
+    new_entries: Vec<PendingCorpusEntry>,
     /// Last sync timestamp in seconds.
     last_sync_timestamp: u64,
     /// Worker Dir
@@ -814,7 +849,7 @@ impl WorkerCorpus {
             arg_mutation_distribution,
             current_mutated_index: None,
             config: config.into(),
-            new_entry_indices: Default::default(),
+            new_entries: Default::default(),
             last_sync_timestamp: 0,
             worker_dir,
             last_sync_metrics: Default::default(),
@@ -955,13 +990,20 @@ impl WorkerCorpus {
             }
         }
 
-        self.push_corpus_entry(corpus);
+        let pending_dedupe = (!matches!(insertion_mode, CorpusInsertionMode::MemoryOnly))
+            .then_some(dedupe_by_coverage);
+        self.push_corpus_entry(corpus, pending_dedupe);
         campaign_entry
     }
 
-    fn push_corpus_entry(&mut self, corpus: CorpusEntry) {
+    fn push_corpus_entry(&mut self, corpus: CorpusEntry, pending_dedupe: Option<bool>) {
         let new_index = self.in_memory_corpus.len();
-        self.new_entry_indices.push(new_index);
+        if let Some(dedupe_by_coverage) = pending_dedupe {
+            self.new_entries.push(PendingCorpusEntry { index: new_index, dedupe_by_coverage });
+        }
+
+        // This includes reverting txs in the corpus and `can_continue` removes
+        // them. We want this as it is new coverage and may help reach the other branch.
         self.metrics.corpus_count += 1;
         self.in_memory_corpus.push(corpus);
     }
@@ -1138,7 +1180,6 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Abi => {
-                    let targets = targeted_contracts.targets();
                     let (corpus_index, corpus) = if rng.random::<bool>() {
                         (primary_index, primary)
                     } else {
@@ -1151,17 +1192,15 @@ impl WorkerCorpus {
                     new_seq = corpus.tx_seq.clone();
 
                     let idx = rng.random_range(0..new_seq.len());
-                    let tx = new_seq.get_mut(idx).unwrap();
-                    if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                        // TODO: add call_value to call details and mutate it as well as sender some
-                        // of the time.
-                        if !function.inputs.is_empty() {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
-                        }
-                    }
+                    self.try_abi_mutate_at(
+                        &mut new_seq,
+                        idx,
+                        targeted_contracts,
+                        test_runner,
+                        fuzz_state,
+                    )?;
                 }
                 MutationType::Cmp => {
-                    let targets = targeted_contracts.targets();
                     let (corpus_index, corpus) = if rng.random::<bool>() {
                         (primary_index, primary)
                     } else {
@@ -1172,43 +1211,21 @@ impl WorkerCorpus {
                     self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
-                    let mut mutated = false;
                     let fallback_idx = rng.random_range(0..new_seq.len());
-                    let candidates = || {
-                        corpus
-                            .cmp_seq
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, cmp_values)| !cmp_values.is_empty())
-                    };
-                    let candidate_count = candidates().count();
-                    if candidate_count != 0 {
-                        let start = rng.random_range(0..candidate_count);
-                        for (idx, cmp_values) in
-                            candidates().cycle().skip(start).take(candidate_count)
-                        {
-                            let tx = new_seq.get_mut(idx).unwrap();
-                            if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                                mutated = Self::cmp_mutate(
-                                    tx,
-                                    function,
-                                    cmp_values.as_slice(),
-                                    test_runner,
-                                )?;
-                                if mutated {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
+                    let mutated = Self::try_cmp_mutate_sequence(
+                        &mut new_seq,
+                        &corpus.cmp_seq,
+                        targeted_contracts,
+                        test_runner,
+                    )?;
                     if !mutated && self.mutation_weights.mutation_weight_abi > 0 {
-                        let tx = new_seq.get_mut(fallback_idx).unwrap();
-                        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
-                            && !function.inputs.is_empty()
-                        {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
-                        }
+                        self.try_abi_mutate_at(
+                            &mut new_seq,
+                            fallback_idx,
+                            targeted_contracts,
+                            test_runner,
+                            fuzz_state,
+                        )?;
                     }
                 }
             }
@@ -1221,6 +1238,58 @@ impl WorkerCorpus {
         trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
 
         Ok(new_seq)
+    }
+
+    fn try_cmp_mutate_sequence(
+        new_seq: &mut [BasicTxDetails],
+        cmp_seq: &[Vec<CmpOperands>],
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        test_runner: &mut TestRunner,
+    ) -> Result<bool> {
+        let candidates = cmp_seq
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, cmp_values)| (!cmp_values.is_empty()).then_some(idx))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+
+        let targets = targeted_contracts.targets();
+        let start = test_runner.rng().random_range(0..candidates.len());
+        for offset in 0..candidates.len() {
+            let idx = candidates[(start + offset) % candidates.len()];
+            let tx = new_seq.get_mut(idx).unwrap();
+            if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+                && Self::cmp_mutate(tx, function, cmp_seq[idx].as_slice(), test_runner)?
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn try_abi_mutate_at(
+        &self,
+        new_seq: &mut [BasicTxDetails],
+        idx: usize,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        test_runner: &mut TestRunner,
+        fuzz_state: &impl FuzzStateReader,
+    ) -> Result<bool> {
+        let targets = targeted_contracts.targets();
+        let tx = new_seq.get_mut(idx).unwrap();
+        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+            && !function.inputs.is_empty()
+        {
+            // TODO: add call_value to call details and mutate it as well as sender some of the
+            // time.
+            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
@@ -1452,12 +1521,12 @@ impl WorkerCorpus {
             self.in_memory_corpus.remove(index);
 
             // Adjust the tracked indices.
-            self.new_entry_indices.retain_mut(|i| {
-                if *i > index {
-                    *i -= 1; // Shift indices down.
+            self.new_entries.retain_mut(|entry| {
+                if entry.index > index {
+                    entry.index -= 1; // Shift indices down.
                     true // Keep this index.
                 } else {
-                    *i != index // Remove if it's the deleted index, keep otherwise.
+                    entry.index != index // Remove if it's the deleted index, keep otherwise.
                 }
             });
         }
@@ -1655,32 +1724,17 @@ impl WorkerCorpus {
         };
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
-        let mut executor = executor.clone();
         for (entry, tx_seq) in self.load_sync_corpus()? {
-            let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic };
-            let coverage = ReplayCoverage {
-                history_map: &mut self.history_map,
-                edge_indices: &mut self.edge_indices,
-                sancov_history_map: &mut self.sancov_history_map,
-                metrics: Some(&mut self.metrics),
-            };
-            let ReplayOutcome { keep_entry, new_coverage, new_edge, cmp_seq, .. } =
-                replay_corpus_sequence_with_executor(
-                    &tx_seq,
-                    &mut executor,
-                    target,
-                    coverage,
-                    true,
-                    false,
-                )?;
-
-            // A synced edge is new to this worker's local map, so it advances the timer.
-            if new_edge {
-                self.last_new_edge_at = Some(Instant::now());
-            }
-
             let sync_path = &entry.path;
-            if keep_entry && new_coverage {
+            let mut executor = executor.clone();
+            if let Some(corpus_entry) = self.try_import_sequence(
+                &tx_seq,
+                None,
+                &mut executor,
+                ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic },
+                entry.uuid,
+                true,
+            )? {
                 // Move file from sync/ to corpus/ directory.
                 let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
                 if let Err(err) = std::fs::rename(sync_path, &corpus_path) {
@@ -1694,7 +1748,6 @@ impl WorkerCorpus {
                     "moved synced corpus to corpus dir",
                 );
 
-                let corpus_entry = CorpusEntry::new_with_cmp(tx_seq.clone(), cmp_seq, entry.uuid);
                 self.in_memory_corpus.push(corpus_entry);
             } else {
                 // Remove the file as it did not generate new coverage.
@@ -1709,6 +1762,96 @@ impl WorkerCorpus {
         Ok(())
     }
 
+    fn try_import_sequence<FEN: FoundryEvmNetwork>(
+        &mut self,
+        tx_seq: &[BasicTxDetails],
+        cmp_seq_hint: Option<&[Vec<CmpOperands>]>,
+        executor: &mut Executor<FEN>,
+        target: ReplayTarget<'_>,
+        uuid: Uuid,
+        trace_sync: bool,
+    ) -> Result<Option<CorpusEntry>> {
+        let coverage = ReplayCoverage {
+            history_map: &mut self.history_map,
+            edge_indices: &mut self.edge_indices,
+            sancov_history_map: &mut self.sancov_history_map,
+            metrics: Some(&mut self.metrics),
+        };
+        // `executor` is candidate-local scratch state. Coverage maps above are the worker-local
+        // cumulative state used to decide whether this candidate contributes new coverage.
+        let ReplayOutcome { keep_entry, new_coverage, new_edge, cmp_seq, .. } =
+            replay_corpus_sequence_with_executor(
+                tx_seq, executor, target, coverage, trace_sync, false,
+            )?;
+
+        if !keep_entry || !new_coverage {
+            return Ok(None);
+        }
+
+        if new_edge {
+            self.last_new_edge_at = Some(Instant::now());
+        }
+
+        self.metrics.corpus_count += 1;
+        let cmp_seq = cmp_seq_hint
+            .filter(|hint| hint.len() == tx_seq.len())
+            .map_or(cmp_seq, ToOwned::to_owned);
+        Ok(Some(CorpusEntry::new_with_cmp(tx_seq.to_vec(), cmp_seq, uuid)))
+    }
+
+    /// Returns new worker-local corpus entries as immutable candidates for campaign-local exchange.
+    pub(crate) fn export_for_exchange(&mut self) -> Vec<SharedCorpusEntry> {
+        if self.new_entries.is_empty() {
+            return Vec::new();
+        }
+
+        let mut entries = Vec::with_capacity(self.new_entries.len());
+        for pending in &self.new_entries {
+            let Some(corpus) = self.in_memory_corpus.get(pending.index) else { continue };
+            entries.push(SharedCorpusEntry::new(
+                corpus.tx_seq.clone(),
+                corpus.cmp_seq.clone(),
+                pending.dedupe_by_coverage,
+            ));
+        }
+        self.new_entries.clear();
+        entries
+    }
+
+    /// Replays shared corpus candidates and keeps only entries that add worker-local coverage.
+    pub(crate) fn import_shared_entries<FEN: FoundryEvmNetwork>(
+        &mut self,
+        entries: impl IntoIterator<Item = SharedCorpusEntry>,
+        executor: &Executor<FEN>,
+        target: ReplayTarget<'_>,
+    ) -> Result<CorpusImportStats> {
+        let mut stats = CorpusImportStats::default();
+        for entry in entries {
+            if !entry.dedupe_by_coverage {
+                self.metrics.corpus_count += 1;
+                self.in_memory_corpus.push(entry.to_corpus_entry(Uuid::new_v4()));
+                stats.accepted += 1;
+                continue;
+            }
+
+            let mut executor = executor.clone();
+            if let Some(corpus_entry) = self.try_import_sequence(
+                &entry.tx_seq,
+                Some(&entry.cmp_seq),
+                &mut executor,
+                target,
+                Uuid::new_v4(),
+                false,
+            )? {
+                self.in_memory_corpus.push(corpus_entry);
+                stats.accepted += 1;
+            } else {
+                stats.rejected += 1;
+            }
+        }
+        Ok(stats)
+    }
+
     /// Exports the new corpus entries to the master worker's sync dir.
     #[instrument(skip_all)]
     fn export_to_master(&self) -> Result<()> {
@@ -1716,7 +1859,7 @@ impl WorkerCorpus {
         assert_ne!(self.id, 0, "non-master only");
 
         // Early return if no new entries or corpus dir not configured.
-        if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
+        if self.new_entries.is_empty() || self.worker_dir.is_none() {
             return Ok(());
         }
 
@@ -1733,8 +1876,8 @@ impl WorkerCorpus {
         let mut exported = 0;
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
-        for &index in &self.new_entry_indices {
-            let Some(corpus) = self.in_memory_corpus.get(index) else { continue };
+        for entry in &self.new_entries {
+            let Some(corpus) = self.in_memory_corpus.get(entry.index) else { continue };
             let file_name = corpus.file_name(self.config.corpus_gzip);
             let file_path = corpus_dir.join(&file_name);
             let sync_path = master_sync_dir.join(&file_name);
@@ -1872,7 +2015,7 @@ impl WorkerCorpus {
         let last_sync = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         self.last_sync_timestamp = last_sync;
 
-        self.new_entry_indices.clear();
+        self.new_entries.clear();
 
         debug!(target: "corpus", last_sync, "synced");
 
@@ -2349,6 +2492,28 @@ mod tests {
         assert!(second >= first);
         assert_eq!(manager.metrics.cumulative_edges_seen, 2);
         assert!(manager.time_since_new_edge().is_some());
+    }
+
+    #[test]
+    fn exchange_export_preserves_optimization_only_dedupe_policy() {
+        let mut manager = empty_worker_corpus(1, temp_corpus_dir());
+        let coverage_sequence = vec![basic_tx()];
+        let optimization_sequence = vec![basic_tx()];
+
+        manager.process_inputs_for_campaign(&coverage_sequence, &[], true, None).unwrap();
+        manager
+            .process_inputs_for_campaign(
+                &optimization_sequence,
+                &[],
+                false,
+                Some((I256::try_from(7).unwrap(), optimization_sequence.clone())),
+            )
+            .unwrap();
+
+        let entries = manager.export_for_exchange();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].dedupe_by_coverage);
+        assert!(!entries[1].dedupe_by_coverage);
     }
 
     #[test]

@@ -111,7 +111,10 @@ mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantWorkers};
+pub use invariant::{
+    InvariantConfig, InvariantCorpusSyncConfig, InvariantCorpusSyncMode, InvariantDepthMode,
+    InvariantWorkers,
+};
 
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};

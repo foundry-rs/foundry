@@ -267,6 +267,10 @@ show_metrics = true
 show_solidity = false
 check_interval = 1
 
+[invariant.corpus_sync]
+mode = "plateau"
+plateau_seconds = 1800
+
 [coverage]
 report = ["summary"]
 lcov_version = "1.0.0"
@@ -1514,7 +1518,11 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1
+    "check_interval": 1,
+    "corpus_sync": {
+      "mode": "plateau",
+      "plateau_seconds": 1800
+    }
   },
   "symbolic": {
     "enabled": false,

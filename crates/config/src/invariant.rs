@@ -97,6 +97,30 @@ fn fixed_workers(workers: usize) -> Result<InvariantWorkers, String> {
         .ok_or_else(|| "invariant workers must be greater than 0".to_string())
 }
 
+/// Corpus synchronization strategy for parallel invariant campaigns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InvariantCorpusSyncMode {
+    /// Do not exchange newly discovered corpus entries between workers during a campaign.
+    Off,
+    /// Exchange corpus entries only after a worker has stopped finding new coverage.
+    Plateau,
+}
+
+impl FromStr for InvariantCorpusSyncMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "false" => Ok(Self::Off),
+            "plateau" => Ok(Self::Plateau),
+            other => Err(format!(
+                "invalid invariant corpus sync mode `{other}`; expected `off` or `plateau`"
+            )),
+        }
+    }
+}
+
 /// Per-run invariant depth selection mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -120,6 +144,28 @@ impl FromStr for InvariantDepthMode {
                 Err(format!("unknown invariant depth mode `{value}`, expected `fixed` or `random`"))
             }
         }
+    }
+}
+
+/// Configuration for campaign-local corpus exchange between invariant workers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InvariantCorpusSyncConfig {
+    /// Sync strategy.
+    pub mode: InvariantCorpusSyncMode,
+    /// Number of seconds without new coverage before a plateau sync is attempted.
+    pub plateau_seconds: u32,
+}
+
+impl Default for InvariantCorpusSyncConfig {
+    fn default() -> Self {
+        Self { mode: InvariantCorpusSyncMode::Plateau, plateau_seconds: 30 * 60 }
+    }
+}
+
+impl InvariantCorpusSyncConfig {
+    pub const fn is_enabled(&self) -> bool {
+        matches!(self.mode, InvariantCorpusSyncMode::Plateau)
     }
 }
 
@@ -181,6 +227,9 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Campaign-local corpus exchange configuration for parallel invariant workers.
+    #[serde(default)]
+    pub corpus_sync: InvariantCorpusSyncConfig,
 }
 
 impl Default for InvariantConfig {
@@ -206,6 +255,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            corpus_sync: InvariantCorpusSyncConfig::default(),
         }
     }
 }
