@@ -68,6 +68,48 @@ async fn test_get_transfer_parity_traces() {
     assert_eq!(traces, block_traces);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_raw_transaction_local() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let value = U256::from(1_000_000_000u64);
+    let from_balance = provider.get_balance(from).await.unwrap();
+    let to_balance = provider.get_balance(to).await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .from(from)
+        .to(to)
+        .value(value)
+        .with_gas_limit(21_000)
+        .max_fee_per_gas(20_000_000_000)
+        .max_priority_fee_per_gas(1_000_000_000);
+    let signed_tx = api.sign_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let raw_tx = hex::decode(&signed_tx[2..]).unwrap();
+
+    let traces =
+        provider.trace_raw_transaction(&raw_tx).trace().state_diff().vm_trace().await.unwrap();
+
+    assert!(traces.state_diff.is_some());
+    assert!(traces.vm_trace.is_some());
+    assert!(!traces.trace.is_empty());
+    match traces.trace[0].action {
+        Action::Call(ref call) => {
+            assert_eq!(call.from, from);
+            assert_eq!(call.to, to);
+            assert_eq!(call.value, value);
+        }
+        _ => unreachable!("unexpected action"),
+    }
+
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 0);
+    assert_eq!(provider.get_balance(from).await.unwrap(), from_balance);
+    assert_eq!(provider.get_balance(to).await.unwrap(), to_balance);
+}
+
 sol!(
     #[sol(rpc, bytecode = "0x6080604052348015600f57600080fd5b50336000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff16021790555060a48061005e6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c806375fc8e3c14602d575b600080fd5b60336035565b005b60008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16fffea26469706673582212205006867290df97c54f2df1cb94fc081197ab670e2adf5353071d2ecce1d694b864736f6c634300080d0033")]
     contract SuicideContract {

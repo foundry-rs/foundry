@@ -59,7 +59,9 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
-        parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
+        parity::{
+            LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
+        },
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
@@ -1256,6 +1258,60 @@ impl<N: Network> EthApi<N> {
         node_info!("trace_replayBlockTransactions");
         self.backend.trace_replay_block_transactions(block, trace_types).await
     }
+
+    /// Traces a raw signed transaction without importing it into the mempool.
+    ///
+    /// Handler for RPC call: `trace_rawTransaction`.
+    pub async fn trace_raw_transaction(
+        &self,
+        tx: Bytes,
+        trace_types: HashSet<TraceType>,
+        block_number: Option<BlockId>,
+    ) -> Result<TraceResults>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+    {
+        node_info!("trace_rawTransaction");
+
+        let mut data = tx.as_ref();
+        if data.is_empty() {
+            return Err(BlockchainError::EmptyRawTransactionData);
+        }
+
+        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        match &transaction {
+            FoundryTxEnvelope::Eip2930(_) => self.backend.ensure_eip2930_active()?,
+            FoundryTxEnvelope::Eip1559(_) => self.backend.ensure_eip1559_active()?,
+            FoundryTxEnvelope::Eip4844(_) => self.backend.ensure_eip4844_active()?,
+            FoundryTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active()?,
+            #[cfg(feature = "optimism")]
+            FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active()?,
+            #[cfg(feature = "optimism")]
+            FoundryTxEnvelope::PostExec(_) => {
+                return Err(BlockchainError::InvalidTransactionRequest(
+                    "not implemented for post-exec tx".to_string(),
+                ));
+            }
+            FoundryTxEnvelope::Legacy(_) => {}
+            FoundryTxEnvelope::Tempo(_) => self.backend.ensure_tempo_active()?,
+        }
+        let pending_transaction = PendingTransaction::new(transaction)?;
+        let block_request = match block_number {
+            Some(BlockId::Number(BlockNumber::Pending)) => {
+                let pending_txs = self.pool.ready_transactions().collect();
+                BlockRequest::Pending(pending_txs)
+            }
+            _ => {
+                let number = self.backend.ensure_block_number(block_number).await?;
+                BlockRequest::Number(number)
+            }
+        };
+
+        self.backend
+            .trace_raw_transaction(pending_transaction, trace_types, Some(block_request))
+            .await
+    }
 }
 
 impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> EthApi<N> {
@@ -1690,6 +1746,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
             EthRequest::TraceReplayBlockTransactions(block, trace_types) => {
                 self.trace_replay_block_transactions(block, trace_types).await.to_rpc_result()
+            }
+            EthRequest::TraceRawTransaction(tx, trace_types, block_number) => {
+                self.trace_raw_transaction(tx, trace_types, block_number).await.to_rpc_result()
             }
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
