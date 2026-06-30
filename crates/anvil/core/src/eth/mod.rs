@@ -363,6 +363,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_freeOSMemory", with = "empty_params")]
     DebugFreeOsMemory(()),
 
+    /// reth's `debug_accountRange` endpoint.
+    #[serde(rename = "debug_accountRange")]
+    DebugAccountRange(BlockNumber, Bytes, u64, bool, bool, bool),
+
     /// geth's `debug_traceBlockByHash` endpoint
     #[serde(rename = "debug_traceBlockByHash")]
     DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
@@ -1737,6 +1741,16 @@ true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         match serde_json::from_value::<EthRequest>(value).unwrap() {
             EthRequest::DebugFreeOsMemory(()) => {}
+            req => panic!("unexpected request: {req:?}"),
+        }
+    }
+
+    #[test]
+    fn test_serde_debug_account_range() {
+        let s = r#"{"method": "debug_accountRange", "params": ["latest", "0x", 1, false, false, false]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        match serde_json::from_value::<EthRequest>(value).unwrap() {
+            EthRequest::DebugAccountRange(_, _, 1, false, false, false) => {}
             req => panic!("unexpected request: {req:?}"),
         }
     }

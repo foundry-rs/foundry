@@ -1260,6 +1260,20 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Handles reth's no-op `debug_accountRange` endpoint.
+    pub fn debug_account_range(
+        &self,
+        _block_number: BlockNumber,
+        _start: Bytes,
+        _max_results: u64,
+        _nocode: bool,
+        _nostorage: bool,
+        _incompletes: bool,
+    ) -> Result<()> {
+        node_info!("debug_accountRange");
+        Ok(())
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1741,6 +1755,23 @@ impl EthApi<FoundryNetwork> {
                 self.debug_get_modified_accounts_by_number(start_number, end_number).to_rpc_result()
             }
             EthRequest::DebugFreeOsMemory(()) => self.debug_free_os_memory().to_rpc_result(),
+            EthRequest::DebugAccountRange(
+                block_number,
+                start,
+                max_results,
+                nocode,
+                nostorage,
+                incompletes,
+            ) => self
+                .debug_account_range(
+                    block_number,
+                    start,
+                    max_results,
+                    nocode,
+                    nostorage,
+                    incompletes,
+                )
+                .to_rpc_result(),
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }
