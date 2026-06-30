@@ -206,6 +206,8 @@ make_fake_bin() {
 }
 
 # `install_rust_foundryup` runs in a subshell-free context, so track calls via a file.
+# Keep a copy of the real impl so it can be restored and tested later.
+eval "real_install_rust_foundryup() $(declare -f install_rust_foundryup | sed '1d')"
 install_marker="$(mktemp)"
 install_rust_foundryup() { echo called >> "$install_marker"; }
 
@@ -302,14 +304,42 @@ check_eq "list shows flat version" "yes" "$(printf '%s\n' "$list_out" | grep -qx
 check_eq "list shows nested version" "yes" "$(printf '%s\n' "$list_out" | grep -qx 'foundryup: v2.0.0' && echo yes || echo no)"
 rm -rf "$FOUNDRY_VERSIONS_DIR"
 
-# --- update_shim failure --------------------------------------------------
+# --- update_shim failure (best-effort) ------------------------------------
 
-# A failed launcher download must error, never silently report success.
+# A failed update-check must be non-fatal and must leave the on-PATH launcher
+# untouched.
 FOUNDRY_BIN_DIR="$(mktemp -d)"
+FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
+printf 'original-launcher\n' > "$FOUNDRY_BIN_PATH"
+
 download() { return 1; }
 rc=0; ( update_shim 2>/dev/null ) || rc=$?
-check_eq "update_shim errors when download fails" "1" "$rc"
+check_eq "update_shim is non-fatal when download fails" "0" "$rc"
+
+# A versionless download (e.g. a 404 body) is likewise non-fatal.
+download() { printf '404: Not Found\n' > "$2"; return 0; }
+rc=0; ( update_shim 2>/dev/null ) || rc=$?
+check_eq "update_shim is non-fatal on versionless download" "0" "$rc"
+check_eq "update_shim leaves launcher untouched on failure" \
+  "original-launcher" "$(cat "$FOUNDRY_BIN_PATH")"
 rm -rf "$FOUNDRY_BIN_DIR"
+
+# --- install_rust_foundryup failure (best-effort) -------------------------
+
+# Bootstrap failures must return nonzero (so migrate_and_exec can fall back),
+# not abort the process.
+install_rust_foundryup() { real_install_rust_foundryup "$@"; }  # restore real impl
+FOUNDRYUP_RUST_HOME="$(mktemp -d)"
+
+download() { return 1; }
+rc=0; ( install_rust_foundryup "$FOUNDRYUP_RUST_HOME/bin/foundryup" 2>/dev/null ) || rc=$?
+check_eq "install_rust_foundryup returns nonzero when download fails" "1" "$rc"
+
+# A `404: Not Found` body downloads "successfully" but isn't a script; reject it.
+download() { printf '404: Not Found\n' > "$2"; return 0; }
+rc=0; ( install_rust_foundryup "$FOUNDRYUP_RUST_HOME/bin/foundryup" 2>/dev/null ) || rc=$?
+check_eq "install_rust_foundryup rejects non-script installer body" "1" "$rc"
+rm -rf "$FOUNDRYUP_RUST_HOME"
 
 # --- summary --------------------------------------------------------------
 
