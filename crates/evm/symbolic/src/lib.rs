@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use std::{
     collections::VecDeque,
     fmt::{self, Write as _},
-    io::{Read, Write},
+    io::Write,
     num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut},
     path::{Path, PathBuf},
