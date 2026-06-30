@@ -87,6 +87,7 @@ pub(crate) struct TUIContext<'a> {
     pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
     pub(crate) show_source: bool,
+    pub(crate) show_variables: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
     pub(crate) active_buffer: BufferKind,
 }
@@ -111,6 +112,7 @@ impl<'a> TUIContext<'a> {
             buf_utf: false,
             show_shortcuts: true,
             show_source: true,
+            show_variables: true,
             active_buffer: BufferKind::Memory,
         }
     }
@@ -348,6 +350,13 @@ impl TUIContext<'_> {
                 self.show_source = !self.show_source;
                 let state = if self.show_source { "shown" } else { "hidden" };
                 self.set_info(format!("Source pane: {state}"));
+            }
+
+            // Toggle variables pane
+            KeyCode::Char('V') => {
+                self.show_variables = !self.show_variables;
+                let state = if self.show_variables { "shown" } else { "hidden" };
+                self.set_info(format!("Variables pane: {state}"));
             }
 
             // Go to program counter
@@ -1168,6 +1177,13 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('v')));
         assert!(tui.show_source);
         assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: shown");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('V')));
+        assert!(!tui.show_variables);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Variables pane: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('V')));
+        assert!(tui.show_variables);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Variables pane: shown");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('h')));
         assert!(!tui.show_shortcuts);
