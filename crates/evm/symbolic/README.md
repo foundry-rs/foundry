@@ -112,8 +112,8 @@ forge test --symbolic-use-fuzz-corpus --fuzz-corpus-dir fuzz_corpus
 
 Imported corpus entries are bounded by `symbolic.corpus_seed_limit` and only
 guide branch order; they do not prune feasible symbolic paths. JSON output
-records the per-test corpus directory, import counts, and exact seed files under
-`symbolic.corpus_seeds`.
+records the per-test corpus directory, import counts, and seed files that
+matched a symbolic calldata variant under `symbolic.corpus_seeds.used`.
 
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use

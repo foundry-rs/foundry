@@ -1838,6 +1838,164 @@ contract SymbolicImportFuzzCorpus {
     assert_eq!(std::path::PathBuf::from(used[0]["path"].as_str().unwrap()), seed_path);
 });
 
+forgetest_init!(symbolic_import_fuzz_corpus_prioritizes_seeded_calldata_variant, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_import_fuzz_corpus_prioritizes_seeded_calldata_variant because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicImportFuzzCorpusVariants.t.sol",
+        r#"
+contract SymbolicImportFuzzCorpusVariants {
+    /// forge-config: default.symbolic.default_bytes_lengths = [1, 2]
+    function testGuidedBytes(bytes memory data) public pure {
+        if (data.length == 1) {
+            if (data[0] == 0x11) return;
+            return;
+        }
+        if (data.length != 2) return;
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let selector = &keccak256(b"testGuidedBytes(bytes)")[..4];
+    let calldata = format!(
+        "0x{}{:064x}{:064x}{:0<64}",
+        hex::encode(selector),
+        32,
+        2,
+        hex::encode([0xaa, 0xbb])
+    );
+    let unmodeled_calldata = format!(
+        "0x{}{:064x}{:064x}{:0<64}",
+        hex::encode(selector),
+        32,
+        3,
+        hex::encode([0xcc, 0xdd, 0xee])
+    );
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicImportFuzzCorpusVariants")
+        .join("testGuidedBytes")
+        .join("worker0")
+        .join("corpus");
+    std::fs::create_dir_all(&corpus_dir).unwrap();
+    let seed_path = corpus_dir.join("00000000-0000-0000-0000-000000000001-1.json");
+    let unmodeled_seed_path = corpus_dir.join("00000000-0000-0000-0000-000000000002-1.json");
+    for (path, calldata) in
+        [(&seed_path, calldata.as_str()), (&unmodeled_seed_path, unmodeled_calldata.as_str())]
+    {
+        let seed = serde_json::json!([
+            {
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+                "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                "calldata": calldata
+            }
+        ]);
+        std::fs::write(path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+    }
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testGuidedBytes",
+            "--symbolic-use-fuzz-corpus",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-width",
+            "2",
+            "--json",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "testGuidedBytes(bytes)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(symbolic["corpus_seeds"]["loaded"], 2);
+    assert_eq!(symbolic["corpus_seeds"]["skipped"], 0);
+    let used = symbolic["corpus_seeds"]["used"].as_array().unwrap();
+    assert_eq!(used.len(), 1);
+    assert_eq!(used[0]["calldata"], calldata);
+    assert_eq!(std::path::PathBuf::from(used[0]["path"].as_str().unwrap()), seed_path);
+});
+
+forgetest_init!(symbolic_import_fuzz_corpus_honors_function_inline_config, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_import_fuzz_corpus_honors_function_inline_config because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInlineImportFuzzCorpus.t.sol",
+        r#"
+contract SymbolicInlineImportFuzzCorpus {
+    /// forge-config: default.symbolic.use_fuzz_corpus = true
+    function testFuzz_inline(uint256 x) public pure {
+        if (x != 7) return;
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let selector = &keccak256(b"testFuzz_inline(uint256)")[..4];
+    let calldata = format!("0x{}{:064x}", hex::encode(selector), 7);
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicInlineImportFuzzCorpus")
+        .join("testFuzz_inline")
+        .join("worker0")
+        .join("corpus");
+    std::fs::create_dir_all(&corpus_dir).unwrap();
+    let seed_path = corpus_dir.join("00000000-0000-0000-0000-000000000001-1.json");
+    let seed = serde_json::json!([
+        {
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": calldata
+        }
+    ]);
+    std::fs::write(&seed_path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_inline",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-width",
+            "1",
+            "--json",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "testFuzz_inline(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(symbolic["counterexample"]["raw_args"], "7");
+    assert_eq!(symbolic["corpus_seeds"]["loaded"], 1);
+    let used = symbolic["corpus_seeds"]["used"].as_array().unwrap();
+    assert_eq!(used.len(), 1);
+    assert_eq!(used[0]["calldata"], calldata);
+});
+
 forgetest_init!(symbolic_seed_corpus_warns_without_corpus_dir, |prj, cmd| {
     prj.add_test(
         "SymbolicFuzzCorpusNoDir.t.sol",

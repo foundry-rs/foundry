@@ -93,6 +93,7 @@ fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> b
 #[derive(Default)]
 struct ImportedSymbolicCorpusSeeds {
     inputs: Vec<SymbolicConcreteInput>,
+    refs: Vec<SymbolicCorpusSeedRef>,
     metadata: Option<SymbolicCorpusSeedMetadata>,
 }
 
@@ -1022,9 +1023,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = if (symbolic_enabled && is_symbolic_entrypoint(func))
-                    || should_symbolically_import_fuzz_corpus(&self.config, func)
-                {
+                let kind = if symbolic_enabled && is_symbolic_entrypoint(func) {
                     TestFunctionKind::SymbolicTest
                 } else {
                     func.test_function_kind()
@@ -1584,6 +1583,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.single_fail(Some(e.to_string()));
             return self.result;
         }
+        let kind = if should_symbolically_import_fuzz_corpus(&self.config, func) {
+            TestFunctionKind::SymbolicTest
+        } else {
+            kind
+        };
 
         // In showmap replay mode and `forge fuzz`, only fuzz/invariant tests are runnable.
         if (self.cr.mcr.tcfg.showmap.is_some() || self.cr.mcr.tcfg.fuzz_only)
@@ -1729,7 +1733,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     metadata.skipped += 1;
                     continue;
                 };
-                metadata.used.push(SymbolicCorpusSeedRef {
+                imported.refs.push(SymbolicCorpusSeedRef {
                     path: entry.path,
                     calldata: input.calldata.clone(),
                 });
@@ -1742,7 +1746,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             corpus_dir = %corpus_dir.display(),
             loaded = metadata.loaded,
             skipped = metadata.skipped,
-            used = metadata.used.len(),
+            imported = imported.inputs.len(),
             "imported symbolic fuzz corpus seeds"
         );
         imported.metadata = Some(metadata);
@@ -1776,8 +1780,32 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        let ImportedSymbolicCorpusSeeds { inputs: corpus_seeds, metadata: corpus_seed_metadata } =
-            self.import_symbolic_fuzz_corpus(func);
+        let ImportedSymbolicCorpusSeeds {
+            inputs: corpus_seeds,
+            refs: corpus_seed_refs,
+            metadata: mut corpus_seed_metadata,
+        } = self.import_symbolic_fuzz_corpus(func);
+        if let Some(metadata) = corpus_seed_metadata.as_mut() {
+            match SymbolicExecutor::modeled_corpus_seed_indexes(
+                &self.config.symbolic,
+                func,
+                &corpus_seeds,
+            ) {
+                Ok(indexes) => {
+                    metadata.used = indexes
+                        .into_iter()
+                        .filter_map(|idx| corpus_seed_refs.get(idx).cloned())
+                        .collect();
+                }
+                Err(err) => {
+                    debug!(
+                        %err,
+                        test = %func.signature(),
+                        "failed to model imported symbolic corpus seeds"
+                    );
+                }
+            }
+        }
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         if self.should_defer_symbolic_diagnostics() {
             symbolic.capture_diagnostics();

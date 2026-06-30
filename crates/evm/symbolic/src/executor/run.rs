@@ -1,4 +1,23 @@
 use super::*;
+use std::cmp::Reverse;
+
+fn order_roots_by_corpus_seed_count(roots: &mut [PathState], order: SymbolicExplorationOrder) {
+    let Some((first, rest)) = roots.split_first() else {
+        return;
+    };
+    if rest.iter().all(|root| root.corpus_seed_model_count() == first.corpus_seed_model_count()) {
+        return;
+    }
+
+    match order {
+        SymbolicExplorationOrder::Bfs => {
+            roots.sort_by_key(|root| Reverse(root.corpus_seed_model_count()));
+        }
+        SymbolicExplorationOrder::Dfs => {
+            roots.sort_by_key(PathState::corpus_seed_model_count);
+        }
+    }
+}
 
 impl SymbolicExecutor {
     /// Creates a symbolic executor from Foundry's symbolic configuration.
@@ -108,6 +127,28 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Returns corpus seed indexes that can be modeled by at least one symbolic calldata variant.
+    pub fn modeled_corpus_seed_indexes(
+        config: &SymbolicConfig,
+        function: &Function,
+        corpus_seeds: &[SymbolicConcreteInput],
+    ) -> Result<Vec<usize>, SymbolicError> {
+        let variants = SymbolicCalldata::variants(function, config)?;
+        let mut modeled = vec![false; corpus_seeds.len()];
+        for calldata in &variants {
+            for (idx, seed) in corpus_seeds.iter().enumerate() {
+                if !modeled[idx] && calldata.seed_model(seed).is_some() {
+                    modeled[idx] = true;
+                }
+            }
+        }
+        Ok(modeled
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, modeled)| modeled.then_some(idx))
+            .collect())
+    }
+
     /// Executes a bounded symbolic invariant call sequence.
     ///
     /// Each sequence step chooses from the concrete target functions and senders supplied by
@@ -153,7 +194,7 @@ impl SymbolicExecutor {
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
         let code = SymCode::from_bytecode(&bytecode);
-        let mut worklist = VecDeque::new();
+        let mut roots = Vec::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config)? {
             let corpus_seed_models = input
                 .corpus_seeds
@@ -171,8 +212,10 @@ impl SymbolicExecutor {
             root.apply_executor_env(input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();
-            worklist.push_back(root);
+            roots.push(root);
         }
+        order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
+        let mut worklist = roots.into_iter().collect::<VecDeque<_>>();
         let mut completed_paths = 0usize;
         let mut reverted_paths = 0usize;
         let mut normal_paths = 0usize;

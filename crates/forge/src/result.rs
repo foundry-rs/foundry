@@ -1067,11 +1067,11 @@ pub struct SymbolicCorpusSeedMetadata {
     pub loaded: usize,
     /// Number of corpus files skipped because they were unreadable or not a matching single call.
     pub skipped: usize,
-    /// Seeds passed to symbolic execution as path-priority hints.
+    /// Seeds modeled by symbolic execution as path-priority hints.
     pub used: Vec<SymbolicCorpusSeedRef>,
 }
 
-/// One fuzz corpus seed passed to symbolic execution.
+/// One fuzz corpus seed modeled by symbolic execution.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolicCorpusSeedRef {
     /// Corpus file path.
