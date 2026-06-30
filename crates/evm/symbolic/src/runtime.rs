@@ -1,6 +1,7 @@
 use super::{abi::*, *};
 
 mod address;
+mod bytes;
 mod calldata;
 mod cheatcodes;
 mod control;
@@ -10,8 +11,10 @@ mod memory;
 mod precompiles;
 mod solver;
 mod state;
+mod symbols;
 
 pub(crate) use address::*;
+pub(crate) use bytes::*;
 pub(crate) use calldata::*;
 pub(crate) use cheatcodes::*;
 pub(crate) use control::*;
@@ -32,6 +35,7 @@ pub(crate) use solver::{
     validate_solver_model_output,
 };
 pub(crate) use state::*;
+pub(crate) use symbols::*;
 
 pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
@@ -46,6 +50,8 @@ pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     pub value: U256,
     /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.
     pub ffi_enabled: bool,
+    /// Whether to return one successful concrete input when execution is safe.
+    pub collect_success_input: bool,
 }
 
 /// Error returned by the internal symbolic executor.
@@ -127,7 +133,7 @@ impl SymbolicError {
 impl fmt::Display for SymbolicRunResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Safe(stats) => write!(f, "safe after {} paths", stats.paths),
+            Self::Safe { stats, .. } => write!(f, "safe after {} paths", stats.paths),
             Self::Counterexample { stats, .. } => {
                 write!(f, "counterexample after {} paths", stats.paths)
             }

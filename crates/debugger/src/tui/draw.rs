@@ -109,25 +109,47 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        // Split the app vertically to construct all the panes.
-        let [op_pane, variables_pane, stack_pane, memory_pane, src_pane] = Layout::new(
+        if footer_height > 0 {
+            self.draw_footer(f, footer);
+        }
+
+        if self.show_source {
+            // Split the app vertically to construct all the panes.
+            let [op_pane, variables_pane, stack_pane, memory_pane, src_pane] = Layout::new(
+                Direction::Vertical,
+                [
+                    Constraint::Ratio(1, 7),
+                    Constraint::Ratio(1, 7),
+                    Constraint::Ratio(1, 7),
+                    Constraint::Ratio(1, 7),
+                    Constraint::Ratio(3, 7),
+                ],
+            )
+            .split(app)[..] else {
+                unreachable!()
+            };
+
+            self.draw_src(f, src_pane);
+            self.draw_op_list(f, op_pane);
+            self.draw_variables(f, variables_pane);
+            self.draw_stack(f, stack_pane);
+            self.draw_buffer(f, memory_pane);
+            return;
+        }
+
+        let [op_pane, variables_pane, stack_pane, memory_pane] = Layout::new(
             Direction::Vertical,
             [
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(3, 7),
+                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 5),
+                Constraint::Ratio(2, 5),
             ],
         )
         .split(app)[..] else {
             unreachable!()
         };
 
-        if footer_height > 0 {
-            self.draw_footer(f, footer);
-        }
-        self.draw_src(f, src_pane);
         self.draw_op_list(f, op_pane);
         self.draw_variables(f, variables_pane);
         self.draw_stack(f, stack_pane);
@@ -168,12 +190,18 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        // Split left pane in 2 vertically to opcode list and source.
-        let [op_pane, src_pane] =
-            Layout::new(Direction::Vertical, [Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
-                .split(app_left)[..]
-        else {
-            unreachable!()
+        let (op_pane, src_pane) = if self.show_source {
+            // Split left pane in 2 vertically to opcode list and source.
+            let [op_pane, src_pane] = Layout::new(
+                Direction::Vertical,
+                [Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)],
+            )
+            .split(app_left)[..] else {
+                unreachable!()
+            };
+            (op_pane, Some(src_pane))
+        } else {
+            (app_left, None)
         };
 
         // Split right pane vertically to construct variables, stack and memory.
@@ -188,7 +216,9 @@ impl TUIContext<'_> {
         if footer_height > 0 {
             self.draw_footer(f, footer);
         }
-        self.draw_src(f, src_pane);
+        if let Some(src_pane) = src_pane {
+            self.draw_src(f, src_pane);
+        }
         self.draw_op_list(f, op_pane);
         self.draw_variables(f, variables_pane);
         self.draw_stack(f, stack_pane);
@@ -258,7 +288,7 @@ impl TUIContext<'_> {
 
         let l1 =
             "[q] quit | [j/k] op | [a/s] jump | [c/C] call | [g/G] start/end | [p] PC | [o] offset";
-        let l2 = "[/] search | [n/N] repeat | [l] layout | [b] buffer | [t] labels | [m] decode | [h] help";
+        let l2 = "[/] search | [n/N] repeat | [l] layout | [b] buffer | [v] source | [t] labels | [m] decode | [h] help";
         let l3 = "[J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
         if self.show_shortcuts {
@@ -1209,7 +1239,7 @@ fn hex_digits(n: usize) -> usize {
 mod tests {
     use super::TUIContext;
     use crate::{
-        DebugNode,
+        DebugNode, DebuggerLayout,
         debugger::{DebuggerContext, DebuggerStats},
         op::OpcodeParam,
     };
@@ -1340,6 +1370,29 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn hidden_source_pane_omits_source_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_source = false;
+        let backend = TestBackend::new(220, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("Contract call"));
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
     }
 

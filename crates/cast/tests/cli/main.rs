@@ -87,13 +87,6 @@ Display options:
       --json
           Format log messages as JSON
 
-      --machine
-          Activate the agent contract: disables color and wraps CLI-runtime exits (parse / usage /
-          help / version) in a structured envelope. Per-command machine output (declared
-          `output_mode`, progress and prompt suppression, canonical exit codes) is adopted
-          incrementally — see `docs/agents/spec.md` §10. Mutually exclusive with `--json` and `--md`
-          to keep machine-mode output unambiguous
-
       --md
           Format log messages as Markdown
 
@@ -4089,89 +4082,6 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
-// `cast --machine call` emits a single envelope on stdout against an
-// empty account, returning the deterministic `0x` result.
-forgetest_async!(cast_call_machine_mode_emits_envelope, |_prj, cmd| {
-    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let http_endpoint = handle.http_endpoint();
-
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            &http_endpoint,
-        ])
-        .assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
-
-    assert_eq!(envelope["schema_version"], 1);
-    assert_eq!(envelope["success"], true);
-    assert_eq!(envelope["data"]["raw"], "0x");
-    assert_eq!(envelope["errors"], serde_json::json!([]));
-    assert_eq!(envelope["warnings"], serde_json::json!([]));
-});
-
-// `--machine` rejects flags that would corrupt the envelope-only stdout
-// contract. Asserts the stable `code` + exit code, not just message text.
-forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
-    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let http_endpoint = handle.http_endpoint();
-
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "--trace",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            &http_endpoint,
-        ])
-        .assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
-    assert_eq!(
-        envelope["errors"][0]["details"]["unsupported_flags"],
-        serde_json::json!(["--trace"]),
-        "missing structured unsupported_flags details: {envelope}"
-    );
-});
-
-// Transport/connectivity failures (here: unreachable RPC URL) emit a typed
-// `network.rpc.error` envelope and exit `Network (6)`.
-forgetest_async!(cast_call_machine_mode_rpc_failure_emits_network_envelope, |_prj, cmd| {
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            // Unreachable: port 1 is reserved and nothing accepts here.
-            "http://127.0.0.1:1",
-        ])
-        .assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "network.rpc.error");
-    assert_eq!(assert.get_output().status.code(), Some(6));
-});
-
 // https://github.com/foundry-rs/foundry/issues/10848
 forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -4917,6 +4827,16 @@ contract ConstructorContract {
     assert!(
         value_output.contains("0x000000000000000000000000000000000000000000000000000000000000002a")
     );
+
+    cmd.cast_fuse()
+        .args(["--json", "call", address, "getValue()(uint256)", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[
+  "42"
+]
+
+"#]]);
 });
 
 // Test that cast estimate --create works correctly with constructor arguments
@@ -6378,4 +6298,31 @@ mod vaddr_e2e {
             );
         }
     );
+
+    // tests that displays a sample beacon block traces in Cancun
+    // https://github.com/foundry-rs/foundry/issues/12435
+    casttest!(test_beacon_block_root_in_cancun, |prj, cmd| {
+        prj.clear();
+        let eth_rpc_url = next_http_rpc_endpoint();
+        cmd.args([
+            "run",
+            "0xae290fe8c89c3e83dff20eeb2b8e3261bcdce0d66441c7056918dfb5fafe6d96",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [45054] 0xB731392c0EB5BF2092f9f7B520DA551f70Ea9131::Claim{value: 46698476594582387}()
+    ├─ [4320] 0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02::00000000(00000000000000000000000000000000000000000000000069091d4b) [staticcall]
+    │   └─ ← [Return] 0x70c7855161ec07af782df915fb3e81702df40f34972da3d740cdfc132ac926f6
+    ├─ emit NvStuck(param0: 0x6e6C36B970f8862bA3F148DEdAB8F98f5ed8b426, param1: 46698476594582387 [4.669e16], param2: 1762205003 [1.762e9])
+    └─ ← [Stop]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+    });
 }

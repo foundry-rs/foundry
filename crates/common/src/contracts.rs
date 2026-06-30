@@ -591,8 +591,17 @@ pub fn find_matching_contract_artifact(
     target_name: Option<&str>,
 ) -> eyre::Result<ConfigurableContractArtifact> {
     if let Some(name) = target_name {
-        output
-            .remove(target_path, name)
+        if let Some(artifact) = output.remove(target_path, name) {
+            return Ok(artifact);
+        }
+
+        let target_path = canonicalized(target_path);
+        let matching_source = output.artifact_ids().find_map(|(id, _artifact)| {
+            (id.name == name && canonicalized(&id.source) == target_path).then(|| id.source.clone())
+        });
+
+        matching_source
+            .and_then(|source| output.remove(&source, name))
             .ok_or_eyre(format!("Could not find artifact `{name}` in the compiled artifacts"))
     } else {
         let possible_targets = output

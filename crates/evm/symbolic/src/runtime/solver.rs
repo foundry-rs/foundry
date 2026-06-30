@@ -1,8 +1,10 @@
 use super::*;
+use std::process::{Child, Output};
+use wait_timeout::ChildExt;
 
 mod hard_arith_fallback;
 mod monotonic_product;
-mod normalize;
+mod opt;
 
 use hard_arith_fallback::constraints_prefer_hard_arith_fallback_first;
 #[cfg(test)]
@@ -11,9 +13,13 @@ pub(crate) use hard_arith_fallback::hard_arith_fallback_model;
 #[cfg(test)]
 pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
-pub(crate) use normalize::normalize_constraints_for_solver;
+pub(crate) use opt::normalize_constraints_for_solver;
+use opt::{
+    constraint_cache_key, constraints_are_directly_unsat, sorted_bool_exprs_are_subset,
+    write_smt_assertions,
+};
 #[cfg(test)]
-pub(crate) use normalize::{normalize_bool_for_solver, normalize_expr_for_solver};
+pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
 
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
@@ -180,6 +186,10 @@ pub(crate) struct SmtLibSubprocessSolver {
     model_cache_hits: usize,
     smt_queries: usize,
     solver_time: Duration,
+    smt_input_bytes: u64,
+    smt_max_query_bytes: u64,
+    smt_build_time: Duration,
+    smt_max_query_time: Duration,
 }
 
 impl SmtLibSubprocessSolver {
@@ -208,6 +218,10 @@ impl SmtLibSubprocessSolver {
             model_cache_hits: 0,
             smt_queries: 0,
             solver_time: Duration::ZERO,
+            smt_input_bytes: 0,
+            smt_max_query_bytes: 0,
+            smt_build_time: Duration::ZERO,
+            smt_max_query_time: Duration::ZERO,
         }
     }
 
@@ -234,6 +248,14 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             model_cache_hits: self.model_cache_hits,
             heuristic_witnesses: self.heuristic_witnesses,
             solver_time_ms: self.solver_time.as_millis().try_into().unwrap_or(u64::MAX),
+            smt_input_bytes: self.smt_input_bytes,
+            smt_max_query_bytes: self.smt_max_query_bytes,
+            smt_build_time_ms: self.smt_build_time.as_millis().try_into().unwrap_or(u64::MAX),
+            smt_max_query_time_ms: self
+                .smt_max_query_time
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
         }
     }
 
@@ -412,6 +434,27 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, false);
             return Ok(false);
         }
+        if defer_hard_arith_without_witness
+            && let Some((condition, base)) = constraints.split_last()
+            && {
+                let normalized_base = normalize_constraints_for_solver(base);
+                let base_key = constraint_cache_key(&normalized_base);
+                self.sat_cache.get(&base_key) == Some(&true)
+            }
+            && {
+                let mut complement = Vec::with_capacity(constraints.len());
+                complement.extend(base.iter().cloned());
+                complement.push(condition.clone().not());
+                let normalized_complement = normalize_constraints_for_solver(&complement);
+                let complement_key = constraint_cache_key(&normalized_complement);
+                self.has_cached_unsat_subset(&complement_key)
+            }
+        {
+            self.sat_cache_hits += 1;
+            trace!("is_sat: branch complement unsat cache hit");
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
+        }
 
         self.reserve_query()?;
         self.record_query();
@@ -514,19 +557,29 @@ impl SmtLibSubprocessSolver {
 
     /// Caches a definitive normalized satisfiability result if the cache has room.
     fn cache_sat_result(&mut self, key: Vec<SymBoolExpr>, result: bool) {
-        if self.sat_cache.contains_key(&key)
-            || self.sat_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES
-        {
-            self.sat_cache.insert(key, result);
+        let has_capacity = self.sat_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES;
+        match self.sat_cache.entry(key) {
+            alloy_primitives::map::Entry::Occupied(mut entry) => {
+                entry.insert(result);
+            }
+            alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
+                entry.insert(result);
+            }
+            alloy_primitives::map::Entry::Vacant(_) => {}
         }
     }
 
     /// Caches a validated normalized model result if the cache has room.
     fn cache_model_result(&mut self, key: Vec<SymBoolExpr>, model: SymbolicModel) {
-        if self.model_cache.contains_key(&key)
-            || self.model_cache.len() < SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES
-        {
-            self.model_cache.insert(key, model);
+        let has_capacity = self.model_cache.len() < SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES;
+        match self.model_cache.entry(key) {
+            alloy_primitives::map::Entry::Occupied(mut entry) => {
+                entry.insert(model);
+            }
+            alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
+                entry.insert(model);
+            }
+            alloy_primitives::map::Entry::Vacant(_) => {}
         }
     }
 
@@ -545,6 +598,7 @@ impl SmtLibSubprocessSolver {
         model_constraints: &[SymBoolExpr],
     ) -> Result<String, SymbolicError> {
         self.smt_queries += 1;
+        let build_started = Instant::now();
         let mut vars = SymbolicVars::default();
         for constraint in smt_constraints {
             constraint.collect_vars(&mut vars);
@@ -565,13 +619,15 @@ impl SmtLibSubprocessSolver {
         for var in vars {
             let _ = writeln!(smt, "(declare-fun {var} () (_ BitVec 256))");
         }
-        for constraint in smt_constraints {
-            let _ = writeln!(smt, "(assert {})", constraint.smt());
-        }
+        write_smt_assertions(&mut smt, smt_constraints);
         smt.push_str("(check-sat)\n");
         if model {
             smt.push_str("(get-model)\n");
         }
+        let smt_bytes = smt.len().try_into().unwrap_or(u64::MAX);
+        self.smt_input_bytes = self.smt_input_bytes.saturating_add(smt_bytes);
+        self.smt_max_query_bytes = self.smt_max_query_bytes.max(smt_bytes);
+        self.smt_build_time += build_started.elapsed();
         if self.dump_smt {
             let query = self.queries;
             self.emit_diagnostic(format_args!("--- symbolic SMT query {query} ---\n{smt}\n"));
@@ -580,7 +636,9 @@ impl SmtLibSubprocessSolver {
         let started = Instant::now();
         let result =
             run_solver_commands(&commands, &smt, self.timeout, model.then_some(model_constraints));
-        self.solver_time += started.elapsed();
+        let query_time = started.elapsed();
+        self.solver_time += query_time;
+        self.smt_max_query_time = self.smt_max_query_time.max(query_time);
         self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
         if self.dump_smt {
             self.portfolio_diagnostics.record(&result.summaries);
@@ -592,148 +650,6 @@ impl SmtLibSubprocessSolver {
             }
         }
         result.output
-    }
-}
-
-/// Returns a structural key for normalized solver cache lookups.
-fn constraint_cache_key(constraints: &[SymBoolExpr]) -> Vec<SymBoolExpr> {
-    let mut key = Vec::with_capacity(constraints.len());
-    for constraint in constraints.iter().cloned() {
-        constraint.cache_key().push_cache_key_conjuncts(&mut key);
-    }
-    key.sort();
-    key.dedup();
-    key
-}
-
-/// Returns whether normalized conjunctive constraints contain a direct contradiction.
-fn constraints_are_directly_unsat(constraints: &[SymBoolExpr]) -> bool {
-    constraints.iter().any(|constraint| match constraint.kind() {
-        SymBoolExprKind::Const(false) => true,
-        SymBoolExprKind::Not(inner) => constraints.binary_search(inner).is_ok(),
-        _ => constraints.binary_search(&constraint.clone().not()).is_ok(),
-    })
-}
-
-/// Returns whether every expression in sorted `subset` appears in sorted `superset`.
-fn sorted_bool_exprs_are_subset(subset: &[SymBoolExpr], superset: &[SymBoolExpr]) -> bool {
-    if subset.len() > superset.len() {
-        return false;
-    }
-
-    let mut superset = superset.iter();
-    for expected in subset {
-        loop {
-            match superset.next() {
-                Some(candidate) if candidate < expected => {}
-                Some(candidate) if candidate == expected => break,
-                _ => return false,
-            }
-        }
-    }
-    true
-}
-
-impl SymBoolExpr {
-    fn cache_key(self) -> Self {
-        self.fold(&mut Self::cache_key_node)
-    }
-
-    fn cache_key_node(expr: Self) -> Self {
-        match expr.into_kind() {
-            SymBoolExprKind::Not(value) => value.not(),
-            SymBoolExprKind::And(values) => {
-                let mut conjuncts = Vec::new();
-                for value in values.iter().cloned() {
-                    value.push_cache_key_conjuncts(&mut conjuncts);
-                }
-                conjuncts.sort();
-                conjuncts.dedup();
-                Self::and(conjuncts)
-            }
-            SymBoolExprKind::Eq(left, right) => {
-                let left = left.cache_key();
-                let right = right.cache_key();
-                if left <= right { Self::eq(left, right) } else { Self::eq(right, left) }
-            }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                Self::cache_key_cmp(op, left.cache_key(), right.cache_key())
-            }
-            SymBoolExprKind::Const(value) => Self::constant(value),
-        }
-    }
-
-    fn push_cache_key_conjuncts(self, out: &mut Vec<Self>) {
-        match self.kind() {
-            SymBoolExprKind::Const(true) => {}
-            SymBoolExprKind::And(values) => {
-                for value in values.iter().cloned() {
-                    value.push_cache_key_conjuncts(out);
-                }
-            }
-            _ => out.push(self),
-        }
-    }
-
-    fn cache_key_cmp(op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> Self {
-        match op {
-            SymBoolExprOp::Ugt => Self::cmp(SymBoolExprOp::Ult, right, left),
-            SymBoolExprOp::Uge => Self::cmp(SymBoolExprOp::Ule, right, left),
-            SymBoolExprOp::Sgt => Self::cmp(SymBoolExprOp::Slt, right, left),
-            SymBoolExprOp::Ult | SymBoolExprOp::Ule | SymBoolExprOp::Slt => {
-                Self::cmp(op, left, right)
-            }
-        }
-    }
-}
-
-impl SymExpr {
-    fn cache_key(self) -> Self {
-        self.fold(&mut Self::cache_key_node)
-    }
-
-    fn cache_key_node(expr: Self) -> Self {
-        match expr.kind() {
-            SymExprKind::Op(op, left, right) => {
-                if op.is_commutative() && right < left {
-                    let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
-                    Self::op(op, right, left)
-                } else {
-                    expr
-                }
-            }
-            SymExprKind::AddMod { left, right, .. } => {
-                if right < left {
-                    let SymExprKind::AddMod { left, right, modulus } = expr.into_kind() else {
-                        unreachable!()
-                    };
-                    Self::addmod(right, left, modulus)
-                } else {
-                    expr
-                }
-            }
-            SymExprKind::MulMod { left, right, .. } => {
-                if right < left {
-                    let SymExprKind::MulMod { left, right, modulus } = expr.into_kind() else {
-                        unreachable!()
-                    };
-                    Self::mulmod(right, left, modulus)
-                } else {
-                    expr
-                }
-            }
-            SymExprKind::Ite(_, _, _) => {
-                let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
-                Self::ite(cond.cache_key(), left, right)
-            }
-            _ => expr,
-        }
-    }
-}
-
-impl SymExprOp {
-    const fn is_commutative(self) -> bool {
-        matches!(self, Self::Add | Self::Mul | Self::And | Self::Or | Self::Xor)
     }
 }
 
@@ -1504,7 +1420,7 @@ fn run_solver_process(
     timeout: Option<u32>,
     cancel: &AtomicBool,
 ) -> SolverProcessOutcome {
-    let mut child = match Command::new(&command.program)
+    let child = match Command::new(&command.program)
         .args(&command.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1519,89 +1435,89 @@ fn run_solver_process(
             ));
         }
     };
-    let stdout_reader = child.stdout.take().map(read_pipe_to_string);
-    let stderr_reader = child.stderr.take().map(read_pipe_to_string);
+    let mut child = SolverChild::new(child);
 
-    if let Some(mut stdin) = child.stdin.take()
+    if let Some(mut stdin) = child.child_mut().stdin.take()
         && let Err(err) = stdin.write_all(smt.as_bytes())
     {
-        kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
         return SolverProcessOutcome::Error(format!("failed to write solver query: {err}"));
     }
 
-    let deadline = timeout
-        .filter(|seconds| *seconds > 0)
-        .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
-    let mut backoff = INITIAL_SOLVER_POLL_BACKOFF;
-    let status = loop {
+    let started_at = Instant::now();
+    let timeout =
+        timeout.filter(|seconds| *seconds > 0).map(|seconds| Duration::from_secs(seconds.into()));
+    loop {
         if cancel.load(Ordering::SeqCst) {
-            kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
             return SolverProcessOutcome::Cancelled;
         }
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
-            return SolverProcessOutcome::Unknown;
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                thread::sleep(backoff);
-                backoff = (backoff * 2).min(MAX_SOLVER_POLL_BACKOFF);
-            }
-            Err(err) => {
-                kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
-                return SolverProcessOutcome::Error(format!("failed to read solver output: {err}"));
-            }
-        }
-    };
 
-    let stdout = match join_pipe_output(stdout_reader, "stdout") {
-        Ok(stdout) => stdout,
-        Err(err) => return SolverProcessOutcome::Error(err),
+        let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
+            return SolverProcessOutcome::Unknown;
+        };
+
+        match child.child_mut().wait_timeout(wait) {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(err) => {
+                return SolverProcessOutcome::Error(format!(
+                    "failed to wait for solver process: {err}"
+                ));
+            }
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(output) => output,
+        Err(err) => {
+            return SolverProcessOutcome::Error(format!("failed to read solver output: {err}"));
+        }
     };
-    let stderr = match join_pipe_output(stderr_reader, "stderr") {
-        Ok(stderr) => stderr,
-        Err(err) => return SolverProcessOutcome::Error(err),
-    };
-    if !status.success() {
-        return SolverProcessOutcome::Error(solver_exit_error(command, status, &stdout, &stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        return SolverProcessOutcome::Error(solver_exit_error(
+            command,
+            output.status,
+            &stdout,
+            &stderr,
+        ));
     }
     SolverProcessOutcome::Output(stdout)
 }
 
-fn read_pipe_to_string<R>(mut pipe: R) -> thread::JoinHandle<Result<String, String>>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let mut output = Vec::new();
-        pipe.read_to_end(&mut output)
-            .map_err(|err| format!("failed to read solver output: {err}"))?;
-        Ok(String::from_utf8_lossy(&output).to_string())
-    })
+fn solver_wait_duration(elapsed: Duration, timeout: Option<Duration>) -> Option<Duration> {
+    let Some(timeout) = timeout else {
+        return Some(SOLVER_CANCEL_CHECK_INTERVAL);
+    };
+    let remaining = timeout.checked_sub(elapsed)?;
+    if remaining.is_zero() { None } else { Some(remaining.min(SOLVER_CANCEL_CHECK_INTERVAL)) }
 }
 
-fn join_pipe_output(
-    reader: Option<thread::JoinHandle<Result<String, String>>>,
-    stream: &str,
-) -> Result<String, String> {
-    match reader {
-        Some(reader) => reader.join().map_err(|_| format!("solver {stream} reader panicked"))?,
-        None => Ok(String::new()),
+struct SolverChild {
+    child: Option<Child>,
+}
+
+impl SolverChild {
+    const fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    const fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("solver child exists")
+    }
+
+    fn wait_with_output(mut self) -> std::io::Result<Output> {
+        self.child.take().expect("solver child exists").wait_with_output()
     }
 }
 
-fn kill_and_reap_solver_process(
-    child: &mut std::process::Child,
-    stdout_reader: Option<thread::JoinHandle<Result<String, String>>>,
-    stderr_reader: Option<thread::JoinHandle<Result<String, String>>>,
-) {
-    // This only terminates the direct child. Wrapper commands should forward termination and close
-    // inherited pipes so descendant solver processes do not outlive cancelled queries.
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = join_pipe_output(stdout_reader, "stdout");
-    let _ = join_pipe_output(stderr_reader, "stderr");
+impl Drop for SolverChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 fn solver_exit_error(

@@ -24,12 +24,9 @@ impl SymbolicExecutor {
                 if end > code.len() {
                     return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
                 }
-                let bytes = std::iter::repeat_with(SymExpr::zero)
-                    .take(32 - n)
-                    .chain(code.read_bytes(state.pc, n))
-                    .collect::<Vec<_>>();
+                let value = code.push_data_word(state.pc, n);
                 state.pc = end;
-                state.stack.push(SymExpr::from_bytes(bytes))?;
+                state.stack.push(value)?;
             }
             opcode::DUP1..=opcode::DUP16 => {
                 let n = (op - opcode::DUP1 + 1) as usize;
@@ -135,7 +132,7 @@ impl SymbolicExecutor {
                 let size = state.stack.pop()?;
                 match state.constrained_usize_checked(&size) {
                     Some(Ok(size)) => {
-                        let bytes = state.memory.read_bytes_offset(offset, size);
+                        let bytes = state.memory.read_byte_exprs_offset(offset, size);
                         state.stack.push(keccak_word(bytes))?;
                     }
                     Some(Err(_)) => {
@@ -155,8 +152,11 @@ impl SymbolicExecutor {
                                     "symbolic SHA3 size",
                                 )
                             })?;
-                        let bytes =
-                            state.memory.read_bytes_symbolic_size(offset, size.clone(), max_size);
+                        let bytes = state.memory.read_byte_exprs_symbolic_size(
+                            offset,
+                            size.clone(),
+                            max_size,
+                        );
                         state.stack.push(keccak_word_with_len(bytes, size))?;
                     }
                 }
@@ -209,7 +209,7 @@ impl SymbolicExecutor {
                 match state.constrained_usize_checked(&size) {
                     Some(Ok(size)) => {
                         let bytes = state.extcode_bytes_word(executor, target, offset, size)?;
-                        state.memory.copy_symbolic_offset(dest, bytes);
+                        state.memory.copy_bytes_offset(dest, bytes);
                     }
                     Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
@@ -231,7 +231,7 @@ impl SymbolicExecutor {
                         if max_size != 0 {
                             let bytes =
                                 state.extcode_bytes_word(executor, target, offset, max_size)?;
-                            state.memory.copy_symbolic_size_offset(dest, size, bytes)?;
+                            state.memory.copy_bytes_size_offset(dest, size, bytes)?;
                         }
                     }
                 }
@@ -287,9 +287,7 @@ impl SymbolicExecutor {
                 let size = state.stack.pop()?;
                 match state.constrained_usize_checked(&size) {
                     Some(Ok(size)) => {
-                        state
-                            .memory
-                            .copy_symbolic_offset(dest, code.read_bytes_offset(offset, size));
+                        state.memory.copy_bytes_offset(dest, code.read_bytes_offset(offset, size));
                     }
                     Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
@@ -309,7 +307,7 @@ impl SymbolicExecutor {
                                 )
                             })?;
                         if max_size != 0 {
-                            state.memory.copy_symbolic_size_offset(
+                            state.memory.copy_bytes_size_offset(
                                 dest,
                                 size,
                                 code.read_bytes_offset(offset, max_size),
@@ -663,9 +661,6 @@ impl SymbolicExecutor {
                         return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                     }
                     log_topics.push(topic);
-                }
-                if data.iter().any(SymExpr::contains_gasleft) {
-                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 return self.handle_log(
                     state,

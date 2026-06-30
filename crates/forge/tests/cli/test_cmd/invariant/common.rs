@@ -187,7 +187,8 @@ forgetest!(invariant_calldata_dictionary, |prj, cmd| {
     prj.insert_utils();
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(1));
-        config.invariant.depth = 10;
+        config.invariant.runs = 1000;
+        config.invariant.depth = 20;
     });
 
     prj.add_test(
@@ -1335,7 +1336,7 @@ contract SequenceNoReverts {
     uint256 public count;
 
     function work(uint256 x) public {
-        require(x % 2 != 0);
+        x;
         count++;
     }
 }

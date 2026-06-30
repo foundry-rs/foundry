@@ -49,6 +49,7 @@ const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "p
 /// serialization, but they are still valid user-facing config keys.
 const SYMBOLIC_KEYS: &[&str] = &[
     "enabled",
+    "seed_corpus",
     "solver",
     "solver_command",
     "solver_portfolio",

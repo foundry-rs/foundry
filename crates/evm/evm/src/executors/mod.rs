@@ -11,6 +11,8 @@ use crate::inspectors::{
     cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
+use alloy_evm::Evm;
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
@@ -28,24 +30,29 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
+    eip2935::{
+        HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, history_storage_slot, history_storage_value,
+        history_window_start,
+    },
     evm::{
-        EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor,
-        TxEnvFor,
+        EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor,
+        IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::ObservedCall;
-use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
-    context::Transaction,
+    context::{Block, Transaction},
     context_interface::{
         result::{ExecutionResult, Output, ResultAndState},
         transaction::SignedAuthorization,
     },
-    database::{DatabaseCommit, DatabaseRef},
+    database::{Database, DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
+    primitives::hardfork::SpecId,
 };
 use sancov::SancovGuard;
 use std::{
@@ -72,8 +79,14 @@ mod sancov;
 mod showmap;
 mod trace;
 
-pub use corpus::DynamicTargetCtx;
-pub use showmap::{ShowmapDomain, ShowmapOpts, ShowmapStats, replay_corpus_to_showmap};
+pub use corpus::{DynamicTargetCtx, persist_corpus_seed};
+pub use corpus_io::{
+    CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
+};
+pub use showmap::{
+    InvariantReplayOptions, ReplayFailure, ShowmapDomain, ShowmapOpts, ShowmapReplayTarget,
+    ShowmapStats, replay_corpus_to_showmap,
+};
 pub use trace::TracingExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
@@ -145,6 +158,25 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 ..Default::default()
             },
         );
+
+        if !backend.is_in_forking_mode() && evm_env.cfg_env.spec.into() >= SpecId::PRAGUE {
+            let mut account =
+                backend.basic_ref(HISTORY_STORAGE_ADDRESS).unwrap_or_default().unwrap_or_default();
+            account.code_hash = keccak256(&HISTORY_STORAGE_CODE);
+            account.code = Some(Bytecode::new_raw(HISTORY_STORAGE_CODE.clone()));
+            backend.insert_account_info(HISTORY_STORAGE_ADDRESS, account);
+
+            let current_block = evm_env.block_env.number();
+            let mut block_number = history_window_start(current_block);
+            while block_number < current_block {
+                let block_hash =
+                    backend.block_hash(block_number.saturating_to()).unwrap_or_default();
+                let slot = history_storage_slot(block_number);
+                let value = history_storage_value(block_hash);
+                let _ = backend.insert_account_storage(HISTORY_STORAGE_ADDRESS, slot, value);
+                block_number += U256::from(1);
+            }
+        }
 
         Self {
             backend: Arc::new(backend),
@@ -365,8 +397,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, mode: TraceMode) -> &mut Self {
-        self.inspector_mut().tracing(mode);
+    pub fn set_trace_requirements(&mut self, requirements: TraceRequirements) -> &mut Self {
+        self.inspector_mut().tracing_requirements(requirements);
         self
     }
 
@@ -570,6 +602,35 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env.set_signed_authorization(authorization_list);
         tx_env.set_tx_type(4);
         self.transact_with_env(evm_env, tx_env)
+    }
+
+    /// Applies the EIP-4788 beacon roots system call (Cancun+).
+    /// <https://eips.ethereum.org/EIPS/eip-4788>
+    pub fn apply_beacon_root(
+        &mut self,
+        parent_beacon_block_root: alloy_primitives::B256,
+    ) -> eyre::Result<()> {
+        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let mut evm_env = self.evm_env.clone();
+        let inspector = self.inspector().clone();
+        let mut state = {
+            let mut backend = CowBackend::new_borrowed(self.backend());
+            let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
+                &mut backend,
+                evm_env.clone(),
+                inspector,
+            );
+            let result =
+                evm.transact_system_call(SYSTEM_ADDRESS, BEACON_ROOTS_ADDRESS, calldata)?;
+            evm_env = evm.finish().1;
+            result.state
+        };
+        state.retain(|address, _| *address == BEACON_ROOTS_ADDRESS);
+
+        self.backend_mut().commit(state);
+        self.inspector_mut().set_block(evm_env.block_env);
+
+        Ok(())
     }
 
     /// Execute the transaction configured in `tx_env`.
@@ -1168,10 +1229,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
                     for hit in hits.drain(..) {
                         let edge_index = edge_indices.edge_index(hit.edge);
                         if history_map.len() <= edge_index {
-                            debug_assert_eq!(history_map.len(), edge_index);
-                            // `Vec::push` already amortizes geometric growth; no need
-                            // to pre-reserve a single slot.
-                            history_map.push(0);
+                            history_map.resize(edge_index + 1, 0);
                         }
                         Self::merge_edge_count(
                             hit.count,
@@ -1467,10 +1525,7 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
-    use revm::{
-        context::{Cfg, TxEnv},
-        primitives::hardfork::SpecId,
-    };
+    use revm::context::{Cfg, TxEnv};
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
         RawCallResult {
@@ -1505,6 +1560,24 @@ mod tests {
             (false, false)
         );
         assert_eq!(history, [1, 1]);
+    }
+
+    #[test]
+    fn collision_free_edge_merge_handles_sparse_observation_indices() {
+        let first =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+        let second =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(20) };
+        let mut edge_indices = EdgeIndexMap::default();
+        edge_indices.edge_index(first);
+        edge_indices.edge_index(second);
+        let mut history = Vec::new();
+
+        assert_eq!(
+            dense_call(second).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [0, 1]);
     }
 
     #[test]
@@ -1567,6 +1640,25 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn beacon_root_system_call_does_not_persist_system_address() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().spec_id(SpecId::CANCUN).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let before = executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap();
+
+        executor.apply_beacon_root(B256::repeat_byte(0x11)).unwrap();
+
+        assert_eq!(
+            executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap(),
+            before,
+            "EIP-4788 system calls must not persist the system caller account",
+        );
     }
 
     /// Regression test for `pre_override_blob_hashes` restoration.
