@@ -17,7 +17,7 @@ pub(crate) struct PathState {
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
-    pub(crate) corpus_seed_models: Vec<SymbolicModel>,
+    corpus_seed_models: Vec<Arc<SymbolicModel>>,
     pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
@@ -242,20 +242,28 @@ impl PathState {
     pub(crate) fn split_corpus_seed_models(
         &self,
         condition: &SymBoolExpr,
-    ) -> (Vec<SymbolicModel>, Vec<SymbolicModel>) {
+    ) -> (Vec<Arc<SymbolicModel>>, Vec<Arc<SymbolicModel>>) {
         let mut true_models = Vec::new();
         let mut false_models = Vec::new();
         for model in &self.corpus_seed_models {
-            match condition.eval_model_if_complete(model) {
-                Ok(Some(true)) => true_models.push(model.clone()),
-                Ok(Some(false)) => false_models.push(model.clone()),
+            match condition.eval_model_if_complete(model.as_ref()) {
+                Ok(Some(true)) => true_models.push(Arc::clone(model)),
+                Ok(Some(false)) => false_models.push(Arc::clone(model)),
                 Ok(None) | Err(_) => {
-                    true_models.push(model.clone());
-                    false_models.push(model.clone());
+                    true_models.push(Arc::clone(model));
+                    false_models.push(Arc::clone(model));
                 }
             }
         }
         (true_models, false_models)
+    }
+
+    pub(crate) fn set_corpus_seed_models(&mut self, models: Vec<Arc<SymbolicModel>>) {
+        self.corpus_seed_models = models;
+    }
+
+    pub(crate) const fn corpus_seed_model_count(&self) -> usize {
+        self.corpus_seed_models.len()
     }
 
     pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {

@@ -454,11 +454,11 @@ impl SymbolicExecutor {
                             state.split_corpus_seed_models(&true_cond);
                         let mut true_state = state.clone();
                         true_state.constraints.push(true_cond);
-                        true_state.corpus_seed_models = true_seed_models;
+                        true_state.set_corpus_seed_models(true_seed_models);
                         true_state.pc = dest;
                         let mut false_state = state.clone();
                         false_state.constraints.push(false_cond);
-                        false_state.corpus_seed_models = false_seed_models;
+                        false_state.set_corpus_seed_models(false_seed_models);
                         false_state.pc = fallthrough;
 
                         let true_feasible = self.take_loop_jump(&mut true_state, fallthrough, dest)
@@ -468,8 +468,8 @@ impl SymbolicExecutor {
                         trace!(true_feasible, false_feasible, "JUMPI symbolic branch");
                         match (true_feasible, false_feasible) {
                             (true, true)
-                                if false_state.corpus_seed_models.len()
-                                    > true_state.corpus_seed_models.len() =>
+                                if false_state.corpus_seed_model_count()
+                                    > true_state.corpus_seed_model_count() =>
                             {
                                 push_preferred_branch(
                                     worklist,

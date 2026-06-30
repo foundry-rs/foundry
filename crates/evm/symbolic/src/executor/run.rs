@@ -155,8 +155,11 @@ impl SymbolicExecutor {
         let code = SymCode::from_bytecode(&bytecode);
         let mut worklist = VecDeque::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config)? {
-            let corpus_seed_models =
-                input.corpus_seeds.iter().filter_map(|seed| calldata.seed_model(seed)).collect();
+            let corpus_seed_models = input
+                .corpus_seeds
+                .iter()
+                .filter_map(|seed| calldata.seed_model(seed).map(Arc::new))
+                .collect();
             let mut root = PathState::new(
                 input.target,
                 input.sender,
@@ -164,7 +167,7 @@ impl SymbolicExecutor {
                 calldata,
                 input.ffi_enabled,
             );
-            root.corpus_seed_models = corpus_seed_models;
+            root.set_corpus_seed_models(corpus_seed_models);
             root.apply_executor_env(input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();

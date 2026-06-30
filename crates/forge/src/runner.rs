@@ -96,14 +96,11 @@ struct ImportedSymbolicCorpusSeeds {
     metadata: Option<SymbolicCorpusSeedMetadata>,
 }
 
-impl ImportedSymbolicCorpusSeeds {
-    fn attach_to(&self, result: SymbolicResult) -> SymbolicResult {
-        if let Some(metadata) = self.metadata.clone() {
-            result.with_corpus_seeds(metadata)
-        } else {
-            result
-        }
-    }
+fn attach_imported_symbolic_corpus_seeds(
+    metadata: &Option<SymbolicCorpusSeedMetadata>,
+    result: SymbolicResult,
+) -> SymbolicResult {
+    if let Some(metadata) = metadata.clone() { result.with_corpus_seeds(metadata) } else { result }
 }
 
 pub(crate) struct InvariantCampaignScope<'a> {
@@ -1779,7 +1776,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        let imported_corpus = self.import_symbolic_fuzz_corpus(func);
+        let ImportedSymbolicCorpusSeeds { inputs: corpus_seeds, metadata: corpus_seed_metadata } =
+            self.import_symbolic_fuzz_corpus(func);
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         if self.should_defer_symbolic_diagnostics() {
             symbolic.capture_diagnostics();
@@ -1792,7 +1790,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
             collect_success_input: false,
-            corpus_seeds: imported_corpus.inputs.clone(),
+            corpus_seeds,
         });
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
         let symbolic_diagnostics = symbolic.take_diagnostics();
@@ -1803,7 +1801,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     TestStatus::Success,
                     None,
                     None,
-                    imported_corpus.attach_to(SymbolicResult::pass(&self.config.symbolic, stats)),
+                    attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::pass(&self.config.symbolic, stats),
+                    ),
                 );
             }
             SymbolicRunResult::Incomplete { kind, reason, stats } => {
@@ -1812,15 +1813,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     TestStatus::Failure,
                     Some(display_reason),
                     None,
-                    imported_corpus.attach_to(SymbolicResult::incomplete(
-                        &self.config.symbolic,
-                        kind,
-                        reason,
-                        stats,
-                        SymbolicReplayMetadata::not_required(),
-                        SymbolicCallTrace::none(),
-                        None,
-                    )),
+                    attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            kind,
+                            reason,
+                            stats,
+                            SymbolicReplayMetadata::not_required(),
+                            SymbolicCallTrace::none(),
+                            None,
+                        ),
+                    ),
                 );
             }
             SymbolicRunResult::Counterexample { args, calldata, stats } => {
@@ -1840,8 +1844,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
                     Err(EvmError::Skip(reason)) => {
                         let replay_reason = format!("vm.skip during concrete replay: {reason}");
-                        let symbolic_result =
-                            imported_corpus.attach_to(SymbolicResult::incomplete(
+                        let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            SymbolicResult::incomplete(
                                 &self.config.symbolic,
                                 SymbolicStopReason::Error,
                                 "concrete replay skipped the symbolic counterexample",
@@ -1849,7 +1854,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 SymbolicReplayMetadata::skipped(replay_reason),
                                 SymbolicCallTrace::none(),
                                 Some(symbolic_counterexample),
-                            ));
+                            ),
+                        );
                         self.result.symbolic_result(
                             TestStatus::Skipped,
                             reason.0,
@@ -1862,8 +1868,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                     Err(err) => {
                         let reason = err.to_string();
-                        let symbolic_result =
-                            imported_corpus.attach_to(SymbolicResult::incomplete(
+                        let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            SymbolicResult::incomplete(
                                 &self.config.symbolic,
                                 SymbolicStopReason::Error,
                                 reason.clone(),
@@ -1871,7 +1878,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 SymbolicReplayMetadata::error(reason.clone()),
                                 SymbolicCallTrace::none(),
                                 Some(symbolic_counterexample),
-                            ));
+                            ),
+                        );
                         self.result.symbolic_result(
                             TestStatus::Failure,
                             Some(reason),
@@ -1900,15 +1908,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 if success {
                     self.result.extend(raw_call_result);
                     let reason = "symbolic counterexample did not replay".to_string();
-                    let symbolic_result = imported_corpus.attach_to(SymbolicResult::incomplete(
-                        &self.config.symbolic,
-                        SymbolicStopReason::Error,
-                        reason.clone(),
-                        stats,
-                        SymbolicReplayMetadata::mismatch(reason.clone()),
-                        call_trace,
-                        Some(symbolic_counterexample),
-                    ));
+                    let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            SymbolicStopReason::Error,
+                            reason.clone(),
+                            stats,
+                            SymbolicReplayMetadata::mismatch(reason.clone()),
+                            call_trace,
+                            Some(symbolic_counterexample),
+                        ),
+                    );
                     let counterexample = CounterExample::Single(base_counterexample);
                     self.result.symbolic_result(
                         TestStatus::Failure,
@@ -2027,7 +2038,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         TestStatus::Failure,
                         final_reason,
                         Some(counterexample),
-                        imported_corpus.attach_to(symbolic_result),
+                        attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            symbolic_result,
+                        ),
                     );
                 }
             }
