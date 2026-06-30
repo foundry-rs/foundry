@@ -443,14 +443,10 @@ impl ScriptArgs {
                 return Ok(None);
             }
 
-            let size_limits = pre_simulation
-                .script_config
-                .evm_opts
-                .env
-                .code_size_limit
-                .or(pre_simulation.script_config.config.code_size_limit)
-                .map(ContractSizeLimits::with_runtime_limit)
-                .unwrap_or_default();
+            let size_limits = pre_simulation.args.contract_size_limits(
+                &pre_simulation.script_config.config,
+                &pre_simulation.script_config.evm_opts,
+            );
             pre_simulation.args.check_contract_sizes(
                 size_limits,
                 &pre_simulation.execution_result,
@@ -651,13 +647,15 @@ impl ScriptArgs {
         Ok(())
     }
 
-    fn contract_size_limits(&self) -> ContractSizeLimits {
+    fn contract_size_limits(&self, config: &Config, evm_opts: &EvmOpts) -> ContractSizeLimits {
         self.evm
             .env
             .code_size_limit
+            .or(evm_opts.env.code_size_limit)
+            .or(config.code_size_limit)
             .map(ContractSizeLimits::with_runtime_limit)
             .or_else(|| {
-                self.evm
+                evm_opts
                     .networks
                     .contract_size_limits()
                     .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
@@ -1316,6 +1314,43 @@ mod tests {
         // The CLI flag must land in evm_opts so that the size_limits computation in run() picks
         // it up via `.evm_opts.env.code_size_limit.or(config.code_size_limit)`.
         assert_eq!(args.evm.env.code_size_limit, Some(2147483647));
+    }
+
+    #[test]
+    fn contract_size_limits_use_resolved_monad_network() {
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
+        let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
+
+        let limits = args.contract_size_limits(&Config::default(), &evm_opts);
+
+        assert!(limits.runtime > ContractSizeLimits::default().runtime);
+        assert!(limits.initcode > ContractSizeLimits::default().initcode);
+    }
+
+    #[test]
+    fn contract_size_limits_prefer_cli_then_config_over_network() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--code-size-limit",
+            "64",
+        ]);
+        let mut config = Config { code_size_limit: Some(128), ..Default::default() };
+        let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
+        assert_eq!(
+            args.contract_size_limits(&config, &evm_opts),
+            ContractSizeLimits::with_runtime_limit(64)
+        );
+
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
+        config.code_size_limit = Some(128);
+        assert_eq!(
+            args.contract_size_limits(&config, &evm_opts),
+            ContractSizeLimits::with_runtime_limit(128)
+        );
     }
 
     #[test]
