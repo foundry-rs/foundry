@@ -62,7 +62,7 @@ impl SequenceShrink {
         self.included_calls.test(call_idx)
     }
 
-    pub fn included_count(&self) -> usize {
+    pub const fn included_count(&self) -> usize {
         self.included_count
     }
 

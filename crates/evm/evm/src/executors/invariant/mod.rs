@@ -278,7 +278,7 @@ fn invariant_focus_worker_index(worker_id: u32, worker_count: usize) -> Option<u
     }
 
     let first_focus_worker = worker_count - focus_workers;
-    if worker_id >= first_focus_worker { Some(worker_id - first_focus_worker) } else { None }
+    (worker_id >= first_focus_worker).then(|| worker_id - first_focus_worker)
 }
 
 fn campaign_seed_for_worker(
@@ -2537,7 +2537,7 @@ mod tests {
         let first = function("first(uint256)");
         let second = function("second(uint256)");
         let mut contract = targeted_contract("Target", vec![first.clone(), second.clone()]);
-        contract.targeted_functions = vec![first.clone(), second.clone()];
+        contract.targeted_functions = vec![first, second.clone()];
 
         let mut targets = TargetedContracts::new();
         targets.insert(target, contract);
@@ -2570,8 +2570,7 @@ mod tests {
         let first = function("aaa(uint256)");
         let second = function("bbb(uint256)");
         let excluded = function("ccc(uint256)");
-        let mut contract =
-            targeted_contract("Target", vec![first.clone(), second.clone(), excluded.clone()]);
+        let mut contract = targeted_contract("Target", vec![first, second, excluded.clone()]);
         contract.excluded_functions = vec![excluded.clone()];
 
         let mut targets = TargetedContracts::new();
