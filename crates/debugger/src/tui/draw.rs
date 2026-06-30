@@ -1049,8 +1049,8 @@ const COMMAND_PROMPT_HINT: &str = "  Enter: run | Esc: cancel | help: command li
 fn command_prompt_line(input: &str, width: u16) -> Line<'static> {
     let width = width as usize;
     let fixed_width = 2;
-    let hint_width = COMMAND_PROMPT_HINT.chars().count();
-    let input_width = input.chars().count();
+    let hint_width = text_width(COMMAND_PROMPT_HINT);
+    let input_width = text_width(input);
     let include_hint = fixed_width + input_width + hint_width <= width;
     let input_width = if include_hint {
         width.saturating_sub(fixed_width + hint_width)
@@ -1069,9 +1069,13 @@ fn command_prompt_line(input: &str, width: u16) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Returns the rendered display width of `text` in terminal cells.
+fn text_width(text: &str) -> usize {
+    Span::raw(text).width()
+}
+
 fn input_tail(input: &str, max_width: usize) -> String {
-    let len = input.chars().count();
-    if len <= max_width {
+    if text_width(input) <= max_width {
         return input.to_string();
     }
     if max_width == 0 {
@@ -1081,9 +1085,17 @@ fn input_tail(input: &str, max_width: usize) -> String {
         return "<".to_string();
     }
 
-    let mut tail = input.chars().rev().take(max_width - 1).collect::<Vec<_>>();
-    tail.reverse();
-    format!("<{}", tail.into_iter().collect::<String>())
+    // Reserve one cell for the leading `<` truncation indicator, then keep the widest
+    // suffix that fits in the remaining width.
+    let tail_width = max_width - 1;
+    let mut start = input.len();
+    for (idx, _) in input.char_indices().rev() {
+        if text_width(&input[idx..]) > tail_width {
+            break;
+        }
+        start = idx;
+    }
+    format!("<{}", &input[start..])
 }
 
 fn step_notice_title(line: &str) -> &'static str {
@@ -1517,6 +1529,16 @@ mod tests {
         assert!(line.width() <= 12);
         assert_eq!(text, ":<789abcdef█");
         assert!(!text.contains("Enter: run"));
+    }
+
+    #[test]
+    fn command_prompt_line_clips_wide_unicode_to_width() {
+        // Full-width characters render two cells each, so clipping must respect display
+        // width rather than character count.
+        let input = "界界界界界界界界";
+        let line = super::command_prompt_line(input, 8);
+
+        assert!(line.width() <= 8);
     }
 
     #[test]
