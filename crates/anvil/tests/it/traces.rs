@@ -30,6 +30,7 @@ use alloy_rpc_types::{
         parity::{Action, ChangedType, LocalizedTransactionTrace, TraceResults, TraceType},
     },
 };
+use alloy_rpc_types_eth::AccountInfo;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, sol};
 use anvil::{NodeConfig, spawn};
@@ -185,6 +186,45 @@ async fn test_trace_raw_transaction_local() {
     assert_eq!(provider.get_transaction_count(from).await.unwrap(), 0);
     assert_eq!(provider.get_balance(from).await.unwrap(), from_balance);
     assert_eq!(provider.get_balance(to).await.unwrap(), to_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_account_info_at_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_number = receipt.block_number.unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+
+    let by_number: Option<AccountInfo> = provider
+        .raw_request(
+            "debug_accountInfoAt".into(),
+            (BlockId::number(block_number), Index::from(0), to),
+        )
+        .await
+        .unwrap();
+    let by_hash: Option<AccountInfo> = provider
+        .raw_request(
+            "debug_accountInfoAt".into(),
+            (BlockId::Hash(block_hash.into()), Index::from(0), to),
+        )
+        .await
+        .unwrap();
+
+    let expected_balance = handle.genesis_balance().saturating_add(amount);
+    for account in [by_number.unwrap(), by_hash.unwrap()] {
+        assert_eq!(account.balance, expected_balance);
+        assert_eq!(account.nonce, 0);
+        assert!(account.code.is_empty());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
