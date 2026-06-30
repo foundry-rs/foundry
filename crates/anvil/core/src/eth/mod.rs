@@ -325,6 +325,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_dbGet")]
     DebugDbGet(String),
 
+    /// reth's `debug_getModifiedAccountsByNumber` endpoint.
+    #[serde(rename = "debug_getModifiedAccountsByNumber")]
+    DebugGetModifiedAccountsByNumber(u64, u64),
+
     /// geth's `debug_traceBlockByHash` endpoint
     #[serde(rename = "debug_traceBlockByHash")]
     DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
@@ -1563,6 +1567,16 @@ true}]}"#;
         let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }, {"disableStorage": true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_get_modified_accounts_by_number() {
+        let s = r#"{"method": "debug_getModifiedAccountsByNumber", "params": [0, 1]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        match serde_json::from_value::<EthRequest>(value).unwrap() {
+            EthRequest::DebugGetModifiedAccountsByNumber(0, 1) => {}
+            req => panic!("unexpected request: {req:?}"),
+        }
     }
 
     #[test]

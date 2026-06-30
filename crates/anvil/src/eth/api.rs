@@ -1218,6 +1218,16 @@ impl<N: Network> EthApi<N> {
         self.backend.debug_db_get(key).await
     }
 
+    /// Handles reth's no-op `debug_getModifiedAccountsByNumber` endpoint.
+    pub fn debug_get_modified_accounts_by_number(
+        &self,
+        _start_number: u64,
+        _end_number: u64,
+    ) -> Result<()> {
+        node_info!("debug_getModifiedAccountsByNumber");
+        Ok(())
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1679,6 +1689,9 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugGetModifiedAccountsByNumber(start_number, end_number) => {
+                self.debug_get_modified_accounts_by_number(start_number, end_number).to_rpc_result()
+            }
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }
