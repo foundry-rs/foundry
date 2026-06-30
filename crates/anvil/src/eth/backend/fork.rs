@@ -18,12 +18,16 @@ use alloy_provider::{
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
     FeeHistory, Filter, Log,
+    request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
+    state::StateOverride,
     trace::{
         geth::{GethDebugTracingOptions, GethTrace, TraceResult},
         parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
     },
 };
+use alloy_rpc_types_eth::{Bundle, EthCallResponse, StateContext};
+use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::hardfork::FoundryHardfork;
@@ -357,6 +361,18 @@ impl<N: Network> ClientFork<N> {
         let res = self.provider().call(request.clone()).block(block.into()).await?;
 
         Ok(res)
+    }
+
+    /// Sends `eth_callMany`
+    pub async fn call_many(
+        &self,
+        bundles: Vec<Bundle<WithOtherFields<TransactionRequest>>>,
+        state_context: Option<StateContext>,
+        state_override: Option<StateOverride>,
+    ) -> Result<Vec<Vec<EthCallResponse>>, TransportError> {
+        self.provider()
+            .raw_request("eth_callMany".into(), (bundles, state_context, state_override))
+            .await
     }
 
     /// Sends `eth_simulateV1`

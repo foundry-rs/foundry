@@ -82,6 +82,7 @@ use alloy_rpc_types::{
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
 };
+use alloy_rpc_types_eth::{Bundle, EthCallResponse};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
@@ -4054,6 +4055,76 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 }
 
 impl Backend<FoundryNetwork> {
+    /// Executes bundles of call requests and returns each call output.
+    pub async fn call_many(
+        &self,
+        bundles: Vec<Bundle<WithOtherFields<TransactionRequest>>>,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        state_override: Option<alloy_rpc_types::state::StateOverride>,
+    ) -> Result<Vec<Vec<EthCallResponse>>, BlockchainError> {
+        if bundles.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundles are empty.".to_string(),
+            )));
+        }
+
+        self.with_database_at(block_request, |state, block_env| {
+            let mut cache_db = CacheDB::new(state);
+            if let Some(state_override) = state_override {
+                apply_state_overrides(state_override, &mut cache_db)?;
+            }
+
+            let mut results = Vec::with_capacity(bundles.len());
+            for bundle in bundles {
+                let Bundle { transactions, block_override } = bundle;
+                let mut bundle_block_env = block_env.clone();
+                if let Some(block_override) = block_override {
+                    cache_db.apply_block_overrides(block_override, &mut bundle_block_env);
+                }
+
+                let mut bundle_results = Vec::with_capacity(transactions.len());
+                for request in transactions {
+                    let fee_details = FeeDetails::new(
+                        request.gas_price,
+                        request.max_fee_per_gas,
+                        request.max_priority_fee_per_gas,
+                        request.max_fee_per_blob_gas,
+                    )?
+                    .or_zero_fees();
+                    let (evm_env, tx_env, op_deposit) =
+                        self.build_call_env(request, fee_details, bundle_block_env.clone());
+
+                    let mut inspector = self.build_inspector();
+                    let ResultAndState { result, state } = self.transact_with_inspector_ref(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        tx_env,
+                        op_deposit,
+                    )?;
+
+                    let output = result.output().cloned().unwrap_or_default();
+                    let response = if result.is_success() {
+                        EthCallResponse { value: Some(output), error: None }
+                    } else {
+                        let error = RevertDecoder::new()
+                            .maybe_decode(&output, None)
+                            .unwrap_or_else(|| "execution failed".to_string());
+                        EthCallResponse { value: None, error: Some(error) }
+                    };
+
+                    cache_db.commit(state);
+                    bundle_results.push(response);
+                }
+
+                results.push(bundle_results);
+            }
+
+            Ok(results)
+        })
+        .await?
+    }
+
     /// Simulates the payload by executing the calls in request.
     pub async fn simulate(
         &self,
