@@ -817,6 +817,12 @@ impl<N: Network> Backend<N> {
         rx
     }
 
+    /// Returns the number of new-block listeners. Closed listeners are pruned lazily on the next
+    /// new block notification.
+    pub fn new_block_listeners_count(&self) -> usize {
+        self.new_block_listeners.lock().len()
+    }
+
     /// Notifies all `new_block_listeners` about the new block
     fn notify_on_new_block(&self, header: Header, hash: B256) {
         // cleanup closed notification streams first, if the channel is closed we can remove the
@@ -3931,7 +3937,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
             let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
-            if let Some((number, hash)) = fork_num_and_hash {
+            let selected_best_number = if let Some((number, hash)) = fork_num_and_hash {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
@@ -3949,11 +3955,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                             )))
                         })?;
                     self.blockchain.storage.write().best_hash = best_hash;
+                    best_number
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
                     self.blockchain.storage.write().best_number = number;
                     self.blockchain.storage.write().best_hash = hash;
+                    number
                 }
             } else {
                 self.blockchain.storage.write().best_number = best_number;
@@ -3971,6 +3979,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     })?;
 
                 self.blockchain.storage.write().best_hash = best_hash;
+                best_number
+            };
+
+            // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
+            // can intentionally keep BlockEnv.number distinct from the best L2 block number.
+            if !is_arbitrum(self.chain_id().to()) {
+                self.set_block_number(selected_best_number);
             }
         }
 

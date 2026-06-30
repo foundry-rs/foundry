@@ -16,7 +16,7 @@ use alloy_primitives::{
     Address, B256, ChainId, U256, b256, bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
 };
-use alloy_provider::Provider;
+use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockTransactions, request::TransactionRequest,
     state::AccountOverride,
@@ -61,6 +61,32 @@ async fn can_get_price() {
     let gas_price = provider.get_gas_price().await.unwrap();
     assert!(gas_price > 0);
     assert_eq!(gas_price, api.gas_price());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_base_fee() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::London.into()))).await;
+    let provider = handle.http_provider();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, api.base_fee().unwrap());
+
+    let expected = U256::from(1234);
+    api.anvil_set_next_block_base_fee_per_gas(expected).await.unwrap();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, Some(expected));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_null_base_fee_before_london() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+    let provider = handle.http_provider();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -143,6 +169,33 @@ async fn can_get_block_by_number() {
 
     let block = provider.get_block(BlockId::hash(block.header.hash)).full().await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_header_by_number() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let header: Option<AnyRpcHeader> =
+        provider.client().request("eth_getHeaderByNumber", ("0x1",)).await.unwrap();
+    let header = header.unwrap();
+    assert_eq!(header.hash, block.header.hash);
+    assert_eq!(header.number, block.header.number);
+    assert_eq!(header.transactions_root, block.header.transactions_root);
+
+    let missing: Option<AnyRpcHeader> =
+        provider.client().request("eth_getHeaderByNumber", ("0x2",)).await.unwrap();
+    assert_eq!(missing, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -522,6 +575,67 @@ async fn can_send_raw_tx_sync() {
     let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
     assert_eq!(receipt.from(), wallets[1].address());
     assert_eq!(receipt.to(), tx.to());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_raw_transaction_conditional() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+
+    let from = wallets[0].address();
+    let mut tx = TxEip1559 {
+        max_fee_per_gas: eip1559_est.max_fee_per_gas,
+        max_priority_fee_per_gas: eip1559_est.max_priority_fee_per_gas,
+        gas_limit: 100000,
+        chain_id: 31337,
+        to: alloy_primitives::TxKind::Call(from),
+        input: bytes!("11112222"),
+        ..Default::default()
+    };
+    let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+
+    let tx = tx.into_signed(signature);
+    let mut encoded = Vec::new();
+    tx.eip2718_encode(&mut encoded);
+
+    let tx_hash = provider
+        .raw_request(
+            "eth_sendRawTransactionConditional".into(),
+            (alloy_primitives::Bytes::from(encoded), serde_json::json!({"knownAccounts": {}})),
+        )
+        .await
+        .unwrap();
+
+    let tx_hash = provider
+        .watch_pending_transaction(PendingTransactionConfig::new(tx_hash))
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+
+    let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.from(), wallets[1].address());
+    assert_eq!(receipt.to(), tx.to());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejects_raw_transaction_conditional_prestate() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let result: std::result::Result<serde_json::Value, _> = provider
+        .raw_request(
+            "eth_sendRawTransactionConditional".into(),
+            (alloy_primitives::Bytes::default(), serde_json::json!({"blockNumberMin": "0x2"})),
+        )
+        .await;
+
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("transaction conditions are not supported"), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
