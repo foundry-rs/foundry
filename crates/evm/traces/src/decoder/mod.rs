@@ -198,7 +198,7 @@ pub struct CallTraceDecoder {
     /// The chain ID, used to determine network-specific precompiles.
     pub chain_id: Option<u64>,
 
-    /// Detailed opcodes for analysis
+    /// Detailed opcodes for analysis.
     pub opcodes: Vec<OpCode>,
 
     /// The Tempo hardfork, used to determine hardfork-specific precompiles.
@@ -542,6 +542,23 @@ impl CallTraceDecoder {
                     for opcode in &self.opcodes {
                         if step.op == *opcode {
                             let res = match &step.storage_change {
+                                Some(change) if step.op == OpCode::SSTORE => {
+                                    if let Some(had_value) = change.had_value {
+                                        format!(
+                                            "[{}] {} 0x{:x}: 0x{:x} → 0x{:x}",
+                                            step.gas_cost,
+                                            opcode,
+                                            change.key,
+                                            had_value,
+                                            change.value
+                                        )
+                                    } else {
+                                        format!(
+                                            "[{}] {} 0x{:x} → (0x{:x})",
+                                            step.gas_cost, opcode, change.key, change.value
+                                        )
+                                    }
+                                }
                                 Some(change) => format!(
                                     "[{}] {} 0x{:x} → (0x{:x})",
                                     step.gas_cost, opcode, change.key, change.value

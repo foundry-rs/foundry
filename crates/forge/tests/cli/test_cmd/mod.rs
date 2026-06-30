@@ -3836,7 +3836,7 @@ Traces:
 
   [..] CounterTest::test_Increment()
     ├─ [..] Counter::increment()
-    │   ├─ [..] SSTORE 0x0 → (0x1)
+    │   ├─ [..] SSTORE 0x0: 0x0 → 0x1
     │   └─ ← [Stop]
     ├─ [..] Counter::number() [staticcall]
     │   └─ ← [Return] 1

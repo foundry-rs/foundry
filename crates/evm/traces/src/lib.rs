@@ -15,7 +15,6 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
 };
-use foundry_config::NamedChain::SuperpositionTestnet;
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::{
     OpcodeFilter,
@@ -210,19 +209,16 @@ pub fn render_trace_arena_inner(
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
-    // Remove overlapping decoded trace data
     let mut resolved = arena.resolve_arena();
 
     let mut tempo_changes = String::new();
     if with_storage_changes {
         append_tempo_channel_storage_decodes(&mut tempo_changes, &resolved);
-    }
 
-    let resolved_mut = resolved.to_mut();
-    if with_storage_changes {
-        for node in resolved_mut.nodes_mut() {
+        // Remove storage text that is already represented by an opcode line.
+        for node in resolved.to_mut().nodes_mut() {
             for step in &mut node.trace.steps {
-                if step.decoded.is_some() {
+                if matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_))) {
                     step.storage_change = None;
                 }
             }
@@ -234,7 +230,7 @@ pub fn render_trace_arena_inner(
         .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
-    w.write_arena(&resolved_mut).expect("Failed to write traces");
+    w.write_arena(resolved.as_ref()).expect("Failed to write traces");
     let mut rendered =
         String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
     rendered.push_str(&tempo_changes);
