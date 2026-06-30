@@ -20,6 +20,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
+use anvil_core::eth::block::Block;
 use eyre::Ok;
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_primitives::FoundryReceiptEnvelope;
@@ -1039,6 +1040,33 @@ async fn can_get_raw_header() {
     let decoded = Header::decode(&mut raw_by_number.as_ref()).unwrap();
     assert_eq!(decoded.number, 1);
     assert_eq!(decoded.hash_slow(), block.header.hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_block() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).value(U256::from(1)).to(Address::random());
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let raw_by_number: Bytes =
+        provider.client().request("debug_getRawBlock", (BlockId::number(1),)).await.unwrap();
+    let raw_by_hash: Bytes = provider
+        .client()
+        .request("debug_getRawBlock", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert!(!raw_by_number.is_empty());
+
+    let decoded: Block = Block::decode(&mut raw_by_number.as_ref()).unwrap();
+    assert_eq!(decoded.header.hash_slow(), block.header.hash);
+    assert_eq!(decoded.header.number, 1);
+    assert_eq!(decoded.body.transactions.len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
