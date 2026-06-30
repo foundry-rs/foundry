@@ -526,7 +526,7 @@ impl FuzzDictionary {
     /// Values are collected only once for a given bytecode.
     /// If values are newly collected then they are removed at the end of current run.
     fn insert_push_bytes_values(&mut self, address: &Address, account_info: &AccountInfo) {
-        if !self.config.include_push_bytes || self.addresses.contains(address) {
+        if !self.config.include_push_bytes {
             return;
         }
 
@@ -867,6 +867,20 @@ mod tests {
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
         assert_eq!(dictionary.addresses.len(), 2);
         assert_eq!(dictionary.hits, hits_after_first_scan);
+    }
+
+    #[test]
+    fn same_address_with_new_bytecode_is_scanned_again() {
+        let mut dictionary = FuzzDictionary::default();
+        let address = Address::repeat_byte(0x22);
+
+        dictionary.insert_push_bytes_values(&address, &account_with_code(&[0x60, 0x01]));
+        dictionary.insert_push_bytes_values(&address, &account_with_code(&[0x60, 0x04]));
+
+        assert_eq!(dictionary.addresses.len(), 1);
+        assert_eq!(dictionary.push_bytecode_hashes.len(), 2);
+        assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
+        assert!(dictionary.state_values.contains(&B256::from(U256::from(4))));
     }
 
     #[test]
