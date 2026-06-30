@@ -308,6 +308,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_getRawTransaction", with = "sequence")]
     DebugGetRawTransaction(TxHash),
 
+    /// reth's `debug_getRawReceipts` endpoint.
+    #[serde(rename = "debug_getRawReceipts", with = "sequence")]
+    DebugGetRawReceipts(BlockId),
+
     /// geth's `debug_clearTxpool` endpoint
     #[serde(rename = "debug_clearTxpool", with = "empty_params")]
     DebugClearTxpool(()),
@@ -1534,6 +1538,17 @@ mod tests {
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockNumberAndIndex","params":["0x3ed3a89b",0],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_raw_receipts() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["latest"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

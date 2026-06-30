@@ -1680,6 +1680,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DebugGetRawTransaction(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
+            EthRequest::DebugGetRawReceipts(block) => {
+                self.raw_receipts(block).await.to_rpc_result()
+            }
             // non eth-standard rpc calls
             EthRequest::DebugClearTxpool(_) => self.debug_clear_txpool().await.to_rpc_result(),
             // non eth-standard rpc calls
@@ -2858,6 +2861,34 @@ impl EthApi<FoundryNetwork> {
     pub async fn raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
         node_info!("debug_getRawTransaction");
         self.inner_raw_transaction(hash).await
+    }
+
+    /// Returns EIP-2718 encoded raw receipts for the block.
+    ///
+    /// Handler for RPC call: `debug_getRawReceipts`.
+    pub async fn raw_receipts(&self, block: BlockId) -> Result<Vec<Bytes>> {
+        node_info!("debug_getRawReceipts");
+
+        // In fork mode, serve pre-fork blocks from the upstream provider.
+        if let BlockRequest::Number(number) = self.block_request(Some(block)).await?
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(number)
+        {
+            let receipts = fork.block_receipts(number).await?.unwrap_or_default();
+            return Ok(receipts
+                .into_iter()
+                .map(|receipt| {
+                    receipt.0.inner.inner.map_logs(|log| log.inner).encoded_2718().into()
+                })
+                .collect());
+        }
+
+        let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
+        let receipts = self
+            .backend
+            .mined_receipts(block.header.hash_slow())
+            .ok_or(BlockchainError::BlockNotFound)?;
+        Ok(receipts.into_iter().map(|receipt| receipt.encoded_2718().into()).collect())
     }
 
     /// Returns EIP-2718 encoded raw transaction by block hash and index

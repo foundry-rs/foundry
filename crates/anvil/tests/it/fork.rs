@@ -6,6 +6,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_eips::{
+    eip2718::Decodable2718,
     eip7840::BlobParams,
     eip7910::{EthConfig, SystemContract},
 };
@@ -24,7 +25,7 @@ use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::Et
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryNetwork;
+use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
 use revm::precompile::PrecompileStatus;
@@ -101,6 +102,40 @@ async fn test_fork_gas_limit_disabled_from_config() {
         .from(handle.dev_wallets().next().unwrap().address());
     let tx = WithOtherFields::new(tx);
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+}
+
+// `debug_getRawReceipts` must serve pre-fork blocks from the upstream provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_receipts() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // A pre-fork block known to contain transactions.
+    let block_number = BLOCK_NUMBER - 1;
+    let rpc_receipts =
+        provider.get_block_receipts(BlockId::number(block_number)).await.unwrap().unwrap();
+    assert!(!rpc_receipts.is_empty());
+
+    let block = provider.get_block(BlockId::number(block_number)).await.unwrap().unwrap();
+    let raw_by_number: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawReceipts", (BlockId::number(block_number),))
+        .await
+        .unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawReceipts", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), rpc_receipts.len());
+
+    // Each entry decodes back into a receipt envelope matching the RPC receipt.
+    for (raw, rpc) in raw_by_number.iter().zip(rpc_receipts.iter()) {
+        let decoded = FoundryReceiptEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
+        assert_eq!(decoded.status(), rpc.status());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
