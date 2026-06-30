@@ -450,11 +450,15 @@ impl SymbolicExecutor {
                         let true_cond = cond.nonzero_bool();
                         let false_cond = true_cond.clone().not();
                         let fallthrough = state.pc;
+                        let (true_seed_models, false_seed_models) =
+                            state.split_corpus_seed_models(&true_cond);
                         let mut true_state = state.clone();
                         true_state.constraints.push(true_cond);
+                        true_state.corpus_seed_models = true_seed_models;
                         true_state.pc = dest;
                         let mut false_state = state.clone();
                         false_state.constraints.push(false_cond);
+                        false_state.corpus_seed_models = false_seed_models;
                         false_state.pc = fallthrough;
 
                         let true_feasible = self.take_loop_jump(&mut true_state, fallthrough, dest)
@@ -462,11 +466,29 @@ impl SymbolicExecutor {
                         let false_feasible =
                             self.branch_is_sat_or_defer(&false_state.constraints)?;
                         trace!(true_feasible, false_feasible, "JUMPI symbolic branch");
-                        if true_feasible {
-                            worklist.push_back(true_state);
-                        }
-                        if false_feasible {
-                            worklist.push_back(false_state);
+                        match (true_feasible, false_feasible) {
+                            (true, true)
+                                if false_state.corpus_seed_models.len()
+                                    > true_state.corpus_seed_models.len() =>
+                            {
+                                push_preferred_branch(
+                                    worklist,
+                                    false_state,
+                                    true_state,
+                                    self.config.exploration_order,
+                                );
+                            }
+                            (true, true) => {
+                                push_preferred_branch(
+                                    worklist,
+                                    true_state,
+                                    false_state,
+                                    self.config.exploration_order,
+                                );
+                            }
+                            (true, false) => worklist.push_back(true_state),
+                            (false, true) => worklist.push_back(false_state),
+                            (false, false) => {}
                         }
                         return Ok(StepOutcome::Forked);
                     }
@@ -752,6 +774,24 @@ impl SymbolicExecutor {
             StepOutcome::Failure
         } else {
             StepOutcome::Revert
+        }
+    }
+}
+
+fn push_preferred_branch(
+    worklist: &mut VecDeque<PathState>,
+    preferred: PathState,
+    secondary: PathState,
+    order: SymbolicExplorationOrder,
+) {
+    match order {
+        SymbolicExplorationOrder::Bfs => {
+            worklist.push_back(preferred);
+            worklist.push_back(secondary);
+        }
+        SymbolicExplorationOrder::Dfs => {
+            worklist.push_back(secondary);
+            worklist.push_back(preferred);
         }
     }
 }
