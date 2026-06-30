@@ -50,6 +50,8 @@ pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     pub value: U256,
     /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.
     pub ffi_enabled: bool,
+    /// Whether to return one successful concrete input when execution is safe.
+    pub collect_success_input: bool,
 }
 
 /// Error returned by the internal symbolic executor.
@@ -131,7 +133,7 @@ impl SymbolicError {
 impl fmt::Display for SymbolicRunResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Safe(stats) => write!(f, "safe after {} paths", stats.paths),
+            Self::Safe { stats, .. } => write!(f, "safe after {} paths", stats.paths),
             Self::Counterexample { stats, .. } => {
                 write!(f, "counterexample after {} paths", stats.paths)
             }

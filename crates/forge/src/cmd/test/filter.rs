@@ -261,6 +261,9 @@ impl TestFilter for ProjectPathsAwareFilter {
                     && (failure.test == signature || failure.test == name)
             })
         } else {
+            // TODO(@mablr): let exact bare-name fuzz filters such as `^testFoo$`
+            // match `testFoo(uint256)` when running `forge fuzz`, while preserving signature
+            // matching for overloaded tests.
             func.is_any_test() && self.args_filter.matches_test(&func.signature())
         }
     }

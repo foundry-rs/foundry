@@ -47,6 +47,7 @@ allow = [
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BlueOak-1.0.0",
     "BSL-1.0",
     "CC0-1.0",
     "CDDL-1.0",
