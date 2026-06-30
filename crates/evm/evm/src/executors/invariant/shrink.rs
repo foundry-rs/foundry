@@ -301,7 +301,6 @@ impl<'a> ShrinkProgress<'a> {
             self.show_solidity,
         );
         progress.set_message(message);
-        progress.force_draw();
     }
 }
 
