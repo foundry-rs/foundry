@@ -33,9 +33,9 @@ pub fn override_call_strat(
     let contracts_ref = contracts.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
-        20 => any::<prop::sample::Index>()
-            .prop_map(move |index| {
-                let (target, _) = index.get(contracts_ref.as_ref());
+        20 => any::<prop::sample::Selector>()
+            .prop_map(move |selector| {
+                let (target, _) = selector.select(contracts_ref.iter());
                 *target
             }),
     ]
