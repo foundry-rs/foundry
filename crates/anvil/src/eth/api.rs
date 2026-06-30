@@ -62,7 +62,7 @@ use alloy_rpc_types::{
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
-    txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
+    txpool::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
 use alloy_rpc_types_eth::FillTransaction;
 use alloy_serde::WithOtherFields;
@@ -1859,6 +1859,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TxPoolStatus(_) => self.txpool_status().await.to_rpc_result(),
             EthRequest::TxPoolInspect(_) => self.txpool_inspect().await.to_rpc_result(),
             EthRequest::TxPoolContent(_) => self.txpool_content().await.to_rpc_result(),
+            EthRequest::TxPoolContentFrom(from) => {
+                self.txpool_content_from(from).await.to_rpc_result()
+            }
             EthRequest::ErigonGetHeaderByNumber(num) => {
                 self.erigon_get_header_by_number(num).await.to_rpc_result()
             }
@@ -3456,9 +3459,13 @@ impl EthApi<FoundryNetwork> {
     ///
     /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content) for more details
     ///
-    /// Handler for ETH RPC call: `txpool_inspect`
+    /// Handler for ETH RPC call: `txpool_content`
     pub async fn txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         node_info!("txpool_content");
+        self.build_txpool_content()
+    }
+
+    fn build_txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         let mut content = TxpoolContent::<AnyRpcTransaction>::default();
         fn convert(tx: Arc<PoolTransaction<FoundryTxEnvelope>>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
@@ -3493,6 +3500,22 @@ impl EthApi<FoundryNetwork> {
         }
 
         Ok(content)
+    }
+
+    /// Returns the details of all transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only, filtered
+    /// by sender.
+    ///
+    /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_contentFrom) for more details
+    ///
+    /// Handler for ETH RPC call: `txpool_contentFrom`
+    pub async fn txpool_content_from(
+        &self,
+        from: Address,
+    ) -> Result<TxpoolContentFrom<AnyRpcTransaction>> {
+        node_info!("txpool_contentFrom");
+        let mut content = self.build_txpool_content()?;
+        Ok(content.remove_from(&from))
     }
 }
 
