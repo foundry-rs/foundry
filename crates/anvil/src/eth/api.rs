@@ -60,7 +60,7 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
-        opcode::TransactionOpcodeGas,
+        opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{
             LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
         },
@@ -1428,6 +1428,17 @@ impl EthApi<FoundryNetwork> {
         self.backend.trace_transaction_opcode_gas(tx_hash).await
     }
 
+    /// Returns opcode gas usage for all transactions in a block.
+    ///
+    /// Handler for RPC call: `trace_blockOpcodeGas`.
+    pub async fn trace_block_opcode_gas(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlockOpcodeGas>> {
+        node_info!("trace_blockOpcodeGas");
+        self.backend.trace_block_opcode_gas(block_id).await
+    }
+
     /// Traces a raw signed transaction without importing it into the mempool.
     ///
     /// Handler for RPC call: `trace_rawTransaction`.
@@ -1892,6 +1903,9 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::TraceTransactionOpcodeGas(tx_hash) => {
                 self.trace_transaction_opcode_gas(tx_hash).await.to_rpc_result()
+            }
+            EthRequest::TraceBlockOpcodeGas(block_id) => {
+                self.trace_block_opcode_gas(block_id).await.to_rpc_result()
             }
             EthRequest::TraceRawTransaction(tx, trace_types, block_number) => {
                 self.trace_raw_transaction(tx, trace_types, block_number).await.to_rpc_result()
