@@ -15,7 +15,10 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{
+            FeeDetails, FeeHistoryCache, FeeHistoryCacheItem, MIN_SUGGESTED_PRIORITY_FEE,
+            create_fee_history_cache_item,
+        },
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -30,7 +33,8 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
+    transaction::Recovered,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
@@ -1128,7 +1132,10 @@ impl<N: Network> EthApi<N> {
         block_count: U256,
         newest_block: BlockNumber,
         reward_percentiles: Vec<f64>,
-    ) -> Result<FeeHistory> {
+    ) -> Result<FeeHistory>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
@@ -1168,30 +1175,123 @@ impl<N: Network> EthApi<N> {
         };
         let mut rewards = Vec::new();
 
+        // The early return above only delegates when the *newest* block predates the fork, but a
+        // range can dip below the fork block while its newest block is post-fork. Local storage
+        // has no pre-fork blocks, so resolving them via `backend.get_block` below would fail.
+        // Serve the pre-fork portion from the fork provider and compute only post-fork locally.
+        let local_lowest = if let Some(fork) = self.get_fork() {
+            // Read the fork block once: re-reading it after the range check would race an
+            // `anvil_reset` moving the fork, which could underflow `count_pre` below.
+            let fork_block = fork.block_number();
+            if lowest <= fork_block {
+                let count_pre = fork_block - lowest + 1;
+                let pre = fork
+                    .fee_history(count_pre, BlockNumber::Number(fork_block), &reward_percentiles)
+                    .await
+                    .map_err(BlockchainError::AlloyForkProvider)?;
+                // These per-block arrays cover [lowest..=fork_block]; drop the trailing next-block
+                // base-fee entry since the first post-fork block is computed locally below.
+                let take = count_pre as usize;
+                response.base_fee_per_gas.extend(pre.base_fee_per_gas.into_iter().take(take));
+                response.gas_used_ratio.extend(pre.gas_used_ratio);
+                if let Some(reward) = pre.reward {
+                    rewards.extend(reward);
+                }
+                // The blob-fee arrays are EIP-4844 fields a fork provider may omit (return empty)
+                // for pre-Cancun blocks. These response arrays are still empty here, so extend then
+                // pad to `count_pre` to keep the pre-fork segment aligned with the gas arrays;
+                // otherwise the merged response would come back short and misaligned, the exact
+                // failure this fixes.
+                response
+                    .base_fee_per_blob_gas
+                    .extend(pre.base_fee_per_blob_gas.into_iter().take(take));
+                response.base_fee_per_blob_gas.resize(take, 0);
+                response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio.into_iter().take(take));
+                response.blob_gas_used_ratio.resize(take, 0.0);
+                // Compute only post-fork blocks locally; the pre-fork portion is served above.
+                fork_block + 1
+            } else {
+                lowest
+            }
+        } else {
+            lowest
+        };
+
         {
-            let fee_history = self.fee_history_cache.lock();
+            let storage_info = self.storage_info();
+            let blob_params = self.backend.blob_params();
 
-            // iter over the requested block range
-            for n in lowest..=highest {
-                // <https://eips.ethereum.org/EIPS/eip-1559>
-                if let Some(block) = fee_history.get(&n) {
-                    response.base_fee_per_gas.push(block.base_fee);
-                    response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
-                    response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
-                    response.gas_used_ratio.push(block.gas_used_ratio);
+            // Snapshot the cached entries for the whole range under a single lock. The
+            // `FeeHistoryService` populates the cache asynchronously and can lag the chain head,
+            // so some entries may still be missing here.
+            let cached: Vec<Option<FeeHistoryCacheItem>> = {
+                let cache = self.fee_history_cache.lock();
+                (local_lowest..=highest).map(|n| cache.get(&n).cloned()).collect()
+            };
 
-                    // requested percentiles
-                    if !reward_percentiles.is_empty() {
-                        let mut block_rewards = Vec::new();
-                        let resolution_per_percentile: f64 = 2.0;
-                        for p in &reward_percentiles {
-                            let p = p.clamp(0.0, 100.0);
-                            let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                            let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
-                            block_rewards.push(reward);
-                        }
-                        rewards.push(block_rewards);
+            // Resolve the whole range into concrete items: take each cache hit, or compute the
+            // miss on demand (without holding the lock) using the same logic as the service. A
+            // block that can't be found is a hard error rather than a silently dropped entry, so
+            // `items` always holds exactly one entry per requested block.
+            let mut warmed: Vec<(u64, FeeHistoryCacheItem)> = Vec::new();
+            let mut items: Vec<FeeHistoryCacheItem> = Vec::with_capacity(cached.len());
+            for (cached_item, n) in cached.into_iter().zip(local_lowest..=highest) {
+                let item = match cached_item {
+                    Some(item) => item,
+                    None => {
+                        let block = self
+                            .backend
+                            .get_block(n)
+                            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                        let header = block.header;
+                        let hash = header.hash_slow();
+                        let (item, block_number) = create_fee_history_cache_item(
+                            hash,
+                            &header,
+                            &storage_info,
+                            blob_params,
+                        );
+                        // The block was found above, but missing stored block/receipts make the
+                        // helper hand back a zero-filled item. Error out rather than serve
+                        // synthetic data for a block we already confirmed exists.
+                        let block_number = block_number
+                            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                        warmed.push((block_number, item.clone()));
+                        item
                     }
+                };
+                items.push(item);
+            }
+
+            // Warm the cache with the on-demand entries under a single lock, then trim to the
+            // limit by dropping the oldest blocks so the fallback can't grow the cache unbounded.
+            if !warmed.is_empty() {
+                let mut cache = self.fee_history_cache.lock();
+                for (block_number, item) in warmed {
+                    cache.insert(block_number, item);
+                }
+                while cache.len() as u64 > self.fee_history_limit {
+                    cache.pop_first();
+                }
+            }
+
+            for item in items {
+                response.base_fee_per_gas.push(item.base_fee);
+                response.base_fee_per_blob_gas.push(item.base_fee_per_blob_gas.unwrap_or(0));
+                response.blob_gas_used_ratio.push(item.blob_gas_used_ratio);
+                response.gas_used_ratio.push(item.gas_used_ratio);
+
+                // requested percentiles
+                if !reward_percentiles.is_empty() {
+                    let mut block_rewards = Vec::new();
+                    let resolution_per_percentile: f64 = 2.0;
+                    for p in &reward_percentiles {
+                        let p = p.clamp(0.0, 100.0);
+                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
+                        let reward = item.rewards.get(index as usize).map_or(0, |r| *r);
+                        block_rewards.push(reward);
+                    }
+                    rewards.push(block_rewards);
                 }
             }
         }
