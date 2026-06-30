@@ -371,8 +371,8 @@ impl TargetedContract {
     }
 
     /// Helper to retrieve functions to fuzz for specified abi.
-    /// Returns specified targeted functions if any, else mutable abi functions that are not
-    /// marked as excluded.
+    /// Returns specified targeted functions if any, else mutable abi functions, always skipping
+    /// functions marked as excluded.
     pub fn abi_fuzzed_functions(&self) -> impl Iterator<Item = &Function> {
         if self.targeted_functions.is_empty() {
             Either::Right(self.abi.functions().filter(|&func| {
@@ -382,7 +382,11 @@ impl TargetedContract {
                 ) && !self.excluded_functions.contains(func)
             }))
         } else {
-            Either::Left(self.targeted_functions.iter())
+            Either::Left(
+                self.targeted_functions
+                    .iter()
+                    .filter(|func| !self.excluded_functions.contains(func)),
+            )
         }
     }
 
@@ -762,6 +766,19 @@ mod tests {
         assert!(!targets.can_replay(&tx));
         assert!(targets.fuzzed_artifacts(&tx).1.is_none());
         assert!(targets.fuzzed_metric_key(&tx).is_none());
+    }
+
+    #[test]
+    fn abi_fuzzed_functions_filters_excluded_targeted_functions() {
+        let allowed = Function::parse("allowed()").unwrap();
+        let excluded = Function::parse("excluded()").unwrap();
+        let mut contract = TargetedContract::new("Target".to_string(), JsonAbi::new());
+        contract.targeted_functions = vec![allowed.clone(), excluded.clone()];
+        contract.excluded_functions = vec![excluded];
+
+        let selectors = contract.abi_fuzzed_functions().map(Function::selector).collect::<Vec<_>>();
+
+        assert_eq!(selectors, vec![allowed.selector()]);
     }
 
     #[test]
