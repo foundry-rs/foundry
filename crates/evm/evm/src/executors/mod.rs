@@ -1399,10 +1399,9 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         logs = exec_logs;
     }
 
-    let transactions = cheatcodes
-        .as_ref()
-        .map(|c| c.broadcastable_transactions.clone())
-        .filter(|txs| !txs.is_empty());
+    let transactions = cheatcodes.as_ref().and_then(|c| {
+        (!c.broadcastable_transactions.is_empty()).then(|| c.broadcastable_transactions.clone())
+    });
 
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
