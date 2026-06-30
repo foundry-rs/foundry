@@ -60,7 +60,9 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
-        parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
+        parity::{
+            LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
+        },
     },
     txpool::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
@@ -1753,6 +1755,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TraceReplayBlockTransactions(block, trace_types) => {
                 self.trace_replay_block_transactions(block, trace_types).await.to_rpc_result()
             }
+            EthRequest::TraceCallMany(calls, block_number) => {
+                self.trace_call_many(calls, block_number).await.to_rpc_result()
+            }
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
@@ -3088,6 +3093,21 @@ impl EthApi<FoundryNetwork> {
         let result: std::result::Result<GethTrace, BlockchainError> =
             self.backend.call_with_tracing(request, fees, Some(block_request), opts).await;
         result
+    }
+
+    /// Traces calls sequentially on top of the same block.
+    ///
+    /// Handler for RPC call: `trace_callMany`.
+    pub async fn trace_call_many(
+        &self,
+        calls: Vec<(WithOtherFields<TransactionRequest>, HashSet<TraceType>)>,
+        block_number: Option<BlockId>,
+    ) -> Result<Vec<TraceResults>> {
+        node_info!("trace_callMany");
+        let block_number = block_number.unwrap_or(BlockId::Number(BlockNumber::Pending));
+        let block_request = self.block_request(Some(block_number)).await?;
+
+        self.backend.trace_call_many(calls, Some(block_request)).await
     }
 }
 

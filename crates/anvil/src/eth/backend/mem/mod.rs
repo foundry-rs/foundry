@@ -79,7 +79,9 @@ use alloy_rpc_types::{
             GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
             NoopFrame, TraceResult,
         },
-        parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
+        parity::{
+            LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
+        },
     },
 };
 use alloy_serde::{OtherFields, WithOtherFields};
@@ -1810,6 +1812,57 @@ impl<N: Network> Backend<N> {
         }
 
         Ok(vec![])
+    }
+
+    /// Traces calls sequentially against a shared in-memory state.
+    pub async fn trace_call_many(
+        &self,
+        calls: Vec<(WithOtherFields<TransactionRequest>, HashSet<TraceType>)>,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Result<Vec<TraceResults>, BlockchainError>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+    {
+        self.with_database_at(block_request, |state, block_env| {
+            let mut cache_db = CacheDB::new(state);
+            let mut results = Vec::with_capacity(calls.len());
+            let mut calls = calls.into_iter().peekable();
+
+            while let Some((request, trace_types)) = calls.next() {
+                let fee_details = FeeDetails::new(
+                    request.gas_price,
+                    request.max_fee_per_gas,
+                    request.max_priority_fee_per_gas,
+                    request.max_fee_per_blob_gas,
+                )?
+                .or_zero_fees();
+                let (evm_env, tx_env, op_deposit) =
+                    self.build_call_env(request, fee_details, block_env.clone());
+
+                let trace_config = TracingInspectorConfig::from_parity_config(&trace_types);
+                let mut inspector = TracingInspector::new(trace_config);
+                let result = self.transact_with_inspector_ref(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    tx_env,
+                    op_deposit,
+                )?;
+
+                let trace_result = inspector
+                    .into_parity_builder()
+                    .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                    .map_err(BlockchainError::from)?;
+                results.push(trace_result);
+
+                if calls.peek().is_some() {
+                    cache_db.commit(result.state);
+                }
+            }
+
+            Ok(results)
+        })
+        .await?
     }
 
     /// Returns the trace results for all transactions in a mined block by replaying them
