@@ -4,7 +4,7 @@ use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
-    multi_runner::{TestContract, TestRunnerConfig, symbolic_entrypoints_enabled},
+    multi_runner::{TestContract, TestFunctionMatcher, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
@@ -79,10 +79,6 @@ use tracing::Span;
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
-
-pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
-    func.name.starts_with("check") || func.name.starts_with("prove")
-}
 
 fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
@@ -837,8 +833,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
-        let symbolic_enabled = symbolic_entrypoints_enabled(
-            self.config.symbolic.enabled,
+        let test_matcher = TestFunctionMatcher::new(
+            &self.config,
+            &self.mcr.inline_config,
             self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
         );
         let functions = self
@@ -846,11 +843,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             .abi
             .functions()
             .filter(|func| {
-                if symbolic_enabled && is_symbolic_entrypoint(func) {
-                    filter.matches_test(&func.signature())
-                } else {
-                    filter.matches_test_function_in_contract(self.name, func)
-                }
+                filter.matches_test_function_kind_in_contract(
+                    self.name,
+                    func,
+                    test_matcher.test_function_kind(self.name, func),
+                )
             })
             .filter(|func| self.function_matches_network_pass(func))
             .collect::<Vec<_>>();
@@ -1024,11 +1021,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = if symbolic_enabled && is_symbolic_entrypoint(func) {
-                    TestFunctionKind::SymbolicTest
-                } else {
-                    func.test_function_kind()
-                };
+                let kind = test_matcher.test_function_kind(self.name, func);
 
                 let _guard = debug_span!(
                     "test",
