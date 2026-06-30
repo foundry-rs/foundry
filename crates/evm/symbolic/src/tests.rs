@@ -981,6 +981,32 @@ fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
 }
 
 #[test]
+fn memory_symbolic_write_after_concrete_overwrite_still_applies() {
+    let mut memory = SymMemory::default();
+
+    memory.store_byte_offset(SymExpr::var("older_offset"), SymExpr::var("older_byte"));
+    memory.store_byte(5, SymExpr::constant(U256::from(0x55)));
+    memory.store_byte_offset(SymExpr::var("later_offset"), SymExpr::var("later_byte"));
+    let loaded = memory.byte(5);
+
+    let concrete_wins = BTreeMap::from([
+        ("older_offset".to_string(), U256::from(5)),
+        ("older_byte".to_string(), U256::from(0xaa)),
+        ("later_offset".to_string(), U256::from(6)),
+        ("later_byte".to_string(), U256::from(0xbb)),
+    ]);
+    assert_eq!(loaded.eval_model(&concrete_wins).unwrap(), U256::from(0x55));
+
+    let later_symbolic_wins = BTreeMap::from([
+        ("older_offset".to_string(), U256::from(5)),
+        ("older_byte".to_string(), U256::from(0xaa)),
+        ("later_offset".to_string(), U256::from(5)),
+        ("later_byte".to_string(), U256::from(0xbb)),
+    ]);
+    assert_eq!(loaded.eval_model(&later_symbolic_wins).unwrap(), U256::from(0xbb));
+}
+
+#[test]
 fn memory_store_byte_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
 
