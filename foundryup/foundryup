@@ -1030,8 +1030,10 @@ install_rust_foundryup() {
   #  - FOUNDRYUP_VERSION scoped to the installer invocation only (it means the
   #    installer version here, but the Foundry tool version to the Rust binary),
   #    so it never leaks into the user's environment.
+  # Send installer chatter (incl. PATH instructions) to stderr so a migrated
+  # `foundryup --version` keeps stdout clean.
   if ! env FOUNDRY_DIR="$FOUNDRYUP_RUST_HOME" FOUNDRYUP_VERSION="$FOUNDRYUP_BOOTSTRAP_VERSION" \
-    sh "$_init" -y; then
+    sh "$_init" -y 1>&2; then
     rm -f "$_init"
     warn "the Rust foundryup installer failed"
     return 1
@@ -1067,7 +1069,7 @@ ensure_rust_foundryup() {
     return 0
   fi
 
-  say "migrating to the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..."
+  say "migrating to the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..." >&2
   install_rust_foundryup "$_bin"
 }
 
@@ -1113,7 +1115,7 @@ update_shim() {
   fi
 
   if version_gt "$_new" "$FOUNDRYUP_INSTALLER_VERSION"; then
-    say "updating foundryup launcher: $FOUNDRYUP_INSTALLER_VERSION → $_new"
+    say "updating foundryup launcher: $FOUNDRYUP_INSTALLER_VERSION → $_new" >&2
     ensure chmod +x "$_tmp"
     ensure mv -f "$_tmp" "$FOUNDRY_BIN_PATH"
     exec env FOUNDRYUP_SHIM_UPDATED=1 "$FOUNDRY_BIN_PATH" "$@"
@@ -1128,7 +1130,7 @@ migrate_and_exec() {
   if wants_update "$@"; then
     update_shim "$@"
     if ensure_rust_foundryup; then
-      say "foundryup is up to date"
+      say "foundryup is up to date" >&2
     else
       warn "could not refresh the Rust foundryup; it will be retried on the next run"
     fi
