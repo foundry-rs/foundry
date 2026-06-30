@@ -219,13 +219,15 @@ sancov_edges = false
 sancov_trace_cmp = false
 corpus_random_sequence_weight = 10
 payable_value_weight = 0
-mutation_weight_splice = 1
-mutation_weight_repeat = 1
-mutation_weight_interleave = 1
-mutation_weight_prefix = 1
-mutation_weight_suffix = 1
-mutation_weight_abi = 1
-mutation_weight_cmp = 1
+mutation_weight_splice = 4
+mutation_weight_repeat = 4
+mutation_weight_interleave = 4
+mutation_weight_prefix = 4
+mutation_weight_suffix = 4
+mutation_weight_abi = 4
+mutation_weight_cmp = 4
+mutation_weight_crossover_insert = 1
+mutation_weight_crossover_replace = 1
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
@@ -256,13 +258,15 @@ sancov_edges = false
 sancov_trace_cmp = false
 corpus_random_sequence_weight = 10
 payable_value_weight = 15
-mutation_weight_splice = 1
-mutation_weight_repeat = 1
-mutation_weight_interleave = 1
-mutation_weight_prefix = 1
-mutation_weight_suffix = 1
-mutation_weight_abi = 1
-mutation_weight_cmp = 1
+mutation_weight_splice = 4
+mutation_weight_repeat = 4
+mutation_weight_interleave = 4
+mutation_weight_prefix = 4
+mutation_weight_suffix = 4
+mutation_weight_abi = 4
+mutation_weight_cmp = 4
+mutation_weight_crossover_insert = 1
+mutation_weight_crossover_replace = 1
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -1464,13 +1468,15 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "sancov_trace_cmp": false,
     "corpus_random_sequence_weight": 10,
     "payable_value_weight": 0,
-    "mutation_weight_splice": 1,
-    "mutation_weight_repeat": 1,
-    "mutation_weight_interleave": 1,
-    "mutation_weight_prefix": 1,
-    "mutation_weight_suffix": 1,
-    "mutation_weight_abi": 1,
-    "mutation_weight_cmp": 1,
+    "mutation_weight_splice": 4,
+    "mutation_weight_repeat": 4,
+    "mutation_weight_interleave": 4,
+    "mutation_weight_prefix": 4,
+    "mutation_weight_suffix": 4,
+    "mutation_weight_abi": 4,
+    "mutation_weight_cmp": 4,
+    "mutation_weight_crossover_insert": 1,
+    "mutation_weight_crossover_replace": 1,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -1503,13 +1509,15 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "sancov_trace_cmp": false,
     "corpus_random_sequence_weight": 10,
     "payable_value_weight": 15,
-    "mutation_weight_splice": 1,
-    "mutation_weight_repeat": 1,
-    "mutation_weight_interleave": 1,
-    "mutation_weight_prefix": 1,
-    "mutation_weight_suffix": 1,
-    "mutation_weight_abi": 1,
-    "mutation_weight_cmp": 1,
+    "mutation_weight_splice": 4,
+    "mutation_weight_repeat": 4,
+    "mutation_weight_interleave": 4,
+    "mutation_weight_prefix": 4,
+    "mutation_weight_suffix": 4,
+    "mutation_weight_abi": 4,
+    "mutation_weight_cmp": 4,
+    "mutation_weight_crossover_insert": 1,
+    "mutation_weight_crossover_replace": 1,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
