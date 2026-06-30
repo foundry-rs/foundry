@@ -592,7 +592,7 @@ pub struct TestArgs {
     /// Accepts a comma-separated list of opcode names, e.g.
     /// `--opcodes SLOAD,MLOAD,SSTORE`. Names are in uppercase.
     /// Requires `-vvvvv` to render.
-    #[arg(long, value_parser = parse_opcode, value_delimiter(','))]
+    #[arg(long, value_parser = parse_opcode, value_delimiter(','), conflicts_with_all = ["json", "junit", "list"])]
     pub opcodes: Vec<OpCode>,
 
     /// Print test summary table.

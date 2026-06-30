@@ -3999,6 +3999,18 @@ Error: Not enough verbosity. Use -vvvvv to show opcodes.
 "#]]);
 });
 
+forgetest_init!(opcodes_conflict_with_non_trace_outputs, |prj, cmd| {
+    prj.initialize_default_contracts();
+    for flag in ["--json", "--junit", "--list"] {
+        let output =
+            cmd.forge_fuse().args(["test", "-vvvvv", "--opcodes", "SLOAD", flag]).assert_failure();
+        let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+        assert!(stderr.contains("--opcodes"), "stderr should mention --opcodes: {stderr}");
+        assert!(stderr.contains(flag), "stderr should mention {flag}: {stderr}");
+        assert!(stderr.contains("cannot be used with"), "stderr should explain conflict: {stderr}");
+    }
+});
+
 // Tests that the test file path is not swallowed by the --opcodes flag
 forgetest_init!(opcodes_path_after_flag, |prj, cmd| {
     prj.initialize_default_contracts();

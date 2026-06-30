@@ -215,11 +215,21 @@ pub fn render_trace_arena_inner(
     if with_storage_changes {
         append_tempo_channel_storage_decodes(&mut tempo_changes, &resolved);
 
-        // Remove storage text that is already represented by an opcode line.
-        for node in resolved.to_mut().nodes_mut() {
-            for step in &mut node.trace.steps {
-                if matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_))) {
-                    step.storage_change = None;
+        let needs_dedup = resolved.as_ref().nodes().iter().any(|node| {
+            node.trace.steps.iter().any(|step| {
+                step.storage_change.is_some()
+                    && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+            })
+        });
+        if needs_dedup {
+            // Remove storage text that is already represented by an opcode line.
+            for node in resolved.to_mut().nodes_mut() {
+                for step in &mut node.trace.steps {
+                    if step.storage_change.is_some()
+                        && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+                    {
+                        step.storage_change = None;
+                    }
                 }
             }
         }
