@@ -1924,6 +1924,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         if contracts.is_empty() {
             eyre::bail!("No contracts to fuzz.");
         }
+        if contracts.fuzzed_functions().next().is_none() {
+            eyre::bail!("No functions to fuzz.");
+        }
 
         Ok((sender_filters, FuzzRunIdentifiedContracts::new(contracts, selected.is_empty())))
     }
