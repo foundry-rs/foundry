@@ -900,6 +900,14 @@ impl<N: Network> EthApi<N> {
         self.backend.block_by_hash(hash).await
     }
 
+    /// Returns block header with given hash.
+    ///
+    /// Handler for ETH RPC call: `eth_getHeaderByHash`
+    pub async fn header_by_hash(&self, hash: B256) -> Result<Option<AnyRpcHeader>> {
+        node_info!("eth_getHeaderByHash");
+        Ok(self.backend.block_by_hash(hash).await?.map(|block| block.header.clone()))
+    }
+
     /// Returns a _full_ block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
@@ -1565,6 +1573,7 @@ impl EthApi<FoundryNetwork> {
                     self.block_by_hash(hash).await.to_rpc_result()
                 }
             }
+            EthRequest::EthGetHeaderByHash(hash) => self.header_by_hash(hash).await.to_rpc_result(),
             EthRequest::EthGetBlockByNumber(num, full) => {
                 if full {
                     self.block_by_number_full(num).await.to_rpc_result()
@@ -1615,11 +1624,11 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
+            EthRequest::EthSendRawTransactionSync(tx, timeout_ms) => {
+                self.send_raw_transaction_sync(tx, timeout_ms).await.to_rpc_result()
+            }
             EthRequest::EthSendRawTransactionConditional(tx, condition) => {
                 self.send_raw_transaction_conditional(tx, condition).await.to_rpc_result()
-            }
-            EthRequest::EthSendRawTransactionSync(tx) => {
-                self.send_raw_transaction_sync(tx).await.to_rpc_result()
             }
             EthRequest::AnvilClassifyTransaction(tx) => {
                 self.anvil_classify_transaction(tx).to_rpc_result()
@@ -2351,15 +2360,28 @@ impl EthApi<FoundryNetwork> {
         Err(BlockchainError::Message("Failed to await transaction inclusion".to_string()))
     }
 
-    /// Waits for a transaction to be included in a block and returns its receipt, with timeout.
-    async fn check_transaction_inclusion(&self, hash: TxHash) -> Result<FoundryTxReceipt> {
+    fn transaction_confirmation_timeout(timeout_ms: Option<u64>) -> Duration {
         const TIMEOUT_DURATION: Duration = Duration::from_secs(30);
-        tokio::time::timeout(TIMEOUT_DURATION, self.await_transaction_inclusion(hash))
+        timeout_ms
+            .filter(|timeout_ms| *timeout_ms > 0)
+            .map(Duration::from_millis)
+            .map(|timeout| timeout.min(TIMEOUT_DURATION))
+            .unwrap_or(TIMEOUT_DURATION)
+    }
+
+    /// Waits for a transaction to be included in a block and returns its receipt, with timeout.
+    async fn check_transaction_inclusion(
+        &self,
+        hash: TxHash,
+        timeout_ms: Option<u64>,
+    ) -> Result<FoundryTxReceipt> {
+        let timeout_duration = Self::transaction_confirmation_timeout(timeout_ms);
+        tokio::time::timeout(timeout_duration, self.await_transaction_inclusion(hash))
             .await
             .unwrap_or_else(|_elapsed| {
                 Err(BlockchainError::TransactionConfirmationTimeout {
                     hash,
-                    duration: TIMEOUT_DURATION,
+                    duration: timeout_duration,
                 })
             })
     }
@@ -2374,7 +2396,7 @@ impl EthApi<FoundryNetwork> {
         node_info!("eth_sendTransactionSync");
         let hash = self.send_transaction(request).await?;
 
-        let receipt = self.check_transaction_inclusion(hash).await?;
+        let receipt = self.check_transaction_inclusion(hash, None).await?;
 
         Ok(receipt)
     }
@@ -2476,11 +2498,15 @@ impl EthApi<FoundryNetwork> {
     /// Sends signed transaction, returning its receipt.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransactionSync`
-    pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<FoundryTxReceipt> {
+    pub async fn send_raw_transaction_sync(
+        &self,
+        tx: Bytes,
+        timeout_ms: Option<u64>,
+    ) -> Result<FoundryTxReceipt> {
         node_info!("eth_sendRawTransactionSync");
 
         let hash = self.send_raw_transaction(tx).await?;
-        let receipt = self.check_transaction_inclusion(hash).await?;
+        let receipt = self.check_transaction_inclusion(hash, timeout_ms).await?;
 
         Ok(receipt)
     }

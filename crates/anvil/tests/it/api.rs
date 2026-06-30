@@ -199,6 +199,33 @@ async fn can_get_header_by_number() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_header_by_hash() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let header: Option<AnyRpcHeader> =
+        provider.client().request("eth_getHeaderByHash", (block.header.hash,)).await.unwrap();
+    let header = header.unwrap();
+    assert_eq!(header.hash, block.header.hash);
+    assert_eq!(header.number, block.header.number);
+    assert_eq!(header.transactions_root, block.header.transactions_root);
+
+    let missing: Option<AnyRpcHeader> =
+        provider.client().request("eth_getHeaderByHash", (B256::ZERO,)).await.unwrap();
+    assert_eq!(missing, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_resolve_safe_and_finalized_block_tags_with_configured_epoch_slots() {
     let slots_in_an_epoch = 3;
     let (api, handle) = spawn(NodeConfig::test().with_slots_in_an_epoch(slots_in_an_epoch)).await;
@@ -545,9 +572,36 @@ async fn can_send_raw_tx_sync() {
     let mut encoded = Vec::new();
     tx.eip2718_encode(&mut encoded);
 
-    let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
+    let receipt = api.send_raw_transaction_sync(encoded.into(), None).await.unwrap();
     assert_eq!(receipt.from(), wallets[1].address());
     assert_eq!(receipt.to(), tx.to());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_parse_raw_tx_sync_timeout() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let one_arg: Result<serde_json::Value, _> = provider
+        .client()
+        .request("eth_sendRawTransactionSync", (alloy_primitives::Bytes::default(),))
+        .await;
+    assert!(one_arg.unwrap_err().to_string().contains("Empty transaction data"));
+
+    let null_timeout: Result<serde_json::Value, _> = provider
+        .client()
+        .request(
+            "eth_sendRawTransactionSync",
+            (alloy_primitives::Bytes::default(), Option::<u64>::None),
+        )
+        .await;
+    assert!(null_timeout.unwrap_err().to_string().contains("Empty transaction data"));
+
+    let timeout: Result<serde_json::Value, _> = provider
+        .client()
+        .request("eth_sendRawTransactionSync", (alloy_primitives::Bytes::default(), 1u64))
+        .await;
+    assert!(timeout.unwrap_err().to_string().contains("Empty transaction data"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
