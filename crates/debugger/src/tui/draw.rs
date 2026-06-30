@@ -314,17 +314,9 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        let prompt_line = Line::from(vec![
-            Span::styled(":", Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(input),
-            Span::styled("█", Style::new().fg(Color::Cyan)),
-            Span::styled(
-                "  Enter: run | Esc: cancel | help: command list",
-                Style::new().add_modifier(Modifier::DIM),
-            ),
-        ]);
+        let prompt_line = command_prompt_line(input, prompt.width.saturating_sub(2));
         let block = Block::default().title("Command").borders(Borders::ALL);
-        let paragraph = Paragraph::new(prompt_line).block(block).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(prompt_line).block(block);
         f.render_widget(paragraph, prompt);
 
         if self.show_shortcuts {
@@ -1052,6 +1044,48 @@ fn shortcut_lines() -> Vec<Line<'static>> {
     ]
 }
 
+const COMMAND_PROMPT_HINT: &str = "  Enter: run | Esc: cancel | help: command list";
+
+fn command_prompt_line(input: &str, width: u16) -> Line<'static> {
+    let width = width as usize;
+    let fixed_width = 2;
+    let hint_width = COMMAND_PROMPT_HINT.chars().count();
+    let input_width = input.chars().count();
+    let include_hint = fixed_width + input_width + hint_width <= width;
+    let input_width = if include_hint {
+        width.saturating_sub(fixed_width + hint_width)
+    } else {
+        width.saturating_sub(fixed_width)
+    };
+
+    let mut spans = vec![
+        Span::styled(":", Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(input_tail(input, input_width)),
+        Span::styled("█", Style::new().fg(Color::Cyan)),
+    ];
+    if include_hint {
+        spans.push(Span::styled(COMMAND_PROMPT_HINT, Style::new().add_modifier(Modifier::DIM)));
+    }
+    Line::from(spans)
+}
+
+fn input_tail(input: &str, max_width: usize) -> String {
+    let len = input.chars().count();
+    if len <= max_width {
+        return input.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "<".to_string();
+    }
+
+    let mut tail = input.chars().rev().take(max_width - 1).collect::<Vec<_>>();
+    tail.reverse();
+    format!("<{}", tail.into_iter().collect::<String>())
+}
+
 fn step_notice_title(line: &str) -> &'static str {
     if line.starts_with(PRECOMPILE_NOTICE_PREFIX) { "precompile call" } else { "decoded step" }
 }
@@ -1472,6 +1506,17 @@ mod tests {
         assert!(screen.contains(":pc 0"));
         assert!(screen.contains("Enter: run"));
         assert!(screen.contains("[:] command"));
+    }
+
+    #[test]
+    fn command_prompt_line_clips_long_input_to_tail() {
+        let input = "continue 0123456789abcdef";
+        let line = super::command_prompt_line(input, 12);
+        let text = line_text(&line);
+
+        assert!(line.width() <= 12);
+        assert_eq!(text, ":<789abcdef█");
+        assert!(!text.contains("Enter: run"));
     }
 
     #[test]

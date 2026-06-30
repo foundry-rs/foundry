@@ -620,23 +620,24 @@ impl TUIContext<'_> {
 
         let mut parts = input.split_whitespace();
         let command = parts.next().unwrap();
-        match command {
-            "pc" | "p" | "continue" | "cont" | "c" => {
-                let Some(pc) = parts.next() else {
-                    return self.set_error(command_usage(command, "<pc>"));
-                };
-                if parts.next().is_some() {
-                    return self.set_error(command_usage(command, "<pc>"));
-                }
-                self.goto_pc_from_input(pc);
+        if CONTINUE_COMMANDS.contains(&command) || PC_COMMANDS.contains(&command) {
+            let Some(pc) = parts.next() else {
+                return self.set_error(command_usage(command, "<pc>"));
+            };
+            if parts.next().is_some() {
+                return self.set_error(command_usage(command, "<pc>"));
             }
-            "mem" | "memory" => self.run_buffer_command(command, BufferKind::Memory, parts),
-            "calldata" | "cd" => self.run_buffer_command(command, BufferKind::Calldata, parts),
-            "returndata" | "ret" | "rd" => {
-                self.run_buffer_command(command, BufferKind::Returndata, parts);
-            }
-            "help" | "h" => self.set_info(command_help()),
-            _ => self.set_error(format!("Unknown command `{command}`; try `help`")),
+            self.goto_pc_from_input(pc);
+        } else if MEMORY_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Memory, parts);
+        } else if CALLDATA_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Calldata, parts);
+        } else if RETURNDATA_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Returndata, parts);
+        } else if HELP_COMMANDS.contains(&command) {
+            self.set_info(command_help());
+        } else {
+            self.set_error(format!("Unknown command `{command}`; try `help`"));
         }
     }
 
@@ -815,13 +816,30 @@ const fn buffer_name(buffer: &BufferKind) -> &'static str {
     }
 }
 
+const CONTINUE_COMMANDS: &[&str] = &["continue", "cont", "c"];
+const PC_COMMANDS: &[&str] = &["pc", "p"];
+const MEMORY_COMMANDS: &[&str] = &["mem", "memory"];
+const CALLDATA_COMMANDS: &[&str] = &["calldata", "cd"];
+const RETURNDATA_COMMANDS: &[&str] = &["returndata", "ret", "rd"];
+const HELP_COMMANDS: &[&str] = &["help", "h"];
+
 fn command_usage(command: &str, arg: &str) -> String {
     format!("Usage: :{command} {arg}")
 }
 
 fn command_help() -> String {
-    "Commands: :continue <pc>, :pc <pc>, :mem <offset>, :calldata <offset>, :returndata <offset>"
-        .to_string()
+    format!(
+        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>",
+        command_aliases(CONTINUE_COMMANDS),
+        command_aliases(PC_COMMANDS),
+        command_aliases(MEMORY_COMMANDS),
+        command_aliases(CALLDATA_COMMANDS),
+        command_aliases(RETURNDATA_COMMANDS)
+    )
+}
+
+fn command_aliases(commands: &[&str]) -> String {
+    commands.iter().map(|command| format!(":{command}")).collect::<Vec<_>>().join("/")
 }
 
 fn handle_prompt_input_key_event(
@@ -1640,7 +1658,16 @@ mod tests {
 
         tui.run_command_from_input("help");
         assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
-        assert!(tui.status.as_ref().unwrap().text.contains(":continue <pc>"));
+        let help = &tui.status.as_ref().unwrap().text;
+        for commands in [
+            CONTINUE_COMMANDS,
+            PC_COMMANDS,
+            MEMORY_COMMANDS,
+            CALLDATA_COMMANDS,
+            RETURNDATA_COMMANDS,
+        ] {
+            assert!(help.contains(&command_aliases(commands)));
+        }
 
         tui.run_command_from_input("mem");
         let status = tui.status.as_ref().unwrap();
