@@ -85,6 +85,18 @@ async fn can_get_client_version() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_debug_trace_chain() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let result: std::result::Result<serde_json::Value, _> =
+        provider.raw_request("debug_traceChain".into(), ("earliest", "latest")).await;
+
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("unimplemented"), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_chain_id() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

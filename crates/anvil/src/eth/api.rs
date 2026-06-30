@@ -1679,6 +1679,9 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugTraceChain(start, end) => {
+                self.debug_trace_chain(start, end).to_rpc_result()
+            }
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }
@@ -2867,6 +2870,18 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
         self.backend.debug_trace_transaction(tx_hash, opts).await
+    }
+
+    /// Returns reth's current explicit unimplemented error for block range tracing.
+    ///
+    /// Handler for RPC call: `debug_traceChain`
+    pub fn debug_trace_chain(
+        &self,
+        _start_exclusive: BlockNumber,
+        _end_inclusive: BlockNumber,
+    ) -> Result<()> {
+        node_info!("debug_traceChain");
+        Err(BlockchainError::RpcError(RpcError::internal_error_with("unimplemented")))
     }
 
     /// Returns traces for all transactions in a block by hash.
