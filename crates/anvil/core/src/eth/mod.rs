@@ -109,6 +109,9 @@ pub enum EthRequest {
         bool,
     ),
 
+    #[serde(rename = "eth_getBlockAccessListByBlockHash", with = "sequence")]
+    EthGetBlockAccessListByBlockHash(B256),
+
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
 
@@ -1457,6 +1460,13 @@ mod tests {
     #[test]
     fn test_eth_block_tx_count_by_block_hash() {
         let s = r#"{"jsonrpc":"2.0","method":"eth_getBlockTransactionCountByHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_get_block_access_list_by_block_hash() {
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getBlockAccessListByBlockHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
