@@ -124,6 +124,45 @@ async fn geth_txpool_separates_queued_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_debug_clear_txpool() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let account = accounts[0].address();
+    let recipient = accounts[1].address();
+    let gas_price = 221435145689u128;
+
+    let pending_tx = TransactionRequest::default()
+        .with_to(recipient)
+        .with_from(account)
+        .with_value(U256::from(42))
+        .with_gas_price(gas_price)
+        .with_nonce(0);
+    let queued_tx = TransactionRequest::default()
+        .with_to(recipient)
+        .with_from(account)
+        .with_value(U256::from(84))
+        .with_gas_price(gas_price)
+        .with_nonce(2);
+
+    let _ = provider.send_transaction(WithOtherFields::new(pending_tx)).await.unwrap();
+    let _ = provider.send_transaction(WithOtherFields::new(queued_tx)).await.unwrap();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 1);
+    assert_eq!(status.queued, 1);
+
+    let _: () = provider.client().request("debug_clearTxpool", ()).await.unwrap();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 0);
+    assert_eq!(status.queued, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool_content_from_filters_sender() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
