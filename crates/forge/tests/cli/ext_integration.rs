@@ -77,7 +77,8 @@ fn solady() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "1a54931129f2814cbbd7ddbafb4005707f8a5bf8")
+    ExtTester::new("pcaversaccio", "snekmate", "2834e9750b39058f06129c8fde1b12fb832a50d5")
+        .fuzz_runs(10_000)
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])

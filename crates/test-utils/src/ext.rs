@@ -11,6 +11,7 @@ pub struct ExtTester {
     pub rev: &'static str,
     pub style: PathStyle,
     pub fork_block: Option<u64>,
+    pub fuzz_runs: u32,
     pub args: Vec<String>,
     pub envs: Vec<(String, String)>,
     pub install_commands: Vec<Vec<String>>,
@@ -26,6 +27,7 @@ impl ExtTester {
             rev,
             style: PathStyle::Dapptools,
             fork_block: None,
+            fuzz_runs: 32,
             args: vec![],
             envs: vec![],
             install_commands: vec![],
@@ -42,6 +44,12 @@ impl ExtTester {
     /// Sets the fork block.
     pub const fn fork_block(mut self, fork_block: u64) -> Self {
         self.fork_block = Some(fork_block);
+        self
+    }
+
+    /// Sets the number of fuzz runs.
+    pub const fn fuzz_runs(mut self, fuzz_runs: u32) -> Self {
+        self.fuzz_runs = fuzz_runs;
         self
     }
 
@@ -168,7 +176,11 @@ impl ExtTester {
         // Run the tests.
         test_cmd.arg("test");
         test_cmd.args(&self.args);
-        test_cmd.args(["--fuzz-runs=32", "--ffi", &self.verbosity]);
+        test_cmd.args([
+            format!("--fuzz-runs={}", self.fuzz_runs),
+            "--ffi".to_string(),
+            self.verbosity.clone(),
+        ]);
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         if let Some(fork_block) = self.fork_block {
