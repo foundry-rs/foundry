@@ -1260,6 +1260,19 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Handles reth's no-op `debug_storageRangeAt` endpoint.
+    pub fn debug_storage_range_at(
+        &self,
+        _block_hash: B256,
+        _tx_idx: usize,
+        _contract_address: Address,
+        _key_start: B256,
+        _max_result: u64,
+    ) -> Result<()> {
+        node_info!("debug_storageRangeAt");
+        Ok(())
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1741,6 +1754,15 @@ impl EthApi<FoundryNetwork> {
                 self.debug_get_modified_accounts_by_number(start_number, end_number).to_rpc_result()
             }
             EthRequest::DebugFreeOsMemory(()) => self.debug_free_os_memory().to_rpc_result(),
+            EthRequest::DebugStorageRangeAt(
+                block_hash,
+                tx_idx,
+                contract_address,
+                key_start,
+                max_result,
+            ) => self
+                .debug_storage_range_at(block_hash, tx_idx, contract_address, key_start, max_result)
+                .to_rpc_result(),
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }

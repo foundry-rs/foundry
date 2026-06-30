@@ -363,6 +363,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_freeOSMemory", with = "empty_params")]
     DebugFreeOsMemory(()),
 
+    /// reth's `debug_storageRangeAt` endpoint.
+    #[serde(rename = "debug_storageRangeAt")]
+    DebugStorageRangeAt(B256, usize, Address, B256, u64),
+
     /// geth's `debug_traceBlockByHash` endpoint
     #[serde(rename = "debug_traceBlockByHash")]
     DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
@@ -1737,6 +1741,16 @@ true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         match serde_json::from_value::<EthRequest>(value).unwrap() {
             EthRequest::DebugFreeOsMemory(()) => {}
+            req => panic!("unexpected request: {req:?}"),
+        }
+    }
+
+    #[test]
+    fn test_serde_debug_storage_range_at() {
+        let s = r#"{"method": "debug_storageRangeAt", "params": ["0x0000000000000000000000000000000000000000000000000000000000000000", 0, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000000000000000000000000000000", 1]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        match serde_json::from_value::<EthRequest>(value).unwrap() {
+            EthRequest::DebugStorageRangeAt(_, 0, _, _, 1) => {}
             req => panic!("unexpected request: {req:?}"),
         }
     }
