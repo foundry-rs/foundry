@@ -31,7 +31,7 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 
@@ -608,6 +608,80 @@ async fn test_debug_trace_call_state_override() {
         _ => {
             unreachable!()
         }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_tx_index() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let from = wallets[0].address();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let set_first = simple_storage_contract.setValue("first".to_string());
+    let set_second = simple_storage_contract.setValue("second".to_string());
+
+    let tx = TransactionRequest::default()
+        .from(from)
+        .to(*simple_storage_contract.address())
+        .with_input(set_first.calldata().to_owned())
+        .nonce(nonce);
+    let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .from(from)
+        .to(*simple_storage_contract.address())
+        .with_input(set_second.calldata().to_owned())
+        .nonce(nonce + 1);
+    let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    api.mine_one().await;
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let get_value = simple_storage_contract.getValue();
+    let call = TransactionRequest::default()
+        .from(from)
+        .to(*simple_storage_contract.address())
+        .with_input(get_value.calldata().to_owned());
+
+    let trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(call.clone()),
+            BlockId::number(block_number),
+            GethDebugTracingCallOptions::default().with_tx_index(0),
+        )
+        .await
+        .unwrap();
+    match trace {
+        GethTrace::Default(default_frame) => {
+            assert_eq!(default_frame.return_value, Bytes::from(String::from("first").abi_encode()));
+        }
+        _ => unreachable!(),
+    }
+
+    let trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(call),
+            BlockId::number(block_number),
+            GethDebugTracingCallOptions::default().with_tx_index(1),
+        )
+        .await
+        .unwrap();
+    match trace {
+        GethTrace::Default(default_frame) => {
+            assert_eq!(
+                default_frame.return_value,
+                Bytes::from(String::from("second").abi_encode())
+            );
+        }
+        _ => unreachable!(),
     }
 }
 
