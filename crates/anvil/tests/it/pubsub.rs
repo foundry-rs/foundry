@@ -2,7 +2,7 @@
 
 use crate::utils::{connect_pubsub, connect_pubsub_with_wallet};
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_pubsub::Subscription;
 use alloy_rpc_types::{
@@ -309,6 +309,34 @@ async fn test_sub_transaction_receipts() {
 
     assert_eq!(filtered_receipts.len(), 1);
     assert_eq!(filtered_receipts[0].transaction_hash(), *second.tx_hash());
+}
+
+// A receipt subscription must drop its block listener once the subscriber unsubscribes, even if its
+// filter never matched any transaction.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sub_transaction_receipts_cleanup_on_unsubscribe() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let baseline = api.backend.new_block_listeners_count();
+
+    // Filter on a hash that never gets mined, so the task can only exit via the dropped receiver.
+    let filter = TransactionReceiptsParams { transaction_hashes: Some(vec![B256::random()]) };
+    let rx = api.transaction_receipts_subscription(filter);
+    assert_eq!(api.backend.new_block_listeners_count(), baseline + 1);
+
+    drop(rx);
+
+    // Let the task observe the closed channel, then mine to trigger listener pruning.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    api.mine_one().await;
+    api.mine_one().await;
+
+    assert_eq!(
+        api.backend.new_block_listeners_count(),
+        baseline,
+        "subscription task should terminate after unsubscribe"
+    );
 }
 
 #[expect(clippy::disallowed_macros)]

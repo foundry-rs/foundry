@@ -3500,18 +3500,36 @@ impl EthApi<FoundryNetwork> {
         let this = self.clone();
 
         tokio::spawn(async move {
-            while let Some(block) = blocks.next().await {
-                let Ok(Some(mut receipts)) =
-                    this.block_receipts(BlockId::Hash(block.hash.into())).await
-                else {
-                    continue;
+            // Precompute the hash filter once.
+            let hash_filter = filter
+                .transaction_hashes
+                .filter(|hashes| !hashes.is_empty())
+                .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
+
+            loop {
+                let block = tokio::select! {
+                    biased;
+                    // Exit when the subscriber unsubscribes, even while awaiting the next block.
+                    _ = tx.closed() => break,
+                    maybe_block = blocks.next() => match maybe_block {
+                        Some(block) => block,
+                        None => break,
+                    },
                 };
 
-                if let Some(hashes) = &filter.transaction_hashes
-                    && !hashes.is_empty()
-                {
-                    receipts.retain(|receipt| hashes.contains(&receipt.transaction_hash()));
-                }
+                let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {
+                    Ok(Some(mut receipts)) => {
+                        if let Some(hashes) = &hash_filter {
+                            receipts.retain(|receipt| hashes.contains(&receipt.transaction_hash()));
+                        }
+                        receipts
+                    }
+                    Ok(None) => continue,
+                    Err(err) => {
+                        trace!(target: "node", %err, "failed to build block receipts for subscription");
+                        continue;
+                    }
+                };
 
                 if receipts.is_empty() {
                     continue;
