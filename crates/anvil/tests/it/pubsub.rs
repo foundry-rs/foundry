@@ -1,15 +1,19 @@
 //! tests for subscriptions
 
 use crate::utils::{connect_pubsub, connect_pubsub_with_wallet};
-use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, U256};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_pubsub::Subscription;
-use alloy_rpc_types::{Block as AlloyBlock, Filter, TransactionRequest};
+use alloy_rpc_types::{
+    Block as AlloyBlock, Filter, TransactionRequest, pubsub::TransactionReceiptsParams,
+};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use anvil::{NodeConfig, spawn};
+use foundry_primitives::FoundryTxReceipt;
 use futures::StreamExt;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads() {
@@ -245,6 +249,94 @@ async fn test_subscriptions() {
         .collect::<Vec<_>>();
 
     assert_eq!(blocks, vec![1, 2, 3])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sub_transaction_receipts() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let ws_provider = connect_pubsub(&handle.ws_endpoint()).await;
+    let http_provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = http_provider.get_accounts().await.unwrap();
+    let from = accounts[0];
+    let to = accounts[1];
+
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1))
+        .with_nonce(0);
+    let first = http_provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(2))
+        .with_nonce(1);
+    let second = http_provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    let all_id =
+        ws_provider.raw_request("eth_subscribe".into(), ["transactionReceipts"]).await.unwrap();
+    let all_stream: Subscription<Vec<FoundryTxReceipt>> =
+        ws_provider.get_subscription(all_id).await.unwrap();
+    let mut all_stream = all_stream.into_stream();
+
+    let filter = TransactionReceiptsParams { transaction_hashes: Some(vec![*second.tx_hash()]) };
+    let filtered_id = ws_provider
+        .raw_request("eth_subscribe".into(), ("transactionReceipts", filter))
+        .await
+        .unwrap();
+    let filtered_stream: Subscription<Vec<FoundryTxReceipt>> =
+        ws_provider.get_subscription(filtered_id).await.unwrap();
+    let mut filtered_stream = filtered_stream.into_stream();
+
+    api.mine_one().await;
+
+    let all_receipts = tokio::time::timeout(Duration::from_secs(5), all_stream.next())
+        .await
+        .expect("timed out waiting for transaction receipts")
+        .expect("subscription ended unexpectedly");
+    let filtered_receipts = tokio::time::timeout(Duration::from_secs(5), filtered_stream.next())
+        .await
+        .expect("timed out waiting for filtered transaction receipts")
+        .expect("subscription ended unexpectedly");
+
+    assert_eq!(all_receipts.len(), 2);
+    assert_eq!(all_receipts[0].transaction_hash(), *first.tx_hash());
+    assert_eq!(all_receipts[1].transaction_hash(), *second.tx_hash());
+
+    assert_eq!(filtered_receipts.len(), 1);
+    assert_eq!(filtered_receipts[0].transaction_hash(), *second.tx_hash());
+}
+
+// A receipt subscription must drop its block listener once the subscriber unsubscribes, even if its
+// filter never matched any transaction.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sub_transaction_receipts_cleanup_on_unsubscribe() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let baseline = api.backend.new_block_listeners_count();
+
+    // Filter on a hash that never gets mined, so the task can only exit via the dropped receiver.
+    let filter = TransactionReceiptsParams { transaction_hashes: Some(vec![B256::random()]) };
+    let rx = api.transaction_receipts_subscription(filter);
+    assert_eq!(api.backend.new_block_listeners_count(), baseline + 1);
+
+    drop(rx);
+
+    // Let the task observe the closed channel, then mine to trigger listener pruning.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    api.mine_one().await;
+    api.mine_one().await;
+
+    assert_eq!(
+        api.backend.new_block_listeners_count(),
+        baseline,
+        "subscription task should terminate after unsubscribe"
+    );
 }
 
 #[expect(clippy::disallowed_macros)]
