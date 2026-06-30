@@ -15,7 +15,9 @@ use foundry_common::{
     ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
 };
 use foundry_config::FuzzDictionaryConfig;
-use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
+use foundry_evm_core::{
+    bytecode::InstIter, eip2935::is_history_storage_address, utils::StateChangeset,
+};
 use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
@@ -303,6 +305,10 @@ impl FuzzDictionary {
     /// These values are persisted across invariant runs.
     fn insert_db_values(&mut self, db_state: Vec<(&Address, &DbAccount)>) {
         for (address, account) in db_state {
+            if is_history_storage_address(address) {
+                continue;
+            }
+
             // Insert basic account information
             self.insert_value(address.into_word());
             // Insert push bytes
@@ -434,6 +440,10 @@ impl FuzzDictionary {
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         for (address, account) in state_changeset {
+            if is_history_storage_address(address) {
+                continue;
+            }
+
             // Insert basic account information.
             self.insert_value(address.into_word());
             // Insert push bytes.
@@ -703,6 +713,9 @@ impl FuzzDictionary {
 mod tests {
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
+    use alloy_primitives::keccak256;
+    use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
+    use revm::{bytecode::Bytecode, database::EmptyDB};
 
     #[test]
     fn log_decoding_preserves_anonymous_event_priority() {
@@ -733,5 +746,30 @@ mod tests {
         assert_eq!(samples.len(), 2);
         assert_eq!(samples[0], DynSolValue::FixedBytes(selector, 32));
         assert_eq!(samples[1], DynSolValue::Uint(U256::from(42), 256));
+    }
+
+    #[test]
+    fn history_storage_account_is_excluded_from_initial_dictionary() {
+        let mut db = CacheDB::<EmptyDB>::default();
+        let code = Bytecode::new_raw(Bytes::from_static(&[0x61, 0x01, 0x23, 0x00]));
+        db.insert_account_info(
+            HISTORY_STORAGE_ADDRESS,
+            AccountInfo {
+                code_hash: keccak256(code.original_byte_slice()),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+        db.insert_account_storage(HISTORY_STORAGE_ADDRESS, U256::from(7), U256::from(0xdead_u64))
+            .unwrap();
+
+        let state = EvmFuzzState::new(&[], &db, FuzzDictionaryConfig::default(), None);
+
+        state.with_dictionary(|dict| {
+            assert!(!dict.values().contains(&HISTORY_STORAGE_ADDRESS.into_word()));
+            assert!(!dict.values().contains(&B256::from(U256::from(0x123))));
+            assert!(!dict.values().contains(&B256::from(U256::from(7))));
+            assert!(!dict.values().contains(&B256::from(U256::from(0xdead_u64))));
+        });
     }
 }

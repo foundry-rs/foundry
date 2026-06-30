@@ -36,6 +36,7 @@ alloy-primitives = { workspace = true, features = [
 alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-op-evm = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
