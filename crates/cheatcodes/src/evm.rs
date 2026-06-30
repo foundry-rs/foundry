@@ -713,6 +713,16 @@ impl Cheatcode for etchCall {
         ccx.ecx.journal_mut().load_account(*target)?;
         let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
+        if *target == HISTORY_STORAGE_ADDRESS
+            && bytecode.hash_slow() != keccak256(&HISTORY_STORAGE_CODE)
+        {
+            let account =
+                ccx.ecx.journal_mut().evm_state_mut().get_mut(target).expect("account is loaded");
+            if account.info.code_hash == keccak256(&HISTORY_STORAGE_CODE) {
+                account.storage.clear();
+                account.mark_created();
+            }
+        }
         ccx.ecx.journal_mut().set_code(*target, bytecode);
         Ok(Default::default())
     }
