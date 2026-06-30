@@ -1,6 +1,6 @@
 //! txpool related tests
 
-use alloy_network::{ReceiptResponse, TransactionBuilder};
+use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::U256;
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::TransactionRequest;
@@ -160,6 +160,74 @@ async fn can_debug_clear_txpool() {
     let status = provider.txpool_status().await.unwrap();
     assert_eq!(status.pending, 0);
     assert_eq!(status.queued, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn geth_txpool_content_from_filters_sender() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let other_sender = accounts[1].address();
+    let recipient = accounts[2].address();
+    let empty_sender = accounts[3].address();
+    let gas_price = 221435145689u128;
+
+    let sender_pending_tx = TransactionRequest::default()
+        .with_to(recipient)
+        .with_from(sender)
+        .with_value(U256::from(42))
+        .with_gas_price(gas_price)
+        .with_nonce(0);
+    let sender_pending_tx = WithOtherFields::new(sender_pending_tx);
+
+    let sender_queued_tx = TransactionRequest::default()
+        .with_to(recipient)
+        .with_from(sender)
+        .with_value(U256::from(84))
+        .with_gas_price(gas_price)
+        .with_nonce(2);
+    let sender_queued_tx = WithOtherFields::new(sender_queued_tx);
+
+    let other_pending_tx = TransactionRequest::default()
+        .with_to(recipient)
+        .with_from(other_sender)
+        .with_value(U256::from(126))
+        .with_gas_price(gas_price)
+        .with_nonce(0);
+    let other_pending_tx = WithOtherFields::new(other_pending_tx);
+
+    let _ = provider.send_transaction(sender_pending_tx).await.unwrap();
+    let _ = provider.send_transaction(sender_queued_tx).await.unwrap();
+    let _ = provider.send_transaction(other_pending_tx).await.unwrap();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 2);
+    assert_eq!(status.queued, 1);
+
+    let content = provider.txpool_content_from(sender).await.unwrap();
+    assert_eq!(content.pending.len(), 1);
+    assert_eq!(content.queued.len(), 1);
+
+    let pending = content.pending.get("0").unwrap();
+    assert_eq!(pending.from(), sender);
+    assert!(!content.pending.contains_key("2"));
+
+    let queued = content.queued.get("2").unwrap();
+    assert_eq!(queued.from(), sender);
+    assert!(!content.queued.contains_key("0"));
+
+    let other_content = provider.txpool_content_from(other_sender).await.unwrap();
+    assert_eq!(other_content.pending.len(), 1);
+    assert_eq!(other_content.pending.get("0").unwrap().from(), other_sender);
+    assert!(other_content.queued.is_empty());
+
+    let empty_content = provider.txpool_content_from(empty_sender).await.unwrap();
+    assert!(empty_content.pending.is_empty());
+    assert!(empty_content.queued.is_empty());
 }
 
 // Cf. https://github.com/foundry-rs/foundry/issues/11239
