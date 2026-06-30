@@ -483,6 +483,10 @@ pub struct Config {
     /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
     /// experimental features.
     pub experimental: bool,
+    /// Whether to turn on SSA CFG-based code generation via the IR (experimental).
+    ///
+    /// This passes `--via-ssa-cfg` to solc. Implies `via_ir`. This is false by default.
+    pub via_ssa_cfg: bool,
     /// Whether to include the AST as JSON in the compiler output.
     pub ast: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
@@ -1888,6 +1892,7 @@ impl Config {
             model_checker,
             via_ir: Some(self.via_ir),
             experimental: Some(self.experimental),
+            via_ssa_cfg: Some(self.via_ssa_cfg),
             // Not used.
             stop_after: None,
             // Set in project paths.
@@ -2810,6 +2815,7 @@ impl Default for Config {
             deny_warnings: false,
             via_ir: false,
             experimental: false,
+            via_ssa_cfg: false,
             ast: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
@@ -5307,6 +5313,23 @@ mod tests {
         let settings = config.solc_settings().unwrap();
         assert_eq!(settings.settings.experimental, Some(false));
         assert_eq!(settings.cli_settings.extra_args, vec!["--experimental".to_string()]);
+    }
+
+    #[test]
+    fn solc_settings_include_via_ssa_cfg_setting() {
+        let config = Config { via_ssa_cfg: true, ..Config::default() };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.via_ssa_cfg, Some(true));
+        assert!(settings.cli_settings.extra_args.is_empty());
+
+        let config = Config {
+            via_ssa_cfg: false,
+            extra_args: vec!["--via-ssa-cfg".to_string()],
+            ..Config::default()
+        };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.via_ssa_cfg, Some(false));
+        assert_eq!(settings.cli_settings.extra_args, vec!["--via-ssa-cfg".to_string()]);
     }
 
     #[test]

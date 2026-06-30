@@ -41,6 +41,13 @@ pub struct CompilerOpts {
     #[serde(skip)]
     pub experimental: bool,
 
+    /// Turn on SSA CFG-based code generation via the IR (experimental).
+    ///
+    /// This passes `--via-ssa-cfg` to solc. Implies `--via-ir`. This is false by default.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub via_ssa_cfg: bool,
+
     /// The number of runs specifies roughly how often each opcode of the deployed code will be
     /// executed across the life-time of the contract. This means it is a trade-off parameter
     /// between code size (deploy cost) and code execution cost (cost after deployment).
@@ -92,6 +99,12 @@ mod tests {
     fn can_parse_experimental() {
         let args: CompilerOpts = CompilerOpts::parse_from(["foundry-cli", "--experimental"]);
         assert!(args.experimental);
+    }
+
+    #[test]
+    fn can_parse_via_ssa_cfg() {
+        let args: CompilerOpts = CompilerOpts::parse_from(["foundry-cli", "--via-ssa-cfg"]);
+        assert!(args.via_ssa_cfg);
     }
 
     #[test]
