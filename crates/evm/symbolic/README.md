@@ -93,6 +93,16 @@ schema lives at
 the replay status, bounds, assumptions, solver metadata, optional trace
 reference, and concrete call data needed by downstream minimizers and exporters.
 
+Symbolic execution can also seed coverage-guided fuzzing by concretizing
+non-failing fuzz-test inputs into the configured `fuzz.corpus_dir`:
+
+```sh
+forge test --symbolic-seed-corpus --fuzz-corpus-dir fuzz_corpus
+```
+
+Forge symbolically executes matching fuzz tests, reuses their normal corpus
+layout, and writes a successful concrete input as a seed for later fuzz runs.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled

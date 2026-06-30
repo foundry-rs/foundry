@@ -24,9 +24,9 @@ use alloy_primitives::{Address, Bytes, Selector, U256, address, hex, keccak256, 
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig, InlineConfig, InvariantConfig};
+use foundry_config::{Config, FuzzConfig, FuzzCorpusConfig, InlineConfig, InvariantConfig};
 use foundry_evm::{
-    constants::{CALLER, CHEATCODE_ADDRESS},
+    constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
@@ -39,7 +39,7 @@ use foundry_evm::{
             execute_tx, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
-        replay_corpus_to_showmap,
+        persist_corpus_seed, replay_corpus_to_showmap,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -51,7 +51,8 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    SymbolicExecutor, SymbolicRunInput, SymbolicRunResult, SymbolicStats, SymbolicStopReason,
+    SymbolicConcreteInput, SymbolicExecutor, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
+    SymbolicStopReason,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -78,6 +79,10 @@ pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6e
 
 pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
     func.name.starts_with("check") || func.name.starts_with("prove")
+}
+
+fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
+    config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
 }
 
 pub(crate) struct InvariantCampaignScope<'a> {
@@ -886,11 +891,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 .into_iter()
                 .map(|func| {
                     let start = Instant::now();
-                    let kind = match artifact.kind {
-                        SymbolicCounterexampleArtifactKind::SingleCall => {
-                            TestFunctionKind::SymbolicTest
-                        }
-                        SymbolicCounterexampleArtifactKind::Sequence => func.test_function_kind(),
+                    let kind = if artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall {
+                        TestFunctionKind::SymbolicTest
+                    } else {
+                        func.test_function_kind()
                     };
                     if artifact.kind == SymbolicCounterexampleArtifactKind::Sequence
                         && !kind.is_invariant_test()
@@ -1667,12 +1671,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             function: func,
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
+            collect_success_input: false,
         });
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
         let symbolic_diagnostics = symbolic.take_diagnostics();
 
         match result {
-            SymbolicRunResult::Safe(stats) => {
+            SymbolicRunResult::Safe { stats, .. } => {
                 self.result.symbolic_result(
                     TestStatus::Success,
                     None,
@@ -2139,6 +2144,101 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         self.result
+    }
+
+    fn try_seed_fuzz_corpus_symbolically(&self, func: &Function, fuzz_config: &FuzzConfig) {
+        if !should_symbolically_seed_fuzz_corpus(&self.config, func) {
+            return;
+        }
+        if fuzz_config.corpus.corpus_dir.is_none() {
+            let _ = sh_warn!(
+                "`--symbolic-seed-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`; \
+                 skipping symbolic corpus seeding"
+            );
+            return;
+        }
+
+        let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+        let result = symbolic.run(SymbolicRunInput {
+            executor: self.executor.as_ref(),
+            target: self.address,
+            sender: self.sender,
+            function: func,
+            value: U256::ZERO,
+            ffi_enabled: self.config.ffi,
+            collect_success_input: true,
+        });
+
+        let input = match result {
+            SymbolicRunResult::Safe { success_input: Some(input), .. } => input,
+            SymbolicRunResult::Safe { success_input: None, .. } => {
+                warn!(test = %func.signature(), "symbolic fuzz corpus seeding found no successful input");
+                return;
+            }
+            SymbolicRunResult::Incomplete { kind, reason, .. } => {
+                warn!(?kind, %reason, test = %func.signature(), "symbolic fuzz corpus seeding incomplete");
+                return;
+            }
+            SymbolicRunResult::Counterexample { .. } => {
+                warn!(test = %func.signature(), "symbolic fuzz corpus seeding found a counterexample");
+                return;
+            }
+        };
+
+        if !self.symbolic_fuzz_seed_concretely_succeeds(&input, fuzz_config) {
+            warn!(test = %func.signature(), "symbolic fuzz corpus seed did not pass concrete replay");
+            return;
+        }
+
+        if let Err(err) = persist_corpus_seed(
+            &fuzz_config.corpus,
+            vec![BasicTxDetails {
+                warp: None,
+                roll: None,
+                sender: self.sender,
+                call_details: CallDetails {
+                    target: self.address,
+                    calldata: input.calldata,
+                    value: Some(U256::ZERO),
+                },
+            }],
+        ) {
+            warn!(%err, test = %func.signature(), "failed to persist symbolic fuzz corpus seed");
+        }
+    }
+
+    fn symbolic_fuzz_seed_concretely_succeeds(
+        &self,
+        input: &SymbolicConcreteInput,
+        fuzz_config: &FuzzConfig,
+    ) -> bool {
+        let Ok(raw_call_result) = self.clone_executor().call_raw(
+            self.sender,
+            self.address,
+            input.calldata.clone(),
+            U256::ZERO,
+        ) else {
+            return false;
+        };
+
+        if raw_call_result.result.as_ref() == MAGIC_ASSUME {
+            return false;
+        }
+
+        if !fuzz_config.fail_on_revert
+            && raw_call_result
+                .reverter
+                .is_some_and(|reverter| reverter != self.address && reverter != CHEATCODE_ADDRESS)
+        {
+            true
+        } else {
+            self.executor.is_raw_call_success(
+                self.address,
+                Cow::Borrowed(&raw_call_result.state_changeset),
+                &raw_call_result,
+                false,
+            )
+        }
     }
 
     /// Runs a table test.
@@ -3161,6 +3261,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
             fuzz_config.corpus.corpus_dir = None;
         }
+
+        self.try_seed_fuzz_corpus_symbolically(func, &fuzz_config);
 
         let progress = start_fuzz_progress(
             self.cr.progress,
