@@ -93,7 +93,6 @@ fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> b
 #[derive(Default)]
 struct ImportedSymbolicCorpusSeeds {
     inputs: Vec<SymbolicConcreteInput>,
-    refs: Vec<SymbolicCorpusSeedRef>,
     metadata: Option<SymbolicCorpusSeedMetadata>,
 }
 
@@ -1733,7 +1732,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     metadata.skipped += 1;
                     continue;
                 };
-                imported.refs.push(SymbolicCorpusSeedRef {
+                metadata.used.push(SymbolicCorpusSeedRef {
                     path: entry.path,
                     calldata: input.calldata.clone(),
                 });
@@ -1782,7 +1781,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let ImportedSymbolicCorpusSeeds {
             inputs: corpus_seeds,
-            refs: corpus_seed_refs,
             metadata: mut corpus_seed_metadata,
         } = self.import_symbolic_fuzz_corpus(func);
         if let Some(metadata) = corpus_seed_metadata.as_mut() {
@@ -1792,9 +1790,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &corpus_seeds,
             ) {
                 Ok(indexes) => {
-                    metadata.used = indexes
+                    let mut indexes = indexes.into_iter().peekable();
+                    metadata.used = std::mem::take(&mut metadata.used)
                         .into_iter()
-                        .filter_map(|idx| corpus_seed_refs.get(idx).cloned())
+                        .enumerate()
+                        .filter_map(|(idx, seed)| match indexes.peek().copied() {
+                            Some(used_idx) if used_idx == idx => {
+                                indexes.next();
+                                Some(seed)
+                            }
+                            _ => None,
+                        })
                         .collect();
                 }
                 Err(err) => {
