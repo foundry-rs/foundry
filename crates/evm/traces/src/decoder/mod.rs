@@ -1,5 +1,5 @@
 use crate::{
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedTraceStep,
     debug::DebugTraceIdentifier,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
@@ -26,7 +26,9 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
+
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
@@ -196,6 +198,9 @@ pub struct CallTraceDecoder {
     /// The chain ID, used to determine network-specific precompiles.
     pub chain_id: Option<u64>,
 
+    /// Detailed opcodes for analysis.
+    pub opcodes: Vec<OpCode>,
+
     /// The Tempo hardfork, used to determine hardfork-specific precompiles.
     pub tempo_hardfork: Option<TempoHardfork>,
 }
@@ -322,6 +327,8 @@ impl CallTraceDecoder {
             disable_labels: false,
 
             chain_id: None,
+
+            opcodes: Vec::new(),
 
             tempo_hardfork: None,
         }
@@ -527,6 +534,45 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
+            if !self.opcodes.is_empty() {
+                for step in &mut node.trace.steps {
+                    if step.decoded.is_some() {
+                        continue;
+                    }
+                    for opcode in &self.opcodes {
+                        if step.op == *opcode {
+                            let res = match &step.storage_change {
+                                Some(change) if step.op == OpCode::SSTORE => {
+                                    if let Some(had_value) = change.had_value {
+                                        format!(
+                                            "[{}] {} 0x{:x}: 0x{:x} → 0x{:x}",
+                                            step.gas_cost,
+                                            opcode,
+                                            change.key,
+                                            had_value,
+                                            change.value
+                                        )
+                                    } else {
+                                        format!(
+                                            "[{}] {} 0x{:x} → (0x{:x})",
+                                            step.gas_cost, opcode, change.key, change.value
+                                        )
+                                    }
+                                }
+                                Some(change) => format!(
+                                    "[{}] {} 0x{:x} → (0x{:x})",
+                                    step.gas_cost, opcode, change.key, change.value
+                                ),
+                                None => format!("[{}] {}", step.gas_cost, opcode),
+                            };
+
+                            step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
+                            break;
+                        }
+                    }
+                }
+            }
+
             node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
             for log in &mut node.logs {
                 log.decoded =

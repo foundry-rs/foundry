@@ -75,7 +75,7 @@ inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
-revm.workspace = true
+revm = { workspace = true, features = ["parse"] }
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }

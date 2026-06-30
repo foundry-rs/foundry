@@ -209,18 +209,42 @@ pub fn render_trace_arena_inner(
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
-    let resolved = arena.resolve_arena();
+    let mut resolved = arena.resolve_arena();
+
+    let mut tempo_changes = String::new();
+    if with_storage_changes {
+        append_tempo_channel_storage_decodes(&mut tempo_changes, &resolved);
+
+        let needs_dedup = resolved.as_ref().nodes().iter().any(|node| {
+            node.trace.steps.iter().any(|step| {
+                step.storage_change.is_some()
+                    && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+            })
+        });
+        if needs_dedup {
+            // Remove storage text that is already represented by an opcode line.
+            for node in resolved.to_mut().nodes_mut() {
+                for step in &mut node.trace.steps {
+                    if step.storage_change.is_some()
+                        && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+                    {
+                        step.storage_change = None;
+                    }
+                }
+            }
+        }
+    }
+
     let mut w = TraceWriter::new(Vec::<u8>::new())
         .color_cheatcodes(true)
         .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
-    w.write_arena(&resolved).expect("Failed to write traces");
+    w.write_arena(resolved.as_ref()).expect("Failed to write traces");
     let mut rendered =
         String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
-    if with_storage_changes {
-        append_tempo_channel_storage_decodes(&mut rendered, &resolved);
-    }
+    rendered.push_str(&tempo_changes);
+
     rendered
 }
 
