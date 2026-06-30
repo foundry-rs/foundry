@@ -1,10 +1,4 @@
 use super::*;
-use std::{
-    cell::RefCell,
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    sync::Weak,
-};
 
 pub(crate) fn keccak_word(bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();
@@ -323,49 +317,11 @@ static EXPR_ONE: LazyLock<Arc<SymExprKind>> =
 static EXPR_MAX: LazyLock<Arc<SymExprKind>> =
     LazyLock::new(|| Arc::new(SymExprKind::Const(U256::MAX)));
 
-type WeakInterner<T> = HashMap<u64, Vec<Weak<T>>>;
-
-thread_local! {
-    static EXPR_INTERNER: RefCell<WeakInterner<SymExprKind>> = RefCell::new(HashMap::default());
-}
-
-fn intern_expr_arc(value: SymExprKind) -> Arc<SymExprKind> {
-    EXPR_INTERNER.with(|interner| intern_arc(&mut interner.borrow_mut(), value))
-}
-
-fn intern_arc<T>(buckets: &mut WeakInterner<T>, value: T) -> Arc<T>
-where
-    T: Eq + Hash,
-{
-    let hash = interner_hash(&value);
-    let bucket = buckets.entry(hash).or_default();
-    let mut idx = 0;
-    while idx < bucket.len() {
-        match bucket[idx].upgrade() {
-            Some(existing) if existing.as_ref() == &value => return existing,
-            Some(_) => idx += 1,
-            None => {
-                bucket.swap_remove(idx);
-            }
-        }
-    }
-
-    let value = Arc::new(value);
-    bucket.push(Arc::downgrade(&value));
-    value
-}
-
-fn interner_hash<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
 impl SymExpr {
     fn from_kind(expr: SymExprKind) -> Self {
         match expr {
             SymExprKind::Const(value) => Self::constant(value),
-            expr => Self(intern_expr_arc(expr)),
+            expr => Self(Arc::new(expr)),
         }
     }
 
@@ -418,13 +374,8 @@ impl SymExpr {
         } else if value == U256::MAX {
             Self(EXPR_MAX.clone())
         } else {
-            Self(intern_expr_arc(SymExprKind::Const(value)))
+            Self(Arc::new(SymExprKind::Const(value)))
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
     }
 
     pub(crate) fn low_byte(self) -> Self {
@@ -1422,20 +1373,11 @@ static BOOL_TRUE: LazyLock<Arc<SymBoolExprKind>> =
 static BOOL_FALSE: LazyLock<Arc<SymBoolExprKind>> =
     LazyLock::new(|| Arc::new(SymBoolExprKind::Const(false)));
 
-thread_local! {
-    static BOOL_EXPR_INTERNER: RefCell<WeakInterner<SymBoolExprKind>> =
-        RefCell::new(HashMap::default());
-}
-
-fn intern_bool_expr_arc(value: SymBoolExprKind) -> Arc<SymBoolExprKind> {
-    BOOL_EXPR_INTERNER.with(|interner| intern_arc(&mut interner.borrow_mut(), value))
-}
-
 impl SymBoolExpr {
     fn from_kind(expr: SymBoolExprKind) -> Self {
         match expr {
             SymBoolExprKind::Const(value) => Self::constant(value),
-            expr => Self(intern_bool_expr_arc(expr)),
+            expr => Self(Arc::new(expr)),
         }
     }
 
@@ -1456,11 +1398,6 @@ impl SymBoolExpr {
             SymBoolExprKind::Const(value) => Some(*value),
             _ => None,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
     }
 
     pub(crate) fn eval(&self) -> Option<bool> {
