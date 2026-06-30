@@ -1,4 +1,6 @@
 use super::*;
+use std::process::{Child, Output};
+use wait_timeout::ChildExt;
 
 mod hard_arith_fallback;
 mod monotonic_product;
@@ -1418,7 +1420,7 @@ fn run_solver_process(
     timeout: Option<u32>,
     cancel: &AtomicBool,
 ) -> SolverProcessOutcome {
-    let mut child = match Command::new(&command.program)
+    let child = match Command::new(&command.program)
         .args(&command.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1433,89 +1435,89 @@ fn run_solver_process(
             ));
         }
     };
-    let stdout_reader = child.stdout.take().map(read_pipe_to_string);
-    let stderr_reader = child.stderr.take().map(read_pipe_to_string);
+    let mut child = SolverChild::new(child);
 
-    if let Some(mut stdin) = child.stdin.take()
+    if let Some(mut stdin) = child.child_mut().stdin.take()
         && let Err(err) = stdin.write_all(smt.as_bytes())
     {
-        kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
         return SolverProcessOutcome::Error(format!("failed to write solver query: {err}"));
     }
 
-    let deadline = timeout
-        .filter(|seconds| *seconds > 0)
-        .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
-    let mut backoff = INITIAL_SOLVER_POLL_BACKOFF;
-    let status = loop {
+    let started_at = Instant::now();
+    let timeout =
+        timeout.filter(|seconds| *seconds > 0).map(|seconds| Duration::from_secs(seconds.into()));
+    loop {
         if cancel.load(Ordering::SeqCst) {
-            kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
             return SolverProcessOutcome::Cancelled;
         }
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
-            return SolverProcessOutcome::Unknown;
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                thread::sleep(backoff);
-                backoff = (backoff * 2).min(MAX_SOLVER_POLL_BACKOFF);
-            }
-            Err(err) => {
-                kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
-                return SolverProcessOutcome::Error(format!("failed to read solver output: {err}"));
-            }
-        }
-    };
 
-    let stdout = match join_pipe_output(stdout_reader, "stdout") {
-        Ok(stdout) => stdout,
-        Err(err) => return SolverProcessOutcome::Error(err),
+        let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
+            return SolverProcessOutcome::Unknown;
+        };
+
+        match child.child_mut().wait_timeout(wait) {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(err) => {
+                return SolverProcessOutcome::Error(format!(
+                    "failed to wait for solver process: {err}"
+                ));
+            }
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(output) => output,
+        Err(err) => {
+            return SolverProcessOutcome::Error(format!("failed to read solver output: {err}"));
+        }
     };
-    let stderr = match join_pipe_output(stderr_reader, "stderr") {
-        Ok(stderr) => stderr,
-        Err(err) => return SolverProcessOutcome::Error(err),
-    };
-    if !status.success() {
-        return SolverProcessOutcome::Error(solver_exit_error(command, status, &stdout, &stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        return SolverProcessOutcome::Error(solver_exit_error(
+            command,
+            output.status,
+            &stdout,
+            &stderr,
+        ));
     }
     SolverProcessOutcome::Output(stdout)
 }
 
-fn read_pipe_to_string<R>(mut pipe: R) -> thread::JoinHandle<Result<String, String>>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let mut output = Vec::new();
-        pipe.read_to_end(&mut output)
-            .map_err(|err| format!("failed to read solver output: {err}"))?;
-        Ok(String::from_utf8_lossy(&output).to_string())
-    })
+fn solver_wait_duration(elapsed: Duration, timeout: Option<Duration>) -> Option<Duration> {
+    let Some(timeout) = timeout else {
+        return Some(SOLVER_CANCEL_CHECK_INTERVAL);
+    };
+    let remaining = timeout.checked_sub(elapsed)?;
+    if remaining.is_zero() { None } else { Some(remaining.min(SOLVER_CANCEL_CHECK_INTERVAL)) }
 }
 
-fn join_pipe_output(
-    reader: Option<thread::JoinHandle<Result<String, String>>>,
-    stream: &str,
-) -> Result<String, String> {
-    match reader {
-        Some(reader) => reader.join().map_err(|_| format!("solver {stream} reader panicked"))?,
-        None => Ok(String::new()),
+struct SolverChild {
+    child: Option<Child>,
+}
+
+impl SolverChild {
+    const fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    const fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("solver child exists")
+    }
+
+    fn wait_with_output(mut self) -> std::io::Result<Output> {
+        self.child.take().expect("solver child exists").wait_with_output()
     }
 }
 
-fn kill_and_reap_solver_process(
-    child: &mut std::process::Child,
-    stdout_reader: Option<thread::JoinHandle<Result<String, String>>>,
-    stderr_reader: Option<thread::JoinHandle<Result<String, String>>>,
-) {
-    // This only terminates the direct child. Wrapper commands should forward termination and close
-    // inherited pipes so descendant solver processes do not outlive cancelled queries.
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = join_pipe_output(stdout_reader, "stdout");
-    let _ = join_pipe_output(stderr_reader, "stderr");
+impl Drop for SolverChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 fn solver_exit_error(
