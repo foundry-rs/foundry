@@ -112,6 +112,12 @@ pub enum EthRequest {
         bool,
     ),
 
+    #[serde(
+        rename = "eth_getHeaderByNumber",
+        deserialize_with = "lenient_block_number::lenient_block_number_seq"
+    )]
+    EthGetHeaderByNumber(BlockNumber),
+
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
 
@@ -848,6 +854,13 @@ mod tests {
     #[test]
     fn test_eth_block_number() {
         let s = r#"{"method": "eth_blockNumber", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_get_header_by_number() {
+        let s = r#"{"method": "eth_getHeaderByNumber", "params":["latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
