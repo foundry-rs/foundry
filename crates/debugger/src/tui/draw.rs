@@ -269,7 +269,7 @@ impl TUIContext<'_> {
         } else if let Some(input) = &self.command_input {
             lines.push(Line::from(vec![
                 Span::styled(
-                    "Command: :",
+                    "Command: ",
                     Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(input.as_str()),
