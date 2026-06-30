@@ -364,8 +364,7 @@ when symbolic tests run. This also applies when these values come from inline
 settings before running symbolic tests from untrusted projects.
 Timeouts and portfolio cancellation terminate only the direct solver child
 process. Wrapper commands should forward termination to any subprocesses they
-spawn and close inherited stdout/stderr so descendant solvers do not outlive the
-cancelled query.
+spawn so descendant solvers do not outlive the cancelled query.
 
 Halmos-style annotations are accepted as compatibility input and translated into
 the same internal config:
