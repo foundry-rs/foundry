@@ -260,7 +260,7 @@ fn gas_report_samples_for_worker(total_samples: u32, worker_id: u32, worker_coun
     total_samples / worker_count + usize::from((worker_id as usize) < total_samples % worker_count)
 }
 
-const fn invariant_worker_collects_evm_cmp_log(
+fn invariant_worker_collects_evm_cmp_log(
     config: &InvariantConfig,
     worker_id: u32,
     worker_count: usize,
@@ -1840,6 +1840,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         .and_modify(|entry| {
                             // Extend the ABI's function list with the new functions.
                             entry.abi.functions.extend(abi.functions.clone());
+                            entry.rebuild_function_lookups();
                         })
                         // Otherwise insert it into the map.
                         .or_insert_with(|| {
@@ -2433,6 +2434,8 @@ mod tests {
 
     #[test]
     fn invariant_worker_cmp_log_selection_uses_one_worker_per_campaign() {
+        use foundry_config::FuzzCorpusMutationWeights;
+
         let mut config = InvariantConfig::default();
         assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
 
@@ -2441,6 +2444,29 @@ mod tests {
         assert!(invariant_worker_collects_evm_cmp_log(&config, 0, 4));
         assert!(!invariant_worker_collects_evm_cmp_log(&config, 1, 4));
         assert!(!invariant_worker_collects_evm_cmp_log(&config, 3, 4));
+
+        config.corpus.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 1,
+            mutation_weight_repeat: 1,
+            mutation_weight_interleave: 1,
+            mutation_weight_prefix: 1,
+            mutation_weight_suffix: 1,
+            mutation_weight_abi: 1,
+            mutation_weight_cmp: 0,
+        };
+        assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
+
+        // All-zero configured weights resolve to the default mutation distribution.
+        config.corpus.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+        };
+        assert!(invariant_worker_collects_evm_cmp_log(&config, 0, 1));
 
         config.corpus.sancov_edges = true;
         assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
