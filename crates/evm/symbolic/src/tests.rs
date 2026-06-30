@@ -405,6 +405,43 @@ fn dynamic_calldata_encodes_bounded_bytes() {
 }
 
 #[test]
+fn calldata_seed_model_round_trips_common_abi_values() {
+    let function = Function::parse(
+        "check(bool,uint256,int128,address,bytes3,bytes,string,uint256[],(uint256,bool))",
+    )
+    .unwrap();
+    let config = SymbolicConfig {
+        default_array_lengths: vec![2],
+        default_bytes_lengths: vec![2],
+        ..Default::default()
+    };
+    let mut fixed = [0u8; 32];
+    fixed[..3].copy_from_slice(&[0xaa, 0xbb, 0xcc]);
+    let args = vec![
+        DynSolValue::Bool(true),
+        DynSolValue::Uint(U256::from(42), 256),
+        DynSolValue::Int(I256::try_from(-5i64).unwrap(), 128),
+        DynSolValue::Address(Address::from([0x11; 20])),
+        DynSolValue::FixedBytes(B256::from(fixed), 3),
+        DynSolValue::Bytes(vec![1, 2]),
+        DynSolValue::String("ok".to_string()),
+        DynSolValue::Array(vec![
+            DynSolValue::Uint(U256::from(1), 256),
+            DynSolValue::Uint(U256::from(2), 256),
+        ]),
+        DynSolValue::Tuple(vec![DynSolValue::Uint(U256::from(9), 256), DynSolValue::Bool(false)]),
+    ];
+    let seed = SymbolicConcreteInput {
+        calldata: Bytes::from(function.abi_encode_input(&args).unwrap()),
+        args: args.clone(),
+    };
+    let calldata = SymbolicCalldata::variants(&function, &config).unwrap().remove(0);
+    let model = calldata.seed_model(&seed).unwrap();
+
+    assert_eq!(calldata.model_to_args(&model).unwrap(), args);
+}
+
+#[test]
 fn calldata_word_loads_preserve_structural_words() {
     let function = Function::parse("check(uint256,bool,address)").unwrap();
     let calldata =
@@ -3002,25 +3039,25 @@ fn split_solver_command_preserves_empty_quoted_args() {
 }
 
 #[test]
-fn split_solver_command_rejects_unterminated_double_quote() {
+fn split_solver_command_rejects_invalid_double_quote() {
     let err = split_solver_command(r#"z3 "unterm"#).unwrap_err();
 
     assert!(
-        matches!(err, SolverConfigError::UnterminatedQuote('"')),
-        "expected UnterminatedQuote('\"'), got {err:?}"
+        matches!(err, SolverConfigError::InvalidShellQuoting),
+        "expected InvalidShellQuoting, got {err:?}"
     );
-    assert_eq!(err.to_string(), r#"unterminated " quote in symbolic solver command"#);
+    assert_eq!(err.to_string(), "invalid shell quoting in symbolic solver command");
 }
 
 #[test]
-fn split_solver_command_rejects_unterminated_single_quote() {
+fn split_solver_command_rejects_invalid_single_quote() {
     let err = split_solver_command("z3 'unterm").unwrap_err();
 
     assert!(
-        matches!(err, SolverConfigError::UnterminatedQuote('\'')),
-        "expected UnterminatedQuote('\\''), got {err:?}"
+        matches!(err, SolverConfigError::InvalidShellQuoting),
+        "expected InvalidShellQuoting, got {err:?}"
     );
-    assert_eq!(err.to_string(), "unterminated ' quote in symbolic solver command");
+    assert_eq!(err.to_string(), "invalid shell quoting in symbolic solver command");
 }
 
 #[test]
@@ -3612,6 +3649,25 @@ fn portfolio_sat_beats_early_unsat() {
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 1, false);
 
     assert!(solver.is_sat(&[]).unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn solver_process_timeout_returns_unknown() {
+    let commands = vec![
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; sleep 2; printf 'sat\n'".to_string(),
+            ],
+            false,
+        )
+        .unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(1), 1, false);
+
+    assert!(matches!(solver.is_sat(&[]), Err(SymbolicError::SolverUnknown)));
 }
 
 #[cfg(unix)]

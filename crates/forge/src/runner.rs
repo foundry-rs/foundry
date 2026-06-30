@@ -8,11 +8,12 @@ use crate::{
     progress::{TestsProgress, start_fuzz_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
-        SymbolicCallTrace, SymbolicCounterexample, SymbolicCounterexampleArtifact,
-        SymbolicCounterexampleArtifactKind, SymbolicCounterexampleCall,
-        SymbolicCounterexampleMinimization, SymbolicCounterexampleReplaySemantics,
-        SymbolicCounterexampleTestIdentity, SymbolicReplayMetadata, SymbolicReplayStatus,
-        SymbolicResult, TestResult, TestSetup, TestStatus, invariant_campaign_display_name,
+        SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
+        SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
+        SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
+        SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
+        SymbolicReplayMetadata, SymbolicReplayStatus, SymbolicResult, TestResult, TestSetup,
+        TestStatus, invariant_campaign_display_name,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -24,13 +25,16 @@ use alloy_primitives::{Address, Bytes, Selector, U256, address, hex, keccak256, 
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig, InlineConfig, InvariantConfig};
+use foundry_config::{
+    Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
+};
 use foundry_evm::{
-    constants::{CALLER, CHEATCODE_ADDRESS},
+    constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
-        CallResult, EvmError, Executor, ITest, RawCallResult, ShowmapOpts,
+        CallResult, EvmError, Executor, ITest, InvariantReplayOptions, RawCallResult, ShowmapOpts,
+        ShowmapReplayTarget, canonical_replay_dirs,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
@@ -38,7 +42,7 @@ use foundry_evm::{
             execute_tx, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
-        replay_corpus_to_showmap,
+        persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -50,7 +54,8 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    SymbolicExecutor, SymbolicRunInput, SymbolicRunResult, SymbolicStats, SymbolicStopReason,
+    SymbolicConcreteInput, SymbolicExecutor, SymbolicRunInput, SymbolicRunResult, SymbolicStats,
+    SymbolicStopReason,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -77,6 +82,27 @@ pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6e
 
 pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
     func.name.starts_with("check") || func.name.starts_with("prove")
+}
+
+fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
+    config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
+}
+
+fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> bool {
+    config.symbolic.use_fuzz_corpus && func.test_function_kind().is_fuzz_test()
+}
+
+#[derive(Default)]
+struct ImportedSymbolicCorpusSeeds {
+    inputs: Vec<SymbolicConcreteInput>,
+    metadata: Option<SymbolicCorpusSeedMetadata>,
+}
+
+fn attach_imported_symbolic_corpus_seeds(
+    metadata: &Option<SymbolicCorpusSeedMetadata>,
+    result: SymbolicResult,
+) -> SymbolicResult {
+    if let Some(metadata) = metadata.clone() { result.with_corpus_seeds(metadata) } else { result }
 }
 
 pub(crate) struct InvariantCampaignScope<'a> {
@@ -143,7 +169,7 @@ pub(crate) fn count_runnable_invariant_campaign_anchors(
     .anchor_count()
 }
 
-fn function_matches_network_pass(
+pub(crate) fn function_matches_network_pass(
     all_override_networks: &[NetworkVariant],
     pass_network: Option<&NetworkVariant>,
     func_network: Option<NetworkVariant>,
@@ -671,6 +697,21 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let start = Instant::now();
         let mut warnings = Vec::new();
 
+        // In fuzz-only mode, drop suites with no runnable fuzz or invariant tests before
+        // executing `setUp`. The full function list is built after setup so contract-level
+        // inline config can still affect symbolic entrypoint discovery.
+        if self.mcr.tcfg.fuzz_only
+            && !self
+                .contract
+                .abi
+                .functions()
+                .filter(|func| filter.matches_test_function_in_contract(self.name, func))
+                .filter(|func| self.function_matches_network_pass(func))
+                .any(|func| func.is_fuzz_test() || func.is_invariant_test())
+        {
+            return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
+        }
+
         // Check if `setUp` function with valid signature declared.
         let setup_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.name.is_setup()).collect();
@@ -870,11 +911,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 .into_iter()
                 .map(|func| {
                     let start = Instant::now();
-                    let kind = match artifact.kind {
-                        SymbolicCounterexampleArtifactKind::SingleCall => {
-                            TestFunctionKind::SymbolicTest
-                        }
-                        SymbolicCounterexampleArtifactKind::Sequence => func.test_function_kind(),
+                    let kind = if artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall {
+                        TestFunctionKind::SymbolicTest
+                    } else {
+                        func.test_function_kind()
                     };
                     if artifact.kind == SymbolicCounterexampleArtifactKind::Sequence
                         && !kind.is_invariant_test()
@@ -1544,12 +1584,30 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.single_fail(Some(e.to_string()));
             return self.result;
         }
+        let kind = if should_symbolically_import_fuzz_corpus(&self.config, func) {
+            TestFunctionKind::SymbolicTest
+        } else {
+            kind
+        };
 
-        // In showmap replay mode, only fuzz/invariant tests are runnable.
-        if self.cr.mcr.tcfg.showmap.is_some()
-            && matches!(kind, TestFunctionKind::UnitTest { .. } | TestFunctionKind::TableTest)
+        // In showmap replay mode and `forge fuzz`, only fuzz/invariant tests are runnable.
+        if (self.cr.mcr.tcfg.showmap.is_some() || self.cr.mcr.tcfg.fuzz_only)
+            && matches!(
+                kind,
+                TestFunctionKind::UnitTest { .. }
+                    | TestFunctionKind::TableTest
+                    | TestFunctionKind::SymbolicTest
+            )
         {
-            self.result.replay_skip("not runnable in showmap mode");
+            if let Some(showmap) = self.cr.mcr.tcfg.showmap.as_ref() {
+                let mode = if showmap.emit_files { "showmap" } else { "replay" };
+                self.result.replay_skip(format!("not runnable in {mode} mode"));
+            } else if self.cr.mcr.tcfg.fuzz_failure_replay {
+                self.result
+                    .single_skip(SkipReason(Some("not runnable in replay mode".to_string())));
+            } else {
+                self.result.single_skip(SkipReason(Some("not runnable in fuzz mode".to_string())));
+            }
             return self.result;
         }
 
@@ -1621,12 +1679,141 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result
     }
 
+    fn import_symbolic_fuzz_corpus(&self, func: &Function) -> ImportedSymbolicCorpusSeeds {
+        let mut imported = ImportedSymbolicCorpusSeeds::default();
+        if !should_symbolically_import_fuzz_corpus(&self.config, func) {
+            return imported;
+        }
+
+        let mut fuzz_config = self.config.fuzz.clone();
+        let _ = test_paths(
+            &mut fuzz_config.corpus,
+            fuzz_config.failure_persist_dir.clone().unwrap(),
+            self.cr.name,
+            &func.name,
+        );
+        let limit = self.config.symbolic.corpus_seed_limit;
+        let mut metadata = SymbolicCorpusSeedMetadata {
+            corpus_dir: fuzz_config.corpus.corpus_dir.clone(),
+            limit,
+            loaded: 0,
+            skipped: 0,
+            used: Vec::new(),
+        };
+        let Some(corpus_dir) = fuzz_config.corpus.corpus_dir.clone() else {
+            let _ = sh_warn!(
+                "`--symbolic-use-fuzz-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`; \
+                 running without imported corpus seeds"
+            );
+            imported.metadata = Some(metadata);
+            return imported;
+        };
+
+        if limit == 0 {
+            imported.metadata = Some(metadata);
+            return imported;
+        }
+
+        'dirs: for replay_dir in canonical_replay_dirs(&corpus_dir) {
+            let mut entries = read_corpus_dir(&replay_dir).collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.path.cmp(&right.path));
+            for entry in entries {
+                if imported.inputs.len() >= limit {
+                    break 'dirs;
+                }
+                metadata.loaded += 1;
+                let tx_seq = match entry.read_tx_seq() {
+                    Ok(tx_seq) => tx_seq,
+                    Err(err) => {
+                        metadata.skipped += 1;
+                        debug!(%err, path = %entry.path.display(), "failed to read symbolic corpus seed");
+                        continue;
+                    }
+                };
+                let Some(input) = self.symbolic_corpus_seed_input(func, &tx_seq) else {
+                    metadata.skipped += 1;
+                    continue;
+                };
+                metadata.used.push(SymbolicCorpusSeedRef {
+                    path: entry.path,
+                    calldata: input.calldata.clone(),
+                });
+                imported.inputs.push(input);
+            }
+        }
+
+        debug!(
+            test = %func.signature(),
+            corpus_dir = %corpus_dir.display(),
+            loaded = metadata.loaded,
+            skipped = metadata.skipped,
+            imported = imported.inputs.len(),
+            "imported symbolic fuzz corpus seeds"
+        );
+        imported.metadata = Some(metadata);
+        imported
+    }
+
+    fn symbolic_corpus_seed_input(
+        &self,
+        func: &Function,
+        tx_seq: &[BasicTxDetails],
+    ) -> Option<SymbolicConcreteInput> {
+        let [tx] = tx_seq else {
+            return None;
+        };
+        if tx.call_details.target != self.address
+            || !tx.call_details.value.unwrap_or_default().is_zero()
+        {
+            return None;
+        }
+        let calldata = &tx.call_details.calldata;
+        if calldata.get(..4) != Some(func.selector().as_slice()) {
+            return None;
+        }
+        let args = func.abi_decode_input(&calldata[4..]).ok()?;
+        Some(SymbolicConcreteInput { args, calldata: calldata.clone() })
+    }
+
     /// Runs a symbolic test and replays any discovered counterexample concretely.
     fn run_symbolic_test(mut self, func: &Function) -> TestResult {
         if self.prepare_test(func).is_err() {
             return self.result;
         }
 
+        let ImportedSymbolicCorpusSeeds {
+            inputs: corpus_seeds,
+            metadata: mut corpus_seed_metadata,
+        } = self.import_symbolic_fuzz_corpus(func);
+        if let Some(metadata) = corpus_seed_metadata.as_mut() {
+            match SymbolicExecutor::modeled_corpus_seed_indexes(
+                &self.config.symbolic,
+                func,
+                &corpus_seeds,
+            ) {
+                Ok(indexes) => {
+                    let mut indexes = indexes.into_iter().peekable();
+                    metadata.used = std::mem::take(&mut metadata.used)
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(idx, seed)| match indexes.peek().copied() {
+                            Some(used_idx) if used_idx == idx => {
+                                indexes.next();
+                                Some(seed)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                }
+                Err(err) => {
+                    debug!(
+                        %err,
+                        test = %func.signature(),
+                        "failed to model imported symbolic corpus seeds"
+                    );
+                }
+            }
+        }
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         if self.should_defer_symbolic_diagnostics() {
             symbolic.capture_diagnostics();
@@ -1638,17 +1825,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             function: func,
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
+            collect_success_input: false,
+            corpus_seeds,
         });
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
         let symbolic_diagnostics = symbolic.take_diagnostics();
 
         match result {
-            SymbolicRunResult::Safe(stats) => {
+            SymbolicRunResult::Safe { stats, .. } => {
                 self.result.symbolic_result(
                     TestStatus::Success,
                     None,
                     None,
-                    SymbolicResult::pass(&self.config.symbolic, stats),
+                    attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::pass(&self.config.symbolic, stats),
+                    ),
                 );
             }
             SymbolicRunResult::Incomplete { kind, reason, stats } => {
@@ -1657,14 +1849,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     TestStatus::Failure,
                     Some(display_reason),
                     None,
-                    SymbolicResult::incomplete(
-                        &self.config.symbolic,
-                        kind,
-                        reason,
-                        stats,
-                        SymbolicReplayMetadata::not_required(),
-                        SymbolicCallTrace::none(),
-                        None,
+                    attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            kind,
+                            reason,
+                            stats,
+                            SymbolicReplayMetadata::not_required(),
+                            SymbolicCallTrace::none(),
+                            None,
+                        ),
                     ),
                 );
             }
@@ -1685,14 +1880,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
                     Err(EvmError::Skip(reason)) => {
                         let replay_reason = format!("vm.skip during concrete replay: {reason}");
-                        let symbolic_result = SymbolicResult::incomplete(
-                            &self.config.symbolic,
-                            SymbolicStopReason::Error,
-                            "concrete replay skipped the symbolic counterexample",
-                            stats,
-                            SymbolicReplayMetadata::skipped(replay_reason),
-                            SymbolicCallTrace::none(),
-                            Some(symbolic_counterexample),
+                        let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            SymbolicResult::incomplete(
+                                &self.config.symbolic,
+                                SymbolicStopReason::Error,
+                                "concrete replay skipped the symbolic counterexample",
+                                stats,
+                                SymbolicReplayMetadata::skipped(replay_reason),
+                                SymbolicCallTrace::none(),
+                                Some(symbolic_counterexample),
+                            ),
                         );
                         self.result.symbolic_result(
                             TestStatus::Skipped,
@@ -1706,14 +1904,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                     Err(err) => {
                         let reason = err.to_string();
-                        let symbolic_result = SymbolicResult::incomplete(
-                            &self.config.symbolic,
-                            SymbolicStopReason::Error,
-                            reason.clone(),
-                            stats,
-                            SymbolicReplayMetadata::error(reason.clone()),
-                            SymbolicCallTrace::none(),
-                            Some(symbolic_counterexample),
+                        let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            SymbolicResult::incomplete(
+                                &self.config.symbolic,
+                                SymbolicStopReason::Error,
+                                reason.clone(),
+                                stats,
+                                SymbolicReplayMetadata::error(reason.clone()),
+                                SymbolicCallTrace::none(),
+                                Some(symbolic_counterexample),
+                            ),
                         );
                         self.result.symbolic_result(
                             TestStatus::Failure,
@@ -1743,14 +1944,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 if success {
                     self.result.extend(raw_call_result);
                     let reason = "symbolic counterexample did not replay".to_string();
-                    let symbolic_result = SymbolicResult::incomplete(
-                        &self.config.symbolic,
-                        SymbolicStopReason::Error,
-                        reason.clone(),
-                        stats,
-                        SymbolicReplayMetadata::mismatch(reason.clone()),
-                        call_trace,
-                        Some(symbolic_counterexample),
+                    let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            SymbolicStopReason::Error,
+                            reason.clone(),
+                            stats,
+                            SymbolicReplayMetadata::mismatch(reason.clone()),
+                            call_trace,
+                            Some(symbolic_counterexample),
+                        ),
                     );
                     let counterexample = CounterExample::Single(base_counterexample);
                     self.result.symbolic_result(
@@ -1870,7 +2074,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         TestStatus::Failure,
                         final_reason,
                         Some(counterexample),
-                        symbolic_result,
+                        attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            symbolic_result,
+                        ),
                     );
                 }
             }
@@ -2112,6 +2319,102 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result
     }
 
+    fn try_seed_fuzz_corpus_symbolically(&self, func: &Function, fuzz_config: &FuzzConfig) {
+        if !should_symbolically_seed_fuzz_corpus(&self.config, func) {
+            return;
+        }
+        if fuzz_config.corpus.corpus_dir.is_none() {
+            let _ = sh_warn!(
+                "`--symbolic-seed-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`; \
+                 skipping symbolic corpus seeding"
+            );
+            return;
+        }
+
+        let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+        let result = symbolic.run(SymbolicRunInput {
+            executor: self.executor.as_ref(),
+            target: self.address,
+            sender: self.sender,
+            function: func,
+            value: U256::ZERO,
+            ffi_enabled: self.config.ffi,
+            collect_success_input: true,
+            corpus_seeds: Vec::new(),
+        });
+
+        let input = match result {
+            SymbolicRunResult::Safe { success_input: Some(input), .. } => input,
+            SymbolicRunResult::Safe { success_input: None, .. } => {
+                warn!(test = %func.signature(), "symbolic fuzz corpus seeding found no successful input");
+                return;
+            }
+            SymbolicRunResult::Incomplete { kind, reason, .. } => {
+                warn!(?kind, %reason, test = %func.signature(), "symbolic fuzz corpus seeding incomplete");
+                return;
+            }
+            SymbolicRunResult::Counterexample { .. } => {
+                warn!(test = %func.signature(), "symbolic fuzz corpus seeding found a counterexample");
+                return;
+            }
+        };
+
+        if !self.symbolic_fuzz_seed_concretely_succeeds(&input, fuzz_config) {
+            warn!(test = %func.signature(), "symbolic fuzz corpus seed did not pass concrete replay");
+            return;
+        }
+
+        if let Err(err) = persist_corpus_seed(
+            &fuzz_config.corpus,
+            vec![BasicTxDetails {
+                warp: None,
+                roll: None,
+                sender: self.sender,
+                call_details: CallDetails {
+                    target: self.address,
+                    calldata: input.calldata,
+                    value: Some(U256::ZERO),
+                },
+            }],
+        ) {
+            warn!(%err, test = %func.signature(), "failed to persist symbolic fuzz corpus seed");
+        }
+    }
+
+    fn symbolic_fuzz_seed_concretely_succeeds(
+        &self,
+        input: &SymbolicConcreteInput,
+        fuzz_config: &FuzzConfig,
+    ) -> bool {
+        let Ok(raw_call_result) = self.clone_executor().call_raw(
+            self.sender,
+            self.address,
+            input.calldata.clone(),
+            U256::ZERO,
+        ) else {
+            return false;
+        };
+
+        if raw_call_result.result.as_ref() == MAGIC_ASSUME {
+            return false;
+        }
+
+        if !fuzz_config.fail_on_revert
+            && raw_call_result
+                .reverter
+                .is_some_and(|reverter| reverter != self.address && reverter != CHEATCODE_ADDRESS)
+        {
+            true
+        } else {
+            self.executor.is_raw_call_success(
+                self.address,
+                Cow::Borrowed(&raw_call_result.state_changeset),
+                &raw_call_result,
+                false,
+            )
+        }
+    }
+
     /// Runs a table test.
     /// The parameters dataset (table) is created from defined parameter fixtures, therefore each
     /// test table parameter should have the same number of fixtures defined.
@@ -2252,7 +2555,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
         let runner = self.invariant_runner();
-        let invariant_config = self.config.invariant.clone();
+        let mut invariant_config = self.config.invariant.clone();
+        if self.cr.mcr.tcfg.fuzz_failure_replay {
+            invariant_config.runs = 0;
+        }
         let invariant_config = &invariant_config;
         let is_optimization = is_optimization_invariant(func);
 
@@ -2319,7 +2625,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Showmap replay mode: replay the persisted corpus and emit coverage
         // files instead of running the invariant campaign.
         if let Some(showmap) = self.cr.mcr.tcfg.showmap.clone() {
-            let corpus_dir = showmap.corpus_dir.clone().or(resolved_corpus_dir);
+            let corpus_dir = showmap
+                .corpus_dir
+                .clone()
+                .map(|corpus_dir| {
+                    narrow_generated_invariant_corpus_root(
+                        corpus_dir,
+                        self.cr.name,
+                        func.name.as_str(),
+                        is_optimization,
+                    )
+                })
+                .or(resolved_corpus_dir);
 
             // Reconstruct the per-test target selection that the campaign loop normally builds.
             if let Err(e) = evm.select_contract_artifacts(self.address) {
@@ -2334,13 +2651,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             };
             let dynamic = evm.dynamic_target_ctx();
+            let invariant_fns = live_invariants
+                .iter()
+                .map(|(invariant, fail)| (*invariant, *fail))
+                .collect::<Vec<_>>();
+            let invariant_address = self.address;
             return self.run_showmap(
                 func,
                 corpus_dir,
                 &showmap,
-                None,
-                Some(&targeted),
-                Some(&dynamic),
+                ShowmapReplayTarget {
+                    fuzzed_function: None,
+                    fuzz_fail_on_revert: false,
+                    fuzzed_contracts: Some(&targeted),
+                    invariant_address: Some(invariant_address),
+                    invariant_fns: &invariant_fns,
+                    invariant_replay: InvariantReplayOptions {
+                        check_interval: invariant_config.check_interval,
+                        call_after_invariant,
+                        is_optimization,
+                    },
+                    dynamic: Some(&dynamic),
+                },
             );
         }
 
@@ -2372,7 +2704,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
         // aren't surprised when fewer invariants appear in the report than their contract
         // defines (Echidna/Medusa never skip properties between runs).
-        if !is_optimization {
+        if !is_optimization && !self.cr.mcr.tcfg.fuzz_failure_replay {
             let persisted_skipped: Vec<&str> = live_invariants
                 .iter()
                 .filter(|(invariant_fn, _)| {
@@ -2396,6 +2728,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // and every other selected predicate that doesn't already have a compatible persisted
         // failure. Track the anchor's index so downstream consumers can resolve the campaign
         // anchor without searching by name.
+        let replay_invariant_fns = live_invariants.clone();
         let invariant_fns: Vec<(&Function, bool)> = live_invariants
             .into_iter()
             .filter(|(invariant_fn, _)| {
@@ -2440,18 +2773,59 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             revert_decoder: self.revert_decoder(),
             show_solidity,
         };
-
-        // Try to replay recorded failure if any.
         let primary_failure_file =
             invariant_failure_file(&failure_dir, invariant_contract.anchor());
-        let persisted_primary = persisted_invariant_failure(
-            &failure_dir,
-            invariant_contract.anchor(),
-            &current_settings,
-        );
-        if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
-            persisted_primary
-        {
+
+        // Try to replay recorded failure if any. `forge fuzz replay` checks each selected
+        // predicate as the replay anchor because merged invariant suites persist failures per
+        // predicate, while campaign runs use a stable suite anchor.
+        let mut replayed_persisted_invariant = false;
+        let replay_candidates: Vec<(&Function, bool)> =
+            if self.cr.mcr.tcfg.fuzz_failure_replay && !is_optimization {
+                replay_invariant_fns
+                    .iter()
+                    .filter(|(invariant_fn, _)| *invariant_fn != invariant_contract.anchor())
+                    .chain(
+                        replay_invariant_fns.iter().filter(|(invariant_fn, _)| {
+                            *invariant_fn == invariant_contract.anchor()
+                        }),
+                    )
+                    .copied()
+                    .collect()
+            } else {
+                vec![(invariant_contract.anchor(), false)]
+            };
+        for (replay_invariant, _) in replay_candidates {
+            let replay_failure_file = invariant_failure_file(&failure_dir, replay_invariant);
+            let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
+                persisted_invariant_failure(&failure_dir, replay_invariant, &current_settings)
+            else {
+                continue;
+            };
+            replayed_persisted_invariant = true;
+            let replay_fns = if self.cr.mcr.tcfg.fuzz_failure_replay && !is_optimization {
+                replay_invariant_fns.clone()
+            } else {
+                invariant_contract.invariant_fns.clone()
+            };
+            let replay_anchor_idx = replay_fns
+                .iter()
+                .position(|(invariant_fn, _)| *invariant_fn == replay_invariant)
+                .expect("replay anchor must be present in invariant_fns");
+            let replay_contract = InvariantContract::new(
+                self.address,
+                self.cr.name,
+                replay_fns,
+                replay_anchor_idx,
+                call_after_invariant,
+                &self.cr.contract.abi,
+            );
+            let replay_ctx = ReplayContext {
+                invariant_contract: &replay_contract,
+                invariant_config,
+                revert_decoder: self.revert_decoder(),
+                show_solidity,
+            };
             let (txes, replay) = replay_persisted_call_sequence(
                 &replay_ctx,
                 self.clone_executor(),
@@ -2485,8 +2859,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     assertion_failure,
                     Some(replay_ctx.revert_decoder),
                     None, // check mode
-                    &invariant_contract,
-                    invariant_contract.anchor(),
+                    &replay_contract,
+                    replay_contract.anchor(),
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -2509,7 +2883,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         // Persist error in invariant failure dir.
                         record_invariant_failure(
                             failure_dir.as_path(),
-                            primary_failure_file.as_path(),
+                            replay_failure_file.as_path(),
                             &call_sequence,
                             &current_settings,
                             assertion_failure,
@@ -2523,15 +2897,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
                 self.result.invariant_replay_fail(
                     replayed_entirely,
-                    &invariant_contract.anchor().name,
+                    &replay_contract.anchor().name,
                     replay_reason,
                     calls_count,
                     reverts,
                     call_sequence.clone(),
                 );
                 if let Some(artifact) = self.persist_invariant_sequence_counterexample_artifact(
-                    &invariant_contract.anchor().signature(),
-                    &format!("{}-replay", invariant_contract.anchor().signature()),
+                    &replay_contract.anchor().signature(),
+                    &format!("{}-replay", replay_contract.anchor().signature()),
                     &call_sequence,
                 ) {
                     self.result.add_counterexample_artifact(artifact);
@@ -2549,10 +2923,26 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &replay_ctx,
         );
 
+        // `forge fuzz replay` (without `--corpus-dir`) only replays persisted failures and
+        // must never start a fresh campaign. If handler bugs still reproduce, surface them
+        // through the normal invariant result path below; otherwise report a skip.
+        if self.cr.mcr.tcfg.fuzz_failure_replay && persisted_handler_failures.is_empty() {
+            let reason = if replayed_persisted_invariant {
+                "no persisted invariant failure reproduced for selected invariants".to_string()
+            } else {
+                format!(
+                    "no persisted invariant failure reproduced for {}",
+                    invariant_contract.anchor().name
+                )
+            };
+            self.result.single_skip(SkipReason(Some(reason)));
+            return self.result;
+        }
+
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
-            self.build_fuzz_state(true),
+            self.build_fuzz_state(true, None),
             progress.as_ref(),
             &self.tcfg.early_exit,
             persisted_handler_failures,
@@ -2991,10 +3381,62 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Showmap replay mode: replay the persisted corpus and emit coverage
         // files instead of running the fuzz campaign.
         if let Some(showmap) = self.cr.mcr.tcfg.showmap.clone() {
-            let corpus_dir =
-                showmap.corpus_dir.clone().or_else(|| fuzz_config.corpus.corpus_dir.clone());
-            return self.run_showmap(func, corpus_dir, &showmap, Some(func), None, None);
+            let corpus_dir = showmap
+                .corpus_dir
+                .clone()
+                .map(|corpus_dir| {
+                    narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &func.name)
+                })
+                .or_else(|| fuzz_config.corpus.corpus_dir.clone());
+            return self.run_showmap(
+                func,
+                corpus_dir,
+                &showmap,
+                ShowmapReplayTarget {
+                    fuzzed_function: Some(func),
+                    fuzz_fail_on_revert: fuzz_config.fail_on_revert,
+                    fuzzed_contracts: None,
+                    invariant_address: None,
+                    invariant_fns: &[],
+                    invariant_replay: InvariantReplayOptions::default(),
+                    dynamic: None,
+                },
+            );
         }
+
+        // Load persisted counterexample, if any.
+        let persisted_failure =
+            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
+        if self.cr.mcr.tcfg.fuzz_failure_replay {
+            let Some(failure) = persisted_failure.as_ref() else {
+                let result = FuzzTestResult {
+                    skipped: true,
+                    reason: Some(format!(
+                        "no persisted fuzz failure found at {}",
+                        failure_file.display()
+                    )),
+                    ..Default::default()
+                };
+                self.result.fuzz_result(result);
+                return self.result;
+            };
+
+            if failure.calldata.get(..4).is_none_or(|selector| func.selector() != selector) {
+                let result = FuzzTestResult {
+                    skipped: true,
+                    reason: Some(format!(
+                        "persisted fuzz failure selector does not match {}",
+                        func.name
+                    )),
+                    ..Default::default()
+                };
+                self.result.fuzz_result(result);
+                return self.result;
+            }
+            fuzz_config.corpus.corpus_dir = None;
+        }
+
+        self.try_seed_fuzz_corpus_symbolically(func, &fuzz_config);
 
         let progress = start_fuzz_progress(
             self.cr.progress,
@@ -3004,7 +3446,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if fuzz_config.run.is_some() { 1 } else { fuzz_config.runs },
         );
 
-        let state = self.build_fuzz_state(false);
+        let state = self.build_fuzz_state(false, Some(func));
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
@@ -3014,12 +3456,24 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_sancov_trace_cmp(fuzz_config.corpus.collect_sancov_trace_cmp());
-        // Load persisted counterexample, if any.
-        let persisted_failure =
-            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
         // Run fuzz test.
         let mut fuzzed_executor =
             FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);
+        if self.cr.mcr.tcfg.fuzz_failure_replay {
+            let result = match fuzzed_executor.replay_persisted_failure(
+                func,
+                self.address,
+                &self.cr.mcr.revert_decoder,
+            ) {
+                Ok(result) => result,
+                Err(e) => {
+                    self.result.fuzz_setup_fail(e);
+                    return self.result;
+                }
+            };
+            self.result.fuzz_result(result);
+            return self.result;
+        }
         let result = match fuzzed_executor.fuzz(
             func,
             &self.setup.fuzz_fixtures,
@@ -3112,9 +3566,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         func: &Function,
         corpus_dir: Option<PathBuf>,
         showmap: &crate::multi_runner::ShowmapConfig,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&foundry_evm::fuzz::invariant::FuzzRunIdentifiedContracts>,
-        dynamic: Option<&foundry_evm::executors::DynamicTargetCtx<'_>>,
+        target: ShowmapReplayTarget<'_>,
     ) -> TestResult {
         let Some(corpus_dir) = corpus_dir else {
             self.result.replay_skip("no corpus_dir configured for this test");
@@ -3133,33 +3585,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
 
         // Fold test identity into the approach dir so each `<approach>/` contains
-        // trials of a single test — what `differential-coverage` expects. Invariant
-        // tests share one corpus per contract, so omit the function name for them
-        // to avoid emitting duplicate approach dirs that replay the same corpus.
+        // trials of a single test — what `differential-coverage` expects. The
+        // (anchor) function name is included for invariant tests too so contracts
+        // with multiple invariant campaigns don't collide on the same approach dir
+        // (which `File::create_new` would reject). Distinct anchors sharing one
+        // corpus simply produce equivalent, separately-named approach dirs.
         let safe_id = self.cr.name.replace(['/', '\\', ':'], "_");
-        let approach = if fuzzed_contracts.is_some() {
-            format!("{}__{safe_id}", showmap.approach)
-        } else {
-            let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
-            format!("{}__{safe_id}__{safe_fn}", showmap.approach)
-        };
+        let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
+        let approach = format!("{}__{safe_id}__{safe_fn}", showmap.approach);
         let opts = ShowmapOpts {
             out_dir: showmap.out_dir.clone(),
             approach,
             trial: showmap.trial.clone(),
             per_input: showmap.per_input,
             domain,
+            emit_files: showmap.emit_files,
         };
 
         let start = std::time::Instant::now();
-        let result = replay_corpus_to_showmap(
-            &executor,
-            &corpus_dir,
-            fuzzed_function,
-            fuzzed_contracts,
-            dynamic,
-            &opts,
-        );
+        let result = replay_corpus_to_showmap(&executor, &corpus_dir, target, &opts);
         let duration = start.elapsed();
         match result {
             Ok(stats) => {
@@ -3170,12 +3614,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         func.name,
                     );
                 }
-                self.result.replay_result(
-                    stats.corpus_entries,
-                    stats.showmap_files,
-                    stats.skipped_entries,
-                    duration,
-                );
+                if stats.unreadable_entries > 0 {
+                    self.result.single_fail(Some(format!(
+                        "failed to read {} corpus entries from {}",
+                        stats.unreadable_entries,
+                        corpus_dir.display()
+                    )));
+                } else if !showmap.emit_files && stats.corpus_entries == 0 {
+                    self.result.replay_skip(format!(
+                        "replayed 0 corpus entries from {}",
+                        corpus_dir.display()
+                    ));
+                } else {
+                    self.result.replay_result(
+                        stats.corpus_entries,
+                        stats.showmap_files,
+                        stats.skipped_entries,
+                        duration,
+                    );
+                }
             }
             Err(e) => {
                 self.result.single_fail(Some(e.to_string()));
@@ -3193,9 +3650,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.executor.clone().into_owned()
     }
 
-    fn build_fuzz_state(&self, invariant: bool) -> EvmFuzzState {
+    fn build_fuzz_state(&self, invariant: bool, func: Option<&Function>) -> EvmFuzzState {
         let config =
             if invariant { self.config.invariant.dictionary } else { self.config.fuzz.dictionary };
+        let has_function_inline_config =
+            func.is_some_and(|func| self.inline_config.contains_function(self.cr.name, &func.name));
+        let can_reuse_setup_state = !invariant
+            && config == self.cr.config.fuzz.dictionary
+            && !has_function_inline_config
+            && !self.cr.contract.abi.functions().any(|func| func.name.is_before_test_setup());
+        if can_reuse_setup_state {
+            return self
+                .setup
+                .fuzz_state
+                .get_or_init(|| self.build_fuzz_state_uncached(false, config))
+                .fork();
+        }
+
+        self.build_fuzz_state_uncached(invariant, config)
+    }
+
+    fn build_fuzz_state_uncached(
+        &self,
+        invariant: bool,
+        config: FuzzDictionaryConfig,
+    ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
         if let Some(db) = self.executor.backend().active_fork_db() {
@@ -3365,6 +3844,16 @@ fn test_paths(
     (failures_dir, failure_file)
 }
 
+fn narrow_generated_fuzz_corpus_root(
+    corpus_dir: PathBuf,
+    contract_name: &str,
+    test_name: &str,
+) -> PathBuf {
+    let contract = contract_name.split(':').next_back().unwrap();
+    let target_dir = corpus_dir.join(contract).join(test_name);
+    narrow_generated_corpus_root(corpus_dir, target_dir)
+}
+
 /// Sets the invariant corpus directory and returns the contract-level failure directory.
 fn invariant_suite_paths(
     corpus_config: &mut FuzzCorpusConfig,
@@ -3384,6 +3873,26 @@ fn invariant_suite_paths(
     }
 
     failure_dir
+}
+
+fn narrow_generated_invariant_corpus_root(
+    corpus_dir: PathBuf,
+    contract_name: &str,
+    invariant_name: &str,
+    is_optimization: bool,
+) -> PathBuf {
+    let contract = invariant_contract_name(contract_name);
+    let mut target_dir = corpus_dir.join(contract);
+    if is_optimization {
+        target_dir = target_dir.join(invariant_name);
+    }
+    narrow_generated_corpus_root(corpus_dir, target_dir)
+}
+
+fn narrow_generated_corpus_root(corpus_dir: PathBuf, target_dir: PathBuf) -> PathBuf {
+    let target_is_dir =
+        std::fs::symlink_metadata(&target_dir).is_ok_and(|metadata| metadata.file_type().is_dir());
+    if target_is_dir { canonicalized(target_dir) } else { corpus_dir }
 }
 
 /// Returns the contract-level invariant failure directory.

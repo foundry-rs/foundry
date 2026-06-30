@@ -17,6 +17,7 @@ pub(crate) struct PathState {
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
+    corpus_seed_models: Vec<Arc<SymbolicModel>>,
     pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
@@ -64,6 +65,7 @@ impl PathState {
             recorded_logs: None,
             access_record: None,
             root_calldata: Some(calldata),
+            corpus_seed_models: Vec::new(),
             loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -103,6 +105,7 @@ impl PathState {
             recorded_logs: None,
             access_record: None,
             root_calldata: None,
+            corpus_seed_models: Vec::new(),
             loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -234,6 +237,33 @@ impl PathState {
         }
 
         expr.eval_model(&model).ok()
+    }
+
+    pub(crate) fn split_corpus_seed_models(
+        &self,
+        condition: &SymBoolExpr,
+    ) -> (Vec<Arc<SymbolicModel>>, Vec<Arc<SymbolicModel>>) {
+        let mut true_models = Vec::new();
+        let mut false_models = Vec::new();
+        for model in &self.corpus_seed_models {
+            match condition.eval_model_if_complete(model.as_ref()) {
+                Ok(Some(true)) => true_models.push(Arc::clone(model)),
+                Ok(Some(false)) => false_models.push(Arc::clone(model)),
+                Ok(None) | Err(_) => {
+                    true_models.push(Arc::clone(model));
+                    false_models.push(Arc::clone(model));
+                }
+            }
+        }
+        (true_models, false_models)
+    }
+
+    pub(crate) fn set_corpus_seed_models(&mut self, models: Vec<Arc<SymbolicModel>>) {
+        self.corpus_seed_models = models;
+    }
+
+    pub(crate) const fn corpus_seed_model_count(&self) -> usize {
+        self.corpus_seed_models.len()
     }
 
     pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {

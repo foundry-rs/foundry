@@ -81,8 +81,30 @@ use filter::{RerunFailure, RerunFailures};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
+const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
+
+fn validate_showmap_name(kind: &str, name: &str) -> Result<()> {
+    let path = Path::new(name);
+    if name.is_empty()
+        || path.is_absolute()
+        || path.components().count() != 1
+        || name.contains(['/', '\\'])
+        || matches!(name, "." | "..")
+    {
+        bail!(
+            "invalid {kind} `{name}`: expected a single file-name component without path separators"
+        );
+    }
+    Ok(())
+}
+
+fn validate_showmap_config(showmap: &ShowmapConfig) -> Result<()> {
+    validate_showmap_name("showmap approach", &showmap.approach)?;
+    validate_showmap_name("showmap trial", &showmap.trial)
+}
 
 /// Output format for EVM execution profiles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -158,6 +180,18 @@ impl TestExecutionOptions {
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
+    /// Internal mode used by `forge fuzz`.
+    #[arg(skip)]
+    pub(crate) fuzz_only: bool,
+
+    /// Internal showmap/replay override used by `forge fuzz replay`.
+    #[arg(skip)]
+    pub(crate) showmap_override: Option<ShowmapConfig>,
+
+    /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
+    #[arg(skip)]
+    pub(crate) fuzz_failure_replay: bool,
+
     // Include global options for users of this struct.
     #[command(flatten)]
     pub global: GlobalArgs,
@@ -316,6 +350,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
     pub fuzz_corpus_random_sequence_weight: Option<u32>,
 
+    /// Directory for fuzz corpus persistence.
+    #[arg(long, env = "FOUNDRY_FUZZ_CORPUS_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub fuzz_corpus_dir: Option<PathBuf>,
+
     /// Percent chance that fuzzed payable calls carry non-zero msg.value.
     #[arg(long, env = "FOUNDRY_FUZZ_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
     pub fuzz_payable_value_weight: Option<u32>,
@@ -385,6 +423,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
     pub invariant_corpus_random_sequence_weight: Option<u32>,
 
+    /// Directory for invariant corpus persistence.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub invariant_corpus_dir: Option<PathBuf>,
+
     /// Percent chance that fuzzed payable invariant calls carry non-zero msg.value.
     #[arg(long, env = "FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
     pub invariant_payable_value_weight: Option<u32>,
@@ -443,6 +485,18 @@ pub struct TestArgs {
         ],
     )]
     pub replay_symbolic_artifact: Option<PathBuf>,
+
+    /// Run fuzz tests symbolically and persist non-failing concrete inputs to the fuzz corpus.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_SEED_CORPUS")]
+    pub symbolic_seed_corpus: bool,
+
+    /// Run fuzz tests symbolically using existing fuzz corpus entries as path-priority hints.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_USE_FUZZ_CORPUS")]
+    pub symbolic_use_fuzz_corpus: bool,
+
+    /// Maximum number of fuzz corpus entries to import for one symbolic test.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_CORPUS_SEED_LIMIT", value_name = "COUNT")]
+    pub symbolic_corpus_seed_limit: Option<usize>,
 
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
@@ -662,7 +716,12 @@ impl TestArgs {
     }
 
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
-    fn showmap_config(&self) -> Option<ShowmapConfig> {
+    fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
+        if let Some(showmap) = self.showmap_override.clone() {
+            validate_showmap_config(&showmap)?;
+            return Ok(Some(showmap));
+        }
+
         // Default trial id uses nanosecond precision so back-to-back invocations
         // don't collide and overwrite each other's output files.
         let trial = self.showmap_trial.clone().unwrap_or_else(|| {
@@ -672,14 +731,34 @@ impl TestArgs {
                 .unwrap_or(0);
             format!("trial-{ns}")
         });
-        Some(ShowmapConfig {
-            out_dir: self.showmap_out.clone()?,
+        let Some(out_dir) = self.showmap_out.clone() else { return Ok(None) };
+        let showmap = ShowmapConfig {
+            out_dir,
             approach: self.showmap_approach.clone(),
             trial,
             per_input: self.showmap_per_input,
             domain: self.showmap_domain.into(),
             corpus_dir: self.showmap_corpus_dir.clone(),
-        })
+            emit_files: true,
+        };
+        validate_showmap_config(&showmap)?;
+        Ok(Some(showmap))
+    }
+
+    /// Restricts this test invocation to fuzz and invariant tests.
+    pub(crate) const fn enable_fuzz_only(&mut self) {
+        self.fuzz_only = true;
+    }
+
+    /// Overrides showmap config for callers that reuse replay mode without the
+    /// `forge test --showmap-*` CLI flags.
+    pub(crate) fn set_showmap_override(&mut self, showmap: ShowmapConfig) {
+        self.showmap_override = Some(showmap);
+    }
+
+    /// Replays persisted fuzz failures without running a new fuzz campaign.
+    pub(crate) const fn enable_fuzz_failure_replay(&mut self) {
+        self.fuzz_failure_replay = true;
     }
 
     fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
@@ -689,7 +768,7 @@ impl TestArgs {
 
         if !self.filter.is_empty() || self.path.is_some() {
             bail!(
-                "`--replay-symbolic-artifact` cannot be combined with test selection filters; \
+                "symbolic artifact mode cannot be combined with test selection filters; \
                  the artifact selects its original target"
             );
         }
@@ -832,6 +911,32 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
+        let (project_root, config, evm_opts, output, filter, replay_symbolic_artifact) =
+            self.compile_project().await?;
+        self.run_tests(
+            &project_root,
+            config,
+            evm_opts,
+            &output,
+            &filter,
+            TestExecutionOptions {
+                replay_symbolic_artifact,
+                ..TestExecutionOptions::default_run()
+            },
+        )
+        .await
+    }
+
+    async fn compile_project(
+        &mut self,
+    ) -> Result<(
+        PathBuf,
+        Config,
+        EvmOpts,
+        ProjectCompileOutput,
+        ProjectPathsAwareFilter,
+        Option<SymbolicArtifactReplayConfig>,
+    )> {
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -851,6 +956,7 @@ impl TestArgs {
 
         // Set up the project.
         let project = config.project()?;
+        let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
 
@@ -884,18 +990,7 @@ impl TestArgs {
             .files(self.get_sources_to_compile(&config, &filter)?);
         let output = compiler.compile(&project)?;
 
-        self.run_tests(
-            &project.paths.root,
-            config,
-            evm_opts,
-            &output,
-            &filter,
-            TestExecutionOptions {
-                replay_symbolic_artifact,
-                ..TestExecutionOptions::default_run()
-            },
-        )
-        .await
+        Ok((project_root, config, evm_opts, output, filter, replay_symbolic_artifact))
     }
 
     /// Executes all the tests in the project.
@@ -1531,7 +1626,7 @@ impl TestArgs {
             evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
         let config = Arc::new(config);
-        let showmap = self.showmap_config();
+        let showmap = self.showmap_config()?;
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(execution.should_debug)
             .set_decode_internal(execution.decode_internal)
@@ -1544,6 +1639,8 @@ impl TestArgs {
             .set_coverage(execution.coverage)
             .with_multi_network(execution.multi_network)
             .with_showmap(showmap)
+            .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
@@ -1640,14 +1737,24 @@ impl TestArgs {
             } else {
                 "run the debugger"
             };
-            let filter = if filter.is_empty() {
+            let filter_hint = if filter.is_empty() {
                 String::new()
             } else {
                 format!("\n\nFilter used:\n{filter}")
             };
+            let matching_tests_hint = if self.debug {
+                format_matching_debug_tests(&runner.list(filter)).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let narrowing_hint = if self.debug {
+                "Use --match-test <TEST_NAME>, --match-contract, and --match-path to further limit the search."
+            } else {
+                "Use --match-contract and --match-path to further limit the search."
+            };
             eyre::bail!(
-                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.\n\n\
-                 Use --match-contract and --match-path to further limit the search.{filter}",
+                "{num_filtered} tests matched your criteria, but exactly 1 test must match in order to {action}.{matching_tests_hint}\n\n\
+                 {narrowing_hint}{filter_hint}",
             );
         }
 
@@ -1766,9 +1873,8 @@ impl TestArgs {
             // Clear the addresses and labels from previous test.
             decoder.clear_addresses();
 
-            // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3
-                || self.gas_report
+            // Some outputs need trace identities even if the textual trace is not rendered.
+            let always_identify_traces = self.gas_report
                 || self.debug
                 || self.flamegraph
                 || self.flamechart
@@ -1788,8 +1894,18 @@ impl TestArgs {
 
             // Process individual test results, printing logs and traces when necessary.
             for (name, result) in tests {
-                let show_traces =
-                    !self.suppress_successful_traces || result.status == TestStatus::Failure;
+                let test_failed = result.status.is_failure();
+                let show_traces = !self.suppress_successful_traces || test_failed;
+                let render_trace_output = should_render_trace_output(silent, show_traces);
+                let should_include_trace = |kind: &TraceKind| match kind {
+                    TraceKind::Execution => (verbosity == 3 && test_failed) || verbosity >= 4,
+                    TraceKind::Setup => (verbosity == 4 && test_failed) || verbosity >= 5,
+                    TraceKind::Deployment => false,
+                };
+                let renders_trace = render_trace_output
+                    && result.traces.iter().any(|(kind, _)| should_include_trace(kind));
+                let identify_addresses = always_identify_traces || renders_trace;
+
                 if !silent {
                     sh_println!("{}", result.short_result_with_suite(name, &contract_name))?;
                     for artifact in &result.counterexample_artifacts {
@@ -1823,46 +1939,50 @@ impl TestArgs {
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
-                decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
+                if identify_addresses {
+                    decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
+                }
 
                 // Identify addresses and decode traces.
-                let mut decoded_traces = Vec::with_capacity(result.traces.len());
-                for (kind, arena) in &mut result.traces {
-                    if identify_addresses {
-                        if self.debug && !result.debug_bytecodes.is_empty() {
-                            let mut local_identifier = TraceIdentifiers::new()
-                                .with_local_and_bytecodes(
-                                    &known_contracts,
-                                    &result.debug_bytecodes,
-                                );
-                            decoder.identify(arena, &mut local_identifier);
-                        }
-                        decoder.identify(arena, &mut identifier);
-                    }
-
-                    // verbosity:
-                    // - 0..3: nothing
-                    // - 3: only display traces for failed tests
-                    // - 4: also display the setup trace for failed tests
-                    // - 5..: display all traces for all tests, including storage changes
-                    let should_include = match kind {
-                        TraceKind::Execution => {
-                            (verbosity == 3 && result.status.is_failure()) || verbosity >= 4
-                        }
-                        TraceKind::Setup => {
-                            (verbosity == 4 && result.status.is_failure()) || verbosity >= 5
-                        }
-                        TraceKind::Deployment => false,
-                    };
-
-                    if should_include {
-                        decode_trace_arena(arena, &decoder).await;
-
-                        if let Some(trace_depth) = self.trace_depth {
-                            prune_trace_depth(arena, trace_depth);
+                let mut decoded_traces = if renders_trace {
+                    Vec::with_capacity(result.traces.len())
+                } else {
+                    Vec::new()
+                };
+                if identify_addresses || renders_trace {
+                    for (kind, arena) in &mut result.traces {
+                        if identify_addresses {
+                            if self.debug && !result.debug_bytecodes.is_empty() {
+                                let mut local_identifier = TraceIdentifiers::new()
+                                    .with_local_and_bytecodes(
+                                        &known_contracts,
+                                        &result.debug_bytecodes,
+                                    );
+                                decoder.identify(arena, &mut local_identifier);
+                            }
+                            decoder.identify(arena, &mut identifier);
                         }
 
-                        decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
+                        // verbosity:
+                        // - 0..3: nothing
+                        // - 3: only display traces for failed tests
+                        // - 4: also display the setup trace for failed tests
+                        // - 5..: display all traces for all tests, including storage changes
+                        let should_include = should_include_trace(kind);
+
+                        if renders_trace && should_include {
+                            decode_trace_arena(arena, &decoder).await;
+
+                            if let Some(trace_depth) = self.trace_depth {
+                                prune_trace_depth(arena, trace_depth);
+                            }
+
+                            decoded_traces.push(render_trace_arena_inner(
+                                arena,
+                                false,
+                                verbosity > 4,
+                            ));
+                        }
                     }
                 }
 
@@ -2104,6 +2224,10 @@ impl TestArgs {
     }
 }
 
+const fn should_render_trace_output(silent: bool, show_traces: bool) -> bool {
+    !silent && show_traces
+}
+
 impl Provider for TestArgs {
     fn metadata(&self) -> Metadata {
         Metadata::named("Core Build Args Provider")
@@ -2151,6 +2275,12 @@ impl Provider for TestArgs {
             fuzz_dict.insert(
                 "corpus_random_sequence_weight".to_string(),
                 fuzz_corpus_random_sequence_weight.into(),
+            );
+        }
+        if let Some(fuzz_corpus_dir) = self.fuzz_corpus_dir.clone() {
+            fuzz_dict.insert(
+                "corpus_dir".to_string(),
+                fuzz_corpus_dir.to_string_lossy().to_string().into(),
             );
         }
         if let Some(fuzz_payable_value_weight) = self.fuzz_payable_value_weight {
@@ -2228,6 +2358,12 @@ impl Provider for TestArgs {
             invariant_dict
                 .insert("corpus_random_sequence_weight_configured".to_string(), true.into());
         }
+        if let Some(invariant_corpus_dir) = self.invariant_corpus_dir.clone() {
+            invariant_dict.insert(
+                "corpus_dir".to_string(),
+                invariant_corpus_dir.to_string_lossy().to_string().into(),
+            );
+        }
         if let Some(invariant_payable_value_weight) = self.invariant_payable_value_weight {
             invariant_dict
                 .insert("payable_value_weight".to_string(), invariant_payable_value_weight.into());
@@ -2260,6 +2396,15 @@ impl Provider for TestArgs {
         let mut symbolic_dict = Dict::default();
         if self.symbolic {
             symbolic_dict.insert("enabled".to_string(), true.into());
+        }
+        if self.symbolic_seed_corpus {
+            symbolic_dict.insert("seed_corpus".to_string(), true.into());
+        }
+        if self.symbolic_use_fuzz_corpus {
+            symbolic_dict.insert("use_fuzz_corpus".to_string(), true.into());
+        }
+        if let Some(corpus_seed_limit) = self.symbolic_corpus_seed_limit {
+            symbolic_dict.insert("corpus_seed_limit".to_string(), corpus_seed_limit.into());
         }
         if let Some(solver) = self.symbolic_solver.clone() {
             symbolic_dict.insert("solver".to_string(), solver.into());
@@ -2407,6 +2552,42 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
     if let Some(decoder) = other.last_run_decoder {
         base.last_run_decoder = Some(decoder);
     }
+}
+
+fn format_matching_debug_tests(
+    matching_tests: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
+) -> Option<String> {
+    let mut output = String::from("\n\nMatching tests:");
+    let mut total = 0;
+    let mut shown = 0;
+
+    for (source, contracts) in matching_tests {
+        for (contract, tests) in contracts {
+            for test in tests {
+                total += 1;
+
+                if shown < DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT {
+                    output.push_str("\n  ");
+                    output.push_str(source);
+                    output.push(':');
+                    output.push_str(contract);
+                    output.push('.');
+                    output.push_str(test);
+                    shown += 1;
+                }
+            }
+        }
+    }
+
+    if total == 0 {
+        return None;
+    }
+
+    if total > shown {
+        output.push_str(&format!("\n  ... and {} more", total - shown));
+    }
+
+    Some(output)
 }
 
 struct LastRunFailures {
@@ -2690,9 +2871,33 @@ mod tests {
     }
 
     #[test]
+    fn showmap_override_validates_path_component_names() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.set_showmap_override(ShowmapConfig {
+            out_dir: PathBuf::from("showmap"),
+            approach: "../outside".to_string(),
+            trial: "trial".to_string(),
+            per_input: false,
+            domain: ShowmapDomain::Evm,
+            corpus_dir: None,
+            emit_files: false,
+        });
+
+        let err = args.showmap_config().unwrap_err().to_string();
+        assert!(err.contains("expected a single file-name component"), "{err}");
+    }
+
+    #[test]
     fn depth_trace() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--trace-depth", "2"]);
         assert!(args.trace_depth.is_some());
+    }
+
+    #[test]
+    fn silent_output_disables_trace_rendering() {
+        assert!(!should_render_trace_output(true, true));
+        assert!(!should_render_trace_output(false, false));
+        assert!(should_render_trace_output(false, true));
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
@@ -2817,6 +3022,38 @@ mod tests {
     }
 
     #[test]
+    fn corpus_dir_env_vars_are_parsed() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_fuzz = std::env::var_os("FOUNDRY_FUZZ_CORPUS_DIR");
+        let previous_invariant = std::env::var_os("FOUNDRY_INVARIANT_CORPUS_DIR");
+        unsafe {
+            std::env::set_var("FOUNDRY_FUZZ_CORPUS_DIR", "env_fuzz_corpus");
+            std::env::set_var("FOUNDRY_INVARIANT_CORPUS_DIR", "env_invariant_corpus");
+        }
+
+        let args = TestArgs::try_parse_from(["foundry-cli"]);
+
+        unsafe {
+            if let Some(previous) = previous_fuzz {
+                std::env::set_var("FOUNDRY_FUZZ_CORPUS_DIR", previous);
+            } else {
+                std::env::remove_var("FOUNDRY_FUZZ_CORPUS_DIR");
+            }
+            if let Some(previous) = previous_invariant {
+                std::env::set_var("FOUNDRY_INVARIANT_CORPUS_DIR", previous);
+            } else {
+                std::env::remove_var("FOUNDRY_INVARIANT_CORPUS_DIR");
+            }
+        }
+
+        let args = args.unwrap();
+        assert_eq!(args.fuzz_corpus_dir, Some(PathBuf::from("env_fuzz_corpus")));
+        assert_eq!(args.invariant_corpus_dir, Some(PathBuf::from("env_invariant_corpus")));
+    }
+
+    #[test]
     fn fuzz_and_invariant_config_flags() {
         let args = TestArgs::parse_from([
             "foundry-cli",
@@ -2830,6 +3067,8 @@ mod tests {
             "4321",
             "--fuzz-corpus-random-sequence-weight",
             "55",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
             "--fuzz-payable-value-weight",
             "12",
             "--fuzz-mutation-weight-splice",
@@ -2854,6 +3093,8 @@ mod tests {
             "6789",
             "--invariant-corpus-random-sequence-weight",
             "25",
+            "--invariant-corpus-dir",
+            "invariant_corpus",
             "--invariant-payable-value-weight",
             "34",
             "--invariant-mutation-weight-splice",
@@ -2877,6 +3118,10 @@ mod tests {
             "4321"
         );
         assert_eq!(figment.extract_inner::<u32>("fuzz.corpus_random_sequence_weight").unwrap(), 55);
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("fuzz.corpus_dir").unwrap(),
+            PathBuf::from("fuzz_corpus")
+        );
         assert_eq!(figment.extract_inner::<u32>("fuzz.payable_value_weight").unwrap(), 12);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
@@ -2904,6 +3149,10 @@ mod tests {
             figment.extract_inner::<u32>("invariant.corpus_random_sequence_weight").unwrap(),
             25
         );
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("invariant.corpus_dir").unwrap(),
+            PathBuf::from("invariant_corpus")
+        );
         assert_eq!(figment.extract_inner::<u32>("invariant.payable_value_weight").unwrap(), 34);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_splice").unwrap(), 2);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_cmp").unwrap(), 7);
@@ -2914,6 +3163,7 @@ mod tests {
         assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, 1234);
         assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_literals, 4321);
         assert_eq!(config.fuzz.corpus.corpus_random_sequence_weight, 55);
+        assert_eq!(config.fuzz.corpus.corpus_dir, Some(PathBuf::from("fuzz_corpus")));
         assert_eq!(config.fuzz.corpus.payable_value_weight, 12);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
@@ -2926,6 +3176,7 @@ mod tests {
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_values, usize::MAX);
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_literals, 6789);
         assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
+        assert_eq!(config.invariant.corpus.corpus_dir, Some(PathBuf::from("invariant_corpus")));
         assert!(config.invariant.corpus_random_sequence_weight_configured);
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
