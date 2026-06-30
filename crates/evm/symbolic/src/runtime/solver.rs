@@ -1473,8 +1473,8 @@ fn run_solver_process(
         }
     };
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         return SolverProcessOutcome::Error(solver_exit_error(
             command,
             output.status,
