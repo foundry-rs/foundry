@@ -305,6 +305,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_getRawTransaction", with = "sequence")]
     DebugGetRawTransaction(TxHash),
 
+    /// geth's `debug_clearTxpool` endpoint
+    #[serde(rename = "debug_clearTxpool", with = "empty_params")]
+    DebugClearTxpool(()),
+
     /// geth's `debug_traceTransaction`  endpoint
     #[serde(rename = "debug_traceTransaction")]
     DebugTraceTransaction(B256, #[serde(default)] GethDebugTracingOptions),
@@ -1519,6 +1523,13 @@ mod tests {
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockNumberAndIndex","params":["0x3ed3a89b",0],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_clear_txpool() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_clearTxpool","params":[],"id":1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
