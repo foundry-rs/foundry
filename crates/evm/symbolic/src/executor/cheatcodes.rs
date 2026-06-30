@@ -1679,11 +1679,8 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.rollFork block number",
                 )?;
-                let current = state
-                    .block
-                    .number
-                    .clone()
-                    .into_concrete("symbolic vm.rollFork current block")?;
+                let current =
+                    state.block.number.as_const_or("symbolic vm.rollFork current block")?;
                 if block_number == current {
                     return Ok(CheatcodeOutcome::Continue(Vec::new()));
                 }
@@ -1704,11 +1701,8 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.rollFork block number",
                 )?;
-                let current = state
-                    .block
-                    .number
-                    .clone()
-                    .into_concrete("symbolic vm.rollFork current block")?;
+                let current =
+                    state.block.number.as_const_or("symbolic vm.rollFork current block")?;
                 if executor.backend().is_active_fork(id) && block_number == current {
                     return Ok(CheatcodeOutcome::Continue(Vec::new()));
                 }

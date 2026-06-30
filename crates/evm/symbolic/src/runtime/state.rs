@@ -907,7 +907,7 @@ impl ExpectedCall {
         if self.gas.is_none() && self.min_gas.is_none() {
             return Ok(true);
         }
-        let mut gas = gas.clone().into_concrete("symbolic expected call gas")?;
+        let mut gas = gas.as_const_or("symbolic expected call gas")?;
         if value.is_some_and(|value| !value.is_zero()) {
             gas = gas.saturating_add(U256::from(CALL_VALUE_STIPEND));
         }
@@ -2007,8 +2007,7 @@ impl SymbolicBlock {
         block_number: U256,
         block_hash: SymExpr,
     ) -> Result<(), SymbolicError> {
-        let current =
-            self.number.clone().into_concrete("symbolic vm.setBlockhash current number")?;
+        let current = self.number.as_const_or("symbolic vm.setBlockhash current number")?;
         if block_number < current && current - block_number <= U256::from(256) {
             self.block_hashes.insert(block_number, block_hash);
         }
@@ -2020,7 +2019,7 @@ impl SymbolicBlock {
         executor: &Executor<FEN>,
         block_number: U256,
     ) -> Result<SymExpr, SymbolicError> {
-        let current = self.number.clone().into_concrete("symbolic BLOCKHASH current number")?;
+        let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
         if block_number >= current || current - block_number > U256::from(256) {
             return Ok(SymExpr::zero());
         }
@@ -2045,7 +2044,7 @@ impl SymbolicBlock {
         if let Some(block_number) = block_number.as_const() {
             return self.block_hash(executor, block_number);
         }
-        let current = self.number.clone().into_concrete("symbolic BLOCKHASH current number")?;
+        let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
         if current.is_zero() {
             return Ok(SymExpr::zero());
         }
