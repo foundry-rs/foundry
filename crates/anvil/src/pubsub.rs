@@ -8,6 +8,7 @@ use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId};
 use anvil_rpc::{request::Version, response::ResponseResult};
+use foundry_primitives::FoundryTxReceipt;
 use futures::{Stream, StreamExt, channel::mpsc::Receiver, ready};
 use serde::Serialize;
 use std::{
@@ -101,6 +102,7 @@ pub enum EthSubscription<N: Network> {
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
     FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>, SubscriptionId),
     Syncing(Option<SubscriptionId>),
+    TransactionReceipts(UnboundedReceiver<Vec<FoundryTxReceipt>>, SubscriptionId),
 }
 
 impl<N: Network> std::fmt::Debug for EthSubscription<N> {
@@ -111,6 +113,7 @@ impl<N: Network> std::fmt::Debug for EthSubscription<N> {
             Self::PendingTransactions(..) => f.debug_tuple("PendingTransactions").finish(),
             Self::FullPendingTransactions(..) => f.debug_tuple("FullPendingTransactions").finish(),
             Self::Syncing(_) => f.debug_tuple("Syncing").finish(),
+            Self::TransactionReceipts(..) => f.debug_tuple("TransactionReceipts").finish(),
         }
     }
 }
@@ -164,6 +167,13 @@ where
                     return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
                 }
                 Poll::Pending
+            }
+            Self::TransactionReceipts(receipts, id) => {
+                let res = ready!(receipts.poll_recv(cx)).map(to_rpc_result).map(|result| {
+                    let params = EthSubscriptionParams { subscription: id.clone(), result };
+                    EthSubscriptionResponse::new(params)
+                });
+                Poll::Ready(res)
             }
         }
     }
