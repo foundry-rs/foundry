@@ -2164,7 +2164,7 @@ fn expression_constructors_reuse_live_nodes() {
     let two = SymExpr::constant(U256::from(2));
     assert!(two.ptr_eq(&SymExpr::constant(U256::from(2))));
 
-    let first = SymExpr::op(SymExprOp::Add, SymExpr::var("x"), two.clone());
+    let first = SymExpr::op(SymExprOp::Add, SymExpr::var("x"), two);
     let second = SymExpr::op(SymExprOp::Add, SymExpr::var("x"), SymExpr::constant(U256::from(2)));
     assert!(first.ptr_eq(&second));
 
