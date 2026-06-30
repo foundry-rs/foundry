@@ -20,7 +20,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-use tokio::sync::{Mutex, mpsc::UnboundedReceiver};
+use tokio::sync::{Mutex, mpsc};
 
 /// Type alias for filters identified by their id and their expiration timestamp
 type FilterMap<N> = Arc<Mutex<HashMap<String, (EthFilter<N>, Instant)>>>;
@@ -142,7 +142,7 @@ pub enum EthFilter<N: Network> {
     Logs(Box<LogsFilter<N>>),
     Blocks(NewBlockNotifications),
     PendingTransactions(Receiver<TxHash>),
-    FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>),
+    FullPendingTransactions(mpsc::Receiver<AnyRpcTransaction>),
 }
 
 impl<N: Network> std::fmt::Debug for EthFilter<N> {
