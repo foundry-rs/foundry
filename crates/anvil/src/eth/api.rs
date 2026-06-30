@@ -1602,6 +1602,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
+            EthRequest::EthSendRawTransactionConditional(tx, condition) => {
+                self.send_raw_transaction_conditional(tx, condition).await.to_rpc_result()
+            }
             EthRequest::EthSendRawTransactionSync(tx) => {
                 self.send_raw_transaction_sync(tx).await.to_rpc_result()
             }
@@ -2392,6 +2395,24 @@ impl EthApi<FoundryNetwork> {
         Ok(*tx.hash())
     }
 
+    /// Sends a signed transaction with an empty transaction condition.
+    ///
+    /// Handler for ETH RPC call: `eth_sendRawTransactionConditional`
+    pub async fn send_raw_transaction_conditional(
+        &self,
+        tx: Bytes,
+        condition: serde_json::Value,
+    ) -> Result<TxHash> {
+        node_info!("eth_sendRawTransactionConditional");
+        if !is_empty_transaction_condition(&condition) {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "transaction conditions are not supported",
+            )));
+        }
+
+        self.send_raw_transaction(tx).await
+    }
+
     /// Classifies a raw transaction with the active Anvil Tempo/T5 payment-lane classifier.
     pub fn anvil_classify_transaction(&self, tx: Bytes) -> Result<PaymentLaneClassification> {
         node_info!("anvil_classifyTransaction");
@@ -2927,6 +2948,18 @@ impl EthApi<FoundryNetwork> {
             self.backend.call_with_tracing(request, fees, Some(block_request), opts).await;
         result
     }
+}
+
+fn is_empty_transaction_condition(condition: &serde_json::Value) -> bool {
+    let Some(condition) = condition.as_object() else {
+        return false;
+    };
+
+    condition.iter().all(|(key, value)| match key.as_str() {
+        "knownAccounts" => value.as_object().is_some_and(|accounts| accounts.is_empty()),
+        "blockNumberMin" | "blockNumberMax" | "timestampMin" | "timestampMax" => value.is_null(),
+        _ => false,
+    })
 }
 
 // == impl EthApi anvil endpoints ==
