@@ -27,9 +27,7 @@ use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{
-    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
-};
+use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{
     ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
@@ -843,20 +841,6 @@ impl TestArgs {
         if test_filter.is_empty() {
             return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                 .chain(source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS))
-                .collect());
-        }
-
-        let filter_args = test_filter.args();
-        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
-            || filter_args.test_pattern_inverse.is_some()
-            || filter_args.contract_pattern.is_some()
-            || filter_args.contract_pattern_inverse.is_some();
-        if !has_contract_or_test_filter {
-            return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                .chain(
-                    source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
-                        .filter(|path| test_filter.matches_path(path)),
-                )
                 .collect());
         }
 
