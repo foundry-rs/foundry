@@ -731,6 +731,20 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     })
 }
 
+fn corpus_cmp_seq(cmp_seq: &[Vec<CmpOperands>], input_len: usize) -> Vec<Vec<CmpOperands>> {
+    let mut retained = Vec::new();
+    for (idx, cmp_values) in cmp_seq.iter().take(input_len).enumerate() {
+        if retained.is_empty() {
+            if cmp_values.is_empty() {
+                continue;
+            }
+            retained.resize_with(idx, Vec::new);
+        }
+        retained.push(cmp_values.clone());
+    }
+    retained
+}
+
 impl WorkerCorpus {
     pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
@@ -918,8 +932,7 @@ impl WorkerCorpus {
         if corpus_inputs.is_empty() {
             return None;
         }
-        let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
-            cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
+        let corpus_cmp_seq = corpus_cmp_seq(cmp_seq, corpus_inputs.len());
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
         self.insert_corpus_entry(
@@ -2372,6 +2385,43 @@ mod tests {
         manager.process_inputs(&[], &[], true, None);
         assert_eq!(manager.in_memory_corpus.len(), 0);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+    }
+
+    #[test]
+    fn all_empty_cmp_sequence_is_not_stored() {
+        let corpus_root = temp_corpus_dir();
+        let mut manager = empty_worker_corpus(1, corpus_root);
+        let inputs = vec![basic_tx(), basic_tx()];
+        let cmp_seq = vec![Vec::new(), Vec::new()];
+
+        let record = manager.process_inputs_for_campaign(&inputs, &cmp_seq, true, None);
+
+        assert!(record.is_some());
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert!(manager.in_memory_corpus[0].cmp_seq.is_empty());
+    }
+
+    #[test]
+    fn non_empty_cmp_sequence_keeps_parallel_indexes() {
+        let corpus_root = temp_corpus_dir();
+        let mut manager = empty_worker_corpus(1, corpus_root);
+        let inputs = vec![basic_tx(), basic_tx()];
+        let cmp = CmpOperands {
+            op1: U256::from(1),
+            op2: U256::from(2),
+            pc: 3,
+            address: Address::ZERO,
+            opcode: 0,
+        };
+        let cmp_seq = vec![Vec::new(), vec![cmp]];
+
+        let record = manager.process_inputs_for_campaign(&inputs, &cmp_seq, true, None);
+
+        assert!(record.is_some());
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(manager.in_memory_corpus[0].cmp_seq.len(), 2);
+        assert!(manager.in_memory_corpus[0].cmp_seq[0].is_empty());
+        assert_eq!(manager.in_memory_corpus[0].cmp_seq[1], vec![cmp]);
     }
 
     #[test]
