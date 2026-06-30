@@ -10,15 +10,18 @@ use crate::executors::{
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256};
 use alloy_sol_types::SolCall;
+use foundry_common::ContractsByAddress;
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     FoundryBlock, constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork,
 };
-use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
+use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 use revm::context::Block;
-use std::{cell::Cell, collections::HashSet, hash::Hash};
+use std::{cell::Cell, collections::HashSet, fmt::Write, hash::Hash};
+
+const LIVE_SHRINK_SEQUENCE_EDGE_CALLS: usize = 16;
 
 /// Shrinker for a call sequence failure.
 /// Iterates sequence call sequence top down and removes calls one by one.
@@ -234,17 +237,125 @@ pub(crate) fn reset_shrink_progress(
     progress: Option<&ProgressBar>,
     label: &str,
     position: Option<(usize, usize)>,
-) {
+) -> String {
+    let message = match position {
+        Some((current, total)) if total > 1 => {
+            format!(" [{current}/{total}] Shrink: {label}")
+        }
+        _ => format!(" Shrink: {label}"),
+    };
     if let Some(progress) = progress {
         progress.set_length(config.shrink_run_limit as u64);
         progress.reset();
-        let message = match position {
-            Some((current, total)) if total > 1 => {
-                format!(" [{current}/{total}] Shrink: {label}")
-            }
-            _ => format!(" Shrink: {label}"),
+        progress.set_message(message.clone());
+    }
+    message
+}
+
+/// Live shrink progress display. The progress bar itself is owned by forge's test runner; this
+/// type only formats the transient message shown while invariant shrinking is active.
+pub(crate) struct ShrinkProgress<'a> {
+    progress: Option<&'a ProgressBar>,
+    message: String,
+    identified_contracts: Option<&'a ContractsByAddress>,
+    show_solidity: bool,
+}
+
+impl<'a> ShrinkProgress<'a> {
+    pub(crate) fn new(
+        config: &InvariantConfig,
+        progress: Option<&'a ProgressBar>,
+        label: &str,
+        position: Option<(usize, usize)>,
+        identified_contracts: Option<&'a ContractsByAddress>,
+        show_solidity: bool,
+    ) -> Self {
+        let message = reset_shrink_progress(config, progress, label, position);
+        Self { progress, message, identified_contracts, show_solidity }
+    }
+
+    fn inc(&self) {
+        if let Some(progress) = self.progress {
+            progress.inc(1);
+        }
+    }
+
+    fn update(
+        &self,
+        calls: &[BasicTxDetails],
+        shrinker: &SequenceShrink,
+        accumulate_warp_roll: bool,
+    ) {
+        let Some(progress) = self.progress else {
+            return;
         };
+        if progress.is_hidden() {
+            return;
+        }
+
+        let sequence = build_shrunk_sequence(calls, shrinker, accumulate_warp_roll);
+        let message = format_shrink_progress_message(
+            &self.message,
+            &sequence,
+            self.identified_contracts,
+            self.show_solidity,
+        );
         progress.set_message(message);
+    }
+}
+
+fn format_shrink_progress_message(
+    phase: &str,
+    sequence: &[BasicTxDetails],
+    identified_contracts: Option<&ContractsByAddress>,
+    show_solidity: bool,
+) -> String {
+    let mut message = String::with_capacity(phase.len() + sequence.len().min(32) * 96);
+    message.push_str(phase);
+    write!(message, "\n\t[Sequence] (shrunk: {})", sequence.len()).unwrap();
+
+    if sequence.len() <= LIVE_SHRINK_SEQUENCE_EDGE_CALLS * 2 {
+        for tx in sequence {
+            push_shrink_progress_call(&mut message, tx, identified_contracts, show_solidity);
+        }
+        return message;
+    }
+
+    for tx in &sequence[..LIVE_SHRINK_SEQUENCE_EDGE_CALLS] {
+        push_shrink_progress_call(&mut message, tx, identified_contracts, show_solidity);
+    }
+    writeln!(
+        message,
+        "\n\t\t... {} call(s) omitted ...",
+        sequence.len() - LIVE_SHRINK_SEQUENCE_EDGE_CALLS * 2
+    )
+    .unwrap();
+    for tx in &sequence[sequence.len() - LIVE_SHRINK_SEQUENCE_EDGE_CALLS..] {
+        push_shrink_progress_call(&mut message, tx, identified_contracts, show_solidity);
+    }
+    message
+}
+
+fn push_shrink_progress_call(
+    message: &mut String,
+    tx: &BasicTxDetails,
+    identified_contracts: Option<&ContractsByAddress>,
+    show_solidity: bool,
+) {
+    let empty_contracts;
+    let identified_contracts = if let Some(identified_contracts) = identified_contracts {
+        identified_contracts
+    } else {
+        empty_contracts = ContractsByAddress::default();
+        &empty_contracts
+    };
+
+    let call =
+        BaseCounterExample::from_invariant_call(tx, identified_contracts, None, show_solidity)
+            .to_string();
+    for line in call.lines() {
+        message.push('\n');
+        message.push_str(line);
     }
 }
 
@@ -363,8 +474,9 @@ where
 /// candidate still triggers the bug.
 fn run_shrink_loop<P>(
     config: &InvariantConfig,
-    calls_len: usize,
-    progress: Option<&ProgressBar>,
+    calls: &[BasicTxDetails],
+    progress: &ShrinkProgress<'_>,
+    accumulate_warp_roll: bool,
     early_exit: &EarlyExit,
     error_policy: ShrinkErrorPolicy,
     mut predicate: P,
@@ -373,20 +485,24 @@ where
     P: FnMut(&SequenceShrink) -> eyre::Result<bool>,
 {
     let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
-    shrink_sequence_by_removing(
-        calls_len,
+    let initial = SequenceShrink::new(calls.len());
+    progress.update(calls, &initial, accumulate_warp_roll);
+
+    let shrinker = shrink_sequence_by_removing(
+        calls.len(),
         &mut run,
         || early_exit.should_stop(),
-        || {
-            if let Some(progress) = progress {
-                progress.inc(1);
+        || progress.inc(),
+        |shrinker| {
+            progress.update(calls, shrinker, accumulate_warp_roll);
+            match predicate(shrinker) {
+                Ok(bug_still_present) => Some(bug_still_present),
+                Err(_) => Some(matches!(error_policy, ShrinkErrorPolicy::KeepRemoved)),
             }
         },
-        |shrinker| match predicate(shrinker) {
-            Ok(bug_still_present) => Some(bug_still_present),
-            Err(_) => Some(matches!(error_policy, ShrinkErrorPolicy::KeepRemoved)),
-        },
-    )
+    );
+    progress.update(calls, &shrinker, accumulate_warp_roll);
+    shrinker
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -398,7 +514,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     expect_assertion_failure: bool,
     executor: &Executor<FEN>,
     rd: Option<&RevertDecoder>,
-    progress: Option<&ProgressBar>,
+    progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
 ) -> eyre::Result<ShrunkSequence> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
@@ -417,8 +533,9 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     let mut last_result_matches_shrinker = true;
     let shrinker = run_shrink_loop(
         config,
-        calls.len(),
+        calls,
         progress,
+        accumulate_warp_roll,
         early_exit,
         // Preserve legacy invariant-shrink behavior: errors during candidate evaluation
         // do not roll back the removal.
@@ -763,7 +880,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     calls: &[BasicTxDetails],
     executor: &Executor<FEN>,
     target_value: I256,
-    progress: Option<&ProgressBar>,
+    progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking optimization sequence of {} calls for target value {}.", calls.len(), target_value);
@@ -781,31 +898,34 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     let replay_failed = Cell::new(false);
     let mut replay_error = None;
     let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
+    let initial = SequenceShrink::new(calls.len());
+    progress.update(calls, &initial, true);
+
     let shrinker = shrink_sequence_by_removing(
         calls.len(),
         &mut run,
         || early_exit.should_stop() || replay_failed.get(),
-        || {
-            if let Some(progress) = progress {
-                progress.inc(1);
-            }
-        },
-        |shrinker| match check_sequence_value(
-            executor.clone(),
-            calls,
-            shrinker.current().collect(),
-            target_address,
-            calldata.clone(),
-        ) {
-            Ok(Some(value)) => Some(value == target_value),
-            Ok(None) => Some(false),
-            Err(err) => {
-                replay_error = Some(err);
-                replay_failed.set(true);
-                None
+        || progress.inc(),
+        |shrinker| {
+            progress.update(calls, shrinker, true);
+            match check_sequence_value(
+                executor.clone(),
+                calls,
+                shrinker.current().collect(),
+                target_address,
+                calldata.clone(),
+            ) {
+                Ok(Some(value)) => Some(value == target_value),
+                Ok(None) => Some(false),
+                Err(err) => {
+                    replay_error = Some(err);
+                    replay_failed.set(true);
+                    None
+                }
             }
         },
     );
+    progress.update(calls, &shrinker, true);
     if let Some(err) = replay_error {
         return Err(err);
     }
@@ -883,7 +1003,7 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     calls: &[BasicTxDetails],
     expected_fingerprint: B256,
     executor: &Executor<FEN>,
-    progress: Option<&ProgressBar>,
+    progress: &ShrinkProgress<'_>,
     early_exit: &EarlyExit,
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     if calls.is_empty() {
@@ -892,8 +1012,9 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     let accumulate_warp_roll = config.has_delay();
     let shrinker = run_shrink_loop(
         config,
-        calls.len(),
+        calls,
         progress,
+        accumulate_warp_roll,
         early_exit,
         ShrinkErrorPolicy::RestoreRemoved,
         |shrinker| {
@@ -988,7 +1109,8 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::{
-        SequenceShrink, ShrinkCandidateKeys, ShrinkErrorPolicy, ShrinkRun, build_shrunk_sequence,
+        LIVE_SHRINK_SEQUENCE_EDGE_CALLS, SequenceShrink, ShrinkCandidateKeys, ShrinkErrorPolicy,
+        ShrinkProgress, ShrinkRun, build_shrunk_sequence, format_shrink_progress_message,
         run_shrink_loop, shrink_sequence_by_removing,
     };
     use crate::executors::EarlyExit;
@@ -1004,6 +1126,19 @@ mod tests {
             call_details: CallDetails {
                 target: Address::ZERO,
                 calldata: Bytes::new(),
+                value: None,
+            },
+        }
+    }
+
+    fn tx_with_calldata(byte: u8) -> BasicTxDetails {
+        BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: CallDetails {
+                target: Address::ZERO,
+                calldata: Bytes::from(vec![byte]),
                 value: None,
             },
         }
@@ -1071,11 +1206,18 @@ mod tests {
     fn shrink_loop_keep_removed_treats_candidate_error_as_still_failing() {
         let config = InvariantConfig { shrink_run_limit: 1, ..Default::default() };
         let early_exit = EarlyExit::new(false);
+        let calls = vec![tx(None, None), tx(None, None)];
+        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
 
-        let shrinker =
-            run_shrink_loop(&config, 2, None, &early_exit, ShrinkErrorPolicy::KeepRemoved, |_| {
-                Err(eyre::eyre!("candidate replay failed"))
-            });
+        let shrinker = run_shrink_loop(
+            &config,
+            &calls,
+            &progress,
+            false,
+            &early_exit,
+            ShrinkErrorPolicy::KeepRemoved,
+            |_| Err(eyre::eyre!("candidate replay failed")),
+        );
 
         assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![1]);
     }
@@ -1084,12 +1226,15 @@ mod tests {
     fn shrink_loop_limit_counts_candidate_replays_not_skipped_indices() {
         let config = InvariantConfig { shrink_run_limit: 4, ..Default::default() };
         let early_exit = EarlyExit::new(false);
+        let calls = vec![tx(None, None), tx(None, None), tx(None, None)];
+        let progress = ShrinkProgress::new(&config, None, "test", None, None, false);
         let mut replay_attempts = 0;
 
         let shrinker = run_shrink_loop(
             &config,
-            3,
-            None,
+            &calls,
+            &progress,
+            false,
             &early_exit,
             ShrinkErrorPolicy::RestoreRemoved,
             |_| {
@@ -1127,5 +1272,34 @@ mod tests {
         let stats = run.finish();
         assert_eq!(stats.attempts, 2);
         assert_eq!(stats.accepted, 0);
+    }
+
+    #[test]
+    fn shrink_progress_message_renders_current_sequence() {
+        let calls = vec![tx_with_calldata(1), tx_with_calldata(2)];
+
+        let message =
+            format_shrink_progress_message(" Shrink: invariant_live", &calls, None, false);
+
+        assert!(message.contains(" Shrink: invariant_live"));
+        assert!(message.contains("[Sequence] (shrunk: 2)"));
+        assert!(message.contains("calldata=0x01 args=[]"));
+        assert!(message.contains("calldata=0x02 args=[]"));
+    }
+
+    #[test]
+    fn shrink_progress_message_omits_middle_of_large_sequence() {
+        let calls = (0..(LIVE_SHRINK_SEQUENCE_EDGE_CALLS * 2 + 3))
+            .map(|idx| tx_with_calldata(idx as u8))
+            .collect::<Vec<_>>();
+
+        let message =
+            format_shrink_progress_message(" Shrink: invariant_live", &calls, None, false);
+
+        assert!(message.contains("[Sequence] (shrunk: 35)"));
+        assert!(message.contains("... 3 call(s) omitted ..."));
+        assert_eq!(message.matches("sender=").count(), LIVE_SHRINK_SEQUENCE_EDGE_CALLS * 2);
+        assert!(message.contains("calldata=0x00 args=[]"));
+        assert!(message.contains("calldata=0x22 args=[]"));
     }
 }
