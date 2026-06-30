@@ -138,6 +138,14 @@ impl<N: Network> ClientFork<N> {
         self.provider().get_proof(address, keys).block_id(block_number.unwrap_or_default()).await
     }
 
+    /// Sends `eth_getBlockAccessList`
+    pub async fn block_access_list(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<serde_json::Value>, TransportError> {
+        self.provider().raw_request("eth_getBlockAccessList".into(), (block_id,)).await
+    }
+
     pub async fn storage_at(
         &self,
         address: Address,
