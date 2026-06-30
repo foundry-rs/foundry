@@ -12,8 +12,8 @@ use alloy_primitives::{
 };
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
-    AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
-    TransactionRequest,
+    AccessList, AccessListItem, AccessListResult, BlockId, BlockNumberOrTag, BlockOverrides,
+    BlockTransactions, TransactionRequest,
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_serde::WithOtherFields;
@@ -1329,6 +1329,34 @@ async fn test_tx_access_list() {
         access_list.access_list,
         AccessList::from(vec![AccessListItem { address: reverter, storage_keys: vec![slot] }]),
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_create_access_list_with_state_override() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let sender = Address::random();
+    let target = Address::random();
+    let tx = TransactionRequest::default().from(sender).to(target);
+    let tx = WithOtherFields::new(tx);
+
+    // PUSH1 0; SLOAD; STOP.
+    let code = Bytes::from(hex!("60005400").to_vec());
+    let state_override = StateOverridesBuilder::default()
+        .append(target, AccountOverride::default().with_code(code.to_vec()))
+        .build();
+
+    let access_list: AccessListResult = provider
+        .client()
+        .request("eth_createAccessList", (tx, None::<BlockId>, state_override))
+        .await
+        .unwrap();
+
+    assert_eq!(access_list.access_list.0.len(), 1);
+    let item = access_list.access_list.0.first().unwrap();
+    assert_eq!(item.address, target);
+    assert_eq!(item.storage_keys, vec![FixedBytes::ZERO]);
 }
 
 // ensures that the gas estimate is running on pending block by default
