@@ -659,9 +659,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     /// extends peak memory in long invariant campaigns.
     fn drop_corpus_payloads(&mut self) {
         self.inputs.clear();
-        self.inputs.shrink_to_fit();
         self.cmp_seq.clear();
-        self.cmp_seq.shrink_to_fit();
     }
 }
 
