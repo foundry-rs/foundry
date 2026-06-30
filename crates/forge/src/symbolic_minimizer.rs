@@ -1948,7 +1948,7 @@ mod tests {
 
         let minimized = minimize_single_call_counterexample(function, &start, TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
             let args = decoded(function, candidate);
-            matches!(&args[0], DynSolValue::Array(values) if values.iter().tuple_combinations().any(|(left, right)| left == right))
+            matches!(&args[0], DynSolValue::Array(values) if values.iter().array_combinations().any(|[left, right]| left == right))
         })
         .unwrap();
 

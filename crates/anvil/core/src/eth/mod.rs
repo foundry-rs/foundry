@@ -68,6 +68,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_gasPrice", with = "empty_params")]
     EthGasPrice(()),
 
+    #[serde(rename = "eth_baseFee", with = "empty_params")]
+    EthBaseFee(()),
+
     #[serde(rename = "eth_maxPriorityFeePerGas", with = "empty_params")]
     EthMaxPriorityFeePerGas(()),
 
@@ -108,6 +111,12 @@ pub enum EthRequest {
         #[serde(deserialize_with = "lenient_block_number::lenient_block_number")] BlockNumber,
         bool,
     ),
+
+    #[serde(
+        rename = "eth_getHeaderByNumber",
+        deserialize_with = "lenient_block_number::lenient_block_number_seq"
+    )]
+    EthGetHeaderByNumber(BlockNumber),
 
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
@@ -173,6 +182,9 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
+
+    #[serde(rename = "eth_sendRawTransactionConditional")]
+    EthSendRawTransactionConditional(Bytes, serde_json::Value),
 
     #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
     EthSendRawTransactionSync(Bytes),
@@ -308,6 +320,14 @@ pub enum EthRequest {
     /// geth's `debug_getRawTransaction`  endpoint
     #[serde(rename = "debug_getRawTransaction", with = "sequence")]
     DebugGetRawTransaction(TxHash),
+
+    /// reth's `debug_getRawReceipts` endpoint.
+    #[serde(rename = "debug_getRawReceipts", with = "sequence")]
+    DebugGetRawReceipts(BlockId),
+
+    /// geth's `debug_clearTxpool` endpoint
+    #[serde(rename = "debug_clearTxpool", with = "empty_params")]
+    DebugClearTxpool(()),
 
     /// geth's `debug_traceTransaction`  endpoint
     #[serde(rename = "debug_traceTransaction")]
@@ -634,6 +654,13 @@ pub enum EthRequest {
     #[serde(rename = "txpool_content", with = "empty_params")]
     TxPoolContent(()),
 
+    /// Returns the details of all transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only, filtered
+    /// by sender.
+    /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_contentFrom>
+    #[serde(rename = "txpool_contentFrom", with = "sequence")]
+    TxPoolContentFrom(Address),
+
     /// Otterscan's `ots_getApiLevel` endpoint
     /// Otterscan currently requires this endpoint, even though it's not part of the ots_*
     /// <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
@@ -850,8 +877,36 @@ mod tests {
     }
 
     #[test]
+    fn test_txpool_content_from() {
+        let address = "0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842";
+        let s = format!(r#"{{"method": "txpool_contentFrom", "params":["{address}"]}}"#);
+        let value: serde_json::Value = serde_json::from_str(&s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::TxPoolContentFrom(from) => {
+                assert_eq!(from, address.parse::<Address>().unwrap());
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_eth_get_header_by_number() {
+        let s = r#"{"method": "eth_getHeaderByNumber", "params":["latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_eth_max_priority_fee() {
         let s = r#"{"method": "eth_maxPriorityFeePerGas", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_base_fee() {
+        let s = r#"{"method": "eth_baseFee", "params":[]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -1487,6 +1542,14 @@ mod tests {
     }
 
     #[test]
+    fn test_serde_raw_transaction_conditional() {
+        let s = r#"{"method": "eth_sendRawTransactionConditional", "params":
+["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"knownAccounts":{}}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_serde_eth_unsubscribe() {
         let s = r#"{"id": 1, "method": "eth_unsubscribe", "params":
 ["0x9cef478923ff08bf67fde6c64013158d"]}"#;
@@ -1530,6 +1593,24 @@ mod tests {
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"jsonrpc":"2.0","method":"eth_getRawTransactionByBlockNumberAndIndex","params":["0x3ed3a89b",0],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_raw_receipts() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["latest"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_clear_txpool() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_clearTxpool","params":[],"id":1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

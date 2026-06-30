@@ -39,9 +39,9 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, NetworkTransactionBuilder,
-    ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse,
-    eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, BlockResponse, Network,
+    NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder, TransactionBuilder4844,
+    TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
@@ -53,6 +53,7 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
+    pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
@@ -61,7 +62,7 @@ use alloy_rpc_types::{
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
-    txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
+    txpool::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
 use alloy_rpc_types_eth::FillTransaction;
 use alloy_serde::WithOtherFields;
@@ -290,6 +291,15 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `anvil_dropAllTransactions`
     pub async fn anvil_drop_all_transactions(&self) -> Result<()> {
         node_info!("anvil_dropAllTransactions");
+        self.pool.clear();
+        Ok(())
+    }
+
+    /// Clears all transactions from the pool.
+    ///
+    /// Handler for RPC call: `debug_clearTxpool`
+    pub async fn debug_clear_txpool(&self) -> Result<()> {
+        node_info!("debug_clearTxpool");
         self.pool.clear();
         Ok(())
     }
@@ -819,6 +829,14 @@ impl<N: Network> EthApi<N> {
     fn eth_gas_price(&self) -> Result<U256> {
         node_info!("eth_gasPrice");
         Ok(U256::from(self.gas_price()))
+    }
+
+    /// Returns the base fee for the next block, or null before London.
+    ///
+    /// Handler for ETH RPC call: `eth_baseFee`
+    pub fn base_fee(&self) -> Result<Option<U256>> {
+        node_info!("eth_baseFee");
+        Ok(self.backend.is_eip1559().then(|| U256::from(self.backend.base_fee())))
     }
 
     /// Returns the excess blob gas and current blob gas price
@@ -1526,6 +1544,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
             EthRequest::EthHashrate(()) => self.hashrate().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.eth_gas_price().to_rpc_result(),
+            EthRequest::EthBaseFee(_) => self.base_fee().to_rpc_result(),
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
             }
@@ -1552,6 +1571,9 @@ impl EthApi<FoundryNetwork> {
                 } else {
                     self.block_by_number(num).await.to_rpc_result()
                 }
+            }
+            EthRequest::EthGetHeaderByNumber(num) => {
+                self.header_by_number(num).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionCount(addr, block) => {
                 self.transaction_count(addr, block).await.to_rpc_result()
@@ -1592,6 +1614,9 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
+            }
+            EthRequest::EthSendRawTransactionConditional(tx, condition) => {
+                self.send_raw_transaction_conditional(tx, condition).await.to_rpc_result()
             }
             EthRequest::EthSendRawTransactionSync(tx) => {
                 self.send_raw_transaction_sync(tx).await.to_rpc_result()
@@ -1667,6 +1692,11 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DebugGetRawTransaction(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
+            EthRequest::DebugGetRawReceipts(block) => {
+                self.raw_receipts(block).await.to_rpc_result()
+            }
+            // non eth-standard rpc calls
+            EthRequest::DebugClearTxpool(_) => self.debug_clear_txpool().await.to_rpc_result(),
             // non eth-standard rpc calls
             EthRequest::DebugTraceTransaction(tx, opts) => {
                 self.debug_trace_transaction(tx, opts).await.to_rpc_result()
@@ -1820,6 +1850,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TxPoolStatus(_) => self.txpool_status().await.to_rpc_result(),
             EthRequest::TxPoolInspect(_) => self.txpool_inspect().await.to_rpc_result(),
             EthRequest::TxPoolContent(_) => self.txpool_content().await.to_rpc_result(),
+            EthRequest::TxPoolContentFrom(from) => {
+                self.txpool_content_from(from).await.to_rpc_result()
+            }
             EthRequest::ErigonGetHeaderByNumber(num) => {
                 self.erigon_get_header_by_number(num).await.to_rpc_result()
             }
@@ -2074,6 +2107,18 @@ impl EthApi<FoundryNetwork> {
         }
 
         self.backend.block_by_number(number).await
+    }
+
+    /// Returns block header with given number.
+    ///
+    /// Handler for ETH RPC call: `eth_getHeaderByNumber`
+    pub async fn header_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcHeader>> {
+        node_info!("eth_getHeaderByNumber");
+        if number == BlockNumber::Pending {
+            return Ok(Some(self.pending_block().await.header.clone()));
+        }
+
+        Ok(self.backend.block_by_number(number).await?.map(|block| block.header.clone()))
     }
 
     /// Returns a _full_ block with given number
@@ -2379,6 +2424,24 @@ impl EthApi<FoundryNetwork> {
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Sends a signed transaction with an empty transaction condition.
+    ///
+    /// Handler for ETH RPC call: `eth_sendRawTransactionConditional`
+    pub async fn send_raw_transaction_conditional(
+        &self,
+        tx: Bytes,
+        condition: serde_json::Value,
+    ) -> Result<TxHash> {
+        node_info!("eth_sendRawTransactionConditional");
+        if !is_empty_transaction_condition(&condition) {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "transaction conditions are not supported",
+            )));
+        }
+
+        self.send_raw_transaction(tx).await
     }
 
     /// Classifies a raw transaction with the active Anvil Tempo/T5 payment-lane classifier.
@@ -2842,6 +2905,34 @@ impl EthApi<FoundryNetwork> {
         self.inner_raw_transaction(hash).await
     }
 
+    /// Returns EIP-2718 encoded raw receipts for the block.
+    ///
+    /// Handler for RPC call: `debug_getRawReceipts`.
+    pub async fn raw_receipts(&self, block: BlockId) -> Result<Vec<Bytes>> {
+        node_info!("debug_getRawReceipts");
+
+        // In fork mode, serve pre-fork blocks from the upstream provider.
+        if let BlockRequest::Number(number) = self.block_request(Some(block)).await?
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(number)
+        {
+            let receipts = fork.block_receipts(number).await?.unwrap_or_default();
+            return Ok(receipts
+                .into_iter()
+                .map(|receipt| {
+                    receipt.0.inner.inner.map_logs(|log| log.inner).encoded_2718().into()
+                })
+                .collect());
+        }
+
+        let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
+        let receipts = self
+            .backend
+            .mined_receipts(block.header.hash_slow())
+            .ok_or(BlockchainError::BlockNotFound)?;
+        Ok(receipts.into_iter().map(|receipt| receipt.encoded_2718().into()).collect())
+    }
+
     /// Returns EIP-2718 encoded raw transaction by block hash and index
     ///
     /// Handler for RPC call: `eth_getRawTransactionByBlockHashAndIndex`
@@ -2931,6 +3022,18 @@ impl EthApi<FoundryNetwork> {
             self.backend.call_with_tracing(request, fees, Some(block_request), opts).await;
         result
     }
+}
+
+fn is_empty_transaction_condition(condition: &serde_json::Value) -> bool {
+    let Some(condition) = condition.as_object() else {
+        return false;
+    };
+
+    condition.iter().all(|(key, value)| match key.as_str() {
+        "knownAccounts" => value.as_object().is_some_and(|accounts| accounts.is_empty()),
+        "blockNumberMin" | "blockNumberMax" | "timestampMin" | "timestampMax" => value.is_null(),
+        _ => false,
+    })
 }
 
 // == impl EthApi anvil endpoints ==
@@ -3362,9 +3465,13 @@ impl EthApi<FoundryNetwork> {
     ///
     /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content) for more details
     ///
-    /// Handler for ETH RPC call: `txpool_inspect`
+    /// Handler for ETH RPC call: `txpool_content`
     pub async fn txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         node_info!("txpool_content");
+        self.build_txpool_content()
+    }
+
+    fn build_txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         let mut content = TxpoolContent::<AnyRpcTransaction>::default();
         fn convert(tx: Arc<PoolTransaction<FoundryTxEnvelope>>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
@@ -3399,6 +3506,22 @@ impl EthApi<FoundryNetwork> {
         }
 
         Ok(content)
+    }
+
+    /// Returns the details of all transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only, filtered
+    /// by sender.
+    ///
+    /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_contentFrom) for more details
+    ///
+    /// Handler for ETH RPC call: `txpool_contentFrom`
+    pub async fn txpool_content_from(
+        &self,
+        from: Address,
+    ) -> Result<TxpoolContentFrom<AnyRpcTransaction>> {
+        node_info!("txpool_contentFrom");
+        let mut content = self.build_txpool_content()?;
+        Ok(content.remove_from(&from))
     }
 }
 
@@ -3496,6 +3619,60 @@ impl EthApi<FoundryNetwork> {
                 if let Ok(Some(txn)) = this.transaction_by_hash(hash).await
                     && tx.send(txn).is_err()
                 {
+                    break;
+                }
+            }
+        });
+
+        rx
+    }
+
+    /// Returns a listener for new block receipts.
+    pub fn transaction_receipts_subscription(
+        &self,
+        filter: TransactionReceiptsParams,
+    ) -> UnboundedReceiver<Vec<FoundryTxReceipt>> {
+        let (tx, rx) = unbounded_channel();
+        let mut blocks = self.new_block_notifications();
+        let this = self.clone();
+
+        tokio::spawn(async move {
+            // Precompute the hash filter once.
+            let hash_filter = filter
+                .transaction_hashes
+                .filter(|hashes| !hashes.is_empty())
+                .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
+
+            loop {
+                let block = tokio::select! {
+                    biased;
+                    // Exit when the subscriber unsubscribes, even while awaiting the next block.
+                    _ = tx.closed() => break,
+                    maybe_block = blocks.next() => match maybe_block {
+                        Some(block) => block,
+                        None => break,
+                    },
+                };
+
+                let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {
+                    Ok(Some(mut receipts)) => {
+                        if let Some(hashes) = &hash_filter {
+                            receipts.retain(|receipt| hashes.contains(&receipt.transaction_hash()));
+                        }
+                        receipts
+                    }
+                    Ok(None) => continue,
+                    Err(err) => {
+                        trace!(target: "node", %err, "failed to build block receipts for subscription");
+                        continue;
+                    }
+                };
+
+                if receipts.is_empty() {
+                    continue;
+                }
+
+                if tx.send(receipts).is_err() {
                     break;
                 }
             }
