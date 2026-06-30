@@ -2835,6 +2835,21 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `debug_getRawReceipts`.
     pub async fn raw_receipts(&self, block: BlockId) -> Result<Vec<Bytes>> {
         node_info!("debug_getRawReceipts");
+
+        // In fork mode, serve pre-fork blocks from the upstream provider.
+        if let BlockRequest::Number(number) = self.block_request(Some(block)).await?
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(number)
+        {
+            let receipts = fork.block_receipts(number).await?.unwrap_or_default();
+            return Ok(receipts
+                .into_iter()
+                .map(|receipt| {
+                    receipt.0.inner.inner.map_logs(|log| log.inner).encoded_2718().into()
+                })
+                .collect());
+        }
+
         let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
         let receipts = self
             .backend
