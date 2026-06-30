@@ -174,6 +174,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
 
+    #[serde(rename = "eth_sendRawTransactionConditional")]
+    EthSendRawTransactionConditional(Bytes, serde_json::Value),
+
     #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
     EthSendRawTransactionSync(Bytes),
 
@@ -308,6 +311,10 @@ pub enum EthRequest {
     /// reth's `debug_getRawReceipts` endpoint.
     #[serde(rename = "debug_getRawReceipts", with = "sequence")]
     DebugGetRawReceipts(BlockId),
+
+    /// geth's `debug_clearTxpool` endpoint
+    #[serde(rename = "debug_clearTxpool", with = "empty_params")]
+    DebugClearTxpool(()),
 
     /// geth's `debug_traceTransaction`  endpoint
     #[serde(rename = "debug_traceTransaction")]
@@ -1480,6 +1487,14 @@ mod tests {
     }
 
     #[test]
+    fn test_serde_raw_transaction_conditional() {
+        let s = r#"{"method": "eth_sendRawTransactionConditional", "params":
+["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"knownAccounts":{}}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_serde_eth_unsubscribe() {
         let s = r#"{"id": 1, "method": "eth_unsubscribe", "params":
 ["0x9cef478923ff08bf67fde6c64013158d"]}"#;
@@ -1534,6 +1549,13 @@ mod tests {
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_clear_txpool() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_clearTxpool","params":[],"id":1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

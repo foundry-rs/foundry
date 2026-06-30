@@ -294,6 +294,15 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Clears all transactions from the pool.
+    ///
+    /// Handler for RPC call: `debug_clearTxpool`
+    pub async fn debug_clear_txpool(&self) -> Result<()> {
+        node_info!("debug_clearTxpool");
+        self.pool.clear();
+        Ok(())
+    }
+
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
         node_info!("anvil_setChainId");
         self.backend.set_chain_id(chain_id);
@@ -1593,6 +1602,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
+            EthRequest::EthSendRawTransactionConditional(tx, condition) => {
+                self.send_raw_transaction_conditional(tx, condition).await.to_rpc_result()
+            }
             EthRequest::EthSendRawTransactionSync(tx) => {
                 self.send_raw_transaction_sync(tx).await.to_rpc_result()
             }
@@ -1670,6 +1682,8 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DebugGetRawReceipts(block) => {
                 self.raw_receipts(block).await.to_rpc_result()
             }
+            // non eth-standard rpc calls
+            EthRequest::DebugClearTxpool(_) => self.debug_clear_txpool().await.to_rpc_result(),
             // non eth-standard rpc calls
             EthRequest::DebugTraceTransaction(tx, opts) => {
                 self.debug_trace_transaction(tx, opts).await.to_rpc_result()
@@ -2384,6 +2398,24 @@ impl EthApi<FoundryNetwork> {
         Ok(*tx.hash())
     }
 
+    /// Sends a signed transaction with an empty transaction condition.
+    ///
+    /// Handler for ETH RPC call: `eth_sendRawTransactionConditional`
+    pub async fn send_raw_transaction_conditional(
+        &self,
+        tx: Bytes,
+        condition: serde_json::Value,
+    ) -> Result<TxHash> {
+        node_info!("eth_sendRawTransactionConditional");
+        if !is_empty_transaction_condition(&condition) {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "transaction conditions are not supported",
+            )));
+        }
+
+        self.send_raw_transaction(tx).await
+    }
+
     /// Classifies a raw transaction with the active Anvil Tempo/T5 payment-lane classifier.
     pub fn anvil_classify_transaction(&self, tx: Bytes) -> Result<PaymentLaneClassification> {
         node_info!("anvil_classifyTransaction");
@@ -2947,6 +2979,18 @@ impl EthApi<FoundryNetwork> {
             self.backend.call_with_tracing(request, fees, Some(block_request), opts).await;
         result
     }
+}
+
+fn is_empty_transaction_condition(condition: &serde_json::Value) -> bool {
+    let Some(condition) = condition.as_object() else {
+        return false;
+    };
+
+    condition.iter().all(|(key, value)| match key.as_str() {
+        "knownAccounts" => value.as_object().is_some_and(|accounts| accounts.is_empty()),
+        "blockNumberMin" | "blockNumberMax" | "timestampMin" | "timestampMax" => value.is_null(),
+        _ => false,
+    })
 }
 
 // == impl EthApi anvil endpoints ==
