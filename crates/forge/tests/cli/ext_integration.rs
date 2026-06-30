@@ -77,8 +77,9 @@ fn solady() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "2834e9750b39058f06129c8fde1b12fb832a50d5")
+    ExtTester::new("pcaversaccio", "snekmate", "df2816d6a5ecdb8dcc1257e22089422825fd5e27")
         .fuzz_runs(256)
+        .python_package("git+https://github.com/vyperlang/vyper@v0.5.0a3")
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
