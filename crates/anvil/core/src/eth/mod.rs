@@ -443,6 +443,10 @@ pub enum EthRequest {
         HashSet<TraceType>,
     ),
 
+    /// Trace transaction endpoint for parity's `trace_replayTransaction`.
+    #[serde(rename = "trace_replayTransaction")]
+    TraceReplayTransaction(B256, HashSet<TraceType>),
+
     /// Trace raw transaction endpoint for parity's `trace_rawTransaction`.
     #[serde(rename = "trace_rawTransaction")]
     TraceRawTransaction(Bytes, HashSet<TraceType>, #[serde(default)] Option<BlockId>),
@@ -1812,6 +1816,13 @@ mod tests {
         let s = r#"{"method": "debug_traceTransaction", "params":
 ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"disableStorage":
 true}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_replay_transaction() {
+        let s = r#"{"method":"trace_replayTransaction","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff",["trace","stateDiff"]]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

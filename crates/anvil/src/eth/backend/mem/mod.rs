@@ -1887,6 +1887,30 @@ impl<N: Network> Backend<N> {
         Ok(vec![])
     }
 
+    /// Replays a mined transaction and returns the requested traces.
+    pub async fn trace_replay_transaction(
+        &self,
+        hash: B256,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<TraceResults, BlockchainError> {
+        let block_number =
+            self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.block_number);
+
+        if let Some(block_number) = block_number
+            && let Some(results) =
+                self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)
+            && let Some(result) = results.into_iter().find(|result| result.transaction_hash == hash)
+        {
+            return Ok(result.full_trace);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.trace_replay_transaction(hash, trace_types).await?);
+        }
+
+        Err(BlockchainError::TransactionNotFound)
+    }
+
     /// Traces a raw transaction without committing it to the chain state or mempool.
     pub async fn trace_raw_transaction(
         &self,
