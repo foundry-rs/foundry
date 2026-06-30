@@ -106,6 +106,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_getBlockByHash")]
     EthGetBlockByHash(B256, bool),
 
+    #[serde(rename = "eth_getHeaderByHash", with = "sequence")]
+    EthGetHeaderByHash(B256),
+
     #[serde(rename = "eth_getBlockByNumber")]
     EthGetBlockByNumber(
         #[serde(deserialize_with = "lenient_block_number::lenient_block_number")] BlockNumber,
@@ -861,6 +864,13 @@ mod tests {
     #[test]
     fn test_eth_block_number() {
         let s = r#"{"method": "eth_blockNumber", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_get_header_by_hash() {
+        let s = r#"{"method": "eth_getHeaderByHash", "params":["0x12e65af7b09d4e08ec0a7786ee606b1b6b710d3f9c39f73d7e065527e0e839d3"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
