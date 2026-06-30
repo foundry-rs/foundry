@@ -366,6 +366,10 @@ impl SymExpr {
         Arc::unwrap_or_clone(self.0)
     }
 
+    pub(super) fn node_id(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+
     pub(crate) fn constant(value: U256) -> Self {
         if value.is_zero() {
             Self(EXPR_ZERO.clone())
@@ -1391,6 +1395,10 @@ impl SymBoolExpr {
 
     pub(super) fn into_kind(self) -> SymBoolExprKind {
         Arc::unwrap_or_clone(self.0)
+    }
+
+    pub(super) fn node_id(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
     }
 
     pub(crate) fn as_const(&self) -> Option<bool> {

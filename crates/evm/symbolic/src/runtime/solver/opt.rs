@@ -81,7 +81,196 @@ pub(super) fn sorted_bool_exprs_are_subset(
 
 /// Normalizes one boolean expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_bool_for_solver(expr: SymBoolExpr) -> SymBoolExpr {
-    expr.fold(&mut normalize_bool_node_for_solver)
+    SolverNormalizer::default().normalize_bool(expr)
+}
+
+#[derive(Default)]
+struct SolverNormalizer {
+    exprs: HashMap<usize, (SymExpr, SymExpr)>,
+    bools: HashMap<usize, (SymBoolExpr, SymBoolExpr)>,
+}
+
+impl SolverNormalizer {
+    fn normalize_bool(&mut self, expr: SymBoolExpr) -> SymBoolExpr {
+        let id = expr.node_id();
+        if let Some((_, normalized)) = self.bools.get(&id) {
+            return normalized.clone();
+        }
+
+        let original = expr.clone();
+        let expr = match expr.into_kind() {
+            SymBoolExprKind::Not(value) => self.normalize_bool(value).not(),
+            SymBoolExprKind::And(values) => SymBoolExpr::and(
+                values.iter().cloned().map(|value| self.normalize_bool(value)).collect(),
+            ),
+            SymBoolExprKind::Eq(left, right) => SymBoolExpr::eq(left, right),
+            SymBoolExprKind::Cmp(op, left, right) => SymBoolExpr::cmp(op, left, right),
+            SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
+        };
+        let normalized = self.normalize_bool_node(expr);
+        self.bools.insert(id, (original, normalized.clone()));
+        normalized
+    }
+
+    fn normalize_bool_exprs(&mut self, expr: SymBoolExpr) -> SymBoolExpr {
+        match expr.into_kind() {
+            SymBoolExprKind::Not(value) => self.normalize_bool_exprs(value).not(),
+            SymBoolExprKind::And(values) => SymBoolExpr::and(
+                values.iter().cloned().map(|value| self.normalize_bool_exprs(value)).collect(),
+            ),
+            SymBoolExprKind::Eq(left, right) => {
+                SymBoolExpr::eq(self.normalize_expr(left), self.normalize_expr(right))
+            }
+            SymBoolExprKind::Cmp(op, left, right) => {
+                SymBoolExpr::cmp(op, self.normalize_expr(left), self.normalize_expr(right))
+            }
+            SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
+        }
+    }
+
+    fn normalize_bool_node(&mut self, expr: SymBoolExpr) -> SymBoolExpr {
+        if let Some(normalized) = expr.normalize_udiv_for_solver() {
+            return normalized;
+        }
+
+        match expr.into_kind() {
+            SymBoolExprKind::Not(value) => value.not(),
+            SymBoolExprKind::And(values) => SymBoolExpr::and(values.iter().cloned().collect()),
+            SymBoolExprKind::Eq(left, right) => {
+                let normalized =
+                    SymBoolExpr::eq(self.normalize_expr(left), self.normalize_expr(right));
+                normalized.normalize_udiv_for_solver().unwrap_or(normalized)
+            }
+            SymBoolExprKind::Cmp(op, left, right) => {
+                let normalized =
+                    SymBoolExpr::cmp(op, self.normalize_expr(left), self.normalize_expr(right));
+                normalized.normalize_udiv_for_solver().unwrap_or(normalized)
+            }
+            SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
+        }
+    }
+
+    fn normalize_expr(&mut self, expr: SymExpr) -> SymExpr {
+        let id = expr.node_id();
+        if let Some((_, normalized)) = self.exprs.get(&id) {
+            return normalized.clone();
+        }
+
+        let original = expr.clone();
+        let expr = match expr.into_kind() {
+            SymExprKind::Keccak { name, len, bytes } => SymExpr::keccak_symbol(
+                name,
+                self.normalize_expr(len),
+                bytes.iter().cloned().map(|byte| self.normalize_expr(byte)).collect(),
+            ),
+            SymExprKind::Hash { name, algorithm, bytes } => SymExpr::hash_symbol(
+                name,
+                algorithm,
+                bytes.iter().cloned().map(|byte| self.normalize_expr(byte)).collect(),
+            ),
+            SymExprKind::Not(value) => SymExpr::not(self.normalize_expr(value)),
+            SymExprKind::Op(op, left, right) => {
+                SymExpr::op(op, self.normalize_expr(left), self.normalize_expr(right))
+            }
+            SymExprKind::AddMod { left, right, modulus } => SymExpr::addmod(
+                self.normalize_expr(left),
+                self.normalize_expr(right),
+                self.normalize_expr(modulus),
+            ),
+            SymExprKind::MulMod { left, right, modulus } => SymExpr::mulmod(
+                self.normalize_expr(left),
+                self.normalize_expr(right),
+                self.normalize_expr(modulus),
+            ),
+            SymExprKind::Ite(condition, then_expr, else_expr) => SymExpr::ite(
+                self.normalize_bool_exprs(condition),
+                self.normalize_expr(then_expr),
+                self.normalize_expr(else_expr),
+            ),
+            SymExprKind::Const(value) => SymExpr::constant(value),
+            SymExprKind::Var(name) => SymExpr::var_symbol(name),
+            SymExprKind::GasLeft(gas) => SymExpr::gas_left(gas),
+        };
+        let normalized = self.normalize_expr_node(expr);
+        self.exprs.insert(id, (original, normalized.clone()));
+        normalized
+    }
+
+    fn normalize_expr_node(&mut self, expr: SymExpr) -> SymExpr {
+        if let Some(rebuilt) = expr.rebuild_from_extracted_byte_terms()
+            && rebuilt != expr
+        {
+            return self.normalize_expr(rebuilt);
+        }
+        if let Some(rebuilt) = expr.rebuild_from_shifted_word_fragments()
+            && rebuilt != expr
+        {
+            return self.normalize_expr(rebuilt);
+        }
+        if let Some(rebuilt) = expr.normalize_masked_shift_for_solver()
+            && rebuilt != expr
+        {
+            return self.normalize_expr(rebuilt);
+        }
+        if let Some(rebuilt) = expr.normalize_masked_or_for_solver()
+            && rebuilt != expr
+        {
+            return self.normalize_expr(rebuilt);
+        }
+        if let Some(rebuilt) = expr.normalize_shift_right_for_solver()
+            && rebuilt != expr
+        {
+            return self.normalize_expr(rebuilt);
+        }
+
+        match expr.kind() {
+            SymExprKind::Op(op, left, right)
+                if matches!(
+                    op,
+                    SymExprOp::Add
+                        | SymExprOp::Mul
+                        | SymExprOp::And
+                        | SymExprOp::Or
+                        | SymExprOp::Xor
+                ) && right < left =>
+            {
+                let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
+                SymExpr::op(op, right, left)
+            }
+            SymExprKind::Ite(_, _, _) => {
+                let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
+                self.normalize_ite_expr(cond, left, right)
+            }
+            _ => expr,
+        }
+    }
+
+    fn normalize_ite_expr(&mut self, cond: SymBoolExpr, left: SymExpr, right: SymExpr) -> SymExpr {
+        let cond = self.normalize_bool(cond);
+        if left == right {
+            return left;
+        }
+        if let Some(condition) = guarded_self_div_word_condition(&cond, &left, &right) {
+            return SymExpr::bool_word(condition);
+        }
+        if left.as_const() == Some(U256::from(1))
+            && self.normalized_bool_word_condition(&right).as_ref() == Some(&cond)
+        {
+            return right;
+        }
+        if right.as_const().is_some_and(|value| value.is_zero())
+            && self.normalized_bool_word_condition(&left).as_ref() == Some(&cond)
+        {
+            return left;
+        }
+        SymExpr::ite(cond, left, right)
+    }
+
+    fn normalized_bool_word_condition(&mut self, expr: &SymExpr) -> Option<SymBoolExpr> {
+        expr.strip_low_byte_mask()
+            .bool_word_condition()
+            .map(|condition| self.normalize_bool(condition))
+    }
 }
 
 impl SymBoolExpr {
@@ -554,31 +743,6 @@ impl SmtCseWriter<'_> {
     }
 }
 
-fn normalize_bool_node_for_solver(expr: SymBoolExpr) -> SymBoolExpr {
-    if let Some(normalized) = expr.normalize_udiv_for_solver() {
-        return normalized;
-    }
-
-    match expr.into_kind() {
-        SymBoolExprKind::Not(value) => value.not(),
-        SymBoolExprKind::And(values) => SymBoolExpr::and(values.iter().cloned().collect()),
-        SymBoolExprKind::Eq(left, right) => {
-            let normalized =
-                SymBoolExpr::eq(normalize_expr_for_solver(left), normalize_expr_for_solver(right));
-            normalized.normalize_udiv_for_solver().unwrap_or(normalized)
-        }
-        SymBoolExprKind::Cmp(op, left, right) => {
-            let normalized = SymBoolExpr::cmp(
-                op,
-                normalize_expr_for_solver(left),
-                normalize_expr_for_solver(right),
-            );
-            normalized.normalize_udiv_for_solver().unwrap_or(normalized)
-        }
-        SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
-    }
-}
-
 /// Simple facts learned from the normalized conjunction currently being queried.
 #[derive(Default)]
 struct ConstraintContext {
@@ -673,73 +837,7 @@ impl ConstraintContext {
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_expr_for_solver(expr: SymExpr) -> SymExpr {
-    expr.fold(&mut normalize_expr_node_for_solver)
-}
-
-fn normalize_expr_node_for_solver(expr: SymExpr) -> SymExpr {
-    if let Some(rebuilt) = expr.rebuild_from_extracted_byte_terms()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(rebuilt);
-    }
-    if let Some(rebuilt) = expr.rebuild_from_shifted_word_fragments()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(rebuilt);
-    }
-    if let Some(rebuilt) = expr.normalize_masked_shift_for_solver()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(rebuilt);
-    }
-    if let Some(rebuilt) = expr.normalize_masked_or_for_solver()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(rebuilt);
-    }
-    if let Some(rebuilt) = expr.normalize_shift_right_for_solver()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(rebuilt);
-    }
-
-    match expr.kind() {
-        SymExprKind::Op(op, left, right)
-            if matches!(
-                op,
-                SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor
-            ) && right < left =>
-        {
-            let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
-            SymExpr::op(op, right, left)
-        }
-        SymExprKind::Ite(_, _, _) => {
-            let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
-            normalize_ite_expr_for_solver(cond, left, right)
-        }
-        _ => expr,
-    }
-}
-
-fn normalize_ite_expr_for_solver(cond: SymBoolExpr, left: SymExpr, right: SymExpr) -> SymExpr {
-    let cond = normalize_bool_for_solver(cond);
-    if left == right {
-        return left;
-    }
-    if let Some(condition) = guarded_self_div_word_condition(&cond, &left, &right) {
-        return SymExpr::bool_word(condition);
-    }
-    if left.as_const() == Some(U256::from(1))
-        && right.normalized_bool_word_condition().as_ref() == Some(&cond)
-    {
-        return right;
-    }
-    if right.as_const().is_some_and(|value| value.is_zero())
-        && left.normalized_bool_word_condition().as_ref() == Some(&cond)
-    {
-        return left;
-    }
-    SymExpr::ite(cond, left, right)
+    SolverNormalizer::default().normalize_expr(expr)
 }
 
 /// Returns the boolean represented by `a == 0 ? 0 : a / a`.
