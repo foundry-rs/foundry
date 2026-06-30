@@ -5,14 +5,15 @@ use crate::{
 use alloy_consensus::Transaction;
 use alloy_network::{
     AnyRpcTransaction, EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse,
+    eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
 };
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
-    AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
-    TransactionRequest,
+    AccessList, AccessListItem, AccessListResult, BlockId, BlockNumberOrTag, BlockOverrides,
+    BlockTransactions, TransactionRequest,
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_serde::WithOtherFields;
@@ -20,6 +21,7 @@ use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
 use eyre::Ok;
 use foundry_evm::hardfork::EthereumHardfork;
+use foundry_primitives::FoundryReceiptEnvelope;
 use futures::{FutureExt, StreamExt, future::join_all};
 use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 use std::{
@@ -872,6 +874,57 @@ async fn can_get_raw_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_receipts() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let first = TransactionRequest::default()
+        .from(accounts[0].address())
+        .value(U256::from(1))
+        .to(Address::random());
+    let second = TransactionRequest::default()
+        .from(accounts[1].address())
+        .value(U256::from(2))
+        .to(Address::random());
+
+    let first = provider.send_transaction(WithOtherFields::new(first)).await.unwrap();
+    let second = provider.send_transaction(WithOtherFields::new(second)).await.unwrap();
+
+    api.mine_one().await;
+    let first_receipt = first.get_receipt().await.unwrap();
+    let second_receipt = second.get_receipt().await.unwrap();
+    assert_eq!(first_receipt.block_number, Some(1));
+    assert_eq!(second_receipt.block_number, Some(1));
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let raw_by_number: Vec<Bytes> =
+        provider.client().request("debug_getRawReceipts", (BlockId::number(1),)).await.unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawReceipts", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+    let missing: Result<Vec<Bytes>, _> =
+        provider.client().request("debug_getRawReceipts", (BlockId::number(999),)).await;
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), 2);
+    assert!(missing.is_err());
+
+    let mut first_raw = raw_by_number[0].as_ref();
+    let first_decoded = FoundryReceiptEnvelope::decode_2718(&mut first_raw).unwrap();
+    let mut second_raw = raw_by_number[1].as_ref();
+    let second_decoded = FoundryReceiptEnvelope::decode_2718(&mut second_raw).unwrap();
+
+    assert!(first_decoded.status());
+    assert!(second_decoded.status());
+    assert_eq!(first_decoded.cumulative_gas_used(), 21_000);
+    assert_eq!(second_decoded.cumulative_gas_used(), 42_000);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_first_nonce_is_zero() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
@@ -1276,6 +1329,34 @@ async fn test_tx_access_list() {
         access_list.access_list,
         AccessList::from(vec![AccessListItem { address: reverter, storage_keys: vec![slot] }]),
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_create_access_list_with_state_override() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let sender = Address::random();
+    let target = Address::random();
+    let tx = TransactionRequest::default().from(sender).to(target);
+    let tx = WithOtherFields::new(tx);
+
+    // PUSH1 0; SLOAD; STOP.
+    let code = Bytes::from(hex!("60005400").to_vec());
+    let state_override = StateOverridesBuilder::default()
+        .append(target, AccountOverride::default().with_code(code.to_vec()))
+        .build();
+
+    let access_list: AccessListResult = provider
+        .client()
+        .request("eth_createAccessList", (tx, None::<BlockId>, state_override))
+        .await
+        .unwrap();
+
+    assert_eq!(access_list.access_list.0.len(), 1);
+    let item = access_list.access_list.0.first().unwrap();
+    assert_eq!(item.address, target);
+    assert_eq!(item.storage_keys, vec![FixedBytes::ZERO]);
 }
 
 // ensures that the gas estimate is running on pending block by default
