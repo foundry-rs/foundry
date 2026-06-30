@@ -27,7 +27,7 @@ use revm::{
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
     },
-    primitives::hardfork::SpecId,
+    primitives::{eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
 };
 use serde::{Deserialize, Serialize};
 use tempo_alloy::TempoNetwork;
@@ -66,6 +66,9 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
     /// Additional network-specific cheatcode contract addresses.
     const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
 
+    /// Maximum initcode size enforced when nested cheatcode execution simulates a raw deployment.
+    const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
+
     fn is_extra_cheatcode_address(address: Address) -> bool {
         Self::EXTRA_CHEATCODE_ADDRESSES.contains(&address)
     }
@@ -92,6 +95,7 @@ impl FoundryEvmNetwork for MonadEvmNetwork {
     type EvmFactory = MonadEvmFactory;
 
     const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[MONAD_CHEATCODE_ADDRESS];
+    const CONTRACT_INITCODE_SIZE_LIMIT: usize = monad_revm::MONAD_MAX_INITCODE_SIZE;
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
@@ -268,5 +272,26 @@ impl IntoInstructionResult for TempoHaltReason {
             Self::Ethereum(eth) => eth.into(),
             _ => InstructionResult::PrecompileError,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monad_overrides_nested_initcode_size_limit() {
+        assert_eq!(
+            <EthEvmNetwork as FoundryEvmNetwork>::CONTRACT_INITCODE_SIZE_LIMIT,
+            MAX_INITCODE_SIZE
+        );
+        assert_eq!(
+            <TempoEvmNetwork as FoundryEvmNetwork>::CONTRACT_INITCODE_SIZE_LIMIT,
+            MAX_INITCODE_SIZE
+        );
+        assert_eq!(
+            <MonadEvmNetwork as FoundryEvmNetwork>::CONTRACT_INITCODE_SIZE_LIMIT,
+            monad_revm::MONAD_MAX_INITCODE_SIZE
+        );
     }
 }

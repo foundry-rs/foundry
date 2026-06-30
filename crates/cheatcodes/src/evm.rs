@@ -1185,9 +1185,9 @@ impl Cheatcode for executeTransactionCall {
         // Enable nonce checks for realistic simulation.
         ccx.ecx.cfg_env_mut().disable_nonce_check = false;
 
-        // EIP-3860: enforce initcode size limit.
+        // Enforce the active network's initcode size limit.
         ccx.ecx.cfg_env_mut().limit_contract_initcode_size =
-            Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+            Some(FEN::CONTRACT_INITCODE_SIZE_LIMIT);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
         // Normal test execution sets `Some(u64::MAX)` to disable the cap; clearing it here
