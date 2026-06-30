@@ -504,6 +504,21 @@ impl SymExpr {
         })
     }
 
+    pub(crate) fn assign_model_value(&self, model: &mut SymbolicModel, value: U256) -> bool {
+        match self.kind() {
+            SymExprKind::Const(existing) => *existing == value,
+            SymExprKind::Var(var) => {
+                if let Some(existing) = model.get(var) {
+                    *existing == value
+                } else {
+                    model.insert(*var, value);
+                    true
+                }
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn from_bool(value: SymBoolExpr) -> Self {
         Self::bool_word(value)
     }
@@ -1532,6 +1547,19 @@ impl SymBoolExpr {
         })
     }
 
+    pub(crate) fn eval_model_if_complete<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        model: &M,
+    ) -> Result<Option<bool>, SymbolicError> {
+        let mut vars = SymbolicVars::default();
+        self.collect_eval_vars(&mut vars);
+        if vars.iter().copied().all(|var| model.contains_name(var)) {
+            self.eval_model(model).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Visits all word expressions contained in this boolean expression.
     pub(crate) fn visit_exprs<B>(
         &self,
@@ -1788,6 +1816,18 @@ impl SymBoolExpr {
                 SymExprKind::Var(var)
                 | SymExprKind::Keccak { name: var, .. }
                 | SymExprKind::Hash { name: var, .. } => {
+                    vars.insert(*var);
+                }
+                _ => {}
+            }
+            ControlFlow::<()>::Continue(())
+        });
+    }
+
+    pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
+        let _ = self.visit_exprs(&mut |expr| {
+            match expr.kind() {
+                SymExprKind::Var(var) | SymExprKind::Hash { name: var, .. } => {
                     vars.insert(*var);
                 }
                 _ => {}

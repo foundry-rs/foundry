@@ -490,6 +490,14 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SEED_CORPUS")]
     pub symbolic_seed_corpus: bool,
 
+    /// Run fuzz tests symbolically using existing fuzz corpus entries as path-priority hints.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_USE_FUZZ_CORPUS")]
+    pub symbolic_use_fuzz_corpus: bool,
+
+    /// Maximum number of fuzz corpus entries to import for one symbolic test.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_CORPUS_SEED_LIMIT", value_name = "COUNT")]
+    pub symbolic_corpus_seed_limit: Option<usize>,
+
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
     pub symbolic_solver: Option<String>,
@@ -2391,6 +2399,12 @@ impl Provider for TestArgs {
         }
         if self.symbolic_seed_corpus {
             symbolic_dict.insert("seed_corpus".to_string(), true.into());
+        }
+        if self.symbolic_use_fuzz_corpus {
+            symbolic_dict.insert("use_fuzz_corpus".to_string(), true.into());
+        }
+        if let Some(corpus_seed_limit) = self.symbolic_corpus_seed_limit {
+            symbolic_dict.insert("corpus_seed_limit".to_string(), corpus_seed_limit.into());
         }
         if let Some(solver) = self.symbolic_solver.clone() {
             symbolic_dict.insert("solver".to_string(), solver.into());

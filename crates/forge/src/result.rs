@@ -952,6 +952,9 @@ pub struct SymbolicResult {
     pub replay: SymbolicReplayMetadata,
     /// Concrete counterexample data, when the solver produced a candidate.
     pub counterexample: Option<SymbolicCounterexample>,
+    /// Fuzz corpus seeds imported into symbolic execution, when enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_seeds: Option<SymbolicCorpusSeedMetadata>,
     /// Durable counterexample artifact, when one was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<SymbolicArtifactRef>,
@@ -1032,9 +1035,16 @@ impl SymbolicResult {
             call_trace,
             replay,
             counterexample,
+            corpus_seeds: None,
             artifact: None,
             minimization: None,
         }
+    }
+
+    /// Attaches fuzz corpus import metadata to this symbolic result.
+    pub fn with_corpus_seeds(mut self, corpus_seeds: SymbolicCorpusSeedMetadata) -> Self {
+        self.corpus_seeds = Some(corpus_seeds);
+        self
     }
 
     /// Attaches a durable replay artifact reference to this symbolic result.
@@ -1048,6 +1058,30 @@ impl SymbolicResult {
         self.minimization = Some(minimization);
         self
     }
+}
+
+/// Fuzz corpus import metadata for a symbolic run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicCorpusSeedMetadata {
+    /// Corpus root used for the current test, after contract/test path expansion.
+    pub corpus_dir: Option<std::path::PathBuf>,
+    /// Maximum imported seeds allowed by configuration.
+    pub limit: usize,
+    /// Number of corpus files considered.
+    pub loaded: usize,
+    /// Number of corpus files skipped because they were unreadable or not a matching single call.
+    pub skipped: usize,
+    /// Seeds modeled by symbolic execution as path-priority hints.
+    pub used: Vec<SymbolicCorpusSeedRef>,
+}
+
+/// One fuzz corpus seed modeled by symbolic execution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicCorpusSeedRef {
+    /// Corpus file path.
+    pub path: std::path::PathBuf,
+    /// ABI-encoded calldata imported from the corpus file.
+    pub calldata: Bytes,
 }
 
 /// Reference to a durable symbolic counterexample artifact.

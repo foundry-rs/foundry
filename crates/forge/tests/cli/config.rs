@@ -125,6 +125,8 @@ script_execution_protection = true
 [profile.default.symbolic]
 enabled = false
 seed_corpus = false
+use_fuzz_corpus = false
+corpus_seed_limit = 32
 solver = "z3"
 timeout = 30
 max_depth = 10000
@@ -365,6 +367,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         symbolic: SymbolicConfig {
             enabled: true,
             seed_corpus: true,
+            use_fuzz_corpus: true,
+            corpus_seed_limit: 17,
             solver: "custom-z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
@@ -1521,6 +1525,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "symbolic": {
     "enabled": false,
     "seed_corpus": false,
+    "use_fuzz_corpus": false,
+    "corpus_seed_limit": 32,
     "solver": "z3",
     "timeout": 30,
     "max_depth": 10000,
