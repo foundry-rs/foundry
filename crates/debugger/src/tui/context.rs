@@ -86,6 +86,7 @@ pub(crate) struct TUIContext<'a> {
     /// Whether to decode active buffer as utf8 or not.
     pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
+    pub(crate) show_source: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
     pub(crate) active_buffer: BufferKind,
 }
@@ -109,6 +110,7 @@ impl<'a> TUIContext<'a> {
             stack_labels: false,
             buf_utf: false,
             show_shortcuts: true,
+            show_source: true,
             active_buffer: BufferKind::Memory,
         }
     }
@@ -339,6 +341,13 @@ impl TUIContext<'_> {
             KeyCode::Char('m') => {
                 self.buf_utf = !self.buf_utf;
                 self.set_info(format!("UTF-8 decoding: {}", toggle_state(self.buf_utf)));
+            }
+
+            // Toggle source pane
+            KeyCode::Char('v') => {
+                self.show_source = !self.show_source;
+                let state = if self.show_source { "shown" } else { "hidden" };
+                self.set_info(format!("Source pane: {state}"));
             }
 
             // Go to program counter
@@ -1152,6 +1161,13 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('m')));
         assert!(!tui.buf_utf);
         assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('v')));
+        assert!(!tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('v')));
+        assert!(tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: shown");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('h')));
         assert!(!tui.show_shortcuts);
