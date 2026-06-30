@@ -847,6 +847,16 @@ async fn test_fork_base_fee() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_pre_london_base_fee_is_null() {
+    let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(12_000_000u64))).await;
+
+    let provider = handle.http_provider();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_init_base_fee() {
     let (api, handle) = spawn(fork_config().with_fork_block_number(Some(13184859u64))).await;
 

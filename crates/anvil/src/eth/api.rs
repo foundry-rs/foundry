@@ -831,6 +831,14 @@ impl<N: Network> EthApi<N> {
         Ok(U256::from(self.gas_price()))
     }
 
+    /// Returns the base fee for the next block, or null before London.
+    ///
+    /// Handler for ETH RPC call: `eth_baseFee`
+    pub fn base_fee(&self) -> Result<Option<U256>> {
+        node_info!("eth_baseFee");
+        Ok(self.backend.is_eip1559().then(|| U256::from(self.backend.base_fee())))
+    }
+
     /// Returns the excess blob gas and current blob gas price
     pub fn excess_blob_gas_and_price(&self) -> Result<Option<BlobExcessGasAndPrice>> {
         Ok(self.backend.excess_blob_gas_and_price())
@@ -1536,6 +1544,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
             EthRequest::EthHashrate(()) => self.hashrate().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.eth_gas_price().to_rpc_result(),
+            EthRequest::EthBaseFee(_) => self.base_fee().to_rpc_result(),
             EthRequest::EthMaxPriorityFeePerGas(_) => {
                 self.gas_max_priority_fee_per_gas().to_rpc_result()
             }

@@ -63,6 +63,32 @@ async fn can_get_price() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_base_fee() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::London.into()))).await;
+    let provider = handle.http_provider();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, api.base_fee().unwrap());
+
+    let expected = U256::from(1234);
+    api.anvil_set_next_block_base_fee_per_gas(expected).await.unwrap();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, Some(expected));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_null_base_fee_before_london() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+    let provider = handle.http_provider();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_accounts() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
