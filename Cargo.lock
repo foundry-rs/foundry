@@ -5554,6 +5554,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
  "alloy-hardforks",
