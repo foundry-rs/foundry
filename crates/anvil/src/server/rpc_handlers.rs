@@ -134,7 +134,8 @@ impl PubSubEthRpcHandler {
                         }
                     }
                     SubscriptionKind::Syncing => {
-                        return RpcError::internal_error_with("Not implemented").into();
+                        trace!(target: "rpc::ws", "received syncing subscription");
+                        EthSubscription::Syncing(Some(id.clone()))
                     }
                 };
 
