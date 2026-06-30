@@ -325,6 +325,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_dbGet")]
     DebugDbGet(String),
 
+    /// reth's `debug_gcStats` endpoint.
+    #[serde(rename = "debug_gcStats", with = "empty_params")]
+    DebugGcStats(()),
+
     /// geth's `debug_traceBlockByHash` endpoint
     #[serde(rename = "debug_traceBlockByHash")]
     DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
@@ -1563,6 +1567,16 @@ true}]}"#;
         let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }, {"disableStorage": true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_gc_stats() {
+        let s = r#"{"method": "debug_gcStats", "params": []}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        match serde_json::from_value::<EthRequest>(value).unwrap() {
+            EthRequest::DebugGcStats(()) => {}
+            req => panic!("unexpected request: {req:?}"),
+        }
     }
 
     #[test]
