@@ -606,7 +606,7 @@ impl SymbolicExecutor {
                 }
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
-                let sat = self.solver.is_sat(&constraints)?;
+                let sat = self.solver.is_sat_branch(&constraints)?;
                 Ok((constraints, sat))
             }
         }
