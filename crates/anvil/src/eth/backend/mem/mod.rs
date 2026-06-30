@@ -818,7 +818,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the number of new-block listeners. Closed listeners are pruned lazily on the next
-    /// [`Self::notify_on_new_block`].
+    /// new block notification.
     pub fn new_block_listeners_count(&self) -> usize {
         self.new_block_listeners.lock().len()
     }
