@@ -56,7 +56,7 @@ use alloy_rpc_types::{
     pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
-    state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
+    state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
@@ -1643,8 +1643,8 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthSimulateV1(simulation, block) => {
                 self.simulate_v1(simulation, block).await.to_rpc_result()
             }
-            EthRequest::EthCreateAccessList(call, block) => {
-                self.create_access_list(call, block).await.to_rpc_result()
+            EthRequest::EthCreateAccessList(call, block, state_override) => {
+                self.create_access_list(call, block, state_override).await.to_rpc_result()
             }
             EthRequest::EthEstimateGas(call, block, state_override, block_overrides) => self
                 .estimate_gas(call, block, EvmOverrides::new(state_override, block_overrides))
@@ -2600,6 +2600,7 @@ impl EthApi<FoundryNetwork> {
         &self,
         mut request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
+        state_override: Option<StateOverride>,
     ) -> Result<AccessListResult> {
         node_info!("eth_createAccessList");
         let block_request = self.block_request(block_number).await?;
@@ -2608,13 +2609,23 @@ impl EthApi<FoundryNetwork> {
             && let Some(fork) = self.get_fork()
             && fork.predates_fork(number)
         {
+            if state_override.is_some() {
+                return Err(BlockchainError::EvmOverrideError(
+                    "not available on past forked blocks".to_string(),
+                ));
+            }
             return Ok(fork.create_access_list(&request, Some(number.into())).await?);
         }
 
         self.backend
             .with_database_at(Some(block_request), |state, block_env| {
+                let mut cache_db = CacheDB::new(state);
+                if let Some(state_override) = state_override {
+                    apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
+                }
+
                 let (_, _, _, access_list) = self.backend.build_access_list_with_state(
-                    &state,
+                    &cache_db,
                     request.clone(),
                     FeeDetails::zero(),
                     block_env.clone(),
@@ -2625,8 +2636,12 @@ impl EthApi<FoundryNetwork> {
                 // field per the execution-apis `eth_createAccessList` spec, so callers
                 // can still inspect the traced slots when execution fails.
                 request.access_list = Some(access_list.clone());
-                let (exit, _, gas_used, _) =
-                    self.backend.call_with_state(&state, request, FeeDetails::zero(), block_env)?;
+                let (exit, _, gas_used, _) = self.backend.call_with_state(
+                    &cache_db,
+                    request,
+                    FeeDetails::zero(),
+                    block_env,
+                )?;
 
                 Ok(AccessListResult {
                     access_list,
@@ -3124,7 +3139,7 @@ impl EthApi<FoundryNetwork> {
 
         // first collect all the slots that are used by the function call
         let access_list_result =
-            self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
+            self.create_access_list(WithOtherFields::new(tx.clone()), None, None).await?;
         let access_list = access_list_result.access_list;
 
         // iterate over all the accessed slots and try to find the one that contains the
