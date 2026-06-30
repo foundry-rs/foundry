@@ -197,14 +197,23 @@ impl CorpusEntry {
         }
     }
 
-    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<()> {
+    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<PathBuf> {
         let file_name = self.file_name(can_gzip);
-        let path = dir.join(file_name);
+        let path = dir.join(&file_name);
+        let temp_path = dir.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+
         if self.should_gzip(can_gzip) {
-            foundry_common::fs::write_json_gzip_file(&path, &self.tx_seq)
+            foundry_common::fs::write_json_gzip_file(&temp_path, &self.tx_seq)?;
         } else {
-            foundry_common::fs::write_json_file(&path, &self.tx_seq)
+            foundry_common::fs::write_json_file(&temp_path, &self.tx_seq)?;
         }
+
+        if let Err(err) = std::fs::rename(&temp_path, &path) {
+            let _ = foundry_common::fs::remove_file(&temp_path);
+            return Err(foundry_common::errors::FsPathError::write(err, &path));
+        }
+
+        Ok(path)
     }
 
     fn file_name(&self, can_gzip: bool) -> String {
@@ -226,6 +235,42 @@ impl CorpusEntry {
 pub(crate) struct CampaignCorpusEntry {
     tx_seq: Vec<BasicTxDetails>,
     dedupe_by_coverage: bool,
+}
+
+/// Persists one call sequence as a corpus seed in the canonical worker0 corpus directory.
+pub fn persist_corpus_seed(
+    config: &FuzzCorpusConfig,
+    tx_seq: Vec<BasicTxDetails>,
+) -> foundry_common::fs::Result<Option<PathBuf>> {
+    let Some(root) = &config.corpus_dir else {
+        return Ok(None);
+    };
+    for dir in canonical_replay_dirs(root) {
+        for entry in read_corpus_dir(&dir) {
+            match entry.read_tx_seq() {
+                Ok(existing) if same_tx_sequence(&existing, &tx_seq) => {
+                    return Ok(Some(entry.path));
+                }
+                Ok(_) => {}
+                Err(err) => debug!(%err, path = ?entry.path, "failed to read corpus seed"),
+            }
+        }
+    }
+    let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
+    foundry_common::fs::create_dir_all(&corpus_dir)?;
+    CorpusEntry::new(tx_seq).write_to_disk_in(&corpus_dir, config.corpus_gzip).map(Some)
+}
+
+fn same_tx_sequence(left: &[BasicTxDetails], right: &[BasicTxDetails]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.warp == right.warp
+                && left.roll == right.roll
+                && left.sender == right.sender
+                && left.call_details.target == right.call_details.target
+                && left.call_details.calldata == right.call_details.calldata
+                && left.call_details.value == right.call_details.value
+        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -884,7 +929,6 @@ impl WorkerCorpus {
                 );
             }
         }
-
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -2438,6 +2482,37 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].uuid, corpus.uuid);
+    }
+
+    #[test]
+    fn corpus_entry_write_uses_unparsable_temp_file() {
+        let corpus_dir = temp_corpus_dir();
+        let corpus = CorpusEntry::new(vec![basic_tx()]);
+        let temp_path =
+            corpus_dir.join(format!(".{}.{}.tmp", corpus.file_name(false), Uuid::new_v4()));
+        fs::write(&temp_path, b"{").unwrap();
+
+        let path = corpus.write_to_disk_in(&corpus_dir, false).unwrap();
+        let entries = read_corpus_dir(&corpus_dir).collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, path);
+        assert!(temp_path.exists());
+    }
+
+    #[test]
+    fn persist_corpus_seed_skips_duplicate_sequence() {
+        let corpus_root = temp_corpus_dir();
+        let config = corpus_config(corpus_root.clone());
+        let sequence = vec![basic_tx_with_calldata(vec![0x12, 0x34])];
+
+        let first = persist_corpus_seed(&config, sequence.clone()).unwrap().unwrap();
+        let second = persist_corpus_seed(&config, sequence).unwrap().unwrap();
+        let entries =
+            read_corpus_dir(&corpus_root.join("worker0").join(CORPUS_DIR)).collect::<Vec<_>>();
+
+        assert_eq!(first, second);
+        assert_eq!(entries.len(), 1);
     }
 
     #[test]

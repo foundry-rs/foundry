@@ -42,6 +42,49 @@ No tests found
     );
 });
 
+forgetest_init!(symbolic_contract_inline_config_enables_check_entrypoints, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_contract_inline_config_enables_check_entrypoints because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicContractInlineConfig.t.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+/// forge-config: default.symbolic.enabled = true
+contract SymbolicContractInlineConfig {
+    function checkEnabledByContractConfig(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--match-test", "checkEnabledByContractConfig"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkEnabledByContractConfig(uint256)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_single_call_artifact_replay_honors_env_fields, |prj, cmd| {
     prj.add_test(
         "SymbolicSingleCallArtifactEnv.t.sol",
@@ -1521,6 +1564,218 @@ contract SymbolicInvariantSequenceMinimize is Test {
         foundry_test_utils::str![[r#"
 invariant_targetNeverBroken()
 "#]],
+    );
+});
+
+forgetest_init!(symbolic_seed_corpus_persists_non_failing_fuzz_input, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_seed_corpus_persists_non_failing_fuzz_input because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzCorpusSeed.t.sol",
+        r#"
+contract SymbolicFuzzCorpusSeed {
+    function testHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y != 0) return;
+        assert(y == 0);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testHybridFindsBug",
+            "--symbolic-seed-corpus",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_success();
+
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicFuzzCorpusSeed")
+        .join("testHybridFindsBug")
+        .join("worker0")
+        .join("corpus");
+    let mut entries = std::fs::read_dir(&corpus_dir)
+        .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    entries.sort_by_key(|entry| entry.path());
+    let expected_selector = &keccak256(b"testHybridFindsBug(uint256,uint256)")[..4];
+    let expected_x = "6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db7";
+    let expected_y = format!("{:064x}", 0);
+    let expected_x_decimal =
+        "49625181101706940895816136432294817651401421999560241731196107431962769845687";
+    let mut found_symbolic_seed = false;
+    for entry in &entries {
+        let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+        assert_eq!(corpus.as_array().unwrap().len(), 1);
+        let calldata = corpus[0]["calldata"].as_str().expect("seed calldata");
+        assert_eq!(&hex::decode(&calldata[2..10]).unwrap(), expected_selector);
+        if calldata[10..74] == *expected_x && calldata[74..138] == expected_y {
+            found_symbolic_seed = true;
+        } else {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+    }
+    assert!(found_symbolic_seed);
+
+    prj.add_test(
+        "SymbolicFuzzCorpusSeed.t.sol",
+        r#"
+contract SymbolicFuzzCorpusSeed {
+    function testHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y == 0) return;
+        assert(false);
+    }
+
+    function checkHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y != 0) return;
+        assert(y == 0);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "testHybridFindsBug", "--threads", "1", "--fuzz-runs", "8"])
+        .assert_success();
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkHybridFindsBug",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFuzzCorpusSeed.t.sol:SymbolicFuzzCorpusSeed
+[PASS] checkHybridFindsBug(uint256,uint256) ([METRICS])
+...
+"#]]);
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testHybridFindsBug",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--threads",
+            "1",
+            "--fuzz-corpus-random-sequence-weight",
+            "0",
+            "--fuzz-mutation-weight-splice",
+            "0",
+            "--fuzz-mutation-weight-repeat",
+            "0",
+            "--fuzz-mutation-weight-interleave",
+            "0",
+            "--fuzz-mutation-weight-prefix",
+            "0",
+            "--fuzz-mutation-weight-suffix",
+            "0",
+            "--fuzz-mutation-weight-abi",
+            "1",
+            "--fuzz-mutation-weight-cmp",
+            "0",
+            "--fuzz-runs",
+            "256",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains(expected_x_decimal), "{stdout}");
+});
+
+forgetest_init!(symbolic_seed_corpus_is_best_effort_for_symbolic_incomplete, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_seed_corpus_is_best_effort_for_symbolic_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzCorpusBestEffort.t.sol",
+        r#"
+contract SymbolicFuzzCorpusBestEffort {
+    function testFuzz_symbolicHostile(uint256) public pure {
+        for (uint256 i; i < 10001; ++i) {}
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_symbolicHostile",
+            "--symbolic-seed-corpus",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--fuzz-runs",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("[PASS] testFuzz_symbolicHostile(uint256)"), "{stdout}");
+});
+
+forgetest_init!(symbolic_seed_corpus_warns_without_corpus_dir, |prj, cmd| {
+    prj.add_test(
+        "SymbolicFuzzCorpusNoDir.t.sol",
+        r#"
+contract SymbolicFuzzCorpusNoDir {
+    function testFuzz_noop(uint256) public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_noop",
+            "--symbolic-seed-corpus",
+            "--fuzz-runs",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+
+    assert!(
+        stderr
+            .contains("`--symbolic-seed-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`"),
+        "{stderr}"
     );
 });
 
