@@ -355,6 +355,10 @@ pub enum EthRequest {
         HashSet<TraceType>,
     ),
 
+    /// Opcode gas trace endpoint for reth's `trace_transactionOpcodeGas`.
+    #[serde(rename = "trace_transactionOpcodeGas", with = "sequence")]
+    TraceTransactionOpcodeGas(B256),
+
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
     #[serde(
@@ -1538,6 +1542,13 @@ mod tests {
         let s = r#"{"method": "debug_traceTransaction", "params":
 ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"disableStorage":
 true}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_transaction_opcode_gas() {
+        let s = r#"{"method": "trace_transactionOpcodeGas", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

@@ -59,6 +59,7 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
+        opcode::TransactionOpcodeGas,
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
@@ -1309,6 +1310,17 @@ impl EthApi<FoundryNetwork> {
         Ok(block_request)
     }
 
+    /// Returns opcode gas usage for a transaction.
+    ///
+    /// Handler for RPC call: `trace_transactionOpcodeGas`.
+    pub async fn trace_transaction_opcode_gas(
+        &self,
+        tx_hash: B256,
+    ) -> Result<Option<TransactionOpcodeGas>> {
+        node_info!("trace_transactionOpcodeGas");
+        self.backend.trace_transaction_opcode_gas(tx_hash).await
+    }
+
     /// Increases the balance of an account.
     ///
     /// Handler for RPC call: `anvil_addBalance`
@@ -1690,6 +1702,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
             EthRequest::TraceReplayBlockTransactions(block, trace_types) => {
                 self.trace_replay_block_transactions(block, trace_types).await.to_rpc_result()
+            }
+            EthRequest::TraceTransactionOpcodeGas(tx_hash) => {
+                self.trace_transaction_opcode_gas(tx_hash).await.to_rpc_result()
             }
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
