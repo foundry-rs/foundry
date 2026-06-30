@@ -132,6 +132,19 @@ unset -f download
 # --- resolve_version_and_tag (redirect + feed nightly) --------------------
 
 API_JSON='{"tag_name": "v9.9.9", "name": "v9.9.9"}'
+# Minimal `releases` listing used for the nightly API fallback path. The awk
+# parser is line-oriented (it mirrors the real multi-line api.github.com JSON),
+# so `tag_name` and `published_at` must be on separate lines.
+NIGHTLY_API_JSON='[
+  {
+    "tag_name": "nightly-olderfeedfirst000000000000000000000000",
+    "published_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "tag_name": "nightly-deadbeef00000000000000000000000000000000",
+    "published_at": "2026-01-02T00:00:00Z"
+  }
+]'
 
 # `fetch` runs in a command-substitution subshell, so track calls via a file.
 api_marker="$(mktemp)"
@@ -158,6 +171,14 @@ FOUNDRYUP_VERSION="nightly"
 resolve_version_and_tag
 check_eq "nightly resolves to newest feed tag" "nightly-$NIGHTLY_SHA" "$FOUNDRYUP_TAG"
 check_eq "nightly does not call API" "0" "$(wc -l < "$api_marker" | tr -d ' ')"
+
+: > "$api_marker"
+curl() { return 1; }
+fetch() { echo called >> "$api_marker"; printf '%s' "$NIGHTLY_API_JSON"; }
+FOUNDRYUP_VERSION="nightly"
+resolve_version_and_tag
+check_eq "nightly falls back to API tag when feed fails" "nightly-deadbeef00000000000000000000000000000000" "$FOUNDRYUP_TAG"
+check_eq "nightly calls API when feed fails" "1" "$(wc -l < "$api_marker" | tr -d ' ')"
 
 # --- rust foundryup migration shim ----------------------------------------
 
