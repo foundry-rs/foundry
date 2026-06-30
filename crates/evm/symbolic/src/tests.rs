@@ -3002,25 +3002,25 @@ fn split_solver_command_preserves_empty_quoted_args() {
 }
 
 #[test]
-fn split_solver_command_rejects_unterminated_double_quote() {
+fn split_solver_command_rejects_invalid_double_quote() {
     let err = split_solver_command(r#"z3 "unterm"#).unwrap_err();
 
     assert!(
-        matches!(err, SolverConfigError::UnterminatedQuote('"')),
-        "expected UnterminatedQuote('\"'), got {err:?}"
+        matches!(err, SolverConfigError::InvalidShellQuoting),
+        "expected InvalidShellQuoting, got {err:?}"
     );
-    assert_eq!(err.to_string(), r#"unterminated " quote in symbolic solver command"#);
+    assert_eq!(err.to_string(), "invalid shell quoting in symbolic solver command");
 }
 
 #[test]
-fn split_solver_command_rejects_unterminated_single_quote() {
+fn split_solver_command_rejects_invalid_single_quote() {
     let err = split_solver_command("z3 'unterm").unwrap_err();
 
     assert!(
-        matches!(err, SolverConfigError::UnterminatedQuote('\'')),
-        "expected UnterminatedQuote('\\''), got {err:?}"
+        matches!(err, SolverConfigError::InvalidShellQuoting),
+        "expected InvalidShellQuoting, got {err:?}"
     );
-    assert_eq!(err.to_string(), "unterminated ' quote in symbolic solver command");
+    assert_eq!(err.to_string(), "invalid shell quoting in symbolic solver command");
 }
 
 #[test]

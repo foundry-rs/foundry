@@ -5492,6 +5492,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
+ "shlex",
  "similar-asserts",
  "snapbox",
  "solar-compiler",
@@ -5732,6 +5733,7 @@ dependencies = [
  "inturn",
  "serde",
  "serde_json",
+ "shlex",
  "thiserror 2.0.18",
  "tracing",
 ]
