@@ -174,6 +174,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
 
+    #[serde(rename = "eth_sendRawTransactionConditional")]
+    EthSendRawTransactionConditional(Bytes, serde_json::Value),
+
     #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
     EthSendRawTransactionSync(Bytes),
 
@@ -1471,6 +1474,14 @@ mod tests {
     #[test]
     fn test_eth_new_filter() {
         let s = r#"{"method": "eth_newFilter", "params": [{"topics":["0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b"]}],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_raw_transaction_conditional() {
+        let s = r#"{"method": "eth_sendRawTransactionConditional", "params":
+["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"knownAccounts":{}}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
