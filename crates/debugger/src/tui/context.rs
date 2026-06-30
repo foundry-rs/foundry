@@ -261,6 +261,7 @@ impl TUIContext<'_> {
             KeyCode::Char('b') => {
                 self.active_buffer = self.active_buffer.next();
                 self.draw_memory.current_buf_startline = 0;
+                self.set_info(format!("Active buffer: {}", self.active_buffer_name()));
             }
 
             // Cycle layout
@@ -329,10 +330,16 @@ impl TUIContext<'_> {
             }),
 
             // Toggle stack labels
-            KeyCode::Char('t') => self.stack_labels = !self.stack_labels,
+            KeyCode::Char('t') => {
+                self.stack_labels = !self.stack_labels;
+                self.set_info(format!("Stack labels: {}", toggle_state(self.stack_labels)));
+            }
 
             // Toggle memory UTF-8 decoding
-            KeyCode::Char('m') => self.buf_utf = !self.buf_utf,
+            KeyCode::Char('m') => {
+                self.buf_utf = !self.buf_utf;
+                self.set_info(format!("UTF-8 decoding: {}", toggle_state(self.buf_utf)));
+            }
 
             // Go to program counter
             KeyCode::Char('p') => {
@@ -366,7 +373,11 @@ impl TUIContext<'_> {
             }),
 
             // Toggle help notice
-            KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
+            KeyCode::Char('h') => {
+                self.show_shortcuts = !self.show_shortcuts;
+                let state = if self.show_shortcuts { "shown" } else { "hidden" };
+                self.set_info(format!("Shortcut help: {state}"));
+            }
 
             // Numbers for repeating commands or breakpoints
             KeyCode::Char(
@@ -707,6 +718,10 @@ fn buffer_as_number(s: &str) -> usize {
     const MIN: usize = 1;
     const MAX: usize = 100_000;
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
+}
+
+const fn toggle_state(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
 }
 
 fn handle_prompt_input_key_event(
@@ -1110,6 +1125,40 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
         assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
+    }
+
+    #[test]
+    fn view_shortcuts_report_status() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert_eq!(tui.active_buffer, BufferKind::Memory);
+        let _ = tui.handle_key_event(key(KeyCode::Char('b')));
+        assert_eq!(tui.active_buffer, BufferKind::Calldata);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Active buffer: calldata");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('t')));
+        assert!(tui.stack_labels);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack labels: on");
+        let _ = tui.handle_key_event(key(KeyCode::Char('t')));
+        assert!(!tui.stack_labels);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack labels: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('m')));
+        assert!(tui.buf_utf);
+        assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: on");
+        let _ = tui.handle_key_event(key(KeyCode::Char('m')));
+        assert!(!tui.buf_utf);
+        assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('h')));
+        assert!(!tui.show_shortcuts);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('h')));
+        assert!(tui.show_shortcuts);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: shown");
     }
 
     #[test]
