@@ -1,5 +1,7 @@
 use alloy_primitives::U256;
-use foundry_test_utils::{TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str};
+use foundry_test_utils::{
+    TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
+};
 
 mod common;
 mod handler;
@@ -1037,6 +1039,121 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest_init!(invariant_selector_focus_worker_exercises_targeted_selector, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+        config.fuzz.seed = Some(U256::from(1u32));
+    });
+    prj.add_test(
+        "InvariantSelectorFocusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FocusTarget {
+    bool public broken;
+
+    function aaaBreak() public {
+        broken = true;
+    }
+
+    function zzzSafe() public {}
+}
+
+contract InvariantSelectorFocusTest is Test {
+    FocusTarget target;
+
+    function setUp() public {
+        target = new FocusTarget();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = target.aaaBreak.selector;
+        selectors[1] = target.zzzSafe.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    function invariant_focus() public view {
+        require(!target.broken(), "focused");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--mt", "invariant_focus"]).assert_failure();
+    let stdout = output.get_output().stdout_lossy();
+    assert!(stdout.contains("[FAIL: focused]"), "{stdout}");
+    assert!(stdout.contains("invariant_focus()"), "{stdout}");
+    assert!(stdout.contains("aaaBreak"), "{stdout}");
+});
+
+forgetest_init!(invariant_selector_focus_workers_respect_user_filters, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 4;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+        config.fuzz.seed = Some(U256::from(1u32));
+    });
+    prj.add_test(
+        "InvariantSelectorFocusFiltersTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FocusFilterTarget {
+    bool public broken;
+
+    function aaaBreak() public {
+        broken = true;
+    }
+
+    function yyySafe() public {}
+
+    function zzzSafe() public {}
+}
+
+contract InvariantSelectorFocusAllowlistTest is Test {
+    FocusFilterTarget target;
+
+    function setUp() public {
+        target = new FocusFilterTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.zzzSafe.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    function invariant_allowlist_focus() public view {
+        require(!target.broken(), "focused");
+    }
+}
+
+contract InvariantSelectorFocusBlocklistTest is Test {
+    FocusFilterTarget target;
+
+    function setUp() public {
+        target = new FocusFilterTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.aaaBreak.selector;
+        excludeSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    function invariant_blocklist_focus() public view {
+        require(!target.broken(), "focused");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--mt", "invariant_allowlist_focus"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+    assert!(!stdout.contains("aaaBreak"), "{stdout}");
+
+    let output =
+        cmd.forge_fuse().args(["test", "--mt", "invariant_blocklist_focus"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+    assert!(!stdout.contains("aaaBreak"), "{stdout}");
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11453>
