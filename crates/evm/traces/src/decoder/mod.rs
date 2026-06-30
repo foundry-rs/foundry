@@ -1137,11 +1137,111 @@ fn indexed_inputs(event: &Event) -> usize {
 mod tests {
     use super::*;
     use alloy_primitives::{address, aliases::U96, hex};
-    use alloy_sol_types::{SolCall, SolEvent};
+    use alloy_sol_types::{SolCall, SolEvent, TopicList};
     use monad_revm::{
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
         staking::interface::IMonadStaking::{getEpochCall, getEpochReturn},
     };
+
+    fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
+        let mut items = functions
+            .into_iter()
+            .map(|function| (function.selector().to_string(), function.signature()))
+            .collect::<Vec<_>>();
+        items.sort();
+        items
+    }
+
+    fn event_abi_items(events: impl IntoIterator<Item = Event>) -> Vec<(String, usize, String)> {
+        let mut items = events
+            .into_iter()
+            .map(|event| (event.selector().to_string(), indexed_inputs(&event), event.signature()))
+            .collect::<Vec<_>>();
+        items.sort();
+        items
+    }
+
+    fn typed_call_abi_item<C: SolCall>() -> (String, String) {
+        (Selector::from(C::SELECTOR).to_string(), C::SIGNATURE.to_string())
+    }
+
+    fn typed_event_abi_item<E: SolEvent>() -> (String, usize, String) {
+        let signature_topics = usize::from(!E::ANONYMOUS);
+        let indexed_inputs = <E::TopicList as TopicList>::COUNT - signature_topics;
+        (E::SIGNATURE_HASH.to_string(), indexed_inputs, E::SIGNATURE.to_string())
+    }
+
+    #[test]
+    fn test_monad_decoder_abis_match_monad_revm() {
+        use monad_revm::{
+            reserve_balance::interface::IReserveBalance as RevmReserveBalance,
+            staking::interface::IMonadStaking as RevmMonadStaking,
+        };
+
+        let local_staking_functions = IMonadStaking::abi::functions()
+            .into_values()
+            .chain(IMonadStakingSyscalls::abi::functions().into_values())
+            .flatten();
+        let mut revm_staking_functions = vec![
+            typed_call_abi_item::<RevmMonadStaking::addValidatorCall>(),
+            typed_call_abi_item::<RevmMonadStaking::delegateCall>(),
+            typed_call_abi_item::<RevmMonadStaking::undelegateCall>(),
+            typed_call_abi_item::<RevmMonadStaking::withdrawCall>(),
+            typed_call_abi_item::<RevmMonadStaking::compoundCall>(),
+            typed_call_abi_item::<RevmMonadStaking::claimRewardsCall>(),
+            typed_call_abi_item::<RevmMonadStaking::changeCommissionCall>(),
+            typed_call_abi_item::<RevmMonadStaking::externalRewardCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getEpochCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getProposerValIdCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getValidatorCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getDelegatorCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getWithdrawalRequestCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getConsensusValidatorSetCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getSnapshotValidatorSetCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getExecutionValidatorSetCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getDelegationsCall>(),
+            typed_call_abi_item::<RevmMonadStaking::getDelegatorsCall>(),
+            typed_call_abi_item::<RevmMonadStaking::syscallOnEpochChangeCall>(),
+            typed_call_abi_item::<RevmMonadStaking::syscallRewardCall>(),
+            typed_call_abi_item::<RevmMonadStaking::syscallSnapshotCall>(),
+        ];
+        revm_staking_functions.sort();
+        assert_eq!(
+            function_abi_items(local_staking_functions),
+            revm_staking_functions,
+            "Monad staking function selectors drifted from monad_revm",
+        );
+
+        let mut revm_staking_events = vec![
+            typed_event_abi_item::<RevmMonadStaking::ClaimRewards>(),
+            typed_event_abi_item::<RevmMonadStaking::CommissionChanged>(),
+            typed_event_abi_item::<RevmMonadStaking::Delegate>(),
+            typed_event_abi_item::<RevmMonadStaking::EpochChanged>(),
+            typed_event_abi_item::<RevmMonadStaking::Undelegate>(),
+            typed_event_abi_item::<RevmMonadStaking::ValidatorCreated>(),
+            typed_event_abi_item::<RevmMonadStaking::ValidatorRewarded>(),
+            typed_event_abi_item::<RevmMonadStaking::ValidatorStatusChanged>(),
+            typed_event_abi_item::<RevmMonadStaking::Withdraw>(),
+        ];
+        revm_staking_events.sort();
+        assert_eq!(
+            event_abi_items(IMonadStaking::abi::events().into_values().flatten()),
+            revm_staking_events,
+            "Monad staking event selectors drifted from monad_revm",
+        );
+
+        assert_eq!(
+            function_abi_items(IReserveBalance::abi::functions().into_values().flatten()),
+            vec![typed_call_abi_item::<RevmReserveBalance::dippedIntoReserveCall>()],
+            "Monad reserve-balance function selectors drifted from monad_revm",
+        );
+
+        assert_eq!(
+            event_abi_items(IReserveBalance::abi::events().into_values().flatten()),
+            Vec::<(String, usize, String)>::new(),
+            "Monad reserve-balance event selectors drifted from monad_revm",
+        );
+    }
 
     #[test]
     fn test_selector_collision_resolution() {
