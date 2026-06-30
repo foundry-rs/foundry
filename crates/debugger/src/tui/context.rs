@@ -612,6 +612,7 @@ impl TUIContext<'_> {
 
     fn run_command_from_input(&mut self, input: &str) {
         let input = input.trim();
+        let input = input.strip_prefix(':').unwrap_or(input).trim_start();
         if input.is_empty() {
             self.set_error("Enter a debugger command".to_string());
             return;
@@ -1623,6 +1624,19 @@ mod tests {
         assert_eq!(tui.active_buffer, BufferKind::Calldata);
         assert_eq!(tui.draw_memory.current_buf_startline, 2);
         assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to calldata offset 0x40 (64)");
+    }
+
+    #[test]
+    fn command_prompt_accepts_optional_leading_colon() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input(":pc 2a");
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to PC 0x2a (42) in current trace");
     }
 
     #[test]
