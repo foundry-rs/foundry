@@ -867,7 +867,7 @@ impl TestArgs {
     /// filter. We want to compile all non-test sources always because tests might depend on them
     /// dynamically through cheatcodes.
     #[instrument(target = "forge::test", skip_all)]
-    fn source_selection_for_filter(
+    fn get_sources_to_compile(
         &self,
         config: &Config,
         test_filter: &ProjectPathsAwareFilter,
@@ -1021,12 +1021,8 @@ impl TestArgs {
                 .compile(&project)
         };
 
-        let (files, inline_config) = self.source_selection_for_filter(
-            &config,
-            &filter,
-            None,
-            replay_symbolic_artifact.as_ref(),
-        )?;
+        let (files, inline_config) =
+            self.get_sources_to_compile(&config, &filter, None, replay_symbolic_artifact.as_ref())?;
         let output = compile(files)?;
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
@@ -1609,7 +1605,7 @@ impl TestArgs {
             apply_mutation_compiler_overrides(&mut config_for_mutation);
 
             let json_output = shell::is_json();
-            let (selected_sources, _) = self.source_selection_for_filter(
+            let (selected_sources, _) = self.get_sources_to_compile(
                 &config_for_mutation,
                 filter,
                 Some(execution.inline_config.clone()),
