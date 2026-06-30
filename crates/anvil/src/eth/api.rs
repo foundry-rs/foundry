@@ -826,7 +826,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for ETH RPC call: `eth_baseFee`
     pub fn base_fee(&self) -> Result<Option<U256>> {
         node_info!("eth_baseFee");
-        Ok(self.backend.fees().is_eip1559().then(|| U256::from(self.backend.base_fee())))
+        Ok(self.backend.is_eip1559().then(|| U256::from(self.backend.base_fee())))
     }
 
     /// Returns the excess blob gas and current blob gas price
