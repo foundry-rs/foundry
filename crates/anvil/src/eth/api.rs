@@ -1218,6 +1218,14 @@ impl<N: Network> EthApi<N> {
         self.backend.debug_db_get(key).await
     }
 
+    /// Returns the PoW seed hash for a block number.
+    ///
+    /// Handler for RPC call: `debug_seedHash`.
+    pub fn debug_seed_hash(&self, _number: u64) -> Result<B256> {
+        node_info!("debug_seedHash");
+        Ok(B256::ZERO)
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1679,6 +1687,7 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugSeedHash(number) => self.debug_seed_hash(number).to_rpc_result(),
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }

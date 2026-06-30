@@ -529,6 +529,15 @@ async fn can_get_code_by_hash() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_debug_seed_hash() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let seed_hash: B256 = provider.raw_request("debug_seedHash".into(), (0u64,)).await.unwrap();
+    assert_eq!(seed_hash, B256::ZERO);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fill_transaction_fills_chain_id() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
