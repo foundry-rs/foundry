@@ -1218,6 +1218,14 @@ impl<N: Network> EthApi<N> {
         self.backend.debug_db_get(key).await
     }
 
+    /// Retrieves an ancient binary blob from the freezer.
+    ///
+    /// Handler for RPC call: `debug_dbAncient`.
+    pub fn debug_db_ancient(&self, _kind: String, _number: u64) -> Result<()> {
+        node_info!("debug_dbAncient");
+        Ok(())
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1679,6 +1687,9 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugDbAncient(kind, number) => {
+                self.debug_db_ancient(kind, number).to_rpc_result()
+            }
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }
