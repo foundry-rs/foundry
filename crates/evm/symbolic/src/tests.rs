@@ -2160,6 +2160,32 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
 }
 
 #[test]
+fn expression_constructors_reuse_live_nodes() {
+    let two = SymExpr::constant(U256::from(2));
+    assert!(two.ptr_eq(&SymExpr::constant(U256::from(2))));
+
+    let first = SymExpr::op(SymExprOp::Add, SymExpr::var("x"), two.clone());
+    let second = SymExpr::op(SymExprOp::Add, SymExpr::var("x"), SymExpr::constant(U256::from(2)));
+    assert!(first.ptr_eq(&second));
+
+    let inverted = SymExpr::not(first.clone());
+    assert!(inverted.ptr_eq(&SymExpr::not(second)));
+    assert!(SymExpr::not(inverted).ptr_eq(&first));
+}
+
+#[test]
+fn bool_constructors_reuse_live_nodes() {
+    let first = SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::var("x"), SymExpr::var("y"));
+    let second = SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::var("x"), SymExpr::var("y"));
+    assert!(first.ptr_eq(&second));
+
+    let first_not = first.clone().not();
+    let second_not = second.not();
+    assert!(first_not.ptr_eq(&second_not));
+    assert!(first_not.not().ptr_eq(&first));
+}
+
+#[test]
 fn bool_word_equality_simplifies_to_condition() {
     let condition = SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::var("x"), SymExpr::var("y"));
     let word = SymExpr::from_bool(condition.clone());
