@@ -1218,6 +1218,14 @@ impl<N: Network> EthApi<N> {
         self.backend.debug_db_get(key).await
     }
 
+    /// Returns invalid blocks known to the node.
+    ///
+    /// Handler for RPC call: `debug_getBadBlocks`.
+    pub fn bad_blocks(&self) -> Result<Vec<serde_json::Value>> {
+        node_info!("debug_getBadBlocks");
+        Ok(Vec::new())
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1667,6 +1675,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DebugGetRawTransaction(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
+            EthRequest::DebugGetBadBlocks(_) => self.bad_blocks().to_rpc_result(),
             // non eth-standard rpc calls
             EthRequest::DebugTraceTransaction(tx, opts) => {
                 self.debug_trace_transaction(tx, opts).await.to_rpc_result()
