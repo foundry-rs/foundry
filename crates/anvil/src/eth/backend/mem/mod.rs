@@ -3779,12 +3779,12 @@ where
         tx_index: Index,
         address: Address,
     ) -> Result<Option<TrieAccount>, BlockchainError> {
-        if let Some((block, _)) = self.get_block_with_hash(block_id.clone()) {
+        if let Some((block, _)) = self.get_block_with_hash(block_id) {
             return self.mined_debug_account_at(&block, tx_index, address);
         }
 
         if let Some(fork) = self.get_fork() {
-            let number = self.ensure_block_number(Some(block_id.clone())).await?;
+            let number = self.ensure_block_number(Some(block_id)).await?;
             if fork.predates_fork_inclusive(number) {
                 return Ok(fork.debug_account_at(block_id, tx_index, address).await?);
             }
