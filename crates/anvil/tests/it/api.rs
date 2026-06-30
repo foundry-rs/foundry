@@ -709,6 +709,7 @@ async fn can_debug_account_range() {
     assert_eq!(response, serde_json::Value::Null);
 }
 
+#[tokio::test(flavor = "multi_thread")]
 async fn can_debug_free_os_memory() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
