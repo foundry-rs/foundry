@@ -3771,6 +3771,103 @@ where
         Ok(BlockOpcodeGas { block_hash, block_number: block.header.number(), transactions })
     }
 
+    /// Returns account trie information after replaying a block through the transaction at
+    /// `tx_index`.
+    pub async fn debug_account_at(
+        &self,
+        block_id: BlockId,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<Option<TrieAccount>, BlockchainError> {
+        if let Some((block, _)) = self.get_block_with_hash(block_id.clone()) {
+            return self.mined_debug_account_at(&block, tx_index, address);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            let number = self.ensure_block_number(Some(block_id.clone())).await?;
+            if fork.predates_fork_inclusive(number) {
+                return Ok(fork.debug_account_at(block_id, tx_index, address).await?);
+            }
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    fn mined_debug_account_at(
+        &self,
+        block: &Block,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<Option<TrieAccount>, BlockchainError> {
+        let tx_index = tx_index.0;
+        let transaction_count = block.body.transactions.len();
+        if tx_index >= transaction_count {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "tx_index {tx_index} out of bounds for block with {transaction_count} transactions"
+            ))));
+        }
+
+        let pool_txs: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>> = block.body.transactions
+            [..=tx_index]
+            .iter()
+            .map(|tx| {
+                let pending_tx =
+                    PendingTransaction::from_maybe_impersonated(tx.clone()).expect("is valid");
+                Arc::new(PoolTransaction {
+                    pending_transaction: pending_tx,
+                    requires: vec![],
+                    provides: vec![],
+                    priority: crate::eth::pool::transactions::TransactionPriority(0),
+                })
+            })
+            .collect();
+
+        let replay = |parent_state: &StateDb| -> Result<Option<TrieAccount>, BlockchainError> {
+            let mut replay_db = in_memory_db::MemDb::default();
+            replay_db.init_from_state_snapshot(parent_state.read_as_state_snapshot());
+
+            let mut evm_env = self.evm_env.read().clone();
+            evm_env.block_env = block_env_from_header(&block.header);
+
+            let spec_id = *evm_env.spec_id();
+            let inspector_tx_config = self.inspector_tx_config();
+            let gas_config = self.pool_tx_gas_config(&evm_env);
+
+            self.execute_with_block_executor(
+                &mut replay_db,
+                &evm_env,
+                block.header.parent_hash,
+                spec_id,
+                &pool_txs,
+                &gas_config,
+                &inspector_tx_config,
+                &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
+            );
+
+            let db = replay_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+            let Some(account) = db.get(&address) else {
+                return Ok(None);
+            };
+
+            let storage_root = storage_root(&account.storage);
+            let code_hash = account.info.code_hash;
+            let balance = account.info.balance;
+            let nonce = account.info.nonce;
+            Ok(Some(TrieAccount { balance, nonce, code_hash, storage_root }))
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            replay(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            replay(state)
+        }
+    }
+
     /// Rollback the chain to a common height.
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,

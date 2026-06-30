@@ -1417,6 +1417,19 @@ impl EthApi<FoundryNetwork> {
         Ok(block_request)
     }
 
+    /// Returns account trie information after replaying a block through a transaction index.
+    ///
+    /// Handler for RPC call: `debug_accountAt`.
+    pub async fn debug_account_at(
+        &self,
+        block_id: BlockId,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<Option<TrieAccount>> {
+        node_info!("debug_accountAt");
+        self.backend.debug_account_at(block_id, tx_index, address).await
+    }
+
     /// Returns opcode gas usage for a transaction.
     ///
     /// Handler for RPC call: `trace_transactionOpcodeGas`.
@@ -1877,6 +1890,9 @@ impl EthApi<FoundryNetwork> {
                 self.debug_get_modified_accounts_by_number(start_number, end_number).to_rpc_result()
             }
             EthRequest::DebugFreeOsMemory(()) => self.debug_free_os_memory().to_rpc_result(),
+            EthRequest::DebugAccountAt(block_id, tx_index, address) => {
+                self.debug_account_at(block_id, tx_index, address).await.to_rpc_result()
+            }
             EthRequest::DebugTraceBlock(rlp_block, opts) => {
                 self.debug_trace_block(rlp_block, opts).await.to_rpc_result()
             }

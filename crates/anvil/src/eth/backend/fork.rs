@@ -311,6 +311,15 @@ impl<N: Network> ClientFork<N> {
         self.provider().debug_code_by_hash(code_hash, block_id).await
     }
 
+    pub async fn debug_account_at(
+        &self,
+        block_id: BlockId,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<Option<TrieAccount>, TransportError> {
+        self.provider().raw_request("debug_accountAt".into(), (block_id, tx_index, address)).await
+    }
+
     pub async fn debug_trace_block_by_hash(
         &self,
         block_hash: B256,
