@@ -529,6 +529,24 @@ async fn can_get_code_by_hash() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_debug_get_modified_accounts_by_hash() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let response: serde_json::Value = provider
+        .raw_request(
+            "debug_getModifiedAccountsByHash".into(),
+            (
+                "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response, serde_json::Value::Null);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fill_transaction_fills_chain_id() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
