@@ -125,9 +125,15 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         let matcher = self.test_function_matcher();
         self.matching_contracts(filter).flat_map(move |(id, c)| {
             let identifier = id.identifier();
-            c.abi
-                .functions()
-                .filter(move |func| matcher.matches_test_function(filter, &identifier, func))
+            let symbolic_tests_enabled = matcher.symbolic_tests_enabled(&identifier);
+            c.abi.functions().filter(move |func| {
+                let kind = TestFunctionKind::classify(
+                    func.name.as_str(),
+                    !func.inputs.is_empty(),
+                    symbolic_tests_enabled,
+                );
+                filter.matches_test_function_kind_in_contract(&identifier, func, kind)
+            })
         })
     }
 
@@ -142,9 +148,15 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(move |(id, c)| {
                 let identifier = id.identifier();
-                c.abi
-                    .functions()
-                    .filter(move |func| matcher.test_function_kind(&identifier, func).is_any_test())
+                let symbolic_tests_enabled = matcher.symbolic_tests_enabled(&identifier);
+                c.abi.functions().filter(move |func| {
+                    TestFunctionKind::classify(
+                        func.name.as_str(),
+                        !func.inputs.is_empty(),
+                        symbolic_tests_enabled,
+                    )
+                    .is_any_test()
+                })
             })
     }
 
@@ -156,12 +168,20 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let identifier = id.identifier();
+                let symbolic_tests_enabled = matcher.symbolic_tests_enabled(&identifier);
                 let tests = c
                     .abi
                     .functions()
                     // TODO(@mablr): in fuzz-only mode, make `--list` mirror execution
                     // by hiding unit/table/symbolic tests that `forge fuzz run/replay` skips.
-                    .filter(|func| matcher.matches_test_function(filter, &identifier, func))
+                    .filter(|func| {
+                        let kind = TestFunctionKind::classify(
+                            func.name.as_str(),
+                            !func.inputs.is_empty(),
+                            symbolic_tests_enabled,
+                        );
+                        filter.matches_test_function_kind_in_contract(&identifier, func, kind)
+                    })
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -845,19 +865,6 @@ impl<'a> TestFunctionMatcher<'a> {
         )
     }
 
-    pub(crate) fn matches_test_function(
-        &self,
-        filter: &dyn TestFilter,
-        contract_id: &str,
-        func: &Function,
-    ) -> bool {
-        filter.matches_test_function_kind_in_contract(
-            contract_id,
-            func,
-            self.test_function_kind(contract_id, func),
-        )
-    }
-
     pub(crate) fn matches_contract(
         &self,
         filter: &dyn TestFilter,
@@ -865,8 +872,13 @@ impl<'a> TestFunctionMatcher<'a> {
         abi: &JsonAbi,
     ) -> bool {
         let identifier = id.identifier();
+        let symbolic_tests_enabled = self.symbolic_tests_enabled(&identifier);
         matches_contract(filter, &id.source, &id.name, &identifier, abi.functions(), |func| {
-            self.test_function_kind(&identifier, func)
+            TestFunctionKind::classify(
+                func.name.as_str(),
+                !func.inputs.is_empty(),
+                symbolic_tests_enabled,
+            )
         })
     }
 }
