@@ -18,12 +18,17 @@ use alloy_provider::{
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
     FeeHistory, Filter, Log,
+    request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     trace::{
         geth::{GethDebugTracingOptions, GethTrace, TraceResult},
-        parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
+        parity::{
+            LocalizedTransactionTrace as Trace, TraceResults, TraceResultsWithTransactionHash,
+            TraceType,
+        },
     },
 };
+use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::hardfork::FoundryHardfork;
@@ -216,6 +221,16 @@ impl<N: Network> ClientFork<N> {
         storage.transaction_traces.insert(hash, traces.clone());
 
         Ok(traces)
+    }
+
+    /// Sends `trace_call`.
+    pub async fn trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        trace_types: HashSet<TraceType>,
+        block: BlockId,
+    ) -> Result<TraceResults, TransportError> {
+        self.provider().raw_request("trace_call".into(), (request, trace_types, block)).await
     }
 
     pub async fn debug_trace_transaction(

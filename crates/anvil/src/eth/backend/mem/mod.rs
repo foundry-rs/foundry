@@ -79,7 +79,9 @@ use alloy_rpc_types::{
             GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
             NoopFrame, TraceResult,
         },
-        parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
+        parity::{
+            LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
+        },
     },
 };
 use alloy_serde::{OtherFields, WithOtherFields};
@@ -1785,6 +1787,47 @@ impl<N: Network> Backend<N> {
         }
 
         Ok(vec![])
+    }
+
+    /// Executes a transaction call and returns requested parity trace results.
+    pub async fn trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        fee_details: FeeDetails,
+        trace_types: HashSet<TraceType>,
+        block_request: BlockRequest<FoundryTxEnvelope>,
+        block_id: BlockId,
+    ) -> Result<TraceResults, BlockchainError>
+    where
+        Self: TransactionValidator<FoundryTxEnvelope>,
+        N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+    {
+        if let BlockRequest::Number(number) = &block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(*number)
+        {
+            return Ok(fork.trace_call(request, trace_types, block_id).await?);
+        }
+
+        self.with_database_at(Some(block_request), |state, block| {
+            let cache_db = CacheDB::new(state);
+            let mut inspector =
+                TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
+            let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block);
+            let result = self.transact_with_inspector_ref(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                tx_env,
+                op_deposit,
+            )?;
+
+            inspector
+                .into_parity_builder()
+                .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                .map_err(Into::into)
+        })
+        .await?
     }
 
     /// Replays all transactions in a block and returns the requested traces for each transaction
