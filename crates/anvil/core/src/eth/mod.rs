@@ -325,6 +325,13 @@ pub enum EthRequest {
     #[serde(rename = "debug_dbGet")]
     DebugDbGet(String),
 
+    /// reth's `debug_standardTraceBlockToFile` endpoint.
+    #[serde(rename = "debug_standardTraceBlockToFile")]
+    DebugStandardTraceBlockToFile(
+        BlockNumber,
+        #[serde(default)] Option<GethDebugTracingCallOptions>,
+    ),
+
     /// geth's `debug_traceBlockByHash` endpoint
     #[serde(rename = "debug_traceBlockByHash")]
     DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
@@ -1563,6 +1570,16 @@ true}]}"#;
         let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }, {"disableStorage": true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_standard_trace_block_to_file() {
+        let s = r#"{"method": "debug_standardTraceBlockToFile", "params": ["latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        match serde_json::from_value::<EthRequest>(value).unwrap() {
+            EthRequest::DebugStandardTraceBlockToFile(_, None) => {}
+            req => panic!("unexpected request: {req:?}"),
+        }
     }
 
     #[test]

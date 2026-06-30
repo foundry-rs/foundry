@@ -1218,6 +1218,16 @@ impl<N: Network> EthApi<N> {
         self.backend.debug_db_get(key).await
     }
 
+    /// Handles reth's no-op `debug_standardTraceBlockToFile` endpoint.
+    pub fn debug_standard_trace_block_to_file(
+        &self,
+        _block: BlockNumber,
+        _opts: Option<GethDebugTracingCallOptions>,
+    ) -> Result<()> {
+        node_info!("debug_standardTraceBlockToFile");
+        Ok(())
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1679,6 +1689,9 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugStandardTraceBlockToFile(block, opts) => {
+                self.debug_standard_trace_block_to_file(block, opts).to_rpc_result()
+            }
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }
