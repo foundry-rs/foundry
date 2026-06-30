@@ -529,6 +529,21 @@ async fn can_get_code_by_hash() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_debug_storage_range_at() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let response: serde_json::Value = provider
+        .raw_request(
+            "debug_storageRangeAt".into(),
+            (B256::ZERO, 0usize, Address::ZERO, B256::ZERO, 1u64),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response, serde_json::Value::Null);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fill_transaction_fills_chain_id() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
