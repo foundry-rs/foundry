@@ -817,6 +817,12 @@ impl<N: Network> Backend<N> {
         rx
     }
 
+    /// Returns the number of new-block listeners. Closed listeners are pruned lazily on the next
+    /// new block notification.
+    pub fn new_block_listeners_count(&self) -> usize {
+        self.new_block_listeners.lock().len()
+    }
+
     /// Notifies all `new_block_listeners` about the new block
     fn notify_on_new_block(&self, header: Header, hash: B256) {
         // cleanup closed notification streams first, if the channel is closed we can remove the

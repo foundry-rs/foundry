@@ -53,6 +53,7 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
+    pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
     state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
@@ -3525,6 +3526,60 @@ impl EthApi<FoundryNetwork> {
                 if let Ok(Some(txn)) = this.transaction_by_hash(hash).await
                     && tx.send(txn).is_err()
                 {
+                    break;
+                }
+            }
+        });
+
+        rx
+    }
+
+    /// Returns a listener for new block receipts.
+    pub fn transaction_receipts_subscription(
+        &self,
+        filter: TransactionReceiptsParams,
+    ) -> UnboundedReceiver<Vec<FoundryTxReceipt>> {
+        let (tx, rx) = unbounded_channel();
+        let mut blocks = self.new_block_notifications();
+        let this = self.clone();
+
+        tokio::spawn(async move {
+            // Precompute the hash filter once.
+            let hash_filter = filter
+                .transaction_hashes
+                .filter(|hashes| !hashes.is_empty())
+                .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
+
+            loop {
+                let block = tokio::select! {
+                    biased;
+                    // Exit when the subscriber unsubscribes, even while awaiting the next block.
+                    _ = tx.closed() => break,
+                    maybe_block = blocks.next() => match maybe_block {
+                        Some(block) => block,
+                        None => break,
+                    },
+                };
+
+                let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {
+                    Ok(Some(mut receipts)) => {
+                        if let Some(hashes) = &hash_filter {
+                            receipts.retain(|receipt| hashes.contains(&receipt.transaction_hash()));
+                        }
+                        receipts
+                    }
+                    Ok(None) => continue,
+                    Err(err) => {
+                        trace!(target: "node", %err, "failed to build block receipts for subscription");
+                        continue;
+                    }
+                };
+
+                if receipts.is_empty() {
+                    continue;
+                }
+
+                if tx.send(receipts).is_err() {
                     break;
                 }
             }
