@@ -467,22 +467,15 @@ impl SymbolicExecutor {
                             self.branch_is_sat_or_defer(&false_state.constraints)?;
                         trace!(true_feasible, false_feasible, "JUMPI symbolic branch");
                         match (true_feasible, false_feasible) {
-                            (true, true)
-                                if false_state.corpus_seed_model_count()
-                                    > true_state.corpus_seed_model_count() =>
-                            {
-                                push_preferred_branch(
-                                    worklist,
-                                    false_state,
-                                    true_state,
-                                    self.config.exploration_order,
-                                );
-                            }
                             (true, true) => {
-                                push_preferred_branch(
+                                let true_seed_count = true_state.corpus_seed_model_count();
+                                let false_seed_count = false_state.corpus_seed_model_count();
+                                push_seed_ordered_branches(
                                     worklist,
                                     true_state,
+                                    true_seed_count,
                                     false_state,
+                                    false_seed_count,
                                     self.config.exploration_order,
                                 );
                             }
@@ -778,10 +771,32 @@ impl SymbolicExecutor {
     }
 }
 
-fn push_preferred_branch(
-    worklist: &mut VecDeque<PathState>,
-    preferred: PathState,
-    secondary: PathState,
+fn push_seed_ordered_branches<T>(
+    worklist: &mut VecDeque<T>,
+    true_branch: T,
+    true_seed_count: usize,
+    false_branch: T,
+    false_seed_count: usize,
+    order: SymbolicExplorationOrder,
+) {
+    match false_seed_count.cmp(&true_seed_count) {
+        std::cmp::Ordering::Greater => {
+            push_preferred_branch(worklist, false_branch, true_branch, order);
+        }
+        std::cmp::Ordering::Less => {
+            push_preferred_branch(worklist, true_branch, false_branch, order);
+        }
+        std::cmp::Ordering::Equal => {
+            worklist.push_back(true_branch);
+            worklist.push_back(false_branch);
+        }
+    }
+}
+
+fn push_preferred_branch<T>(
+    worklist: &mut VecDeque<T>,
+    preferred: T,
+    secondary: T,
     order: SymbolicExplorationOrder,
 ) {
     match order {
@@ -793,5 +808,72 @@ fn push_preferred_branch(
             worklist.push_back(secondary);
             worklist.push_back(preferred);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seed_ordered_branches_preserve_equal_count_order() {
+        let mut bfs_worklist = VecDeque::new();
+        push_seed_ordered_branches(
+            &mut bfs_worklist,
+            "true",
+            0,
+            "false",
+            0,
+            SymbolicExplorationOrder::Bfs,
+        );
+        assert_eq!(
+            super::super::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
+            Some("true")
+        );
+
+        let mut dfs_worklist = VecDeque::new();
+        push_seed_ordered_branches(
+            &mut dfs_worklist,
+            "true",
+            0,
+            "false",
+            0,
+            SymbolicExplorationOrder::Dfs,
+        );
+        assert_eq!(
+            super::super::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn seed_ordered_branches_prefer_strict_seed_count() {
+        let mut bfs_worklist = VecDeque::new();
+        push_seed_ordered_branches(
+            &mut bfs_worklist,
+            "true",
+            0,
+            "false",
+            1,
+            SymbolicExplorationOrder::Bfs,
+        );
+        assert_eq!(
+            super::super::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
+            Some("false")
+        );
+
+        let mut dfs_worklist = VecDeque::new();
+        push_seed_ordered_branches(
+            &mut dfs_worklist,
+            "true",
+            1,
+            "false",
+            0,
+            SymbolicExplorationOrder::Dfs,
+        );
+        assert_eq!(
+            super::super::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
+            Some("true")
+        );
     }
 }
