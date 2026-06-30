@@ -1544,6 +1544,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthGetTransactionByHash(hash) => {
                 self.transaction_by_hash(hash).await.to_rpc_result()
             }
+            EthRequest::EthPendingTransactions(_) => {
+                self.pending_transactions().await.to_rpc_result()
+            }
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).await.to_rpc_result()
             }
@@ -2735,28 +2738,46 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
     pub async fn transaction_by_hash(&self, hash: B256) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByHash");
-        let mut tx = self.pool.get_transaction(hash).map(|pending| {
-            let from = *pending.sender();
-            let tx = transaction_build(
-                Some(*pending.hash()),
-                pending.transaction,
-                None,
-                None,
-                Some(self.backend.base_fee()),
-            );
-
-            let WithOtherFields { inner: mut tx, other } = tx.0;
-            // we set the from field here explicitly to the set sender of the pending transaction,
-            // in case the transaction is impersonated.
-            tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
-
-            AnyRpcTransaction(WithOtherFields { inner: tx, other })
-        });
+        let mut tx =
+            self.pool.get_transaction(hash).map(|pending| self.build_pool_transaction(pending));
         if tx.is_none() {
             tx = self.backend.transaction_by_hash(hash).await?
         }
 
         Ok(tx)
+    }
+
+    fn build_pool_transaction(
+        &self,
+        pending: PendingTransaction<FoundryTxEnvelope>,
+    ) -> AnyRpcTransaction {
+        let from = *pending.sender();
+        let tx = transaction_build(
+            Some(*pending.hash()),
+            pending.transaction,
+            None,
+            None,
+            Some(self.backend.base_fee()),
+        );
+
+        let WithOtherFields { inner: mut tx, other } = tx.0;
+        // we set the from field here explicitly to the set sender of the pending transaction,
+        // in case the transaction is impersonated.
+        tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
+
+        AnyRpcTransaction(WithOtherFields { inner: tx, other })
+    }
+
+    /// Returns all ready transactions from the local pending pool.
+    ///
+    /// Handler for ETH RPC call: `eth_pendingTransactions`
+    pub async fn pending_transactions(&self) -> Result<Vec<AnyRpcTransaction>> {
+        node_info!("eth_pendingTransactions");
+        Ok(self
+            .pool
+            .ready_transactions()
+            .map(|pending| self.build_pool_transaction(pending.pending_transaction.clone()))
+            .collect())
     }
 
     /// Returns the transaction by sender and nonce.

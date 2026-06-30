@@ -227,6 +227,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
 
+    #[serde(rename = "eth_pendingTransactions", with = "empty_params")]
+    EthPendingTransactions(()),
+
     /// Returns the blob for a given blob versioned hash.
     #[serde(rename = "anvil_getBlobByHash", with = "sequence")]
     GetBlobByHash(B256),
@@ -872,6 +875,13 @@ mod tests {
     #[test]
     fn test_eth_block_number() {
         let s = r#"{"method": "eth_blockNumber", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_pending_transactions() {
+        let s = r#"{"method": "eth_pendingTransactions", "params":[]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
