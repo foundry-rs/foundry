@@ -31,6 +31,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | pauseGasMeteringCall::SELECTOR
         | resumeGasMeteringCall::SELECTOR
         | resetGasMeteringCall::SELECTOR
+        | isIsolateModeCall::SELECTOR
         | lastCallGasCall::SELECTOR
         | lastFrameGasCall::SELECTOR
         | stopExpectSafeMemoryCall::SELECTOR

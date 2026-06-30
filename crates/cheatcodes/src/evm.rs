@@ -849,6 +849,13 @@ impl Cheatcode for coolSlotCall {
     }
 }
 
+impl Cheatcode for isIsolateModeCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self {} = self;
+        Ok(state.config.isolate.abi_encode())
+    }
+}
+
 impl Cheatcode for readCallersCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;

@@ -484,8 +484,9 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         let inspector = executor.inspector_mut();
         // inspector.set_env(&self.env);
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
-            cheatcodes.config =
-                Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
+            let mut config = cheatcodes.config.clone_with(&self.config, self.evm_opts.clone());
+            config.isolate = self.isolation;
+            cheatcodes.config = Arc::new(config);
         }
         inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
@@ -507,14 +508,16 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         artifact_id: &ArtifactId,
         db: Backend<FEN>,
     ) -> Executor<FEN> {
-        let cheats_config = Arc::new(CheatsConfig::new(
+        let mut cheats_config = CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),
             Some(known_contracts),
             Some(artifact_id.clone()),
             None,
             false,
-        ));
+        );
+        cheats_config.isolate = self.isolation;
+        let cheats_config = Arc::new(cheats_config);
         ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack
