@@ -433,6 +433,7 @@ tikv-jemallocator = "0.7"
 auto_impl = "1"
 bytes = "1.11"
 walkdir = "2"
+wait-timeout = "0.2"
 prettyplease = "0.2"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
