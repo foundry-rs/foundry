@@ -1218,6 +1218,12 @@ impl<N: Network> EthApi<N> {
         self.backend.debug_db_get(key).await
     }
 
+    /// Handles reth's no-op `debug_setTrieFlushInterval` endpoint.
+    pub fn debug_set_trie_flush_interval(&self, _interval: String) -> Result<()> {
+        node_info!("debug_setTrieFlushInterval");
+        Ok(())
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1679,6 +1685,9 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugSetTrieFlushInterval(interval) => {
+                self.debug_set_trie_flush_interval(interval).to_rpc_result()
+            }
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }
