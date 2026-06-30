@@ -235,6 +235,82 @@ printf '#!/usr/bin/env sh\nexit 3\n' > "$fake_bin"; chmod +x "$fake_bin"
 ensure_rust_foundryup
 check_eq "failing sidecar --version triggers reinstall" "1" "$(wc -l < "$install_marker" | tr -d ' ')"
 
+# --- update detection -----------------------------------------------------
+
+wants_update -U && r=yes || r=no
+check_eq "wants_update detects -U" "yes" "$r"
+wants_update --install stable --update && r=yes || r=no
+check_eq "wants_update detects --update among args" "yes" "$r"
+wants_update --install stable && r=yes || r=no
+check_eq "wants_update false without update flag" "no" "$r"
+wants_update -- --update && r=yes || r=no
+check_eq "wants_update stops at -- sentinel" "no" "$r"
+wants_update --install --update && r=yes || r=no
+check_eq "wants_update skips option values" "no" "$r"
+
+# --- platform binary names ------------------------------------------------
+
+uname() { echo "Linux"; }
+check_eq "bin name on linux" "forge" "$(foundry_bin_name forge)"
+uname() { echo "MINGW64_NT-10.0"; }
+check_eq "bin name on windows" "forge.exe" "$(foundry_bin_name forge)"
+unset -f uname
+
+bin_dir="$(mktemp -d)"
+: > "$bin_dir/forge"
+uname() { echo "Linux"; }
+check_eq "find_foundry_bin finds bare name" "$bin_dir/forge" "$(find_foundry_bin "$bin_dir" forge)"
+: > "$bin_dir/cast.exe"
+uname() { echo "MINGW64_NT-10.0"; }
+check_eq "find_foundry_bin finds .exe on windows" "$bin_dir/cast.exe" "$(find_foundry_bin "$bin_dir" cast)"
+unset -f uname
+rm -rf "$bin_dir"
+
+# --- nested versions layout (list / use) ----------------------------------
+
+# Build a versions dir mixing the legacy flat layout and the nested layout a
+# Rust foundryup migration produces.
+FOUNDRY_VERSIONS_DIR="$(mktemp -d)"
+mk_version() { # $1 = dir
+  mkdir -p "$1"
+  for bin in forge cast anvil chisel; do
+    printf '#!/usr/bin/env sh\necho "%s 1.0.0"\n' "$bin" > "$1/$bin"
+    chmod +x "$1/$bin"
+  done
+}
+mk_version "$FOUNDRY_VERSIONS_DIR/v1.0.0"                       # flat
+mk_version "$FOUNDRY_VERSIONS_DIR/foundry-rs/foundry/v2.0.0"    # nested
+
+check_eq "is_version_dir true for version dir" \
+  "yes" "$(is_version_dir "$FOUNDRY_VERSIONS_DIR/v1.0.0" && echo yes || echo no)"
+check_eq "is_version_dir false for owner dir" \
+  "no" "$(is_version_dir "$FOUNDRY_VERSIONS_DIR/foundry-rs" && echo yes || echo no)"
+
+check_eq "resolve_version_dir finds flat version" \
+  "$FOUNDRY_VERSIONS_DIR/v1.0.0" "$(resolve_version_dir v1.0.0)"
+check_eq "resolve_version_dir finds nested version" \
+  "$FOUNDRY_VERSIONS_DIR/foundry-rs/foundry/v2.0.0" "$(resolve_version_dir v2.0.0)"
+check_eq "resolve_version_dir empty for missing version" \
+  "" "$(resolve_version_dir v9.9.9)"
+
+# list_versions_dir surfaces both flat and nested versions without erroring.
+# Temporarily restore a printing `say` (the suite silences it) to capture output.
+say() { printf "foundryup: %s\n" "$1"; }
+list_out="$(list_versions_dir "$FOUNDRY_VERSIONS_DIR")"
+say() { :; }
+check_eq "list shows flat version" "yes" "$(printf '%s\n' "$list_out" | grep -qx 'foundryup: v1.0.0' && echo yes || echo no)"
+check_eq "list shows nested version" "yes" "$(printf '%s\n' "$list_out" | grep -qx 'foundryup: v2.0.0' && echo yes || echo no)"
+rm -rf "$FOUNDRY_VERSIONS_DIR"
+
+# --- update_shim failure --------------------------------------------------
+
+# A failed launcher download must error, never silently report success.
+FOUNDRY_BIN_DIR="$(mktemp -d)"
+download() { return 1; }
+rc=0; ( update_shim 2>/dev/null ) || rc=$?
+check_eq "update_shim errors when download fails" "1" "$rc"
+rm -rf "$FOUNDRY_BIN_DIR"
+
 # --- summary --------------------------------------------------------------
 
 if [ "$failures" -ne 0 ]; then
