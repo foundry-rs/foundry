@@ -580,7 +580,7 @@ impl TUIContext<'_> {
     }
 
     fn goto_buffer_offset_from_input(&mut self, input: &str) {
-        self.goto_buffer_offset(buffer_kind(&self.active_buffer), input);
+        self.goto_buffer_offset(self.active_buffer, input);
     }
 
     fn goto_buffer_offset(&mut self, buffer: BufferKind, input: &str) {
@@ -812,14 +812,6 @@ const fn buffer_name(buffer: &BufferKind) -> &'static str {
         BufferKind::Memory => "memory",
         BufferKind::Calldata => "calldata",
         BufferKind::Returndata => "returndata",
-    }
-}
-
-const fn buffer_kind(buffer: &BufferKind) -> BufferKind {
-    match buffer {
-        BufferKind::Memory => BufferKind::Memory,
-        BufferKind::Calldata => BufferKind::Calldata,
-        BufferKind::Returndata => BufferKind::Returndata,
     }
 }
 
