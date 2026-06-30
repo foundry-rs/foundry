@@ -45,14 +45,18 @@ mod run;
 mod tests {
     use super::*;
 
-    struct BranchOnlySolver;
+    struct DefinitiveOnlySolver;
 
-    impl SymbolicSolver for BranchOnlySolver {
+    impl SymbolicSolver for DefinitiveOnlySolver {
         fn stats(&self) -> SymbolicStats {
             SymbolicStats::default()
         }
 
-        fn set_query_observer(&mut self, _observer: Option<QueryObserver>) {}
+        fn set_query_observer(
+            &mut self,
+            _observer: Option<Box<dyn Fn(usize) + Send + Sync + 'static>>,
+        ) {
+        }
 
         fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
             None
@@ -68,12 +72,13 @@ mod tests {
             Ok(())
         }
 
-        fn is_sat(&mut self, _constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
-            panic!("constraints_with_condition should use branch satisfiability")
+        fn is_sat(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
+            assert_eq!(constraints.len(), 2);
+            Ok(true)
         }
 
         fn is_sat_branch(&mut self, _constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
-            Ok(true)
+            Err(SymbolicError::SolverUnknown)
         }
 
         fn model(&mut self, _constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError> {
@@ -82,25 +87,29 @@ mod tests {
     }
 
     #[test]
-    fn constraints_with_condition_uses_branch_solver_path() {
+    fn constraints_with_condition_uses_definitive_solver_path() {
         let mut executor = SymbolicExecutor {
             config: SymbolicConfig::default(),
-            solver: Box::new(BranchOnlySolver),
+            solver: Box::new(DefinitiveOnlySolver),
             deferred_incomplete: None,
         };
-        let state = PathState::new(
+        let mut state = PathState::new(
             Address::ZERO,
             Address::ZERO,
             U256::ZERO,
             SymbolicCalldata::selector_only(&Function::parse("empty()").unwrap()).unwrap(),
             false,
         );
-        let condition = SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)));
+        state.constraints.push(SymBoolExpr::eq(
+            SymExpr::op(SymExprOp::UDiv, SymExpr::var("x"), SymExpr::constant(U256::from(3))),
+            SymExpr::constant(U256::from(7)),
+        ));
+        let condition = SymBoolExpr::eq(SymExpr::var("z"), SymExpr::constant(U256::from(5)));
 
         let (constraints, sat) =
             executor.constraints_with_condition(&state, condition.clone()).unwrap();
 
         assert!(sat);
-        assert_eq!(constraints, vec![condition]);
+        assert_eq!(constraints, vec![state.constraints[0].clone(), condition]);
     }
 }
