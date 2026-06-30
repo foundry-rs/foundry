@@ -109,6 +109,9 @@ pub enum EthRequest {
         bool,
     ),
 
+    #[serde(rename = "eth_getBlockAccessListRaw", with = "sequence")]
+    EthGetBlockAccessListRaw(BlockId),
+
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
 
@@ -1620,6 +1623,13 @@ true}]}"#;
 
         // this case deviates from the spec, but we're supporting this for legacy reasons: <https://github.com/foundry-rs/foundry/issues/1868>
         let s = r#"{"method": "eth_getBlockByNumber", "params": [0, true]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_get_block_access_list_raw() {
+        let s = r#"{"method": "eth_getBlockAccessListRaw", "params": ["latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

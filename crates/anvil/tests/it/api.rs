@@ -12,7 +12,7 @@ use alloy_network::{
     EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync,
 };
 use alloy_primitives::{
-    Address, B256, ChainId, U256, b256, bytes,
+    Address, B256, Bytes, ChainId, U256, b256, bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
 };
 use alloy_provider::Provider;
@@ -142,6 +142,17 @@ async fn can_get_block_by_number() {
 
     let block = provider.get_block(BlockId::hash(block.header.hash)).full().await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_block_access_list_raw() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let block_access_list: Option<Bytes> =
+        provider.client().request("eth_getBlockAccessListRaw", (BlockId::latest(),)).await.unwrap();
+
+    assert_eq!(block_access_list, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
