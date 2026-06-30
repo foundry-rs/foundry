@@ -138,6 +138,40 @@ impl<N: Network> ClientFork<N> {
         self.provider().get_proof(address, keys).block_id(block_number.unwrap_or_default()).await
     }
 
+    /// Sends `eth_getBlockAccessList`
+    pub async fn block_access_list(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<serde_json::Value>, TransportError> {
+        self.provider().raw_request("eth_getBlockAccessList".into(), (block_id,)).await
+    }
+
+    /// Sends `eth_getBlockAccessListByBlockHash`
+    pub async fn block_access_list_by_hash(
+        &self,
+        block_hash: B256,
+    ) -> Result<Option<serde_json::Value>, TransportError> {
+        self.provider().raw_request("eth_getBlockAccessListByBlockHash".into(), (block_hash,)).await
+    }
+
+    /// Sends `eth_getBlockAccessListByBlockNumber`
+    pub async fn block_access_list_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<serde_json::Value>, TransportError> {
+        self.provider()
+            .raw_request("eth_getBlockAccessListByBlockNumber".into(), (block_number,))
+            .await
+    }
+
+    /// Sends `eth_getBlockAccessListRaw`.
+    pub async fn block_access_list_raw(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<Bytes>, TransportError> {
+        self.provider().raw_request("eth_getBlockAccessListRaw".into(), (block_id,)).await
+    }
+
     pub async fn storage_at(
         &self,
         address: Address,

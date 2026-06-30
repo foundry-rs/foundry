@@ -121,6 +121,21 @@ pub enum EthRequest {
     )]
     EthGetHeaderByNumber(BlockNumber),
 
+    #[serde(rename = "eth_getBlockAccessList", with = "sequence")]
+    EthGetBlockAccessList(BlockId),
+
+    #[serde(rename = "eth_getBlockAccessListByBlockHash", with = "sequence")]
+    EthGetBlockAccessListByBlockHash(B256),
+
+    #[serde(
+        rename = "eth_getBlockAccessListByBlockNumber",
+        deserialize_with = "lenient_block_number::lenient_block_number_seq"
+    )]
+    EthGetBlockAccessListByBlockNumber(BlockNumber),
+
+    #[serde(rename = "eth_getBlockAccessListRaw", with = "sequence")]
+    EthGetBlockAccessListRaw(BlockId),
+
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
 
