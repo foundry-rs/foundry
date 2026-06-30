@@ -2,7 +2,7 @@ use super::{call_after_invariant_function, call_invariant_function, execute_tx};
 use crate::executors::{
     EarlyExit, Executor,
     invariant::shrink::{
-        CheckSequenceOutcome, ShrinkProgress, shrink_sequence, shrink_sequence_value,
+        CheckSequenceOutcome, reset_shrink_progress, shrink_sequence, shrink_sequence_value,
     },
 };
 use alloy_dyn_abi::JsonAbiExt;
@@ -133,16 +133,10 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     early_exit: &EarlyExit,
     position: Option<(usize, usize)>,
 ) -> Result<ReplayErrorResult> {
-    // Multi-invariant runs include `[i/N]` in the shrink progress message so users see how many
-    // shrinkers are queued behind the current one.
-    let shrink_progress = ShrinkProgress::new(
-        &config,
-        progress,
-        &target_invariant.name,
-        position,
-        Some(&ided_contracts),
-        config.show_solidity,
-    );
+    // Reset progress bar for this invariant's shrink phase. Multi-invariant runs call this once
+    // per target so the bar's message reflects which invariant is currently being shrunk and
+    // (when more than one invariant needs shrinking) the `[i/N]` counter shows queue depth.
+    reset_shrink_progress(&config, progress, &target_invariant.name, position);
 
     let (calls, check_result) = if let Some(target) = target_value {
         (
@@ -153,7 +147,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
                 calls,
                 &executor,
                 target,
-                &shrink_progress,
+                progress,
                 early_exit,
             )?,
             None,
@@ -167,7 +161,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             expect_assertion_failure,
             &executor,
             rd,
-            &shrink_progress,
+            progress,
             early_exit,
         )?;
         (shrunk.calls, shrunk.result)

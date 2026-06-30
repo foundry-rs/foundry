@@ -84,7 +84,6 @@ impl TestsProgressState {
                 indicatif::ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
             );
             fuzz_progress.set_prefix(test_name.to_owned());
-            fuzz_progress.enable_steady_tick(Duration::from_millis(100));
             Some(fuzz_progress)
         } else {
             None
