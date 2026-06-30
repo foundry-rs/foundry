@@ -58,11 +58,21 @@ check_eq "redirect with non-version tag returns empty" \
 
 NIGHTLY_SHA="bc3b7f1e90bb7a30903d7d1ae2c532e4fba5679d"
 OLDER_SHA="55210f8c412eac24e9318341efab1e27c5b03822"
-# Minimal Atom feed: newest nightly first, then an older one and a stable tag.
+# Minimal Atom feed: older entry first, then the newest nightly by updated
+# timestamp and a stable tag.
 FEED="<feed>
-  <entry><link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$NIGHTLY_SHA\"/></entry>
-  <entry><link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$OLDER_SHA\"/></entry>
-  <entry><link href=\"https://github.com/foundry-rs/foundry/releases/tag/v1.7.1\"/></entry>
+  <entry>
+    <updated>2026-01-01T00:00:00Z</updated>
+    <link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$OLDER_SHA\"/>
+  </entry>
+  <entry>
+    <updated>2026-01-02T00:00:00Z</updated>
+    <link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$NIGHTLY_SHA\"/>
+  </entry>
+  <entry>
+    <updated>2026-01-03T00:00:00Z</updated>
+    <link href=\"https://github.com/foundry-rs/foundry/releases/tag/v1.7.1\"/>
+  </entry>
 </feed>"
 
 curl() { printf '%s' "$FEED"; }
@@ -72,13 +82,20 @@ check_eq "nightly feed returns bounded unique candidates" \
   $'nightly-bc3b7f1e90bb7a30903d7d1ae2c532e4fba5679d\nnightly-55210f8c412eac24e9318341efab1e27c5b03822' \
   "$(FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT=5 resolve_nightly_tags_via_feed foundry-rs/foundry)"
 
-FEED_WITH_DUPLICATES="<feed>
-  <entry><link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$NIGHTLY_SHA\"/></entry>
-  <entry><content>compare nightly-$OLDER_SHA...nightly-$NIGHTLY_SHA</content></entry>
-  <entry><link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$OLDER_SHA\"/></entry>
+FEED_WITH_COMPARE_LINKS="<feed>
+  <entry>
+    <updated>2026-01-01T00:00:00Z</updated>
+    <link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$OLDER_SHA\"/>
+    <content>compare nightly-$NIGHTLY_SHA...nightly-$OLDER_SHA</content>
+  </entry>
+  <entry>
+    <updated>2026-01-02T00:00:00Z</updated>
+    <link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$NIGHTLY_SHA\"/>
+    <content>compare nightly-$OLDER_SHA...nightly-$NIGHTLY_SHA</content>
+  </entry>
 </feed>"
-curl() { printf '%s' "$FEED_WITH_DUPLICATES"; }
-check_eq "nightly feed deduplicates candidates in order" \
+curl() { printf '%s' "$FEED_WITH_COMPARE_LINKS"; }
+check_eq "nightly feed ignores compare links and sorts by updated" \
   $'nightly-bc3b7f1e90bb7a30903d7d1ae2c532e4fba5679d\nnightly-55210f8c412eac24e9318341efab1e27c5b03822' \
   "$(FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT=5 resolve_nightly_tags_via_feed foundry-rs/foundry)"
 
@@ -112,18 +129,9 @@ check_eq "nightly selector skips invalid archive candidate" \
   "nightly-$OLDER_SHA" "$(select_installable_nightly_tag)"
 unset -f download
 
-# --- resolve_version_and_tag (redirect + API fallback) --------------------
+# --- resolve_version_and_tag (redirect + feed nightly) --------------------
 
 API_JSON='{"tag_name": "v9.9.9", "name": "v9.9.9"}'
-# Minimal `releases` listing used for the nightly API fallback path. The awk
-# parser is line-oriented (it mirrors the real multi-line api.github.com JSON),
-# so `tag_name` and `published_at` must be on separate lines.
-NIGHTLY_API_JSON='[
-  {
-    "tag_name": "nightly-deadbeef",
-    "published_at": "2026-01-01T00:00:00Z"
-  }
-]'
 
 # `fetch` runs in a command-substitution subshell, so track calls via a file.
 api_marker="$(mktemp)"
@@ -148,16 +156,8 @@ check_eq "latest calls API when redirect fails" "1" "$(wc -l < "$api_marker" | t
 curl() { printf '%s' "$FEED"; }
 FOUNDRYUP_VERSION="nightly"
 resolve_version_and_tag
-check_eq "nightly resolves to nightly-<sha> via feed" "nightly-$NIGHTLY_SHA" "$FOUNDRYUP_TAG"
-check_eq "nightly does not call API when feed works" "0" "$(wc -l < "$api_marker" | tr -d ' ')"
-
-: > "$api_marker"
-curl() { return 1; }
-fetch() { echo called >> "$api_marker"; printf '%s' "$NIGHTLY_API_JSON"; }
-FOUNDRYUP_VERSION="nightly"
-resolve_version_and_tag
-check_eq "nightly falls back to API tag" "nightly-deadbeef" "$FOUNDRYUP_TAG"
-check_eq "nightly calls API when feed fails" "1" "$(wc -l < "$api_marker" | tr -d ' ')"
+check_eq "nightly resolves to newest feed tag" "nightly-$NIGHTLY_SHA" "$FOUNDRYUP_TAG"
+check_eq "nightly does not call API" "0" "$(wc -l < "$api_marker" | tr -d ' ')"
 
 # --- rust foundryup migration shim ----------------------------------------
 
