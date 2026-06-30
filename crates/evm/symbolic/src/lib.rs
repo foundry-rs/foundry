@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use std::{
     collections::VecDeque,
     fmt::{self, Write as _},
-    io::{Read, Write},
+    io::Write,
     num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut},
     path::{Path, PathBuf},
@@ -273,7 +273,12 @@ fn symbolic_create_bytes_selectors() -> &'static [(usize, [u8; 4]); 32] {
 #[derive(Clone, Debug)]
 pub enum SymbolicRunResult {
     /// All explored paths completed without a feasible failure.
-    Safe(SymbolicStats),
+    Safe {
+        /// Execution counters collected during the run.
+        stats: SymbolicStats,
+        /// One concrete successful input, when requested by the caller.
+        success_input: Option<SymbolicConcreteInput>,
+    },
     /// A feasible failure was found.
     Counterexample {
         /// ABI-typed argument values extracted from the solver model.
@@ -292,6 +297,15 @@ pub enum SymbolicRunResult {
         /// Execution counters collected before execution stopped.
         stats: SymbolicStats,
     },
+}
+
+/// One concrete symbolic input materialized from a solver model.
+#[derive(Clone, Debug)]
+pub struct SymbolicConcreteInput {
+    /// ABI-typed argument values extracted from the solver model.
+    pub args: Vec<DynSolValue>,
+    /// ABI-encoded calldata for replay.
+    pub calldata: Bytes,
 }
 
 /// A concrete invariant target selected from Foundry's invariant discovery.

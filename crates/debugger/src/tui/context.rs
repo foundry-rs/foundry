@@ -86,6 +86,7 @@ pub(crate) struct TUIContext<'a> {
     /// Whether to decode active buffer as utf8 or not.
     pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
+    pub(crate) show_source: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
     pub(crate) active_buffer: BufferKind,
 }
@@ -109,6 +110,7 @@ impl<'a> TUIContext<'a> {
             stack_labels: false,
             buf_utf: false,
             show_shortcuts: true,
+            show_source: true,
             active_buffer: BufferKind::Memory,
         }
     }
@@ -261,6 +263,7 @@ impl TUIContext<'_> {
             KeyCode::Char('b') => {
                 self.active_buffer = self.active_buffer.next();
                 self.draw_memory.current_buf_startline = 0;
+                self.set_info(format!("Active buffer: {}", self.active_buffer_name()));
             }
 
             // Cycle layout
@@ -329,10 +332,23 @@ impl TUIContext<'_> {
             }),
 
             // Toggle stack labels
-            KeyCode::Char('t') => self.stack_labels = !self.stack_labels,
+            KeyCode::Char('t') => {
+                self.stack_labels = !self.stack_labels;
+                self.set_info(format!("Stack labels: {}", toggle_state(self.stack_labels)));
+            }
 
             // Toggle memory UTF-8 decoding
-            KeyCode::Char('m') => self.buf_utf = !self.buf_utf,
+            KeyCode::Char('m') => {
+                self.buf_utf = !self.buf_utf;
+                self.set_info(format!("UTF-8 decoding: {}", toggle_state(self.buf_utf)));
+            }
+
+            // Toggle source pane
+            KeyCode::Char('v') => {
+                self.show_source = !self.show_source;
+                let state = if self.show_source { "shown" } else { "hidden" };
+                self.set_info(format!("Source pane: {state}"));
+            }
 
             // Go to program counter
             KeyCode::Char('p') => {
@@ -366,7 +382,11 @@ impl TUIContext<'_> {
             }),
 
             // Toggle help notice
-            KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
+            KeyCode::Char('h') => {
+                self.show_shortcuts = !self.show_shortcuts;
+                let state = if self.show_shortcuts { "shown" } else { "hidden" };
+                self.set_info(format!("Shortcut help: {state}"));
+            }
 
             // Numbers for repeating commands or breakpoints
             KeyCode::Char(
@@ -578,21 +598,35 @@ impl TUIContext<'_> {
     }
 
     fn handle_breakpoint(&mut self, c: char) {
+        self.key_buffer.clear();
+
+        let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c).copied() else {
+            self.set_error(format!("Breakpoint '{c}' not found"));
+            return;
+        };
+
         // Find the location of the called breakpoint in the whole debug arena (at this address with
         // this pc)
-        if let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c) {
-            for (i, node) in self.debug_arena().iter().enumerate() {
-                if node.address == *caller
-                    && let Some(step) = node.steps.iter().position(|step| step.pc == *pc)
-                {
-                    self.draw_memory.inner_call_index = i;
-                    self.current_step = step;
-                    self.scroll_memory_to_current_write();
-                    break;
-                }
-            }
-        }
-        self.key_buffer.clear();
+        let Some((inner_call_index, step_index)) =
+            self.debug_arena().iter().enumerate().find_map(|(i, node)| {
+                (node.address == caller)
+                    .then(|| node.steps.iter().position(|step| step.pc == pc).map(|step| (i, step)))
+                    .flatten()
+            })
+        else {
+            self.set_error(format!("Breakpoint '{c}' target not found in trace"));
+            return;
+        };
+
+        let already_at_target = self.draw_memory.inner_call_index == inner_call_index
+            && self.current_step == step_index;
+
+        self.draw_memory.inner_call_index = inner_call_index;
+        self.current_step = step_index;
+        self.scroll_memory_to_current_write();
+
+        let action = if already_at_target { "Already at" } else { "Jumped to" };
+        self.set_info(format!("{action} breakpoint '{c}' at PC 0x{pc:x} ({pc})"));
     }
 
     fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
@@ -693,6 +727,10 @@ fn buffer_as_number(s: &str) -> usize {
     const MIN: usize = 1;
     const MAX: usize = 100_000;
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
+}
+
+const fn toggle_state(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
 }
 
 fn handle_prompt_input_key_event(
@@ -1096,6 +1134,104 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
         assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
+    }
+
+    #[test]
+    fn view_shortcuts_report_status() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert_eq!(tui.active_buffer, BufferKind::Memory);
+        let _ = tui.handle_key_event(key(KeyCode::Char('b')));
+        assert_eq!(tui.active_buffer, BufferKind::Calldata);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Active buffer: calldata");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('t')));
+        assert!(tui.stack_labels);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack labels: on");
+        let _ = tui.handle_key_event(key(KeyCode::Char('t')));
+        assert!(!tui.stack_labels);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack labels: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('m')));
+        assert!(tui.buf_utf);
+        assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: on");
+        let _ = tui.handle_key_event(key(KeyCode::Char('m')));
+        assert!(!tui.buf_utf);
+        assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('v')));
+        assert!(!tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('v')));
+        assert!(tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: shown");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('h')));
+        assert!(!tui.show_shortcuts);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('h')));
+        assert!(tui.show_shortcuts);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: shown");
+    }
+
+    #[test]
+    fn breakpoint_shortcut_jumps_and_reports_status() {
+        let address = Address::repeat_byte(1);
+        let other = Address::repeat_byte(2);
+        let mut context = context_with_arena(vec![
+            node(other, CallKind::Call, &[1]),
+            node(address, CallKind::Call, &[7, 42]),
+        ]);
+        context.breakpoints.insert('a', (address, 42));
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 1);
+        assert_eq!(tui.current_step, 1);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Jumped to breakpoint 'a' at PC 0x2a (42)");
+    }
+
+    #[test]
+    fn breakpoint_shortcut_reports_missing_key() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('z')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 0);
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Breakpoint 'z' not found");
+    }
+
+    #[test]
+    fn breakpoint_shortcut_reports_missing_trace_target() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        context.breakpoints.insert('a', (address, 42));
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 0);
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Breakpoint 'a' target not found in trace");
     }
 
     #[test]

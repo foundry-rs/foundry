@@ -395,7 +395,6 @@ pub struct ShowmapConfig {
     pub emit_files: bool,
 }
 
-/// CLI-only options for replaying a durable symbolic counterexample artifact.
 #[derive(Clone, Debug)]
 pub struct SymbolicArtifactReplayConfig {
     /// Artifact payload to replay.

@@ -252,6 +252,23 @@ async fn test_subscriptions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_sub_syncing_delivers_initial_status() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = connect_pubsub(&handle.ws_endpoint()).await;
+    let sub_id = provider.raw_request("eth_subscribe".into(), ["syncing"]).await.unwrap();
+    let stream: Subscription<serde_json::Value> = provider.get_subscription(sub_id).await.unwrap();
+    let mut stream = stream.into_stream();
+
+    let initial = tokio::time::timeout(Duration::from_secs(5), stream.next())
+        .await
+        .expect("timed out waiting for initial sync status")
+        .expect("subscription ended unexpectedly");
+
+    assert_eq!(initial, serde_json::json!(false));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_sub_transaction_receipts() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let ws_provider = connect_pubsub(&handle.ws_endpoint()).await;

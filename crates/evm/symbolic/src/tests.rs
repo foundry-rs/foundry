@@ -3616,6 +3616,25 @@ fn portfolio_sat_beats_early_unsat() {
 
 #[cfg(unix)]
 #[test]
+fn solver_process_timeout_returns_unknown() {
+    let commands = vec![
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; sleep 2; printf 'sat\n'".to_string(),
+            ],
+            false,
+        )
+        .unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(1), 1, false);
+
+    assert!(matches!(solver.is_sat(&[]), Err(SymbolicError::SolverUnknown)));
+}
+
+#[cfg(unix)]
+#[test]
 fn portfolio_scheduler_promotes_recent_sat_winner() {
     let marker = portfolio_test_marker("adaptive-slow-leader");
     let marker_arg = marker.display().to_string();

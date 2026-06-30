@@ -101,6 +101,7 @@ pub enum EthSubscription<N: Network> {
     Header(NewBlockNotifications, StorageInfo<N>, SubscriptionId),
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
     FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>, SubscriptionId),
+    Syncing(Option<SubscriptionId>),
     TransactionReceipts(UnboundedReceiver<Vec<FoundryTxReceipt>>, SubscriptionId),
 }
 
@@ -111,6 +112,7 @@ impl<N: Network> std::fmt::Debug for EthSubscription<N> {
             Self::Header(..) => f.debug_tuple("Header").finish(),
             Self::PendingTransactions(..) => f.debug_tuple("PendingTransactions").finish(),
             Self::FullPendingTransactions(..) => f.debug_tuple("FullPendingTransactions").finish(),
+            Self::Syncing(_) => f.debug_tuple("Syncing").finish(),
             Self::TransactionReceipts(..) => f.debug_tuple("TransactionReceipts").finish(),
         }
     }
@@ -157,6 +159,14 @@ where
                     EthSubscriptionResponse::new(params)
                 });
                 Poll::Ready(res)
+            }
+            Self::Syncing(id) => {
+                if let Some(id) = id.take() {
+                    let params =
+                        EthSubscriptionParams { subscription: id, result: to_rpc_result(false) };
+                    return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
+                }
+                Poll::Pending
             }
             Self::TransactionReceipts(receipts, id) => {
                 let res = ready!(receipts.poll_recv(cx)).map(to_rpc_result).map(|result| {
