@@ -16,9 +16,7 @@ use alloy_signer_local::{
 use alloy_sol_types::SolCall;
 use base64::prelude::*;
 use foundry_cheatcodes_spec::{SymbolicVm, Vm};
-use foundry_config::{
-    SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout, split_quoted_args,
-};
+use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},

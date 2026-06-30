@@ -1139,14 +1139,17 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
                     let start = rng.random_range(0..corpus.tx_seq.len());
                     let end = rng.random_range(start..corpus.tx_seq.len());
                     let item_idx = rng.random_range(0..corpus.tx_seq.len());
-                    let repeated = new_seq[item_idx].clone();
-                    for tx in &mut new_seq[start..end] {
-                        *tx = repeated.clone();
+                    let repeated = corpus.tx_seq[item_idx].clone();
+
+                    new_seq.reserve(corpus.tx_seq.len());
+                    new_seq.extend_from_slice(&corpus.tx_seq[..start]);
+                    for _ in start..end {
+                        new_seq.push(repeated.clone());
                     }
+                    new_seq.extend_from_slice(&corpus.tx_seq[end..]);
                 }
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
@@ -1170,10 +1173,12 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
-                    for i in 0..rng.random_range(0..=new_seq.len()) {
-                        new_seq[i] = self.new_tx(test_runner)?;
+                    let prefix_len = rng.random_range(0..=corpus.tx_seq.len());
+                    new_seq.reserve(corpus.tx_seq.len());
+                    for _ in 0..prefix_len {
+                        new_seq.push(self.new_tx(test_runner)?);
                     }
+                    new_seq.extend_from_slice(&corpus.tx_seq[prefix_len..]);
                 }
                 MutationType::Suffix => {
                     let (corpus_index, corpus) = if rng.random::<bool>() {
@@ -1185,10 +1190,12 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
-                    for i in new_seq.len() - rng.random_range(0..new_seq.len())..corpus.tx_seq.len()
-                    {
-                        new_seq[i] = self.new_tx(test_runner)?;
+                    let suffix_len = rng.random_range(0..corpus.tx_seq.len());
+                    let retained_len = corpus.tx_seq.len() - suffix_len;
+                    new_seq.reserve(corpus.tx_seq.len());
+                    new_seq.extend_from_slice(&corpus.tx_seq[..retained_len]);
+                    for _ in retained_len..corpus.tx_seq.len() {
+                        new_seq.push(self.new_tx(test_runner)?);
                     }
                 }
                 MutationType::Abi => {

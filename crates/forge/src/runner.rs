@@ -8,11 +8,12 @@ use crate::{
     progress::{TestsProgress, start_fuzz_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
-        SymbolicCallTrace, SymbolicCounterexample, SymbolicCounterexampleArtifact,
-        SymbolicCounterexampleArtifactKind, SymbolicCounterexampleCall,
-        SymbolicCounterexampleMinimization, SymbolicCounterexampleReplaySemantics,
-        SymbolicCounterexampleTestIdentity, SymbolicReplayMetadata, SymbolicReplayStatus,
-        SymbolicResult, TestResult, TestSetup, TestStatus, invariant_campaign_display_name,
+        SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
+        SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
+        SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
+        SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
+        SymbolicReplayMetadata, SymbolicReplayStatus, SymbolicResult, TestResult, TestSetup,
+        TestStatus, invariant_campaign_display_name,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -24,14 +25,16 @@ use alloy_primitives::{Address, Bytes, Selector, U256, address, hex, keccak256, 
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzConfig, FuzzCorpusConfig, InlineConfig, InvariantConfig};
+use foundry_config::{
+    Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
+};
 use foundry_evm::{
     constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, EvmError, Executor, ITest, InvariantReplayOptions, RawCallResult, ShowmapOpts,
-        ShowmapReplayTarget,
+        ShowmapReplayTarget, canonical_replay_dirs,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
@@ -39,7 +42,7 @@ use foundry_evm::{
             execute_tx, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
-        persist_corpus_seed, replay_corpus_to_showmap,
+        persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -83,6 +86,23 @@ pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
 
 fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
+}
+
+fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> bool {
+    config.symbolic.use_fuzz_corpus && func.test_function_kind().is_fuzz_test()
+}
+
+#[derive(Default)]
+struct ImportedSymbolicCorpusSeeds {
+    inputs: Vec<SymbolicConcreteInput>,
+    metadata: Option<SymbolicCorpusSeedMetadata>,
+}
+
+fn attach_imported_symbolic_corpus_seeds(
+    metadata: &Option<SymbolicCorpusSeedMetadata>,
+    result: SymbolicResult,
+) -> SymbolicResult {
+    if let Some(metadata) = metadata.clone() { result.with_corpus_seeds(metadata) } else { result }
 }
 
 pub(crate) struct InvariantCampaignScope<'a> {
@@ -1564,6 +1584,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.single_fail(Some(e.to_string()));
             return self.result;
         }
+        let kind = if should_symbolically_import_fuzz_corpus(&self.config, func) {
+            TestFunctionKind::SymbolicTest
+        } else {
+            kind
+        };
 
         // In showmap replay mode and `forge fuzz`, only fuzz/invariant tests are runnable.
         if (self.cr.mcr.tcfg.showmap.is_some() || self.cr.mcr.tcfg.fuzz_only)
@@ -1654,12 +1679,141 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result
     }
 
+    fn import_symbolic_fuzz_corpus(&self, func: &Function) -> ImportedSymbolicCorpusSeeds {
+        let mut imported = ImportedSymbolicCorpusSeeds::default();
+        if !should_symbolically_import_fuzz_corpus(&self.config, func) {
+            return imported;
+        }
+
+        let mut fuzz_config = self.config.fuzz.clone();
+        let _ = test_paths(
+            &mut fuzz_config.corpus,
+            fuzz_config.failure_persist_dir.clone().unwrap(),
+            self.cr.name,
+            &func.name,
+        );
+        let limit = self.config.symbolic.corpus_seed_limit;
+        let mut metadata = SymbolicCorpusSeedMetadata {
+            corpus_dir: fuzz_config.corpus.corpus_dir.clone(),
+            limit,
+            loaded: 0,
+            skipped: 0,
+            used: Vec::new(),
+        };
+        let Some(corpus_dir) = fuzz_config.corpus.corpus_dir.clone() else {
+            let _ = sh_warn!(
+                "`--symbolic-use-fuzz-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`; \
+                 running without imported corpus seeds"
+            );
+            imported.metadata = Some(metadata);
+            return imported;
+        };
+
+        if limit == 0 {
+            imported.metadata = Some(metadata);
+            return imported;
+        }
+
+        'dirs: for replay_dir in canonical_replay_dirs(&corpus_dir) {
+            let mut entries = read_corpus_dir(&replay_dir).collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.path.cmp(&right.path));
+            for entry in entries {
+                if imported.inputs.len() >= limit {
+                    break 'dirs;
+                }
+                metadata.loaded += 1;
+                let tx_seq = match entry.read_tx_seq() {
+                    Ok(tx_seq) => tx_seq,
+                    Err(err) => {
+                        metadata.skipped += 1;
+                        debug!(%err, path = %entry.path.display(), "failed to read symbolic corpus seed");
+                        continue;
+                    }
+                };
+                let Some(input) = self.symbolic_corpus_seed_input(func, &tx_seq) else {
+                    metadata.skipped += 1;
+                    continue;
+                };
+                metadata.used.push(SymbolicCorpusSeedRef {
+                    path: entry.path,
+                    calldata: input.calldata.clone(),
+                });
+                imported.inputs.push(input);
+            }
+        }
+
+        debug!(
+            test = %func.signature(),
+            corpus_dir = %corpus_dir.display(),
+            loaded = metadata.loaded,
+            skipped = metadata.skipped,
+            imported = imported.inputs.len(),
+            "imported symbolic fuzz corpus seeds"
+        );
+        imported.metadata = Some(metadata);
+        imported
+    }
+
+    fn symbolic_corpus_seed_input(
+        &self,
+        func: &Function,
+        tx_seq: &[BasicTxDetails],
+    ) -> Option<SymbolicConcreteInput> {
+        let [tx] = tx_seq else {
+            return None;
+        };
+        if tx.call_details.target != self.address
+            || !tx.call_details.value.unwrap_or_default().is_zero()
+        {
+            return None;
+        }
+        let calldata = &tx.call_details.calldata;
+        if calldata.get(..4) != Some(func.selector().as_slice()) {
+            return None;
+        }
+        let args = func.abi_decode_input(&calldata[4..]).ok()?;
+        Some(SymbolicConcreteInput { args, calldata: calldata.clone() })
+    }
+
     /// Runs a symbolic test and replays any discovered counterexample concretely.
     fn run_symbolic_test(mut self, func: &Function) -> TestResult {
         if self.prepare_test(func).is_err() {
             return self.result;
         }
 
+        let ImportedSymbolicCorpusSeeds {
+            inputs: corpus_seeds,
+            metadata: mut corpus_seed_metadata,
+        } = self.import_symbolic_fuzz_corpus(func);
+        if let Some(metadata) = corpus_seed_metadata.as_mut() {
+            match SymbolicExecutor::modeled_corpus_seed_indexes(
+                &self.config.symbolic,
+                func,
+                &corpus_seeds,
+            ) {
+                Ok(indexes) => {
+                    let mut indexes = indexes.into_iter().peekable();
+                    metadata.used = std::mem::take(&mut metadata.used)
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(idx, seed)| match indexes.peek().copied() {
+                            Some(used_idx) if used_idx == idx => {
+                                indexes.next();
+                                Some(seed)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                }
+                Err(err) => {
+                    debug!(
+                        %err,
+                        test = %func.signature(),
+                        "failed to model imported symbolic corpus seeds"
+                    );
+                }
+            }
+        }
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         if self.should_defer_symbolic_diagnostics() {
             symbolic.capture_diagnostics();
@@ -1672,6 +1826,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
             collect_success_input: false,
+            corpus_seeds,
         });
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
         let symbolic_diagnostics = symbolic.take_diagnostics();
@@ -1682,7 +1837,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     TestStatus::Success,
                     None,
                     None,
-                    SymbolicResult::pass(&self.config.symbolic, stats),
+                    attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::pass(&self.config.symbolic, stats),
+                    ),
                 );
             }
             SymbolicRunResult::Incomplete { kind, reason, stats } => {
@@ -1691,14 +1849,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     TestStatus::Failure,
                     Some(display_reason),
                     None,
-                    SymbolicResult::incomplete(
-                        &self.config.symbolic,
-                        kind,
-                        reason,
-                        stats,
-                        SymbolicReplayMetadata::not_required(),
-                        SymbolicCallTrace::none(),
-                        None,
+                    attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            kind,
+                            reason,
+                            stats,
+                            SymbolicReplayMetadata::not_required(),
+                            SymbolicCallTrace::none(),
+                            None,
+                        ),
                     ),
                 );
             }
@@ -1719,14 +1880,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
                     Err(EvmError::Skip(reason)) => {
                         let replay_reason = format!("vm.skip during concrete replay: {reason}");
-                        let symbolic_result = SymbolicResult::incomplete(
-                            &self.config.symbolic,
-                            SymbolicStopReason::Error,
-                            "concrete replay skipped the symbolic counterexample",
-                            stats,
-                            SymbolicReplayMetadata::skipped(replay_reason),
-                            SymbolicCallTrace::none(),
-                            Some(symbolic_counterexample),
+                        let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            SymbolicResult::incomplete(
+                                &self.config.symbolic,
+                                SymbolicStopReason::Error,
+                                "concrete replay skipped the symbolic counterexample",
+                                stats,
+                                SymbolicReplayMetadata::skipped(replay_reason),
+                                SymbolicCallTrace::none(),
+                                Some(symbolic_counterexample),
+                            ),
                         );
                         self.result.symbolic_result(
                             TestStatus::Skipped,
@@ -1740,14 +1904,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                     Err(err) => {
                         let reason = err.to_string();
-                        let symbolic_result = SymbolicResult::incomplete(
-                            &self.config.symbolic,
-                            SymbolicStopReason::Error,
-                            reason.clone(),
-                            stats,
-                            SymbolicReplayMetadata::error(reason.clone()),
-                            SymbolicCallTrace::none(),
-                            Some(symbolic_counterexample),
+                        let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            SymbolicResult::incomplete(
+                                &self.config.symbolic,
+                                SymbolicStopReason::Error,
+                                reason.clone(),
+                                stats,
+                                SymbolicReplayMetadata::error(reason.clone()),
+                                SymbolicCallTrace::none(),
+                                Some(symbolic_counterexample),
+                            ),
                         );
                         self.result.symbolic_result(
                             TestStatus::Failure,
@@ -1777,14 +1944,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 if success {
                     self.result.extend(raw_call_result);
                     let reason = "symbolic counterexample did not replay".to_string();
-                    let symbolic_result = SymbolicResult::incomplete(
-                        &self.config.symbolic,
-                        SymbolicStopReason::Error,
-                        reason.clone(),
-                        stats,
-                        SymbolicReplayMetadata::mismatch(reason.clone()),
-                        call_trace,
-                        Some(symbolic_counterexample),
+                    let symbolic_result = attach_imported_symbolic_corpus_seeds(
+                        &corpus_seed_metadata,
+                        SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            SymbolicStopReason::Error,
+                            reason.clone(),
+                            stats,
+                            SymbolicReplayMetadata::mismatch(reason.clone()),
+                            call_trace,
+                            Some(symbolic_counterexample),
+                        ),
                     );
                     let counterexample = CounterExample::Single(base_counterexample);
                     self.result.symbolic_result(
@@ -1904,7 +2074,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         TestStatus::Failure,
                         final_reason,
                         Some(counterexample),
-                        symbolic_result,
+                        attach_imported_symbolic_corpus_seeds(
+                            &corpus_seed_metadata,
+                            symbolic_result,
+                        ),
                     );
                 }
             }
@@ -2167,6 +2340,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
             collect_success_input: true,
+            corpus_seeds: Vec::new(),
         });
 
         let input = match result {
@@ -2768,7 +2942,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
-            self.build_fuzz_state(true),
+            self.build_fuzz_state(true, None),
             progress.as_ref(),
             &self.tcfg.early_exit,
             persisted_handler_failures,
@@ -3272,7 +3446,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if fuzz_config.run.is_some() { 1 } else { fuzz_config.runs },
         );
 
-        let state = self.build_fuzz_state(false);
+        let state = self.build_fuzz_state(false, Some(func));
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
@@ -3476,9 +3650,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.executor.clone().into_owned()
     }
 
-    fn build_fuzz_state(&self, invariant: bool) -> EvmFuzzState {
+    fn build_fuzz_state(&self, invariant: bool, func: Option<&Function>) -> EvmFuzzState {
         let config =
             if invariant { self.config.invariant.dictionary } else { self.config.fuzz.dictionary };
+        let has_function_inline_config =
+            func.is_some_and(|func| self.inline_config.contains_function(self.cr.name, &func.name));
+        let can_reuse_setup_state = !invariant
+            && config == self.cr.config.fuzz.dictionary
+            && !has_function_inline_config
+            && !self.cr.contract.abi.functions().any(|func| func.name.is_before_test_setup());
+        if can_reuse_setup_state {
+            return self
+                .setup
+                .fuzz_state
+                .get_or_init(|| self.build_fuzz_state_uncached(false, config))
+                .fork();
+        }
+
+        self.build_fuzz_state_uncached(invariant, config)
+    }
+
+    fn build_fuzz_state_uncached(
+        &self,
+        invariant: bool,
+        config: FuzzDictionaryConfig,
+    ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
         if let Some(db) = self.executor.backend().active_fork_db() {

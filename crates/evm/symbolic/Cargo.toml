@@ -31,6 +31,7 @@ base64.workspace = true
 inturn.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+shlex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 wait-timeout.workspace = true

@@ -27,9 +27,9 @@ pub(crate) enum SolverConfigError {
     /// The command string parsed to an empty argv.
     #[error("symbolic solver command is empty")]
     EmptyCommand,
-    /// The command string contains an unterminated quote character.
-    #[error("unterminated {0} quote in symbolic solver command")]
-    UnterminatedQuote(char),
+    /// The command string contains invalid shell quoting.
+    #[error("invalid shell quoting in symbolic solver command")]
+    InvalidShellQuoting,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -875,7 +875,7 @@ pub(crate) fn solver_command_for_portfolio_entry(
 
 /// Splits a shell-like solver command into argv parts.
 pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, SolverConfigError> {
-    let parts = split_quoted_args(command).map_err(SolverConfigError::UnterminatedQuote)?;
+    let parts = shlex::split(command).ok_or(SolverConfigError::InvalidShellQuoting)?;
     if parts.is_empty() {
         return Err(SolverConfigError::EmptyCommand);
     }
