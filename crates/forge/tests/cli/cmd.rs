@@ -1462,6 +1462,1132 @@ Error: linearization inspection is only supported for Solidity contracts (.sol t
 "#]]);
 });
 
+forgetest!(can_inspect_erc7201_storage_layout, |prj, cmd| {
+    prj.add_source(
+        "Namespaced.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Namespaced {
+    /// @custom:storage-location erc7201:example.main
+    struct MainStorage {
+        uint256 counter;
+        address owner;
+        bool paused;
+    }
+
+    function _storage() private pure returns (MainStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.main")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    // erc7201("example.main") = 0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500
+    // counter takes slot +0 (uint256, full slot); owner+paused pack into slot +1
+    cmd.forge_fuse()
+        .args(["inspect", "Namespaced", "storageLayout"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+
+╭---------+---------+--------------------------------------------------------------------+--------+-------+-----------------------------------╮
+| Name    | Type    | Slot                                                               | Offset | Bytes | Contract                          |
++=============================================================================================================================================+
+| counter | uint256 | 0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500 | 0      | 32    | Namespaced [erc7201:example.main] |
+|---------+---------+--------------------------------------------------------------------+--------+-------+-----------------------------------|
+| owner   | address | 0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab501 | 0      | 20    | Namespaced [erc7201:example.main] |
+|---------+---------+--------------------------------------------------------------------+--------+-------+-----------------------------------|
+| paused  | bool    | 0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab501 | 20     | 1     | Namespaced [erc7201:example.main] |
+╰---------+---------+--------------------------------------------------------------------+--------+-------+-----------------------------------╯
+
+
+"#]]);
+});
+
+forgetest!(can_inspect_erc7201_storage_layout_json, |prj, cmd| {
+    prj.add_source(
+        "Namespaced.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Namespaced {
+    /// @custom:storage-location erc7201:example.main
+    struct MainStorage {
+        uint256 counter;
+        address owner;
+    }
+
+    function _storage() private pure returns (MainStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("example.main")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Namespaced", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Namespaced [erc7201:example.main]",
+      "label": "counter",
+      "offset": 0,
+      "slot": "0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500",
+      "type": "uint256"
+    },
+    {
+      "astId": 0,
+      "contract": "Namespaced [erc7201:example.main]",
+      "label": "owner",
+      "offset": 0,
+      "slot": "0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab501",
+      "type": "address"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.arrays") = 0x343ff16b076cf87ecfb54568a3a8e0c91ba3c3c0fed22e2f03c36fcb23343100
+// Fixed-size arrays occupy exactly ceil(N / floor(32/elem_bytes)) slots.
+// uint256[2]: elem=32B, 1 elem/slot → 2 slots.  bool flag should start at base+2.
+forgetest!(can_inspect_erc7201_fixed_array_slot_count, |prj, cmd| {
+    prj.add_source(
+        "Arrays.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Arrays {
+    /// @custom:storage-location erc7201:test.arrays
+    struct ArrayStorage {
+        uint256[2] pair; // 2 × 32B → 2 slots (0-1)
+        bool flag;       // must land at base+2, not base+1
+    }
+
+    function _storage() private pure returns (ArrayStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.arrays")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Arrays", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Arrays [erc7201:test.arrays]",
+      "label": "pair",
+      "offset": 0,
+      "slot": "0x343ff16b076cf87ecfb54568a3a8e0c91ba3c3c0fed22e2f03c36fcb23343100",
+      "type": "uint256[2]"
+    },
+    {
+      "astId": 0,
+      "contract": "Arrays [erc7201:test.arrays]",
+      "label": "flag",
+      "offset": 0,
+      "slot": "0x343ff16b076cf87ecfb54568a3a8e0c91ba3c3c0fed22e2f03c36fcb23343102",
+      "type": "bool"
+    }
+  ],
+  "types": {
+    "bool": {
+      "encoding": "inplace",
+      "label": "bool",
+      "numberOfBytes": "1"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "uint256[2]": {
+      "encoding": "inplace",
+      "label": "uint256[2]",
+      "numberOfBytes": "64",
+      "base": "uint256"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.nested") = 0x0d7a9e4512e090f383ec0ed12be937a91b31306fd9ab6e7fadab4922e5aea000
+// Nested structs occupy exactly as many slots as their contents require.
+// TwoSlot{uint256,uint256}: 2 slots.  bool flag should start at base+2, not base+1.
+forgetest!(can_inspect_erc7201_nested_struct_slot_count, |prj, cmd| {
+    prj.add_source(
+        "Nested.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Nested {
+    struct TwoSlot {
+        uint256 a;
+        uint256 b;
+    }
+
+    /// @custom:storage-location erc7201:test.nested
+    struct NestedStorage {
+        TwoSlot inner; // 2 slots (0-1)
+        bool flag;     // must land at base+2, not base+1
+    }
+
+    function _storage() private pure returns (NestedStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.nested")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Nested", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Nested [erc7201:test.nested]",
+      "label": "inner",
+      "offset": 0,
+      "slot": "0x0d7a9e4512e090f383ec0ed12be937a91b31306fd9ab6e7fadab4922e5aea000",
+      "type": "struct Nested.TwoSlot"
+    },
+    {
+      "astId": 0,
+      "contract": "Nested [erc7201:test.nested]",
+      "label": "flag",
+      "offset": 0,
+      "slot": "0x0d7a9e4512e090f383ec0ed12be937a91b31306fd9ab6e7fadab4922e5aea002",
+      "type": "bool"
+    }
+  ],
+  "types": {
+    "bool": {
+      "encoding": "inplace",
+      "label": "bool",
+      "numberOfBytes": "1"
+    },
+    "struct Nested.TwoSlot": {
+      "encoding": "inplace",
+      "label": "struct Nested.TwoSlot",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Nested.TwoSlot",
+          "label": "a",
+          "offset": 0,
+          "slot": "0",
+          "type": "uint256"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Nested.TwoSlot",
+          "label": "b",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.inherit") = 0x4205ccccaa0e536e6d0f12ee6dec37a75c3d91a331a59600ba29ad2eccd78900
+forgetest!(can_inspect_erc7201_inherited_storage_layout, |prj, cmd| {
+    prj.add_source(
+        "Inherited.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Base {
+    /// @custom:storage-location erc7201:test.inherit
+    struct InheritStorage {
+        uint256 value;
+        address owner;
+    }
+
+    function _storage() private pure returns (InheritStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.inherit")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+
+contract Child is Base {}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Child", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Child [erc7201:test.inherit]",
+      "label": "value",
+      "offset": 0,
+      "slot": "0x4205ccccaa0e536e6d0f12ee6dec37a75c3d91a331a59600ba29ad2eccd78900",
+      "type": "uint256"
+    },
+    {
+      "astId": 0,
+      "contract": "Child [erc7201:test.inherit]",
+      "label": "owner",
+      "offset": 0,
+      "slot": "0x4205ccccaa0e536e6d0f12ee6dec37a75c3d91a331a59600ba29ad2eccd78901",
+      "type": "address"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.mapping") = 0x56c527eed7d0b46b202df7b27d5beedb3795e24989b4531cc9fdbefdf683b100
+// Mappings must carry populated key/value references in storageLayout.types.
+forgetest!(can_inspect_erc7201_mapping_types, |prj, cmd| {
+    prj.add_source(
+        "Mapping.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Mapping {
+    /// @custom:storage-location erc7201:test.mapping
+    struct MapStorage {
+        mapping(address => uint256) balances;
+    }
+
+    function _storage() private pure returns (MapStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.mapping")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Mapping", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Mapping [erc7201:test.mapping]",
+      "label": "balances",
+      "offset": 0,
+      "slot": "0x56c527eed7d0b46b202df7b27d5beedb3795e24989b4531cc9fdbefdf683b100",
+      "type": "mapping(address => uint256)"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "mapping(address => uint256)": {
+      "encoding": "mapping",
+      "key": "address",
+      "label": "mapping(address => uint256)",
+      "numberOfBytes": "32",
+      "value": "uint256"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.dynarray") = 0x5e9fbe99608ff647079d38f7c90233a009c7e81628b7a331162c48bd41e75600
+// Dynamic arrays must carry a populated base reference in storageLayout.types.
+forgetest!(can_inspect_erc7201_dynamic_array_base, |prj, cmd| {
+    prj.add_source(
+        "DynArray.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract DynArray {
+    /// @custom:storage-location erc7201:test.dynarray
+    struct DynStorage {
+        uint256[] values;
+    }
+
+    function _storage() private pure returns (DynStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.dynarray")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "DynArray", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "DynArray [erc7201:test.dynarray]",
+      "label": "values",
+      "offset": 0,
+      "slot": "0x5e9fbe99608ff647079d38f7c90233a009c7e81628b7a331162c48bd41e75600",
+      "type": "uint256[]"
+    }
+  ],
+  "types": {
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "uint256[]": {
+      "encoding": "dynamic_array",
+      "label": "uint256[]",
+      "numberOfBytes": "32",
+      "base": "uint256"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.constarray") = 0x2b5bacd3ce006455af41fefff7b4ac4c38a8aa9f7f1611e491ea9413ca199100
+// Fixed arrays sized by a constant expression (not a literal) must resolve the size correctly.
+forgetest!(can_inspect_erc7201_const_expr_array_size, |prj, cmd| {
+    prj.add_source(
+        "ConstArray.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+uint256 constant SLOTS = 3;
+
+contract ConstArray {
+    /// @custom:storage-location erc7201:test.constarray
+    struct ConstArrayStorage {
+        uint256[SLOTS] values;
+    }
+
+    function _storage() private pure returns (ConstArrayStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.constarray")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "ConstArray", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "ConstArray [erc7201:test.constarray]",
+      "label": "values",
+      "offset": 0,
+      "slot": "0x2b5bacd3ce006455af41fefff7b4ac4c38a8aa9f7f1611e491ea9413ca199100",
+      "type": "uint256[3]"
+    }
+  ],
+  "types": {
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "uint256[3]": {
+      "encoding": "inplace",
+      "label": "uint256[3]",
+      "numberOfBytes": "96",
+      "base": "uint256"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.composite") = 0x81ae721f920fedc11581a214debb56ba6198e52123849352f75511a326eb7b00
+// Array-of-struct: base must point to the struct type, which must itself carry members.
+// Pair{uint256,address} = 2 slots; Pair[2] = 4 slots.
+forgetest!(can_inspect_erc7201_array_of_struct, |prj, cmd| {
+    prj.add_source(
+        "Composite.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Composite {
+    struct Pair {
+        uint256 a;
+        address b;
+    }
+
+    /// @custom:storage-location erc7201:test.composite
+    struct CompositeStorage {
+        Pair[2] pairs;
+    }
+
+    function _storage() private pure returns (CompositeStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.composite")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Composite", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Composite [erc7201:test.composite]",
+      "label": "pairs",
+      "offset": 0,
+      "slot": "0x81ae721f920fedc11581a214debb56ba6198e52123849352f75511a326eb7b00",
+      "type": "struct Composite.Pair[2]"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "struct Composite.Pair": {
+      "encoding": "inplace",
+      "label": "struct Composite.Pair",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Composite.Pair",
+          "label": "a",
+          "offset": 0,
+          "slot": "0",
+          "type": "uint256"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Composite.Pair",
+          "label": "b",
+          "offset": 0,
+          "slot": "1",
+          "type": "address"
+        }
+      ]
+    },
+    "struct Composite.Pair[2]": {
+      "encoding": "inplace",
+      "label": "struct Composite.Pair[2]",
+      "numberOfBytes": "128",
+      "base": "struct Composite.Pair"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.deepmapping") = 0xf3683f60db86b0b051284bbd846b2bbe66a86997292a57e82f40f5e8a330a700
+// Mapping whose value is a struct: key/value AND the struct's members must all be populated.
+forgetest!(can_inspect_erc7201_mapping_to_struct, |prj, cmd| {
+    prj.add_source(
+        "DeepMapping.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract DeepMapping {
+    struct Token {
+        address owner;
+        uint256 amount;
+    }
+
+    /// @custom:storage-location erc7201:test.deepmapping
+    struct TokenRegistry {
+        mapping(uint256 => Token) tokens;
+    }
+
+    function _storage() private pure returns (TokenRegistry storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.deepmapping")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "DeepMapping", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "DeepMapping [erc7201:test.deepmapping]",
+      "label": "tokens",
+      "offset": 0,
+      "slot": "0xf3683f60db86b0b051284bbd846b2bbe66a86997292a57e82f40f5e8a330a700",
+      "type": "mapping(uint256 => struct DeepMapping.Token)"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "mapping(uint256 => struct DeepMapping.Token)": {
+      "encoding": "mapping",
+      "key": "uint256",
+      "label": "mapping(uint256 => struct DeepMapping.Token)",
+      "numberOfBytes": "32",
+      "value": "struct DeepMapping.Token"
+    },
+    "struct DeepMapping.Token": {
+      "encoding": "inplace",
+      "label": "struct DeepMapping.Token",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct DeepMapping.Token",
+          "label": "owner",
+          "offset": 0,
+          "slot": "0",
+          "type": "address"
+        },
+        {
+          "astId": 0,
+          "contract": "struct DeepMapping.Token",
+          "label": "amount",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.struct3") = 0x2519de6936a0f3f35369a45024b659776437a50d0982ecf943e2488b087abf00
+// Three-level struct chain: the members of the outer struct reference an inner struct that
+// itself must be recursively expanded with its own members.
+// Inner{Point p (2 slots), uint256 z}: slot_count=3. Point{x,y}: slot_count=2.
+forgetest!(can_inspect_erc7201_three_level_struct, |prj, cmd| {
+    prj.add_source(
+        "Struct3.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Struct3 {
+    struct Point {
+        uint256 x;
+        uint256 y;
+    }
+
+    struct Inner {
+        Point p;
+        uint256 z;
+    }
+
+    /// @custom:storage-location erc7201:test.struct3
+    struct Data3 {
+        Inner data;
+    }
+
+    function _storage() private pure returns (Data3 storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.struct3")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Struct3", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Struct3 [erc7201:test.struct3]",
+      "label": "data",
+      "offset": 0,
+      "slot": "0x2519de6936a0f3f35369a45024b659776437a50d0982ecf943e2488b087abf00",
+      "type": "struct Struct3.Inner"
+    }
+  ],
+  "types": {
+    "struct Struct3.Inner": {
+      "encoding": "inplace",
+      "label": "struct Struct3.Inner",
+      "numberOfBytes": "96",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Struct3.Inner",
+          "label": "p",
+          "offset": 0,
+          "slot": "0",
+          "type": "struct Struct3.Point"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Struct3.Inner",
+          "label": "z",
+          "offset": 0,
+          "slot": "2",
+          "type": "uint256"
+        }
+      ]
+    },
+    "struct Struct3.Point": {
+      "encoding": "inplace",
+      "label": "struct Struct3.Point",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Struct3.Point",
+          "label": "x",
+          "offset": 0,
+          "slot": "0",
+          "type": "uint256"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Struct3.Point",
+          "label": "y",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.recursive") = 0x5c23e053b910ebb063cfd12509998b5de792f3e025459f15aaa45e15f0e0e800
+// Recursive struct type: Node references itself through a mapping value type.
+forgetest!(can_inspect_erc7201_recursive_struct, |prj, cmd| {
+    prj.add_source(
+        "Recursive.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Recursive {
+    struct Node {
+        mapping(uint256 => Node) children;
+        uint256 value;
+    }
+
+    /// @custom:storage-location erc7201:test.recursive
+    struct NodeRegistry {
+        Node root;
+    }
+
+    function _storage() private pure returns (NodeRegistry storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.recursive")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Recursive", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Recursive [erc7201:test.recursive]",
+      "label": "root",
+      "offset": 0,
+      "slot": "0x5c23e053b910ebb063cfd12509998b5de792f3e025459f15aaa45e15f0e0e800",
+      "type": "struct Recursive.Node"
+    }
+  ],
+  "types": {
+    "mapping(uint256 => struct Recursive.Node)": {
+      "encoding": "mapping",
+      "key": "uint256",
+      "label": "mapping(uint256 => struct Recursive.Node)",
+      "numberOfBytes": "32",
+      "value": "struct Recursive.Node"
+    },
+    "struct Recursive.Node": {
+      "encoding": "inplace",
+      "label": "struct Recursive.Node",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Recursive.Node",
+          "label": "children",
+          "offset": 0,
+          "slot": "0",
+          "type": "mapping(uint256 => struct Recursive.Node)"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Recursive.Node",
+          "label": "value",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.packedarray") = 0x...
+// Packed fixed arrays: uint8[4] fits in 1 slot so numberOfBytes should be "32", not "4".
+// The field after the array must start on a fresh slot (not offset into the array's slot).
+forgetest!(can_inspect_erc7201_packed_fixed_array_bytes, |prj, cmd| {
+    prj.add_source(
+        "Packed.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Packed {
+    /// @custom:storage-location erc7201:test.packedarray
+    struct PackedStorage {
+        uint8[4] nibbles; // 4 × 1B packed → 1 slot, numberOfBytes=32
+        uint256 sentinel; // must be at base+1, not base+0 with offset 4
+    }
+
+    function _storage() private pure returns (PackedStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.packedarray")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Packed", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Packed [erc7201:test.packedarray]",
+      "label": "nibbles",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "uint8[4]"
+    },
+    {
+      "astId": 0,
+      "contract": "Packed [erc7201:test.packedarray]",
+      "label": "sentinel",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "uint256"
+    }
+  ],
+  "types": {
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "uint8": {
+      "encoding": "inplace",
+      "label": "uint8",
+      "numberOfBytes": "1"
+    },
+    "uint8[4]": {
+      "encoding": "inplace",
+      "label": "uint8[4]",
+      "numberOfBytes": "32",
+      "base": "uint8"
+    }
+  }
+}
+
+"#]]);
+});
+
+// Struct member packing: two uint128 fields share a single 32-byte slot.
+// lo → slot 0 offset 0, hi → slot 0 offset 16.  numberOfBytes for the struct must be "32".
+forgetest!(can_inspect_erc7201_packed_struct_members, |prj, cmd| {
+    prj.add_source(
+        "PackedStruct.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract PackedStruct {
+    struct HalfWord {
+        uint128 lo;
+        uint128 hi;
+    }
+
+    /// @custom:storage-location erc7201:test.packedstruct
+    struct PackedStructStorage {
+        HalfWord word;   // 2 × 16B → 1 slot; lo at offset 0, hi at offset 16
+        uint256 next;    // must be at base+1, not base+0
+    }
+
+    function _storage() private pure returns (PackedStructStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.packedstruct")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "PackedStruct", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "PackedStruct [erc7201:test.packedstruct]",
+      "label": "word",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "struct PackedStruct.HalfWord"
+    },
+    {
+      "astId": 0,
+      "contract": "PackedStruct [erc7201:test.packedstruct]",
+      "label": "next",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "uint256"
+    }
+  ],
+  "types": {
+    "struct PackedStruct.HalfWord": {
+      "encoding": "inplace",
+      "label": "struct PackedStruct.HalfWord",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct PackedStruct.HalfWord",
+          "label": "lo",
+          "offset": 0,
+          "slot": "0",
+          "type": "uint128"
+        },
+        {
+          "astId": 0,
+          "contract": "struct PackedStruct.HalfWord",
+          "label": "hi",
+          "offset": 16,
+          "slot": "0",
+          "type": "uint128"
+        }
+      ]
+    },
+    "uint128": {
+      "encoding": "inplace",
+      "label": "uint128",
+      "numberOfBytes": "16"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// Internal function pointers are 8 bytes in Solidity storage; external are 24 bytes.
+// With both in the same struct, iptr (8B) and eptr (24B) fill slot 0 exactly,
+// and flag must land at slot 1 offset 0 — not slot 1 offset 24 (the bug).
+forgetest!(can_inspect_erc7201_function_type_sizes, |prj, cmd| {
+    prj.add_source(
+        "FnPtr.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract FnPtr {
+    /// @custom:storage-location erc7201:test.fnptr
+    struct FnPtrStorage {
+        function() internal iptr; // 8 bytes;  offset 0
+        function() external eptr; // 24 bytes; offset 8  (8+24=32, fills slot)
+        uint8 flag;               // 1 byte;   slot 1 offset 0
+    }
+
+    function _storage() private pure returns (FnPtrStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.fnptr")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "FnPtr", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "FnPtr [erc7201:test.fnptr]",
+      "label": "iptr",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "function () internal"
+    },
+    {
+      "astId": 0,
+      "contract": "FnPtr [erc7201:test.fnptr]",
+      "label": "eptr",
+      "offset": 8,
+      "slot": "[..]",
+      "type": "function () external"
+    },
+    {
+      "astId": 0,
+      "contract": "FnPtr [erc7201:test.fnptr]",
+      "label": "flag",
+      "offset": 0,
+      "slot": "[..]",
+      "type": "uint8"
+    }
+  ],
+  "types": {
+    "function () external": {
+      "encoding": "inplace",
+      "label": "function () external",
+      "numberOfBytes": "24"
+    },
+    "function () internal": {
+      "encoding": "inplace",
+      "label": "function () internal",
+      "numberOfBytes": "8"
+    },
+    "uint8": {
+      "encoding": "inplace",
+      "label": "uint8",
+      "numberOfBytes": "1"
+    }
+  }
+}
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();
