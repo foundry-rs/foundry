@@ -250,6 +250,7 @@ pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]
 struct SmtCseVisit {
     count: usize,
     binding: Option<usize>,
+    collected: bool,
 }
 
 struct SmtCsePlan {
@@ -275,7 +276,11 @@ impl SmtCsePlan {
     }
 
     fn count_expr(&mut self, expr: &SymExpr) {
-        self.expr_visits.entry(expr.clone()).or_default().count += 1;
+        let visit = self.expr_visits.entry(expr.clone()).or_default();
+        visit.count += 1;
+        if visit.count != 1 {
+            return;
+        }
         match expr.kind() {
             SymExprKind::Const(_)
             | SymExprKind::Var(_)
@@ -302,7 +307,11 @@ impl SmtCsePlan {
     }
 
     fn count_bool(&mut self, expr: &SymBoolExpr) {
-        self.bool_visits.entry(expr.clone()).or_default().count += 1;
+        let visit = self.bool_visits.entry(expr.clone()).or_default();
+        visit.count += 1;
+        if visit.count != 1 {
+            return;
+        }
         match expr.kind() {
             SymBoolExprKind::Const(_) => {}
             SymBoolExprKind::Not(value) => self.count_bool(value),
@@ -319,6 +328,13 @@ impl SmtCsePlan {
     }
 
     fn collect_expr_binding(&mut self, expr: &SymExpr) {
+        {
+            let Some(visit) = self.expr_visits.get_mut(expr) else { return };
+            if visit.collected {
+                return;
+            }
+            visit.collected = true;
+        }
         match expr.kind() {
             SymExprKind::Const(_)
             | SymExprKind::Var(_)
@@ -345,6 +361,13 @@ impl SmtCsePlan {
     }
 
     fn collect_bool_binding(&mut self, expr: &SymBoolExpr) {
+        {
+            let Some(visit) = self.bool_visits.get_mut(expr) else { return };
+            if visit.collected {
+                return;
+            }
+            visit.collected = true;
+        }
         match expr.kind() {
             SymBoolExprKind::Const(_) => {}
             SymBoolExprKind::Not(value) => self.collect_bool_binding(value),

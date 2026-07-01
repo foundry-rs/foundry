@@ -752,10 +752,16 @@ impl SymExpr {
         }
 
         if let SymExprKind::BinOp(SymBinOp::Or, left, right) = expr.kind() {
-            // `(a | b) >> n => (a >> n) | (b >> n)`.
+            // Distribute only when it collapses part of the OR; expanding broad
+            // bit-smearing chains eagerly makes SMT CSE much larger.
             let left = Self::shr_const(cx, left.clone(), U256::from(shift));
             let right = Self::shr_const(cx, right.clone(), U256::from(shift));
-            return Self::binop(cx, SymBinOp::Or, left, right);
+            if left.as_const().is_some_and(|value| value.is_zero()) {
+                return right;
+            }
+            if right.as_const().is_some_and(|value| value.is_zero()) {
+                return left;
+            }
         }
 
         let shift = Self::constant(cx, U256::from(shift));
