@@ -80,6 +80,7 @@ use alloy_rpc_types::{
             GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
             NoopFrame, TraceResult,
         },
+        opcode::TransactionOpcodeGas,
         parity::{
             LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
         },
@@ -174,6 +175,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
+use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
@@ -3630,6 +3632,31 @@ impl<N: Network> Backend<N>
 where
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
+    /// Returns opcode gas usage for the given transaction.
+    pub async fn trace_transaction_opcode_gas(
+        &self,
+        hash: B256,
+    ) -> Result<Option<TransactionOpcodeGas>, BlockchainError> {
+        match self.replay_tx_with_inspector(
+            hash,
+            OpcodeGasInspector::default(),
+            move |_, _, inspector, _, _| TransactionOpcodeGas {
+                transaction_hash: hash,
+                opcode_gas: inspector.opcode_gas_iter().collect(),
+            },
+        ) {
+            Ok(trace) => Ok(Some(trace)),
+            Err(BlockchainError::TransactionNotFound) => {
+                if let Some(fork) = self.get_fork() {
+                    return Ok(fork.trace_transaction_opcode_gas(hash).await?);
+                }
+
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     /// Rollback the chain to a common height.
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,

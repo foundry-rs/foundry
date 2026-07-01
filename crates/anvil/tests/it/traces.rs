@@ -26,6 +26,7 @@ use alloy_rpc_types::{
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, PreStateConfig,
             PreStateFrame,
         },
+        opcode::TransactionOpcodeGas,
         parity::{Action, ChangedType, LocalizedTransactionTrace, TraceResults, TraceType},
     },
 };
@@ -67,6 +68,28 @@ async fn test_get_transfer_parity_traces() {
     assert!(!block_traces.is_empty());
 
     assert_eq!(traces, block_traces);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_opcode_gas_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let signer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let receipt =
+        storage.setValue("bar".to_string()).send().await.unwrap().get_receipt().await.unwrap();
+
+    let opcode_gas: Option<TransactionOpcodeGas> = handle
+        .http_provider()
+        .raw_request("trace_transactionOpcodeGas".into(), (receipt.transaction_hash,))
+        .await
+        .unwrap();
+    let opcode_gas = opcode_gas.unwrap();
+
+    assert_eq!(opcode_gas.transaction_hash, receipt.transaction_hash);
+    assert!(opcode_gas.contains("SSTORE"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
