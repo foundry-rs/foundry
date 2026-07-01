@@ -229,15 +229,14 @@ pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymB
 }
 
 /// Returns whether every expression in `subset` appears in `superset`.
-pub(super) fn sorted_bool_exprs_are_subset(
+pub(super) fn bool_exprs_are_subset_of_set(
     subset: &[SymBoolExpr],
-    superset: &[SymBoolExpr],
+    superset: &HashSet<&SymBoolExpr>,
 ) -> bool {
     if subset.len() > superset.len() {
         return false;
     }
 
-    let superset: HashSet<_> = superset.iter().collect();
     subset.iter().all(|expected| superset.contains(expected))
 }
 
