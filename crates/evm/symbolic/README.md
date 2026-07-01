@@ -136,7 +136,7 @@ configured record limit, and a `frontiers` array. Each frontier contains:
 - the concrete one-call sequence that reached the site
 - the EVM comparison site (`address`, `pc`, `opcode`, `opcode_name`)
 - concrete operands (`lhs`, `rhs`), the comparison result, and an
-  `operand_delta` priority score
+  `operand_delta` priority score interpreted according to opcode signedness
 - whether the call also expanded the worker's coverage map
 
 Frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default 256).

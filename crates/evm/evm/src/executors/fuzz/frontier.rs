@@ -97,7 +97,7 @@ struct FuzzBranchFrontierOperands {
     rhs: U256,
     /// Result of evaluating the captured comparison with these concrete operands.
     result: bool,
-    /// Raw unsigned absolute operand delta, useful as a deterministic priority score.
+    /// Absolute operand delta interpreted according to the comparison opcode's signedness.
     operand_delta: U256,
 }
 
@@ -165,7 +165,7 @@ impl FuzzFrontierRecorder {
         for cmp in cmp_values {
             let result = comparison_result(cmp);
             let key = FuzzBranchFrontierKey::new(cmp, result);
-            let operand_delta = operand_delta(cmp.op1, cmp.op2);
+            let operand_delta = operand_delta(cmp);
 
             match self.indexes.entry(key) {
                 Entry::Occupied(entry) => {
@@ -251,8 +251,32 @@ fn comparison_result(cmp: &CmpOperands) -> bool {
     }
 }
 
-fn operand_delta(left: U256, right: U256) -> U256 {
+fn operand_delta(cmp: &CmpOperands) -> U256 {
+    match cmp.opcode {
+        opcode::SLT | opcode::SGT => signed_operand_delta(cmp.op1, cmp.op2),
+        _ => unsigned_operand_delta(cmp.op1, cmp.op2),
+    }
+}
+
+fn unsigned_operand_delta(left: U256, right: U256) -> U256 {
     if left >= right { left - right } else { right - left }
+}
+
+fn signed_operand_delta(left: U256, right: U256) -> U256 {
+    let (left_negative, left_magnitude) = signed_magnitude(left);
+    let (right_negative, right_magnitude) = signed_magnitude(right);
+
+    if left_negative == right_negative {
+        unsigned_operand_delta(left_magnitude, right_magnitude)
+    } else {
+        left_magnitude + right_magnitude
+    }
+}
+
+fn signed_magnitude(value: U256) -> (bool, U256) {
+    let negative = I256::from_raw(value) < I256::ZERO;
+    let magnitude = if negative { U256::ZERO.wrapping_sub(value) } else { value };
+    (negative, magnitude)
 }
 
 const fn opcode_name(op: u8) -> &'static str {
@@ -264,5 +288,33 @@ const fn opcode_name(op: u8) -> &'static str {
         opcode::SGT => "SGT",
         opcode::ISZERO => "ISZERO",
         _ => "UNKNOWN",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operand_delta_uses_signed_distance_for_signed_comparisons() {
+        let unsigned = CmpOperands {
+            op1: U256::MAX,
+            op2: U256::from(1),
+            pc: 0,
+            address: Address::ZERO,
+            opcode: opcode::LT,
+        };
+        assert_eq!(operand_delta(&unsigned), U256::MAX - U256::from(1));
+
+        let signed = CmpOperands { opcode: opcode::SLT, ..unsigned };
+        assert_eq!(operand_delta(&signed), U256::from(2));
+    }
+
+    #[test]
+    fn signed_operand_delta_handles_full_int256_range() {
+        let min = I256::MIN.into_raw();
+        let max = I256::MAX.into_raw();
+
+        assert_eq!(signed_operand_delta(min, max), U256::MAX);
     }
 }
