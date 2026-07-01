@@ -5,7 +5,7 @@
 //! `callTracer` does not record opcode-level steps, so [`CallTrace::steps`] is left empty;
 //! everything the call-tree view needs (calls, value, gas, logs, revert reasons) is preserved.
 
-use alloy_primitives::LogData;
+use alloy_primitives::{Bytes, LogData};
 use alloy_rpc_types::trace::geth::{CallFrame, CallLogFrame};
 use foundry_evm::traces::{
     CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, TraceMemberOrder,
@@ -33,6 +33,18 @@ fn push_frame(
     let success = frame.error.is_none() && frame.revert_reason.is_none();
     let status = Some(status_from_frame(frame));
 
+    // `callTracer` reports an unclassified halt (invalid opcode, a provider-specific quirk) only in
+    // the `error` string. When the frame failed but returned no data, surface that string (or the
+    // decoded `revert_reason`, preferred) as the output so the renderer shows it instead of a
+    // coarse `EvmError: Revert`.
+    let mut output = frame.output.clone().unwrap_or_default();
+    if output.is_empty()
+        && !success
+        && let Some(text) = frame.revert_reason.as_deref().or(frame.error.as_deref())
+    {
+        output = Bytes::copy_from_slice(text.as_bytes());
+    }
+
     let trace = CallTrace {
         depth,
         success,
@@ -45,7 +57,7 @@ fn push_frame(
         kind: call_kind(&frame.typ),
         value: frame.value.unwrap_or_default(),
         data: frame.input.clone(),
-        output: frame.output.clone().unwrap_or_default(),
+        output,
         gas_used: frame.gas_used.saturating_to(),
         gas_limit: frame.gas.saturating_to(),
         gas_refund_counter: 0,
@@ -101,9 +113,9 @@ fn push_frame(
 /// `callTracer` only exposes a coarse, human-readable `error` string (plus an optional
 /// `revert_reason`), not a machine status code, so we recognise the two halts geth and reth report
 /// reliably (an explicit revert and running out of gas) and fall back to
-/// [`InstructionResult::Revert`] for anything else. The frame's `output` / `revert_reason` still
-/// carries the decoded message, and the call is coloured by [`CallTrace::success`], so an imperfect
-/// status never hides a failure.
+/// [`InstructionResult::Revert`] for anything else. `push_frame` preserves the frame's `error` /
+/// `revert_reason` text in the trace output, and the call is coloured by [`CallTrace::success`], so
+/// an imperfect status never hides a failure or the original error message.
 fn status_from_frame(frame: &CallFrame) -> InstructionResult {
     if frame.error.is_none() && frame.revert_reason.is_none() {
         return InstructionResult::Return;
@@ -238,6 +250,29 @@ mod tests {
         assert_eq!(status_from_frame(&other), InstructionResult::Revert);
     }
 
+    /// An unclassified halt with no return data (e.g. an invalid opcode) must keep its original
+    /// `error` string as the trace output, so the renderer surfaces it instead of a coarse
+    /// `EvmError: Revert`.
+    #[test]
+    fn surfaces_error_string_in_output() {
+        let frame = CallFrame {
+            from: address!("1111111111111111111111111111111111111111"),
+            to: Some(address!("2222222222222222222222222222222222222222")),
+            typ: "CALL".to_string(),
+            error: Some("invalid opcode: opcode 0xfe not defined".to_string()),
+            ..Default::default()
+        };
+
+        let arena = call_frame_to_arena(&frame);
+        let root = &arena.nodes()[0];
+
+        assert!(!root.trace.success);
+        assert_eq!(
+            core::str::from_utf8(&root.trace.output[..]).unwrap(),
+            "invalid opcode: opcode 0xfe not defined"
+        );
+    }
+
     /// A log whose `position` points past the last child call must be clamped to the end rather
     /// than dropped, and a `position` of zero must order the log before the first call.
     #[test]
@@ -262,6 +297,35 @@ mod tests {
         assert_eq!(
             root.ordering,
             vec![TraceMemberOrder::Log(0), TraceMemberOrder::Call(0), TraceMemberOrder::Log(1),]
+        );
+    }
+
+    /// A log whose `position` falls strictly between two child calls must be ordered between them.
+    /// The single-child cases above only exercise before-first and after-last, so an off-by-one in
+    /// the `Call(i)` / `Log(li)` indexing would otherwise go unnoticed.
+    #[test]
+    fn orders_log_between_two_children() {
+        let frame = CallFrame {
+            from: address!("1111111111111111111111111111111111111111"),
+            to: Some(address!("2222222222222222222222222222222222222222")),
+            typ: "CALL".to_string(),
+            // position 1 -> one child emitted before the log, so it lands between the two children.
+            logs: vec![CallLogFrame { position: Some(1), index: Some(0), ..Default::default() }],
+            calls: vec![
+                CallFrame { typ: "CALL".to_string(), ..Default::default() },
+                CallFrame { typ: "CALL".to_string(), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+
+        let arena = call_frame_to_arena(&frame);
+        let root = &arena.nodes()[0];
+
+        assert_eq!(arena.nodes().len(), 3, "root + two children");
+        assert_eq!(root.children, vec![1, 2]);
+        assert_eq!(
+            root.ordering,
+            vec![TraceMemberOrder::Call(0), TraceMemberOrder::Log(0), TraceMemberOrder::Call(1),]
         );
     }
 
