@@ -110,9 +110,7 @@ pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
         return Err(eyre!("corpus path does not exist or is not readable: {}", path.display()));
     }
 
-    // TODO(@mablr): support hand-crafted corpora that intentionally use the same UUID
-    // with different timestamps while preserving generated worker-shard deduplication.
-    let mut seen_uuids = HashSet::new();
+    let mut seen_entries = HashSet::new();
     let mut visited_dirs = HashSet::new();
     let mut entries = Vec::new();
     let mut stack = vec![(path.to_path_buf(), 0usize)];
@@ -136,7 +134,7 @@ pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
 
         for replay_dir in canonical_replay_dirs(&dir) {
             for entry in read_corpus_dir(&replay_dir) {
-                if seen_uuids.insert(entry.uuid) {
+                if seen_entries.insert((entry.uuid, entry.timestamp)) {
                     entries.push(entry);
                     if entries.len() > MAX_CORPUS_ENTRIES {
                         return Err(eyre!(
@@ -242,6 +240,20 @@ mod tests {
 
         let entries = read_corpus_tree(&dir).unwrap();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn read_corpus_tree_keeps_same_uuid_with_different_timestamps() {
+        let dir = temp_dir();
+        for timestamp in [1, 2] {
+            let name = format!("00000000-0000-0000-0000-000000000001-{timestamp}.json");
+            std::fs::write(dir.join(name), "[]").unwrap();
+        }
+
+        let entries = read_corpus_tree(&dir).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].timestamp, 1);
+        assert_eq!(entries[1].timestamp, 2);
     }
 
     #[cfg(unix)]
