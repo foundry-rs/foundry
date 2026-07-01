@@ -169,10 +169,6 @@ pub(super) struct SymbolicAbiBuilder<'a, 'cx> {
     cx: &'cx mut SymCx,
 }
 
-struct SymbolicAbiEncoder<'cx> {
-    cx: &'cx mut SymCx,
-}
-
 impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
     /// Constructs a new instance.
     pub(super) const fn new(config: &'a SymbolicConfig, cx: &'cx mut SymCx) -> Self {
@@ -568,82 +564,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         &mut self,
         values: impl IntoIterator<Item = &'v SymbolicAbiValue>,
     ) -> SymBytes {
-        SymbolicAbiEncoder { cx: self.cx }.encode_sequence(values)
-    }
-}
-
-impl<'cx> SymbolicAbiEncoder<'cx> {
-    fn encode_sequence<'v>(
-        &mut self,
-        values: impl IntoIterator<Item = &'v SymbolicAbiValue>,
-    ) -> SymBytes {
-        let values = values.into_iter().collect::<Vec<_>>();
-        let head_size = values.iter().map(|value| value.head_size()).sum::<usize>();
-        let mut head = Vec::with_capacity(values.len());
-        let mut tail = Vec::new();
-        let mut tail_len = 0usize;
-
-        for value in values {
-            if value.is_dynamic() {
-                let offset = SymExpr::constant(self.cx, U256::from(head_size + tail_len));
-                head.push(offset.into_bytes(self.cx));
-                let body = self.encode_dynamic_body(value);
-                tail_len += body.len();
-                tail.push(body);
-            } else {
-                head.push(self.encode_static(value));
-            }
-        }
-
-        SymBytes::concat(self.cx, head.into_iter().chain(tail))
-    }
-
-    fn encode_static(&mut self, value: &SymbolicAbiValue) -> SymBytes {
-        match value {
-            SymbolicAbiValue::Bool { word }
-            | SymbolicAbiValue::Uint { word, .. }
-            | SymbolicAbiValue::Int { word, .. }
-            | SymbolicAbiValue::Address { word } => word.clone().into_bytes(self.cx),
-            SymbolicAbiValue::FixedBytes { bytes, .. } => {
-                let padding =
-                    SymBytes::concrete(self.cx, vec![0; 32usize.saturating_sub(bytes.len())]);
-                SymBytes::concat(self.cx, [bytes.clone(), padding])
-            }
-            SymbolicAbiValue::FixedArray { elements } | SymbolicAbiValue::Tuple { elements } => {
-                self.encode_sequence(elements.iter())
-            }
-            SymbolicAbiValue::Bytes { .. }
-            | SymbolicAbiValue::String { .. }
-            | SymbolicAbiValue::Array { .. } => unreachable!("dynamic ABI value encoded as static"),
-        }
-    }
-
-    fn encode_dynamic_body(&mut self, value: &SymbolicAbiValue) -> SymBytes {
-        match value {
-            SymbolicAbiValue::Bytes { len, bytes } => {
-                encode_packed_bytes_with_len(self.cx, len.clone(), bytes)
-            }
-            SymbolicAbiValue::String { bytes } => {
-                let len = SymExpr::constant(self.cx, U256::from(bytes.len()));
-                encode_packed_bytes_with_len(self.cx, len, bytes)
-            }
-            SymbolicAbiValue::Array { elements } => {
-                let len = SymExpr::constant(self.cx, U256::from(elements.len()));
-                let len = len.into_bytes(self.cx);
-                let elements = self.encode_sequence(elements.iter());
-                SymBytes::concat(self.cx, [len, elements])
-            }
-            SymbolicAbiValue::FixedArray { elements } | SymbolicAbiValue::Tuple { elements } => {
-                self.encode_sequence(elements.iter())
-            }
-            SymbolicAbiValue::Bool { .. }
-            | SymbolicAbiValue::Uint { .. }
-            | SymbolicAbiValue::Int { .. }
-            | SymbolicAbiValue::FixedBytes { .. }
-            | SymbolicAbiValue::Address { .. } => {
-                unreachable!("static ABI value encoded as dynamic")
-            }
-        }
+        encode_sequence(self.cx, values)
     }
 }
 
@@ -903,7 +824,70 @@ pub(super) fn encode_sequence<'a>(
     cx: &mut SymCx,
     values: impl IntoIterator<Item = &'a SymbolicAbiValue>,
 ) -> SymBytes {
-    SymbolicAbiEncoder { cx }.encode_sequence(values)
+    let values = values.into_iter().collect::<Vec<_>>();
+    let head_size = values.iter().map(|value| value.head_size()).sum::<usize>();
+    let mut head = Vec::with_capacity(values.len());
+    let mut tail = Vec::new();
+    let mut tail_len = 0usize;
+
+    for value in values {
+        if value.is_dynamic() {
+            let offset = SymExpr::constant(cx, U256::from(head_size + tail_len));
+            head.push(offset.into_bytes(cx));
+            let body = encode_dynamic_body(cx, value);
+            tail_len += body.len();
+            tail.push(body);
+        } else {
+            head.push(encode_static(cx, value));
+        }
+    }
+
+    SymBytes::concat(cx, head.into_iter().chain(tail))
+}
+
+fn encode_static(cx: &mut SymCx, value: &SymbolicAbiValue) -> SymBytes {
+    match value {
+        SymbolicAbiValue::Bool { word }
+        | SymbolicAbiValue::Uint { word, .. }
+        | SymbolicAbiValue::Int { word, .. }
+        | SymbolicAbiValue::Address { word } => word.clone().into_bytes(cx),
+        SymbolicAbiValue::FixedBytes { bytes, .. } => {
+            let padding = SymBytes::concrete(cx, vec![0; 32usize.saturating_sub(bytes.len())]);
+            SymBytes::concat(cx, [bytes.clone(), padding])
+        }
+        SymbolicAbiValue::FixedArray { elements } | SymbolicAbiValue::Tuple { elements } => {
+            encode_sequence(cx, elements.iter())
+        }
+        SymbolicAbiValue::Bytes { .. }
+        | SymbolicAbiValue::String { .. }
+        | SymbolicAbiValue::Array { .. } => unreachable!("dynamic ABI value encoded as static"),
+    }
+}
+
+fn encode_dynamic_body(cx: &mut SymCx, value: &SymbolicAbiValue) -> SymBytes {
+    match value {
+        SymbolicAbiValue::Bytes { len, bytes } => {
+            encode_packed_bytes_with_len(cx, len.clone(), bytes)
+        }
+        SymbolicAbiValue::String { bytes } => {
+            let len = SymExpr::constant(cx, U256::from(bytes.len()));
+            encode_packed_bytes_with_len(cx, len, bytes)
+        }
+        SymbolicAbiValue::Array { elements } => {
+            let len = SymExpr::constant(cx, U256::from(elements.len()));
+            let len = len.into_bytes(cx);
+            let elements = encode_sequence(cx, elements.iter());
+            SymBytes::concat(cx, [len, elements])
+        }
+        SymbolicAbiValue::FixedArray { elements } | SymbolicAbiValue::Tuple { elements } => {
+            encode_sequence(cx, elements.iter())
+        }
+        SymbolicAbiValue::Bool { .. }
+        | SymbolicAbiValue::Uint { .. }
+        | SymbolicAbiValue::Int { .. }
+        | SymbolicAbiValue::FixedBytes { .. }
+        | SymbolicAbiValue::Address { .. } => unreachable!("static ABI value encoded as dynamic"),
+    }
 }
 
 pub(super) fn encode_packed_bytes_with_len(

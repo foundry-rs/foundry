@@ -66,8 +66,6 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn eq(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> Self {
-        let left = cx.intern_expr(left);
-        let right = cx.intern_expr(right);
         match (left.kind(), right.kind()) {
             _ if left == right => Self::constant(cx, true),
             (SymExprKind::Const(left), SymExprKind::Const(right)) => {
@@ -122,8 +120,6 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn cmp(cx: &mut SymCx, op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> Self {
-        let left = cx.intern_expr(left);
-        let right = cx.intern_expr(right);
         match (op, left.kind(), right.kind()) {
             (op, _, _) if left == right => {
                 Self::constant(cx, matches!(op, SymBoolExprOp::Ule | SymBoolExprOp::Uge))
@@ -162,7 +158,6 @@ impl SymBoolExpr {
     pub(crate) fn and(cx: &mut SymCx, values: Vec<Self>) -> Self {
         let mut out = Vec::new();
         for value in values {
-            let value = cx.intern_bool(value);
             match value.kind() {
                 SymBoolExprKind::Const(true) => {}
                 SymBoolExprKind::Const(false) => return Self::constant(cx, false),
@@ -182,7 +177,6 @@ impl SymBoolExpr {
     pub(crate) fn or(cx: &mut SymCx, values: Vec<Self>) -> Self {
         let mut out = Vec::new();
         for value in values {
-            let value = cx.intern_bool(value);
             match value.kind() {
                 SymBoolExprKind::Const(false) => {}
                 SymBoolExprKind::Const(true) => return Self::constant(cx, true),
@@ -201,7 +195,6 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn not_bool(cx: &mut SymCx, value: Self) -> Self {
-        let value = cx.intern_bool(value);
         match value.kind() {
             SymBoolExprKind::Const(value) => Self::constant(cx, !*value),
             SymBoolExprKind::Not(value) => value.clone(),

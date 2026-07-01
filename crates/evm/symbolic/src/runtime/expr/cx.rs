@@ -65,43 +65,6 @@ impl SymCx {
         if value { self.cache.bool_true.clone() } else { self.cache.bool_false.clone() }
     }
 
-    pub(crate) fn intern_expr(&mut self, expr: SymExpr) -> SymExpr {
-        match expr.into_kind() {
-            SymExprKind::Const(value) => SymExpr::constant(self, value),
-            SymExprKind::Var(name) => SymExpr::var_symbol(self, name),
-            SymExprKind::GasLeft(id) => SymExpr::gas_left(self, id),
-            SymExprKind::Keccak { name, len, bytes } => {
-                SymExpr::keccak_symbol(self, name, len, bytes.iter().cloned().collect())
-            }
-            SymExprKind::Hash { name, algorithm, bytes } => {
-                SymExpr::hash_symbol(self, name, algorithm, bytes.iter().cloned().collect())
-            }
-            SymExprKind::Not(value) => SymExpr::not(self, value),
-            SymExprKind::Op(op, left, right) => SymExpr::op(self, op, left, right),
-            SymExprKind::AddMod { left, right, modulus } => {
-                SymExpr::addmod(self, left, right, modulus)
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                SymExpr::mulmod(self, left, right, modulus)
-            }
-            SymExprKind::Ite(condition, then_expr, else_expr) => {
-                SymExpr::ite(self, condition, then_expr, else_expr)
-            }
-        }
-    }
-
-    pub(crate) fn intern_bool(&mut self, expr: SymBoolExpr) -> SymBoolExpr {
-        match expr.into_kind() {
-            SymBoolExprKind::Const(value) => SymBoolExpr::constant(self, value),
-            SymBoolExprKind::Not(value) => SymBoolExpr::not_bool(self, value),
-            SymBoolExprKind::And(values) => {
-                SymBoolExpr::and(self, values.iter().cloned().collect())
-            }
-            SymBoolExprKind::Eq(left, right) => SymBoolExpr::eq(self, left, right),
-            SymBoolExprKind::Cmp(op, left, right) => SymBoolExpr::cmp(self, op, left, right),
-        }
-    }
-
     pub(crate) fn intern(&mut self, name: &str) -> Symbol {
         if let Some(symbol) = self.symbols.get(name) {
             return symbol.clone();

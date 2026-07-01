@@ -1,10 +1,9 @@
 use super::{abi::*, runtime::*, *};
 
-fn empty_state() -> PathState {
-    let mut cx = SymCx::new();
+fn empty_state(cx: &mut SymCx) -> PathState {
     let calldata =
-        SymbolicCalldata::selector_only(&mut cx, &Function::parse("empty()").unwrap()).unwrap();
-    PathState::new(&mut cx, Address::ZERO, Address::ZERO, U256::ZERO, calldata, false)
+        SymbolicCalldata::selector_only(cx, &Function::parse("empty()").unwrap()).unwrap();
+    PathState::new(cx, Address::ZERO, Address::ZERO, U256::ZERO, calldata, false)
 }
 
 fn symbolic_calldata_variants(
@@ -111,7 +110,7 @@ fn local_batches_respect_exploration_order() {
 #[test]
 fn binary_helpers_use_evm_operand_order() {
     let mut cx = SymCx::new();
-    let mut state = empty_state();
+    let mut state = empty_state(&mut cx);
     state.stack.push(SymExpr::constant(&mut cx, U256::from(2))).unwrap();
     state.stack.push(SymExpr::constant(&mut cx, U256::from(10))).unwrap();
 
@@ -123,7 +122,7 @@ fn binary_helpers_use_evm_operand_order() {
 #[test]
 fn comparison_helpers_use_evm_operand_order() {
     let mut cx = SymCx::new();
-    let mut state = empty_state();
+    let mut state = empty_state(&mut cx);
     state.stack.push(SymExpr::constant(&mut cx, U256::from(2))).unwrap();
     state.stack.push(SymExpr::constant(&mut cx, U256::from(10))).unwrap();
 
@@ -135,7 +134,7 @@ fn comparison_helpers_use_evm_operand_order() {
 #[test]
 fn exp_helper_uses_evm_operand_order() {
     let mut cx = SymCx::new();
-    let mut state = empty_state();
+    let mut state = empty_state(&mut cx);
     state.stack.push(SymExpr::constant(&mut cx, U256::ZERO)).unwrap();
     state.stack.push(SymExpr::constant(&mut cx, U256::from(0x100))).unwrap();
 
@@ -147,7 +146,7 @@ fn exp_helper_uses_evm_operand_order() {
 #[test]
 fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
     let mut cx = SymCx::new();
-    let mut state = empty_state();
+    let mut state = empty_state(&mut cx);
     state.stack.push(SymExpr::constant(&mut cx, U256::from(16))).unwrap();
     state.stack.push(SymExpr::var(&mut cx, "base")).unwrap();
 
@@ -163,7 +162,7 @@ fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
 #[test]
 fn exp_helper_expands_bounded_symbolic_exponent() {
     let mut cx = SymCx::new();
-    let mut state = empty_state();
+    let mut state = empty_state(&mut cx);
     let exponent = SymExpr::var(&mut cx, "exponent");
     let five = SymExpr::constant(&mut cx, U256::from(5));
     let bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, exponent.clone(), five);
@@ -183,7 +182,7 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
 #[test]
 fn shift_helpers_accept_symbolic_amounts() {
     let mut cx = SymCx::new();
-    let mut shl = empty_state();
+    let mut shl = empty_state(&mut cx);
     shl.stack.push(SymExpr::constant(&mut cx, U256::from(1))).unwrap();
     shl.stack.push(SymExpr::var(&mut cx, "shift")).unwrap();
     shl.shift_word(&mut cx, ShiftKind::Shl).unwrap();
@@ -198,7 +197,7 @@ fn shift_helpers_accept_symbolic_amounts() {
         U256::ZERO
     );
 
-    let mut shr = empty_state();
+    let mut shr = empty_state(&mut cx);
     shr.stack.push(SymExpr::constant(&mut cx, U256::from(1) << 255)).unwrap();
     shr.stack.push(SymExpr::var(&mut cx, "shift")).unwrap();
     shr.shift_word(&mut cx, ShiftKind::Shr).unwrap();
@@ -213,7 +212,7 @@ fn shift_helpers_accept_symbolic_amounts() {
         U256::ZERO
     );
 
-    let mut sar = empty_state();
+    let mut sar = empty_state(&mut cx);
     sar.stack.push(SymExpr::constant(&mut cx, U256::MAX)).unwrap();
     sar.stack.push(SymExpr::var(&mut cx, "shift")).unwrap();
     sar.shift_word(&mut cx, ShiftKind::Sar).unwrap();
@@ -228,7 +227,7 @@ fn shift_helpers_accept_symbolic_amounts() {
 #[test]
 fn symbolic_division_guards_zero_divisor() {
     let mut cx = SymCx::new();
-    let mut state = empty_state();
+    let mut state = empty_state(&mut cx);
     state.stack.push(SymExpr::var(&mut cx, "den")).unwrap();
     state.stack.push(SymExpr::var(&mut cx, "num")).unwrap();
 

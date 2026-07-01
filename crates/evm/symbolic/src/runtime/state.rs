@@ -1990,7 +1990,7 @@ impl SymbolicWorld {
         let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
             let bytes = if self.destroyed_accounts.contains(address) {
-                (0..size).map(|_| SymExpr::zero(cx)).collect::<Vec<_>>()
+                vec![SymExpr::zero(cx); size]
             } else {
                 code.read_byte_exprs_offset(cx, offset.clone(), size)
             };

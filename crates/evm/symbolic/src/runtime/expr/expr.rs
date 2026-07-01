@@ -404,7 +404,6 @@ impl SymExpr {
     }
 
     pub(crate) fn not(cx: &mut SymCx, value: Self) -> Self {
-        let value = cx.intern_expr(value);
         match value.kind() {
             SymExprKind::Const(value) => Self::constant(cx, !*value),
             SymExprKind::Not(value) => value.clone(),
@@ -413,8 +412,6 @@ impl SymExpr {
     }
 
     pub(crate) fn op(cx: &mut SymCx, op: SymExprOp, left: Self, right: Self) -> Self {
-        let left = cx.intern_expr(left);
-        let right = cx.intern_expr(right);
         match op {
             SymExprOp::Add => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
@@ -504,9 +501,6 @@ impl SymExpr {
     }
 
     pub(crate) fn addmod(cx: &mut SymCx, left: Self, right: Self, modulus: Self) -> Self {
-        let left = cx.intern_expr(left);
-        let right = cx.intern_expr(right);
-        let modulus = cx.intern_expr(modulus);
         match (left.kind(), right.kind(), modulus.kind()) {
             (_, _, SymExprKind::Const(modulus))
                 if modulus.is_zero() || *modulus == U256::from(1) =>
@@ -521,9 +515,6 @@ impl SymExpr {
     }
 
     pub(crate) fn mulmod(cx: &mut SymCx, left: Self, right: Self, modulus: Self) -> Self {
-        let left = cx.intern_expr(left);
-        let right = cx.intern_expr(right);
-        let modulus = cx.intern_expr(modulus);
         match (left.kind(), right.kind(), modulus.kind()) {
             (_, _, SymExprKind::Const(modulus))
                 if modulus.is_zero() || *modulus == U256::from(1) =>
@@ -543,9 +534,6 @@ impl SymExpr {
         then_expr: Self,
         else_expr: Self,
     ) -> Self {
-        let condition = cx.intern_bool(condition);
-        let then_expr = cx.intern_expr(then_expr);
-        let else_expr = cx.intern_expr(else_expr);
         match condition.as_const() {
             Some(true) => then_expr,
             Some(false) => else_expr,
@@ -561,8 +549,6 @@ impl SymExpr {
     }
 
     pub(crate) fn keccak_symbol(cx: &mut SymCx, name: Symbol, len: Self, bytes: Vec<Self>) -> Self {
-        let len = cx.intern_expr(len);
-        let bytes = bytes.into_iter().map(|byte| cx.intern_expr(byte)).collect::<Vec<_>>();
         Self::from_kind(cx, SymExprKind::Keccak { name, len, bytes: bytes.into() })
     }
 
@@ -572,7 +558,6 @@ impl SymExpr {
         algorithm: &'static str,
         bytes: Vec<Self>,
     ) -> Self {
-        let bytes = bytes.into_iter().map(|byte| cx.intern_expr(byte)).collect::<Vec<_>>();
         Self::from_kind(cx, SymExprKind::Hash { name, algorithm, bytes: bytes.into() })
     }
 
@@ -606,12 +591,11 @@ impl SymExpr {
     }
 
     pub(crate) fn low_byte(self, cx: &mut SymCx) -> Self {
-        let this = cx.intern_expr(self);
-        if let Some(word) = this.as_const() {
+        if let Some(word) = self.as_const() {
             return Self::constant(cx, U256::from(word.to::<u8>()));
         }
         let mask = Self::constant(cx, U256::from(0xff));
-        Self::op(cx, SymExprOp::And, this, mask)
+        Self::op(cx, SymExprOp::And, self, mask)
     }
 
     pub(crate) fn into_byte_exprs(self, cx: &mut SymCx) -> Vec<Self> {

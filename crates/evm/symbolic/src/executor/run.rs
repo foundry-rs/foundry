@@ -109,6 +109,7 @@ impl SymbolicExecutor {
         input: SymbolicRunInput<'_, FEN>,
     ) -> SymbolicRunResult {
         self.deferred_incomplete = None;
+        self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
             return SymbolicRunResult::Incomplete {
@@ -165,6 +166,7 @@ impl SymbolicExecutor {
         input: SymbolicInvariantRunInput<'_, FEN>,
     ) -> SymbolicInvariantRunResult {
         self.deferred_incomplete = None;
+        self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
             return SymbolicInvariantRunResult::Incomplete {

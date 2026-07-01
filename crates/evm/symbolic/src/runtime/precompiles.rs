@@ -89,7 +89,7 @@ pub(crate) fn execute_symbolic_precompile(
         Some(1) => {
             let input = input.materialize(cx);
             let word = symbolic_hash_word_with_len(cx, "ecrecover", input, input_len);
-            let mut bytes = (0..12).map(|_| SymExpr::zero(cx)).collect::<Vec<_>>();
+            let mut bytes = vec![SymExpr::zero(cx); 12];
             bytes.extend((12..32).map(|idx| byte_word(cx, U256::from(idx), word.clone())));
             Ok(Some(SymReturnData::from_byte_exprs(cx, bytes)))
         }
@@ -102,7 +102,7 @@ pub(crate) fn execute_symbolic_precompile(
         Some(3) => {
             let input = input.materialize(cx);
             let word = symbolic_hash_word_with_len(cx, "ripemd160", input, input_len);
-            let mut bytes = (0..12).map(|_| SymExpr::zero(cx)).collect::<Vec<_>>();
+            let mut bytes = vec![SymExpr::zero(cx); 12];
             bytes.extend((12..32).map(|idx| byte_word(cx, U256::from(idx), word.clone())));
             Ok(Some(SymReturnData::from_byte_exprs(cx, bytes)))
         }

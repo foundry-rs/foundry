@@ -98,6 +98,9 @@ pub(crate) trait SymbolicSolver {
     /// Takes any captured verbose diagnostics collected by this backend.
     fn take_diagnostics(&mut self) -> Option<String>;
 
+    /// Clears cached expression keys tied to a previous symbolic context.
+    fn clear_context_caches(&mut self) {}
+
     /// Returns the number of satisfiable witnesses produced by local hard-arithmetic search.
     fn heuristic_witnesses(&self) -> usize {
         0
@@ -289,6 +292,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     /// Returns and clears deferred diagnostic rendering output.
     fn take_diagnostics(&mut self) -> Option<String> {
         self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
+    }
+
+    fn clear_context_caches(&mut self) {
+        self.sat_cache.clear();
+        self.model_cache.clear();
     }
 
     /// Returns how many validated local hard-arithmetic witnesses this solver used.
