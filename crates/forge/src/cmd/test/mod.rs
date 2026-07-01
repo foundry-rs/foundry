@@ -751,7 +751,8 @@ pub struct TestArgs {
     ///
     /// If `forge test` passes but `forge test --brutalize` fails, the code has
     /// a robustness issue that could manifest when called in a different context.
-    #[arg(long, conflicts_with = "mutate")]
+    // TODO: evaluate if we can relax the conflict with replay_symbolic_artifact
+    #[arg(long, conflicts_with_all = ["mutate", "replay_symbolic_artifact"])]
     pub brutalize: bool,
 }
 
