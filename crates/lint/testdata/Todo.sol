@@ -2,17 +2,23 @@
 pragma solidity ^0.8.0;
 
 contract Todo {
-    // TODO: implement access control
+    // ToDo: implement access control
     function unfinished() public {}
 
-    // FIXME this is broken
+    // FixMe this is broken
     function buggy() public {}
 
-    /* TODO: revisit this math */
+    // fixme this is broken too
+    function buggy2() public {}
+
+    /* ToDo: revisit this math */
     function math() public {}
 
-    /// TODO: document this properly
+    /// ToDo: document this properly
     function documented() public {}
+
+    // FIXME first, TODO second, and fixme third
+    function combined() public {}
 
     // a perfectly normal comment, no markers
     function clean() public {}

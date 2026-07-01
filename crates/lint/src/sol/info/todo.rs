@@ -31,14 +31,15 @@ impl<'ast> EarlyLintPass<'ast> for Todo {
         let comments = Comments::new(file, _ctx.session().source_map(), false, false, None);
 
         for comment in comments.iter() {
-            for marker in MARKERS {
-                if comment.lines.iter().any(|line| line.contains(marker)) {
-                    _ctx.emit_with_msg(
-                        &TODO,
-                        comment.span,
-                        format!("unresolved `{marker}` comment"),
-                    );
-                    break;
+            for line in &comment.lines {
+                for word in line.split(|c: char| !c.is_alphanumeric()) {
+                    if MARKERS.iter().any(|m| word.eq_ignore_ascii_case(m)) {
+                        _ctx.emit_with_msg(
+                            &TODO,
+                            comment.span,
+                            format!("unresolved `{word}` comment"),
+                        );
+                    }
                 }
             }
         }
