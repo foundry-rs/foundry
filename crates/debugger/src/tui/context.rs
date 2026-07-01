@@ -1,6 +1,6 @@
 //! Debugger context and event handler implementation.
 
-use super::storage::{find_storage_access, hex_u256};
+use super::storage::{StorageAccess, hex_u256, storage_access_at};
 use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{Address, U256, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
@@ -678,13 +678,23 @@ impl TUIContext<'_> {
             }
         };
 
-        let Some(access) = find_storage_access(self.debug_steps(), self.current_step, slot) else {
+        let Some(target) = find_storage_target(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            slot,
+        ) else {
             self.set_error(format!("Storage slot {} not accessed in current call", hex_u256(slot)));
             return;
         };
 
+        let access = target.access;
+        self.draw_memory.inner_call_index = target.node_index;
         self.current_step = access.step_index();
+        self.draw_memory.current_buf_startline = 0;
+        self.draw_memory.current_stack_startline = 0;
         self.scroll_memory_to_current_write();
+        self.key_buffer.clear();
         self.set_info(format!(
             "Jumped to {} at PC 0x{:x} ({})",
             access.describe(),
@@ -980,6 +990,12 @@ struct PcTarget {
     scope: PcTargetScope,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StorageTarget {
+    node_index: usize,
+    access: StorageAccess,
+}
+
 fn parse_pc_candidates(input: &str) -> Result<Vec<PcCandidate>, String> {
     let input = input.trim();
     if input.is_empty() {
@@ -1080,6 +1096,105 @@ fn parse_storage_slot(input: &str) -> Result<U256, String> {
 
 fn invalid_storage_slot(input: &str) -> String {
     format!("Invalid storage slot `{input}`; use hex 0x20/20 or decimal d:32")
+}
+
+fn find_storage_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    slot: U256,
+) -> Option<StorageTarget> {
+    let current_node = arena.get(current_node_index)?;
+    let trace_node_idx = current_node.trace_node_idx;
+    let current_absolute_step = current_node.step_offset.saturating_add(current_step);
+
+    storage_target_at(arena, current_node_index, current_step, slot)
+        .or_else(|| find_storage_target_after(arena, trace_node_idx, current_absolute_step, slot))
+        .or_else(|| find_storage_target_before(arena, trace_node_idx, current_absolute_step, slot))
+}
+
+fn storage_target_at(
+    arena: &[DebugNode],
+    node_index: usize,
+    step_index: usize,
+    slot: U256,
+) -> Option<StorageTarget> {
+    let node = arena.get(node_index)?;
+    storage_access_at(&node.steps, step_index)
+        .filter(|access| access.slot() == slot)
+        .map(|access| StorageTarget { node_index, access })
+}
+
+fn find_storage_target_after(
+    arena: &[DebugNode],
+    trace_node_idx: usize,
+    current_absolute_step: usize,
+    slot: U256,
+) -> Option<StorageTarget> {
+    let mut best = None;
+
+    for (node_index, node) in arena.iter().enumerate() {
+        if node.trace_node_idx != trace_node_idx {
+            continue;
+        }
+
+        for step_index in 0..node.steps.len() {
+            let absolute_step = node.step_offset.saturating_add(step_index);
+            if absolute_step <= current_absolute_step {
+                continue;
+            }
+
+            let Some(access) =
+                storage_access_at(&node.steps, step_index).filter(|access| access.slot() == slot)
+            else {
+                continue;
+            };
+
+            match best {
+                Some((best_absolute_step, _, _)) if absolute_step >= best_absolute_step => {}
+                _ => best = Some((absolute_step, node_index, access)),
+            }
+            break;
+        }
+    }
+
+    best.map(|(_, node_index, access)| StorageTarget { node_index, access })
+}
+
+fn find_storage_target_before(
+    arena: &[DebugNode],
+    trace_node_idx: usize,
+    current_absolute_step: usize,
+    slot: U256,
+) -> Option<StorageTarget> {
+    let mut best = None;
+
+    for (node_index, node) in arena.iter().enumerate() {
+        if node.trace_node_idx != trace_node_idx {
+            continue;
+        }
+
+        for step_index in (0..node.steps.len()).rev() {
+            let absolute_step = node.step_offset.saturating_add(step_index);
+            if absolute_step >= current_absolute_step {
+                continue;
+            }
+
+            let Some(access) =
+                storage_access_at(&node.steps, step_index).filter(|access| access.slot() == slot)
+            else {
+                continue;
+            };
+
+            match best {
+                Some((best_absolute_step, _, _)) if absolute_step <= best_absolute_step => {}
+                _ => best = Some((absolute_step, node_index, access)),
+            }
+            break;
+        }
+    }
+
+    best.map(|(_, node_index, access)| StorageTarget { node_index, access })
 }
 
 fn find_pc_target(
@@ -1753,6 +1868,52 @@ mod tests {
     }
 
     #[test]
+    fn command_prompt_searches_storage_across_split_call_segments() {
+        let address = Address::repeat_byte(1);
+        let mut store = step(42);
+        store.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+
+        let mut first =
+            DebugNode::new(address, CallKind::Call, vec![step(1)], Bytes::new(), 0, None);
+        first.trace_node_idx = 7;
+        first.step_offset = 0;
+
+        let mut child = DebugNode::new(
+            Address::repeat_byte(2),
+            CallKind::Call,
+            vec![step(2)],
+            Bytes::new(),
+            0,
+            None,
+        );
+        child.trace_node_idx = 8;
+        child.step_offset = 1;
+
+        let mut second =
+            DebugNode::new(address, CallKind::Call, vec![store], Bytes::new(), 0, None);
+        second.trace_node_idx = 7;
+        second.step_offset = 2;
+
+        let mut context = context_with_arena(vec![first, child, second]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("storage 1");
+
+        assert_eq!(tui.draw_memory.inner_call_index, 2);
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to storage SSTORE slot 0x1 = 0x2a at PC 0x2a (42)"
+        );
+    }
+
+    #[test]
     fn command_prompt_finds_warm_sload_from_stack_snapshots() {
         let address = Address::repeat_byte(1);
         let steps =
@@ -1774,6 +1935,30 @@ mod tests {
         assert_eq!(
             tui.status.as_ref().unwrap().text,
             "Jumped to storage SLOAD slot 0x1 = 0x2a at PC 0x1 (1)"
+        );
+    }
+
+    #[test]
+    fn command_prompt_finds_warm_sstore_from_stack_snapshot() {
+        let address = Address::repeat_byte(1);
+        let steps = vec![step_with_stack(42, OpCode::SSTORE, &[42, 1])];
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            steps,
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("slot 1");
+
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to storage SSTORE slot 0x1 = 0x2a at PC 0x2a (42)"
         );
     }
 
