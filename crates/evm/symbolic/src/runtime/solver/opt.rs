@@ -868,15 +868,17 @@ pub(crate) fn normalize_expr_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExp
 }
 
 fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-    if let Some(rebuilt) = expr.rebuild_from_extracted_byte_terms()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(cx, rebuilt);
-    }
-    if let Some(rebuilt) = expr.rebuild_from_shifted_word_fragments()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(cx, rebuilt);
+    if matches!(expr.kind(), SymExprKind::Op(SymExprOp::Or, _, _)) {
+        if let Some(rebuilt) = expr.rebuild_from_extracted_byte_terms()
+            && rebuilt != expr
+        {
+            return normalize_expr_for_solver(cx, rebuilt);
+        }
+        if let Some(rebuilt) = expr.rebuild_from_shifted_word_fragments()
+            && rebuilt != expr
+        {
+            return normalize_expr_for_solver(cx, rebuilt);
+        }
     }
     if let Some(rebuilt) = expr.normalize_masked_shift_for_solver(cx)
         && rebuilt != expr
