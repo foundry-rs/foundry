@@ -105,7 +105,7 @@ use revm::{
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
 use std::{sync::Arc, time::Duration};
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,

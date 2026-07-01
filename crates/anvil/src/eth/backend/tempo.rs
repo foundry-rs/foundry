@@ -17,7 +17,7 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 use std::collections::HashMap;
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
