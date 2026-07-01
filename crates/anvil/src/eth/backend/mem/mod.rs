@@ -3291,7 +3291,7 @@ where
         }
 
         let pool_txs: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>> = block.body.transactions
-            [..=tx_index]
+            [..tx_index]
             .iter()
             .map(|tx| {
                 let pending_tx =
@@ -3306,8 +3306,8 @@ where
             .collect();
 
         let trace = |parent_state: &StateDb| -> Result<GethTrace, BlockchainError> {
-            let mut replay_db = in_memory_db::MemDb::default();
-            replay_db.init_from_state_snapshot(parent_state.read_as_state_snapshot());
+            let mut cache_db =
+                AnvilCacheDB::new(Box::new(parent_state) as Box<dyn MaybeFullDatabase + '_>);
 
             let mut evm_env = self.evm_env.read().clone();
             evm_env.block_env = block_env_from_header(&block.header);
@@ -3317,7 +3317,7 @@ where
             let gas_config = self.pool_tx_gas_config(&evm_env);
 
             self.execute_with_block_executor(
-                &mut replay_db,
+                &mut cache_db,
                 &evm_env,
                 block.header.parent_hash,
                 spec_id,
@@ -3327,7 +3327,7 @@ where
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
             );
 
-            let cache_db = CacheDB::new(Box::new(replay_db) as Box<dyn MaybeFullDatabase>);
+            let cache_db = cache_db.0;
             self.trace_call_with_state(
                 request,
                 fee_details,
