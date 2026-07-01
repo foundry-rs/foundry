@@ -1,5 +1,8 @@
 // CLI integration tests for `forge test --brutalize`
 
+use std::str::FromStr;
+
+use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_test_utils::{str, util::OutputExt};
 
 // Robust contract with casts + assembly passes under brutalization
@@ -120,7 +123,7 @@ contract RobustTest is Test {
     }
 
     function test_bytes32ToBytes31() public view {
-        bytes32 value = bytes32(uint256(type(uint256).max));
+        bytes32 value = hex"ffffffffffffffffffffffffffffffffffffffffffffffff00000000000000aa";
         assertEq(robust.bytes32ToBytes31(value), bytes31(value));
     }
 
@@ -407,6 +410,51 @@ contract JUnitTargetTest is Test {
     assert!(stdout.trim_start().starts_with("<?xml"), "{stdout}");
     assert!(!stdout.contains("Brutalizing source files"), "{stdout}");
     assert!(!stdout.contains("Brutalized 1 source files"), "{stdout}");
+});
+
+// Project-local remappings must resolve to the copied/brutalized temp workspace, not the original.
+forgetest_init!(brutalize_rebases_project_local_remappings, |prj, cmd| {
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings = vec![Remapping::from_str("@src/=src/").unwrap().into()];
+    });
+
+    prj.add_source(
+        "RemappedTarget.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract RemappedTarget {
+    function freeMemoryPointer() external pure returns (uint256 ptr) {
+        assembly {
+            ptr := mload(0x40)
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "RemappedTarget.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "@src/RemappedTarget.sol";
+
+contract RemappedTargetTest {
+    function test_remappedImportUsesBrutalizedTempSource() public {
+        if (new RemappedTarget().freeMemoryPointer() == 0x80) {
+            revert("remapping used original source");
+        }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--brutalize", "--mt", "test_remappedImportUsesBrutalizedTempSource"]);
+    cmd.assert_success();
 });
 
 // Nested casts should not produce overlapping replacements.

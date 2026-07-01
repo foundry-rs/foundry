@@ -9,6 +9,7 @@ use std::{
 };
 
 use eyre::Result;
+use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use foundry_config::Config;
 
 /// Check if a path is safe for use as a relative path within a workspace.
@@ -47,8 +48,19 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
     temp_config.snapshots = rebase_project_path(&config.root, temp_path, &config.snapshots);
     temp_config.broadcast = rebase_project_path(&config.root, temp_path, &config.broadcast);
     temp_config.mutation_dir = rebase_project_path(&config.root, temp_path, &config.mutation_dir);
+    temp_config.test_failures_file =
+        rebase_project_path(&config.root, temp_path, &config.test_failures_file);
+    temp_config.build_info_path = config
+        .build_info_path
+        .as_ref()
+        .map(|path| rebase_project_path(&config.root, temp_path, path));
     temp_config.libs =
         config.libs.iter().map(|lib| rebase_project_path(&config.root, temp_path, lib)).collect();
+    temp_config.remappings = config
+        .remappings
+        .iter()
+        .map(|remapping| rebase_remapping(&config.root, temp_path, remapping))
+        .collect();
     temp_config.include_paths = config
         .include_paths
         .iter()
@@ -68,6 +80,18 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
         temp_config.invariant.failure_persist_dir =
             Some(rebase_project_path(&config.root, temp_path, path));
     }
+    for permission in &mut temp_config.fs_permissions.permissions {
+        permission.path = rebase_project_path(&config.root, temp_path, &permission.path);
+    }
+    if let Some(model_checker) = &mut temp_config.model_checker {
+        model_checker.contracts = std::mem::take(&mut model_checker.contracts)
+            .into_iter()
+            .map(|(path, contracts)| {
+                let path = rebase_project_path(&config.root, temp_path, Path::new(&path));
+                (path.display().to_string(), contracts)
+            })
+            .collect();
+    }
 
     temp_config
 }
@@ -75,6 +99,20 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
 fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
     let rel = relative_to_root(root, path);
     if rel.is_absolute() { path.to_path_buf() } else { temp_path.join(rel) }
+}
+
+fn rebase_remapping(
+    root: &Path,
+    temp_path: &Path,
+    remapping: &RelativeRemapping,
+) -> RelativeRemapping {
+    let mut remapping: Remapping = remapping.clone().into();
+    remapping.path =
+        rebase_project_path(root, temp_path, Path::new(&remapping.path)).display().to_string();
+    if let Some(context) = &mut remapping.context {
+        *context = rebase_project_path(root, temp_path, Path::new(context)).display().to_string();
+    }
+    RelativeRemapping::new(remapping, temp_path)
 }
 
 /// Verify that `candidate` resolves (after following symlinks) to a path that lives
@@ -391,6 +429,10 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{collections::BTreeMap, str::FromStr};
+
+    use foundry_compilers::artifacts::ModelCheckerSettings;
+    use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
 
     fn create_test_dir_structure(base: &Path, structure: &[&str]) {
@@ -405,6 +447,93 @@ mod tests {
                 fs::write(&full_path, format!("// {path}")).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn test_rebase_config_paths_rebases_materialized_project_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        let external = temp.path().join("external");
+
+        let mut contracts = BTreeMap::new();
+        contracts.insert(root.join("src/Target.sol").display().to_string(), vec!["Target".into()]);
+        contracts
+            .insert(external.join("External.sol").display().to_string(), vec!["External".into()]);
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("contracts"),
+            test: root.join("checks"),
+            script: root.join("deploy"),
+            out: root.join("custom-out"),
+            cache_path: root.join("custom-cache"),
+            snapshots: root.join("custom-snapshots"),
+            broadcast: root.join("custom-broadcast"),
+            mutation_dir: root.join("custom-cache/mutation"),
+            test_failures_file: root.join("custom-cache/test-failures"),
+            build_info_path: Some(root.join("custom-build-info")),
+            libs: vec![root.join("vendor"), external.join("lib")],
+            include_paths: vec![root.join("shared")],
+            allow_paths: vec![root.join("fixtures"), external.join("fixtures")],
+            remappings: vec![
+                Remapping::from_str(&format!("@src/={}/", root.join("src").display()))
+                    .unwrap()
+                    .into(),
+                Remapping::from_str(&format!("@ext/={}/", external.join("src").display()))
+                    .unwrap()
+                    .into(),
+            ],
+            fs_permissions: foundry_config::FsPermissions::new([
+                PathPermission::read(root.join("fixtures")),
+                PathPermission::read(external.join("fixtures")),
+            ]),
+            model_checker: Some(ModelCheckerSettings {
+                contracts,
+                engine: None,
+                timeout: None,
+                targets: None,
+                invariants: None,
+                show_unproved: None,
+                div_mod_with_slacks: None,
+                solvers: None,
+                show_unsupported: None,
+                show_proved_safe: None,
+            }),
+            ..Default::default()
+        };
+
+        let temp_config = rebase_config_paths(&config, &workspace);
+
+        assert_eq!(temp_config.root, workspace);
+        assert_eq!(temp_config.src, workspace.join("contracts"));
+        assert_eq!(temp_config.test, workspace.join("checks"));
+        assert_eq!(temp_config.script, workspace.join("deploy"));
+        assert_eq!(temp_config.out, workspace.join("custom-out"));
+        assert_eq!(temp_config.cache_path, workspace.join("custom-cache"));
+        assert_eq!(temp_config.snapshots, workspace.join("custom-snapshots"));
+        assert_eq!(temp_config.broadcast, workspace.join("custom-broadcast"));
+        assert_eq!(temp_config.mutation_dir, workspace.join("custom-cache/mutation"));
+        assert_eq!(temp_config.test_failures_file, workspace.join("custom-cache/test-failures"));
+        assert_eq!(temp_config.build_info_path, Some(workspace.join("custom-build-info")));
+        assert_eq!(temp_config.libs, vec![workspace.join("vendor"), external.join("lib")]);
+        assert_eq!(temp_config.include_paths, vec![workspace.join("shared")]);
+        assert_eq!(
+            temp_config.allow_paths,
+            vec![workspace.join("fixtures"), external.join("fixtures")]
+        );
+
+        let remappings =
+            temp_config.remappings.into_iter().map(Remapping::from).collect::<Vec<_>>();
+        assert_eq!(remappings[0].path, format!("{}/", workspace.join("src").display()));
+        assert_eq!(remappings[1].path, format!("{}/", external.join("src").display()));
+
+        assert_eq!(temp_config.fs_permissions.permissions[0].path, workspace.join("fixtures"));
+        assert_eq!(temp_config.fs_permissions.permissions[1].path, external.join("fixtures"));
+
+        let contracts = temp_config.model_checker.unwrap().contracts;
+        assert!(contracts.contains_key(&workspace.join("src/Target.sol").display().to_string()));
+        assert!(contracts.contains_key(&external.join("External.sol").display().to_string()));
     }
 
     #[test]
