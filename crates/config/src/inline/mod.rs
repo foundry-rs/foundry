@@ -367,6 +367,50 @@ forge-config: default.symbolic.default_dynamic_length = 4
     }
 
     #[test]
+    fn merge_inline_provider_uses_selected_profile() {
+        let mut inline = InlineConfig::new();
+        inline
+            .insert(&natspec(
+                r#"
+forge-config: default.fuzz.runs = 1
+forge-config: ci.fuzz.runs = 2
+"#,
+            ))
+            .unwrap();
+
+        let profile = Profile::new("ci");
+        let config = Config {
+            profile: profile.clone(),
+            profiles: vec![Profile::Default, profile],
+            ..Default::default()
+        }
+        .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+        .unwrap();
+
+        assert_eq!(config.fuzz.runs, 2);
+    }
+
+    #[test]
+    fn merge_inline_provider_preserves_root_for_default_profile_fallback() {
+        let mut inline = InlineConfig::new();
+        inline.insert(&natspec("forge-config: default.isolate = false")).unwrap();
+
+        let profile = Profile::new("ci");
+        let root = std::path::PathBuf::from("project-root");
+        let config = Config {
+            profile: profile.clone(),
+            profiles: vec![Profile::Default, profile],
+            root: root.clone(),
+            ..Default::default()
+        }
+        .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+        .unwrap();
+
+        assert_eq!(config.root, root);
+        assert!(!config.isolate);
+    }
+
+    #[test]
     fn contract_symbolic_enabled_reads_contract_inline_config() {
         let mut inline = InlineConfig::new();
         inline
