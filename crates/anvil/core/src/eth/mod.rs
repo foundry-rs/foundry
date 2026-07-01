@@ -4,7 +4,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
+    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Bundle, Filter, Index, StateContext,
     anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
@@ -121,6 +121,21 @@ pub enum EthRequest {
     )]
     EthGetHeaderByNumber(BlockNumber),
 
+    #[serde(rename = "eth_getBlockAccessList", with = "sequence")]
+    EthGetBlockAccessList(BlockId),
+
+    #[serde(rename = "eth_getBlockAccessListByBlockHash", with = "sequence")]
+    EthGetBlockAccessListByBlockHash(B256),
+
+    #[serde(
+        rename = "eth_getBlockAccessListByBlockNumber",
+        deserialize_with = "lenient_block_number::lenient_block_number_seq"
+    )]
+    EthGetBlockAccessListByBlockNumber(BlockNumber),
+
+    #[serde(rename = "eth_getBlockAccessListRaw", with = "sequence")]
+    EthGetBlockAccessListRaw(BlockId),
+
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
 
@@ -201,6 +216,13 @@ pub enum EthRequest {
         #[serde(default)] Option<BlockId>,
         #[serde(default)] Option<StateOverride>,
         #[serde(default)] Option<Box<BlockOverrides>>,
+    ),
+
+    #[serde(rename = "eth_callMany")]
+    EthCallMany(
+        Vec<Bundle<WithOtherFields<TransactionRequest>>>,
+        #[serde(default)] Option<StateContext>,
+        #[serde(default)] Option<StateOverride>,
     ),
 
     #[serde(rename = "eth_simulateV1")]
@@ -290,8 +312,8 @@ pub enum EthRequest {
 
     /// Creates a filter in the node, to notify when new pending transactions arrive.
     /// To check if the state has changed, call `eth_getFilterChanges`.
-    #[serde(rename = "eth_newPendingTransactionFilter", with = "empty_params")]
-    EthNewPendingTransactionFilter(()),
+    #[serde(rename = "eth_newPendingTransactionFilter", with = "optional_sequence")]
+    EthNewPendingTransactionFilter(Option<bool>),
 
     /// Returns an array of all logs matching filter with given id.
     #[serde(rename = "eth_getFilterLogs", with = "sequence")]
@@ -331,6 +353,18 @@ pub enum EthRequest {
     #[serde(rename = "debug_getRawReceipts", with = "sequence")]
     DebugGetRawReceipts(BlockId),
 
+    /// reth's `debug_getRawTransactions` endpoint.
+    #[serde(rename = "debug_getRawTransactions", with = "sequence")]
+    DebugGetRawTransactions(BlockId),
+
+    /// geth's `debug_getRawHeader` endpoint.
+    #[serde(rename = "debug_getRawHeader", with = "sequence")]
+    DebugGetRawHeader(BlockId),
+
+    /// geth's `debug_getRawBlock` endpoint.
+    #[serde(rename = "debug_getRawBlock", with = "sequence")]
+    DebugGetRawBlock(BlockId),
+
     /// geth's `debug_clearTxpool` endpoint
     #[serde(rename = "debug_clearTxpool", with = "empty_params")]
     DebugClearTxpool(()),
@@ -363,6 +397,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_freeOSMemory", with = "empty_params")]
     DebugFreeOsMemory(()),
 
+    /// geth's `debug_traceBlock` endpoint.
+    #[serde(rename = "debug_traceBlock")]
+    DebugTraceBlock(Bytes, #[serde(default)] GethDebugTracingOptions),
+
     /// geth's `debug_traceBlockByHash` endpoint
     #[serde(rename = "debug_traceBlockByHash")]
     DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
@@ -394,11 +432,22 @@ pub enum EthRequest {
     #[serde(rename = "trace_filter", with = "sequence")]
     TraceFilter(TraceFilter),
 
+    /// Trace get endpoint for parity's `trace_get`.
+    #[serde(rename = "trace_get")]
+    TraceGet(B256, Vec<Index>),
+
     /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
     #[serde(rename = "trace_replayBlockTransactions")]
     TraceReplayBlockTransactions(
         #[serde(deserialize_with = "lenient_block_number::lenient_block_number")] BlockNumber,
         HashSet<TraceType>,
+    ),
+
+    /// Trace call list endpoint for parity's `trace_callMany`.
+    #[serde(rename = "trace_callMany")]
+    TraceCallMany(
+        Vec<(WithOtherFields<TransactionRequest>, HashSet<TraceType>)>,
+        #[serde(default)] Option<BlockId>,
     ),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
@@ -1622,6 +1671,29 @@ mod tests {
     }
 
     #[test]
+    fn test_eth_new_pending_transaction_filter() {
+        let s = r#"{"method": "eth_newPendingTransactionFilter", "params":[],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::EthNewPendingTransactionFilter(None)));
+
+        let s = r#"{"method": "eth_newPendingTransactionFilter", "params":[null],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::EthNewPendingTransactionFilter(None)));
+
+        let s = r#"{"method": "eth_newPendingTransactionFilter", "params":[false],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::EthNewPendingTransactionFilter(Some(false))));
+
+        let s = r#"{"method": "eth_newPendingTransactionFilter", "params":[true],"id":73}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        assert!(matches!(req, EthRequest::EthNewPendingTransactionFilter(Some(true))));
+    }
+
+    #[test]
     fn test_serde_eth_unsubscribe() {
         let s = r#"{"id": 1, "method": "eth_unsubscribe", "params":
 ["0x9cef478923ff08bf67fde6c64013158d"]}"#;
@@ -1676,6 +1748,40 @@ mod tests {
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_raw_transactions() {
+        let s =
+            r#"{"jsonrpc":"2.0","method":"debug_getRawTransactions","params":["latest"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawTransactions","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_raw_header() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawHeader","params":["latest"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawHeader","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_raw_block() {
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawBlock","params":["latest"],"id":1}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"jsonrpc":"2.0","method":"debug_getRawBlock","params":["0x3ed3a89bc10115a321aee238c02de214009f8532a65368e5df5eaf732ee7167c"],"id":1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -1761,6 +1867,31 @@ true}]}"#;
     }
 
     #[test]
+    fn test_serde_trace_call_many() {
+        let s = r#"{"method": "trace_callMany", "params": [[[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","value":"0x1"}, ["trace"]], [{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","value":"0x2"}, ["trace", "stateDiff"]]]]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "trace_callMany", "params": [[[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, ["trace"]]], "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_get() {
+        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", [0]]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_trace_block() {
+        let s = r#"{"method":"debug_traceBlock","params":["0xc0",{"tracer":"callTracer"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_serde_eth_storage() {
         let s = r#"{"method": "eth_getStorageAt", "params":
 ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "latest"]}"#;
@@ -1786,6 +1917,12 @@ true}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
         let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+    }
+
+    #[test]
+    fn test_eth_call_many() {
+        let s = r#"{"method":"eth_callMany","params":[[{"transactions":[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","data":"0xcfae3217"}]}],{"blockNumber":"latest"},{"0x0000000000000000000000000000000000000001":{"balance":"0x1"}}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
     }
 

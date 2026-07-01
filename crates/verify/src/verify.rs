@@ -431,7 +431,7 @@ pub struct VerifyArgs {
     pub language: Option<ContractLanguage>,
 }
 
-fn parse_etherscan_license_type(value: &str) -> Result<String, String> {
+pub fn parse_etherscan_license_type(value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
         return Err("license type cannot be empty".into());

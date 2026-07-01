@@ -328,7 +328,7 @@ foundry-evm-symbolic = { path = "crates/evm/symbolic", default-features = false 
 foundry-evm-traces = { path = "crates/evm/traces", default-features = false }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils", default-features = false }
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "d79879c950c97737f80911e916bda3d7fd45fb13", default-features = false }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "7610c7e6f88429caa400ec35606afd28270ecf9f", default-features = false }
 foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives", default-features = false }
 foundry-tui = { path = "crates/tui", default-features = false }
@@ -339,7 +339,7 @@ foundry-compilers = { version = "0.21.0", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
-foundry-fork-db = { version = "0.26.0", features = ["zstd"] }
+foundry-fork-db = { version = "0.27.0", features = ["zstd"] }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
@@ -433,6 +433,7 @@ tikv-jemallocator = "0.7"
 auto_impl = "1"
 bytes = "1.11"
 walkdir = "2"
+wait-timeout = "0.2"
 prettyplease = "0.2"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = [
@@ -472,6 +473,7 @@ rustls = "0.23"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+shlex = "1"
 similar-asserts = "2.0"
 soldeer-commands = "=0.11.0"
 soldeer-core = { version = "=0.11.0", features = ["serde"] }
@@ -508,17 +510,17 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "6540a5ac3c6f3848684eb
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7", default-features = false }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7", default-features = false, features = [
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7", default-features = false, features = [
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false, features = [
     "serde",
 ] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -532,7 +534,7 @@ idna_adapter = "=1.1.0"
 
 [patch.crates-io]
 ## Temporary dependency on foundry-rs/foundry-core#94 until foundry-compilers is released.
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "39f19b016c2ba793b24255bda83bd3822c8cb525" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "7610c7e6f88429caa400ec35606afd28270ecf9f" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
@@ -592,12 +594,26 @@ op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = 
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 
 ## foundry-fork-db
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "ba6246789fc12cf8fe78aa74aadf31d663f08c1f" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "7610c7e6f88429caa400ec35606afd28270ecf9f" }
+
+## commonware — match the rev patched by the current Tempo workspace
+commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-consensus = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-cryptography = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-macros = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-math = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-p2p = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-parallel = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-runtime = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-storage = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
+commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "65185565b01bc9f406a06c522357954d75ce7cb7" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
