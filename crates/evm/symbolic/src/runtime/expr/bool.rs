@@ -25,6 +25,10 @@ impl SymBoolExpr {
         self.kind.value()
     }
 
+    pub(in crate::runtime) fn ptr_key(&self) -> usize {
+        self.kind.ptr_key()
+    }
+
     #[cfg(test)]
     pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
         self.kind.ptr_eq(&other.kind)

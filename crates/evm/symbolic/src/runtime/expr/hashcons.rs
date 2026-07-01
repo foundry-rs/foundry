@@ -30,6 +30,10 @@ impl<T> HashConsed<T> {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
+    pub(in crate::runtime) fn ptr_key(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
     }
