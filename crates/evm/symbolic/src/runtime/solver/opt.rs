@@ -614,6 +614,7 @@ impl ConstraintContext {
                 .zero_check_operand()
                 .is_some_and(|left| self.word_bool_always_true(cx, left)) =>
             {
+                // `always_true_word == 0 => false`.
                 SymBoolExpr::constant(cx, false)
             }
             SymBoolExprKind::Not(value)
@@ -621,6 +622,7 @@ impl ConstraintContext {
                     .zero_check_operand()
                     .is_some_and(|left| self.word_bool_always_true(cx, left)) =>
             {
+                // `always_true_word != 0 => true`.
                 SymBoolExpr::constant(cx, true)
             }
             _ => expr,
@@ -706,16 +708,19 @@ fn normalize_ite_expr_for_solver(
 ) -> SymExpr {
     let cond = normalize_bool_for_solver(cx, cond);
     if left == right {
+        // `ite(c, a, a) => a`.
         return left;
     }
     if left.as_const() == Some(U256::from(1))
         && right.normalized_bool_word_condition(cx).as_ref() == Some(&cond)
     {
+        // `ite(c, 1, bool_word(c)) => bool_word(c)`.
         return right;
     }
     if right.as_const().is_some_and(|value| value.is_zero())
         && left.normalized_bool_word_condition(cx).as_ref() == Some(&cond)
     {
+        // `ite(c, bool_word(c), 0) => bool_word(c)`.
         return left;
     }
     SymExpr::ite(cx, cond, left, right)
@@ -743,6 +748,7 @@ impl SymBoolExpr {
             {
                 left.normalized_bool_word_condition(cx).map(|value| value.not(cx)).or_else(|| {
                     if left.word_bool_always_true(cx) {
+                        // `always_true_word == 0 => false`.
                         Some(Self::constant(cx, false))
                     } else {
                         let zero = SymExpr::zero(cx);
@@ -755,6 +761,7 @@ impl SymBoolExpr {
             {
                 right.normalized_bool_word_condition(cx).map(|value| value.not(cx)).or_else(|| {
                     if right.word_bool_always_true(cx) {
+                        // `0 == always_true_word => false`.
                         Some(Self::constant(cx, false))
                     } else {
                         let zero = SymExpr::zero(cx);
@@ -765,11 +772,13 @@ impl SymBoolExpr {
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if right.as_const() == Some(U256::from(1)) =>
             {
+                // `bool_word(c) == 1 => c`.
                 left.normalized_bool_word_condition(cx)
             }
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if left.as_const() == Some(U256::from(1)) =>
             {
+                // `1 == bool_word(c) => c`.
                 right.normalized_bool_word_condition(cx)
             }
             SymBoolExprKind::Not(value) => match value.kind() {
@@ -777,6 +786,7 @@ impl SymBoolExpr {
                     if right.as_const().is_some_and(|value| value.is_zero()) =>
                 {
                     if left.word_bool_always_true(cx) {
+                        // `always_true_word != 0 => true`.
                         Some(Self::constant(cx, true))
                     } else {
                         let zero = SymExpr::zero(cx);
@@ -787,6 +797,7 @@ impl SymBoolExpr {
                     if left.as_const().is_some_and(|value| value.is_zero()) =>
                 {
                     if right.word_bool_always_true(cx) {
+                        // `0 != always_true_word => true`.
                         Some(Self::constant(cx, true))
                     } else {
                         let zero = SymExpr::zero(cx);
@@ -824,7 +835,9 @@ impl SymBoolExpr {
         right: &SymExpr,
     ) -> Option<Self> {
         match op {
+            // `a + b > a => false` when `a + b` cannot overflow.
             SymCmpOp::Ugt if left.add_overflow_check(right) => Some(Self::constant(cx, false)),
+            // `a < a + b => false` when `a + b` cannot overflow.
             SymCmpOp::Ult if right.add_overflow_check(left) => Some(Self::constant(cx, false)),
             _ => None,
         }
@@ -834,11 +847,13 @@ impl SymBoolExpr {
         if right.as_const().is_some_and(|value| value.is_zero())
             && let Some(condition) = left.normalize_eq_zero_for_solver(cx)
         {
+            // `word_bool(c) == 0 => !c`.
             return Some(condition);
         }
         if left.as_const().is_some_and(|value| value.is_zero())
             && let Some(condition) = right.normalize_eq_zero_for_solver(cx)
         {
+            // `0 == word_bool(c) => !c`.
             return Some(condition);
         }
         None
@@ -851,27 +866,35 @@ impl SymBoolExpr {
         right: &SymExpr,
     ) -> Option<Self> {
         match (op, left.as_const(), right.as_const()) {
+            // `a > 0 => a != 0`.
             (SymCmpOp::Ugt, _, Some(value)) if value.is_zero() => {
                 left.normalize_ne_zero_for_solver(cx)
             }
+            // `a >= 1 => a != 0`.
             (SymCmpOp::Uge, _, Some(value)) if value == U256::from(1) => {
                 left.normalize_ne_zero_for_solver(cx)
             }
+            // `a <= 0 => a == 0`.
             (SymCmpOp::Ule, _, Some(value)) if value.is_zero() => {
                 left.normalize_eq_zero_for_solver(cx)
             }
+            // `a < 1 => a == 0`.
             (SymCmpOp::Ult, _, Some(value)) if value == U256::from(1) => {
                 left.normalize_eq_zero_for_solver(cx)
             }
+            // `0 < a => a != 0`.
             (SymCmpOp::Ult, Some(value), _) if value.is_zero() => {
                 right.normalize_ne_zero_for_solver(cx)
             }
+            // `1 <= a => a != 0`.
             (SymCmpOp::Ule, Some(value), _) if value == U256::from(1) => {
                 right.normalize_ne_zero_for_solver(cx)
             }
+            // `0 >= a => a == 0`.
             (SymCmpOp::Uge, Some(value), _) if value.is_zero() => {
                 right.normalize_eq_zero_for_solver(cx)
             }
+            // `1 > a => a == 0`.
             (SymCmpOp::Ugt, Some(value), _) if value == U256::from(1) => {
                 right.normalize_eq_zero_for_solver(cx)
             }
@@ -905,6 +928,7 @@ impl SymExpr {
 
     fn normalize_eq_zero_for_solver(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         if let Some((numerator, denominator)) = self.udiv_operands() {
+            // `a / b == 0 => b == 0 || a < b`.
             return Some(Self::udiv_zero_condition(cx, numerator, denominator));
         }
         if let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() {
@@ -927,6 +951,7 @@ impl SymExpr {
             if then_zero.contains_udiv() || else_zero.contains_udiv() {
                 return None;
             }
+            // `ite(c, a, b) == 0 => (c && a == 0) || (!c && b == 0)`.
             let condition = normalize_bool_for_solver(cx, condition.clone());
             let then_condition = SymBoolExpr::and(cx, vec![condition.clone(), then_zero]);
             let not_condition = condition.not(cx);
@@ -938,6 +963,7 @@ impl SymExpr {
 
     fn normalize_ne_zero_for_solver(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         if let Some((numerator, denominator)) = self.udiv_operands() {
+            // `a / b != 0 => b != 0 && a >= b`.
             return Some(Self::udiv_nonzero_condition(cx, numerator, denominator));
         }
         if let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() {
@@ -960,6 +986,7 @@ impl SymExpr {
             if then_nonzero.contains_udiv() || else_nonzero.contains_udiv() {
                 return None;
             }
+            // `ite(c, a, b) != 0 => (c && a != 0) || (!c && b != 0)`.
             let condition = normalize_bool_for_solver(cx, condition.clone());
             let then_condition = SymBoolExpr::and(cx, vec![condition.clone(), then_nonzero]);
             let not_condition = condition.not(cx);
@@ -1004,12 +1031,14 @@ impl ConstraintContext {
             let negated = term.clone().not(cx);
             bool_terms.contains(&negated)
         }) {
+            // `c || !c => true`.
             return true;
         }
         for zero_term in &bool_terms {
             let Some(zero_operand) = zero_term.zero_check_operand() else { continue };
             if bool_terms.iter().any(|term| self.checked_mul_guard_for_operand(term, zero_operand))
             {
+                // `a == 0 || guarded_mul_div(a) => true`.
                 return true;
             }
         }

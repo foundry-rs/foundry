@@ -70,8 +70,10 @@ impl SymBoolExpr {
 
     fn eq_cmp(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> Self {
         match (left.kind(), right.kind()) {
+            // `a == a => true`.
             _ if left == right => Self::constant(cx, true),
             (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                // `const == const => const`.
                 Self::constant(cx, left == right)
             }
             (_, SymExprKind::Const(right_value)) => {
@@ -79,8 +81,10 @@ impl SymBoolExpr {
                     return condition;
                 }
                 if let Some(left_value) = left.known_word() {
+                    // `known(a) == const => const`.
                     return Self::constant(cx, left_value == *right_value);
                 }
+                // `a == b => ordered(a, b)`.
                 let (left, right) = SymExpr::ordered_commutative_operands(left, right);
                 Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
             }
@@ -89,8 +93,10 @@ impl SymBoolExpr {
                     return condition;
                 }
                 if let Some(right_value) = right.known_word() {
+                    // `const == known(a) => const`.
                     return Self::constant(cx, *left_value == right_value);
                 }
+                // `a == b => ordered(a, b)`.
                 let (left, right) = SymExpr::ordered_commutative_operands(left, right);
                 Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
             }
@@ -98,6 +104,7 @@ impl SymBoolExpr {
                 SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
                 SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
             ) if left_bytes.len() == right_bytes.len() => {
+                // `keccak(a) == keccak(b) => len(a) == len(b) && bytes(a) == bytes(b)`.
                 let mut conditions = vec![Self::eq(cx, left_len.clone(), right_len.clone())];
                 conditions.extend(
                     left_bytes
@@ -112,6 +119,7 @@ impl SymBoolExpr {
                 SymExprKind::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
                 SymExprKind::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
             ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
+                // `hash(a) == hash(b) => bytes(a) == bytes(b)`.
                 let conditions = left_bytes
                     .iter()
                     .cloned()
@@ -121,6 +129,7 @@ impl SymBoolExpr {
                 Self::and(cx, conditions)
             }
             _ => {
+                // `a == b => ordered(a, b)`.
                 let (left, right) = SymExpr::ordered_commutative_operands(left, right);
                 Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
             }
@@ -132,33 +141,43 @@ impl SymBoolExpr {
             return Self::eq_cmp(cx, left, right);
         }
         match (op, left.kind(), right.kind()) {
+            // `a <= a => true`, `a < a => false`.
             (op, _, _) if left == right => {
                 Self::constant(cx, matches!(op, SymCmpOp::Ule | SymCmpOp::Uge))
             }
             (op, SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                // `const < const => const`.
                 Self::constant(cx, op.eval(*left, *right))
             }
+            // `0 > a => false`.
             (SymCmpOp::Ugt, SymExprKind::Const(value), _) if value.is_zero() => {
                 Self::constant(cx, false)
             }
+            // `0 <= a => true`.
             (SymCmpOp::Ule, SymExprKind::Const(value), _) if value.is_zero() => {
                 Self::constant(cx, true)
             }
+            // `a < 0 => false`.
             (SymCmpOp::Ult, _, SymExprKind::Const(value)) if value.is_zero() => {
                 Self::constant(cx, false)
             }
+            // `a >= 0 => true`.
             (SymCmpOp::Uge, _, SymExprKind::Const(value)) if value.is_zero() => {
                 Self::constant(cx, true)
             }
+            // `MAX < a => false`.
             (SymCmpOp::Ult, SymExprKind::Const(value), _) if *value == U256::MAX => {
                 Self::constant(cx, false)
             }
+            // `MAX >= a => true`.
             (SymCmpOp::Uge, SymExprKind::Const(value), _) if *value == U256::MAX => {
                 Self::constant(cx, true)
             }
+            // `a > MAX => false`.
             (SymCmpOp::Ugt, _, SymExprKind::Const(value)) if *value == U256::MAX => {
                 Self::constant(cx, false)
             }
+            // `a <= MAX => true`.
             (SymCmpOp::Ule, _, SymExprKind::Const(value)) if *value == U256::MAX => {
                 Self::constant(cx, true)
             }
@@ -170,15 +189,20 @@ impl SymBoolExpr {
         let mut out = Vec::new();
         for value in values {
             match value.kind() {
+                // `true && a => a`.
                 SymBoolExprKind::Const(true) => {}
+                // `false && a => false`.
                 SymBoolExprKind::Const(false) => return Self::constant(cx, false),
+                // `(a && b) && c => a && b && c`.
                 SymBoolExprKind::And(values) => out.extend(values.iter().cloned()),
                 _ => out.push(value),
             }
         }
         if out.is_empty() {
+            // `and() => true`.
             Self::constant(cx, true)
         } else if out.len() == 1 {
+            // `and(a) => a`.
             out.pop().expect("single item exists")
         } else {
             Self::from_kind(cx, SymBoolExprKind::And(out.into()))
@@ -189,16 +213,21 @@ impl SymBoolExpr {
         let mut out = Vec::new();
         for value in values {
             match value.kind() {
+                // `false || a => a`.
                 SymBoolExprKind::Const(false) => {}
+                // `true || a => true`.
                 SymBoolExprKind::Const(true) => return Self::constant(cx, true),
                 _ => out.push(value),
             }
         }
         if out.is_empty() {
+            // `or() => false`.
             Self::constant(cx, false)
         } else if out.len() == 1 {
+            // `or(a) => a`.
             out.pop().expect("single item exists")
         } else {
+            // `a || b => !(!a && !b)`.
             let values = out.into_iter().map(|value| Self::not_bool(cx, value)).collect();
             let and = Self::and(cx, values);
             Self::not_bool(cx, and)
@@ -207,7 +236,9 @@ impl SymBoolExpr {
 
     pub(crate) fn not_bool(cx: &mut SymCx, value: Self) -> Self {
         match value.kind() {
+            // `!const => const`.
             SymBoolExprKind::Const(value) => Self::constant(cx, !*value),
+            // `!!a => a`.
             SymBoolExprKind::Not(value) => value.clone(),
             _ => Self::from_kind(cx, SymBoolExprKind::Not(value)),
         }
