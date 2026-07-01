@@ -1,13 +1,13 @@
 //! Debugger context and event handler implementation.
 
 use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, U256, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_tui::TuiApp;
 use ratatui::Frame;
-use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
+use revm::bytecode::opcode::{self, OpCode};
+use revm_inspectors::tracing::types::{CallKind, CallTraceStep, StorageChangeReason};
 use std::ops::ControlFlow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -634,6 +634,8 @@ impl TUIContext<'_> {
             self.run_buffer_command(command, BufferKind::Calldata, parts);
         } else if RETURNDATA_COMMANDS.contains(&command) {
             self.run_buffer_command(command, BufferKind::Returndata, parts);
+        } else if STORAGE_COMMANDS.contains(&command) {
+            self.run_storage_command(command, parts);
         } else if HELP_COMMANDS.contains(&command) {
             self.set_info(command_help());
         } else {
@@ -654,6 +656,40 @@ impl TUIContext<'_> {
             return self.set_error(command_usage(command, "<offset>"));
         }
         self.goto_buffer_offset(buffer, offset);
+    }
+
+    fn run_storage_command<'a>(&mut self, command: &str, mut args: impl Iterator<Item = &'a str>) {
+        let Some(slot) = args.next() else {
+            return self.set_error(command_usage(command, "<slot>"));
+        };
+        if args.next().is_some() {
+            return self.set_error(command_usage(command, "<slot>"));
+        }
+        self.goto_storage_slot_from_input(slot);
+    }
+
+    fn goto_storage_slot_from_input(&mut self, input: &str) {
+        let slot = match parse_storage_slot(input) {
+            Ok(slot) => slot,
+            Err(err) => {
+                self.set_error(err);
+                return;
+            }
+        };
+
+        let Some(access) = find_storage_access(self.debug_steps(), self.current_step, slot) else {
+            self.set_error(format!("Storage slot {} not accessed in current call", hex_u256(slot)));
+            return;
+        };
+
+        self.current_step = access.step_index;
+        self.scroll_memory_to_current_write();
+        self.set_info(format!(
+            "Jumped to {} at PC 0x{:x} ({})",
+            access.describe(),
+            access.pc,
+            access.pc
+        ));
     }
 
     fn apply_buffer_offset(&mut self, offset: usize) {
@@ -821,6 +857,7 @@ const PC_COMMANDS: &[&str] = &["pc", "p"];
 const MEMORY_COMMANDS: &[&str] = &["mem", "memory"];
 const CALLDATA_COMMANDS: &[&str] = &["calldata", "cd"];
 const RETURNDATA_COMMANDS: &[&str] = &["returndata", "ret", "rd"];
+const STORAGE_COMMANDS: &[&str] = &["storage", "store", "slot"];
 const HELP_COMMANDS: &[&str] = &["help", "h"];
 
 fn command_usage(command: &str, arg: &str) -> String {
@@ -829,12 +866,13 @@ fn command_usage(command: &str, arg: &str) -> String {
 
 fn command_help() -> String {
     format!(
-        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>",
+        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>, {} <slot>",
         command_aliases(CONTINUE_COMMANDS),
         command_aliases(PC_COMMANDS),
         command_aliases(MEMORY_COMMANDS),
         command_aliases(CALLDATA_COMMANDS),
-        command_aliases(RETURNDATA_COMMANDS)
+        command_aliases(RETURNDATA_COMMANDS),
+        command_aliases(STORAGE_COMMANDS)
     )
 }
 
@@ -941,6 +979,41 @@ struct PcTarget {
     scope: PcTargetScope,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StorageAccessKind {
+    Sload,
+    Sstore,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StorageAccess {
+    step_index: usize,
+    pc: usize,
+    kind: StorageAccessKind,
+    slot: U256,
+    value: U256,
+    previous: Option<U256>,
+}
+
+impl StorageAccess {
+    fn describe(self) -> String {
+        let op = match self.kind {
+            StorageAccessKind::Sload => "SLOAD",
+            StorageAccessKind::Sstore => "SSTORE",
+        };
+
+        match (self.kind, self.previous) {
+            (StorageAccessKind::Sstore, Some(previous)) => format!(
+                "storage {op} slot {}: {} -> {}",
+                hex_u256(self.slot),
+                hex_u256(previous),
+                hex_u256(self.value)
+            ),
+            _ => format!("storage {op} slot {} = {}", hex_u256(self.slot), hex_u256(self.value)),
+        }
+    }
+}
+
 fn parse_pc_candidates(input: &str) -> Result<Vec<PcCandidate>, String> {
     let input = input.trim();
     if input.is_empty() {
@@ -1015,6 +1088,91 @@ fn parse_buffer_offset(input: &str) -> Result<usize, String> {
 
 fn invalid_buffer_offset(input: &str) -> String {
     format!("Invalid buffer offset `{input}`; use hex 0x20/20 or decimal d:32")
+}
+
+fn parse_storage_slot(input: &str) -> Result<U256, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("Enter a storage slot".to_string());
+    }
+
+    let (digits, radix) =
+        if let Some(rest) = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")) {
+            (rest, 16)
+        } else if let Some(rest) = input.strip_prefix("d:").or_else(|| input.strip_prefix("dec:")) {
+            (rest, 10)
+        } else {
+            (input, 16)
+        };
+
+    if digits.is_empty() {
+        return Err(invalid_storage_slot(input));
+    }
+
+    U256::from_str_radix(digits, radix).map_err(|_| invalid_storage_slot(input))
+}
+
+fn invalid_storage_slot(input: &str) -> String {
+    format!("Invalid storage slot `{input}`; use hex 0x20/20 or decimal d:32")
+}
+
+fn find_storage_access(
+    steps: &[CallTraceStep],
+    current_step: usize,
+    slot: U256,
+) -> Option<StorageAccess> {
+    if steps.is_empty() {
+        return None;
+    }
+
+    let current = current_step.min(steps.len() - 1);
+    storage_access_at(steps, current).filter(|access| access.slot == slot).or_else(|| {
+        steps
+            .iter()
+            .enumerate()
+            .skip(current.saturating_add(1))
+            .find_map(|(i, _)| storage_access_at(steps, i).filter(|access| access.slot == slot))
+            .or_else(|| {
+                steps[..current].iter().enumerate().rev().find_map(|(i, _)| {
+                    storage_access_at(steps, i).filter(|access| access.slot == slot)
+                })
+            })
+    })
+}
+
+fn storage_access_at(steps: &[CallTraceStep], step_index: usize) -> Option<StorageAccess> {
+    let step = steps.get(step_index)?;
+    if let Some(change) = step.storage_change.as_deref() {
+        let kind = match change.reason {
+            StorageChangeReason::SLOAD => StorageAccessKind::Sload,
+            StorageChangeReason::SSTORE => StorageAccessKind::Sstore,
+        };
+        return Some(StorageAccess {
+            step_index,
+            pc: step.pc,
+            kind,
+            slot: change.key,
+            value: change.value,
+            previous: change.had_value,
+        });
+    }
+
+    if step.op.get() == opcode::SLOAD {
+        return Some(StorageAccess {
+            step_index,
+            pc: step.pc,
+            kind: StorageAccessKind::Sload,
+            slot: step.stack.as_deref()?.last().copied()?,
+            value: steps.get(step_index.checked_add(1)?)?.stack.as_deref()?.last().copied()?,
+            previous: None,
+        });
+    }
+
+    None
+}
+
+fn hex_u256(value: U256) -> String {
+    format!("{value:#x}")
 }
 
 fn find_pc_target(
@@ -1156,10 +1314,11 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Bytes, U256};
+    use alloy_primitives::Bytes;
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::ContractSources;
     use revm::interpreter::InstructionResult;
+    use revm_inspectors::tracing::types::StorageChange;
 
     fn step(pc: usize) -> CallTraceStep {
         step_with_stack(pc, OpCode::STOP, &[])
@@ -1419,6 +1578,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_storage_slots_as_visible_hex_labels() {
+        assert_eq!(parse_storage_slot("0x20").unwrap(), U256::from(32));
+        assert_eq!(parse_storage_slot("d:32").unwrap(), U256::from(32));
+        assert_eq!(parse_storage_slot("dec:32").unwrap(), U256::from(32));
+        assert_eq!(parse_storage_slot("20").unwrap(), U256::from(32));
+        assert_eq!(parse_storage_slot("2a").unwrap(), U256::from(42));
+        assert_eq!(parse_storage_slot("a").unwrap(), U256::from(10));
+
+        assert_eq!(parse_storage_slot("").unwrap_err(), "Enter a storage slot");
+        assert_eq!(
+            parse_storage_slot("0x").unwrap_err(),
+            "Invalid storage slot `0x`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("2x3").unwrap_err(),
+            "Invalid storage slot `2x3`; use hex 0x20/20 or decimal d:32"
+        );
+    }
+
+    #[test]
     fn filters_buffer_offset_input_to_parser_prefixes() {
         assert!(is_buffer_offset_input_char("", '0'));
         assert!(is_buffer_offset_input_char("0", 'x'));
@@ -1637,6 +1816,61 @@ mod tests {
     }
 
     #[test]
+    fn command_prompt_jumps_to_storage_slot_access() {
+        let address = Address::repeat_byte(1);
+        let mut store = step(42);
+        store.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: Some(U256::from(7)),
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1), store],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("storage 1");
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to storage SSTORE slot 0x1: 0x7 -> 0x2a at PC 0x2a (42)"
+        );
+    }
+
+    #[test]
+    fn command_prompt_finds_warm_sload_from_stack_snapshots() {
+        let address = Address::repeat_byte(1);
+        let steps =
+            vec![step_with_stack(1, OpCode::SLOAD, &[1]), step_with_stack(2, OpCode::STOP, &[42])];
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            steps,
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("store 1");
+
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to storage SLOAD slot 0x1 = 0x2a at PC 0x1 (1)"
+        );
+    }
+
+    #[test]
     fn command_prompt_accepts_optional_leading_colon() {
         let address = Address::repeat_byte(1);
         let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
@@ -1665,6 +1899,7 @@ mod tests {
             MEMORY_COMMANDS,
             CALLDATA_COMMANDS,
             RETURNDATA_COMMANDS,
+            STORAGE_COMMANDS,
         ] {
             assert!(help.contains(&command_aliases(commands)));
         }
@@ -1673,6 +1908,11 @@ mod tests {
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Error);
         assert_eq!(status.text, "Usage: :mem <offset>");
+
+        tui.run_command_from_input("store");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Usage: :store <slot>");
     }
 
     #[test]
