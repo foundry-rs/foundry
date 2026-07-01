@@ -70,8 +70,10 @@ pub(super) struct FuzzBranchFrontier {
     /// Fuzz worker that produced the record, if known.
     #[serde(skip_serializing_if = "Option::is_none")]
     worker: Option<u32>,
-    /// Whether this call also expanded coverage from the worker's current map.
-    new_coverage: bool,
+    /// Whether this call also expanded coverage from the worker's current map. Only present when
+    /// edge coverage is collected (corpus, edge-coverage metrics, or sancov); omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    new_coverage: Option<bool>,
     /// Index of the call in the recorded sequence. Stateless fuzzing records one call.
     call_index: usize,
     /// Concrete call sequence that reached the frontier.
@@ -134,7 +136,7 @@ impl FuzzFrontierRecorder {
         target: Address,
         calldata: &Bytes,
         cmp_values: &[CmpOperands],
-        new_coverage: bool,
+        new_coverage: Option<bool>,
     ) {
         if self.limit == 0 || cmp_values.is_empty() {
             return;
@@ -206,7 +208,7 @@ impl FuzzBranchFrontier {
         cmp: CmpOperands,
         result: bool,
         operand_delta: U256,
-        new_coverage: bool,
+        new_coverage: Option<bool>,
         call_index: usize,
     ) -> Self {
         Self {
@@ -382,7 +384,7 @@ mod tests {
             cmp,
             result,
             U256::from(operand_delta),
-            false,
+            None,
             0,
         )
     }
