@@ -4,7 +4,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
+    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Bundle, Filter, Index, StateContext,
     anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
@@ -216,6 +216,13 @@ pub enum EthRequest {
         #[serde(default)] Option<BlockId>,
         #[serde(default)] Option<StateOverride>,
         #[serde(default)] Option<Box<BlockOverrides>>,
+    ),
+
+    #[serde(rename = "eth_callMany")]
+    EthCallMany(
+        Vec<Bundle<WithOtherFields<TransactionRequest>>>,
+        #[serde(default)] Option<StateContext>,
+        #[serde(default)] Option<StateOverride>,
     ),
 
     #[serde(rename = "eth_simulateV1")]
@@ -1862,6 +1869,12 @@ true}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
         let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+    }
+
+    #[test]
+    fn test_eth_call_many() {
+        let s = r#"{"method":"eth_callMany","params":[[{"transactions":[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","data":"0xcfae3217"}]}],{"blockNumber":"latest"},{"0x0000000000000000000000000000000000000001":{"balance":"0x1"}}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
     }
 
