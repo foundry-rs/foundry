@@ -7,8 +7,9 @@ use crate::{
     },
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, U256, address};
 use foundry_config::InvariantConfig;
+use foundry_evm_core::constants::CALLER;
 use parking_lot::RwLock;
 use proptest::prelude::*;
 use rand::seq::IteratorRandom;
@@ -19,6 +20,19 @@ struct PlannedFuzzedCalls {
     generation: u64,
     calls: Vec<BoxedStrategy<CallDetails>>,
 }
+
+/// Default invariant senders, modeled after Echidna's fixed sender pool.
+///
+/// The Foundry default deployer is included because owner/deployer-only paths are common in
+/// invariant targets.
+const DEFAULT_INVARIANT_SENDERS: [Address; 3] = [
+    address!("0x0000000000000000000000000000000000010000"),
+    address!("0x0000000000000000000000000000000000020000"),
+    CALLER,
+];
+
+const RANDOM_SENDER_WEIGHT: u32 = 1;
+const DEFAULT_SENDER_WEIGHT: u32 = 99;
 
 /// Given a target address, we generate random calldata.
 pub fn override_call_strat(
@@ -149,8 +163,8 @@ pub fn invariant_strat(
 }
 
 /// Strategy to select a sender address:
-/// * If `senders` is empty, then it's either a random address or one sampled from the dictionary
-///   according to the configured dictionary weight.
+/// * If `senders` is empty, then it is usually sampled from Foundry's fixed default sender pool.
+///   A random or dictionary address is used rarely to preserve broad exploration.
 /// * If `senders` is not empty, a random address is chosen from the list of senders.
 fn select_random_sender<S: FuzzStateReader>(
     fuzz_state: &S,
@@ -158,8 +172,9 @@ fn select_random_sender<S: FuzzStateReader>(
     dictionary_weight: u32,
 ) -> impl Strategy<Value = Address> + use<S> {
     if senders.targeted.is_empty() {
+        let default_senders = default_invariant_senders(&senders);
         let dictionary_weight = dictionary_weight.min(100);
-        proptest::prop_oneof![
+        let random_sender = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address),
             dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state),
         ]
@@ -176,11 +191,28 @@ fn select_random_sender<S: FuzzStateReader>(
                 addr = Address::random();
             }
             addr
-        })
-        .boxed()
+        });
+
+        if default_senders.is_empty() {
+            random_sender.boxed()
+        } else {
+            proptest::prop_oneof![
+                DEFAULT_SENDER_WEIGHT => any::<prop::sample::Index>()
+                    .prop_map(move |index| *index.get(&default_senders)),
+                RANDOM_SENDER_WEIGHT => random_sender,
+            ]
+            .boxed()
+        }
     } else {
         any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
     }
+}
+
+fn default_invariant_senders(senders: &SenderFilters) -> Vec<Address> {
+    DEFAULT_INVARIANT_SENDERS
+        .into_iter()
+        .filter(|sender| !senders.excluded.contains(sender))
+        .collect()
 }
 
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
@@ -212,4 +244,34 @@ pub fn fuzz_contract_with_calldata<S: FuzzStateReader>(
         trace!(input=?calldata, ?value);
         CallDetails { target, calldata, value }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_sender_pool_includes_foundry_deployer() {
+        let senders = SenderFilters::default();
+
+        assert_eq!(
+            default_invariant_senders(&senders),
+            vec![
+                address!("0x0000000000000000000000000000000000010000"),
+                address!("0x0000000000000000000000000000000000020000"),
+                CALLER,
+            ]
+        );
+    }
+
+    #[test]
+    fn default_sender_pool_respects_exclusions() {
+        let excluded = address!("0x0000000000000000000000000000000000010000");
+        let senders = SenderFilters::new(vec![], vec![excluded, CALLER]);
+
+        assert_eq!(
+            default_invariant_senders(&senders),
+            vec![address!("0x0000000000000000000000000000000000020000")]
+        );
+    }
 }
