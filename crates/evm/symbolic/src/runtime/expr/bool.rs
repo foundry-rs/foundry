@@ -78,6 +78,7 @@ impl SymBoolExpr {
                 if let Some(left_value) = left.known_word() {
                     return Self::constant(cx, left_value == *right_value);
                 }
+                let (left, right) = SymExpr::ordered_commutative_operands(left, right);
                 Self::from_kind(cx, SymBoolExprKind::Eq(left, right))
             }
             (SymExprKind::Const(left_value), _) => {
@@ -87,6 +88,7 @@ impl SymBoolExpr {
                 if let Some(right_value) = right.known_word() {
                     return Self::constant(cx, *left_value == right_value);
                 }
+                let (left, right) = SymExpr::ordered_commutative_operands(left, right);
                 Self::from_kind(cx, SymBoolExprKind::Eq(left, right))
             }
             (
@@ -115,7 +117,10 @@ impl SymBoolExpr {
                     .collect();
                 Self::and(cx, conditions)
             }
-            _ => Self::from_kind(cx, SymBoolExprKind::Eq(left, right)),
+            _ => {
+                let (left, right) = SymExpr::ordered_commutative_operands(left, right);
+                Self::from_kind(cx, SymBoolExprKind::Eq(left, right))
+            }
         }
     }
 
@@ -234,6 +239,22 @@ impl SymBoolExpr {
     pub(crate) fn as_const(&self) -> Option<bool> {
         match self.kind() {
             SymBoolExprKind::Const(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub(in crate::runtime) fn zero_check_operand(&self) -> Option<&SymExpr> {
+        match self.kind() {
+            SymBoolExprKind::Eq(left, right)
+                if right.as_const().is_some_and(|value| value.is_zero()) =>
+            {
+                Some(left)
+            }
+            SymBoolExprKind::Eq(left, right)
+                if left.as_const().is_some_and(|value| value.is_zero()) =>
+            {
+                Some(right)
+            }
             _ => None,
         }
     }

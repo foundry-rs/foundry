@@ -124,4 +124,31 @@ mod tests {
 
         assert!(first.ptr_eq(&second));
     }
+
+    #[test]
+    fn simplifies_shift_right_over_or_at_construction() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x").low_byte(&mut cx);
+        let low = SymExpr::constant(&mut cx, U256::from(0xff));
+        let shift = SymExpr::constant(&mut cx, U256::from(8));
+        let high = SymExpr::op(&mut cx, SymExprOp::Shl, x.clone(), shift.clone());
+        let word = SymExpr::op(&mut cx, SymExprOp::Or, high, low);
+        let shifted = SymExpr::op(&mut cx, SymExprOp::Shr, word, shift);
+
+        assert_eq!(shifted, x);
+    }
+
+    #[test]
+    fn simplifies_masked_or_at_construction() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x").low_byte(&mut cx);
+        let y = SymExpr::var(&mut cx, "y").low_byte(&mut cx);
+        let shift = SymExpr::constant(&mut cx, U256::from(8));
+        let high = SymExpr::op(&mut cx, SymExprOp::Shl, x, shift);
+        let word = SymExpr::op(&mut cx, SymExprOp::Or, high, y.clone());
+        let mask = SymExpr::constant(&mut cx, U256::from(0xff));
+        let masked = SymExpr::op(&mut cx, SymExprOp::And, word, mask);
+
+        assert_eq!(masked, y);
+    }
 }

@@ -2724,20 +2724,19 @@ fn solver_normalizes_erc4626_style_share_zero_predicate() {
 }
 
 #[test]
-fn solver_rebuilds_word_from_extracted_byte_terms() {
+fn expression_rebuilds_word_from_extracted_byte_terms() {
     let mut cx = SymCx::new();
     let word = SymExpr::var(&mut cx, "word");
     let mask = SymExpr::constant(&mut cx, U256::from(u64::MAX));
     let masked = SymExpr::op(&mut cx, SymExprOp::And, word, mask);
     let bytes = masked.clone().into_byte_exprs(&mut cx);
     let rebuilt_word = SymExpr::from_bytes(&mut cx, bytes);
-    let rebuilt = normalize_expr_for_solver(&mut cx, rebuilt_word);
 
-    assert_eq!(rebuilt, normalize_expr_for_solver(&mut cx, masked));
+    assert_eq!(rebuilt_word, masked);
 }
 
 #[test]
-fn solver_rebuilds_word_from_shifted_fragments() {
+fn expression_rebuilds_word_from_shifted_fragments() {
     let mut cx = SymCx::new();
     let word = SymExpr::var(&mut cx, "word");
     let low_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 32));
@@ -2748,13 +2747,12 @@ fn solver_rebuilds_word_from_shifted_fragments() {
     let masked_high = SymExpr::op(&mut cx, SymExprOp::And, shifted, high_mask);
     let high_bits = SymExpr::op(&mut cx, SymExprOp::Shl, masked_high, shift);
     let rebuilt_expr = SymExpr::op(&mut cx, SymExprOp::Or, low_bits, high_bits);
-    let rebuilt = normalize_expr_for_solver(&mut cx, rebuilt_expr);
 
-    assert_eq!(rebuilt, word);
+    assert_eq!(rebuilt_expr, word);
 }
 
 #[test]
-fn solver_simplifies_selector_prefixed_word_fragment() {
+fn expression_simplifies_selector_prefixed_word_fragment() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "calldata_0");
     let y = SymExpr::var(&mut cx, "calldata_1");
@@ -2778,7 +2776,7 @@ fn solver_simplifies_selector_prefixed_word_fragment() {
     let rebuilt_high = SymExpr::op(&mut cx, SymExprOp::Shl, first_word_masked, shift_32.clone());
     let rebuilt = SymExpr::op(&mut cx, SymExprOp::Or, rebuilt_low, rebuilt_high);
 
-    assert_eq!(normalize_expr_for_solver(&mut cx, rebuilt), x);
+    assert_eq!(rebuilt, x);
 
     let next_low_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 32));
     let next_low = SymExpr::op(&mut cx, SymExprOp::And, y.clone(), next_low_mask);
@@ -2787,7 +2785,7 @@ fn solver_simplifies_selector_prefixed_word_fragment() {
     let next_high_shifted = SymExpr::op(&mut cx, SymExprOp::Shl, next_high, shift_32);
     let rebuilt_next = SymExpr::op(&mut cx, SymExprOp::Or, next_low, next_high_shifted);
 
-    assert_eq!(normalize_expr_for_solver(&mut cx, rebuilt_next), y);
+    assert_eq!(rebuilt_next, y);
 }
 
 fn checked_mul_guard_word(cx: &mut SymCx, zero_operand: &SymExpr, expected: &SymExpr) -> SymExpr {
@@ -2868,27 +2866,24 @@ fn solver_normalizes_guarded_self_division_guard() {
 }
 
 #[test]
-fn solver_normalizes_guarded_self_division_word() {
+fn expression_normalizes_guarded_self_division_word() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
     let zero = SymExpr::zero(&mut cx);
     let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
     let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
     let checked_quotient = SymExpr::ite(&mut cx, a_is_zero.clone(), zero, quotient);
-    let normalized = normalize_expr_for_solver(&mut cx, checked_quotient.clone());
-
-    assert!(!normalized.smt().contains("bvudiv"));
     let a_is_nonzero = a_is_zero.not(&mut cx);
     let one = SymExpr::one(&mut cx);
     let zero = SymExpr::zero(&mut cx);
     let expected = SymExpr::ite(&mut cx, a_is_nonzero, one, zero);
-    assert_eq!(normalized, expected);
+    assert_eq!(checked_quotient, expected);
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
         assert_eq!(
             checked_quotient.eval_model(&model).unwrap(),
-            normalized.eval_model(&model).unwrap()
+            expected.eval_model(&model).unwrap()
         );
     }
 }
@@ -4293,7 +4288,11 @@ fn solver_smt_dump_shares_repeated_subterms() {
     let diagnostics = solver.take_diagnostics().unwrap();
 
     assert!(diagnostics.contains("(define-fun __sym_expr_"));
-    assert!(diagnostics.contains("(assert (= __sym_expr_"));
+    assert!(
+        diagnostics
+            .lines()
+            .any(|line| line.starts_with("(assert (= ") && line.contains("__sym_expr_"))
+    );
     assert_eq!(diagnostics.matches("(bvlshr calldata_0 (_ bv248 256))").count(), 1);
 }
 
