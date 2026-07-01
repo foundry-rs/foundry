@@ -129,14 +129,16 @@ impl SymBytes {
             SymBytesKind::Concrete(bytes) => bytes
                 .get(offset)
                 .copied()
-                .map(|byte| cx.constant(U256::from(byte)))
-                .unwrap_or_else(|| cx.zero()),
-            SymBytesKind::Exprs(bytes) => bytes.get(offset).cloned().unwrap_or_else(|| cx.zero()),
+                .map(|byte| SymExpr::constant(cx, U256::from(byte)))
+                .unwrap_or_else(|| SymExpr::zero(cx)),
+            SymBytesKind::Exprs(bytes) => {
+                bytes.get(offset).cloned().unwrap_or_else(|| SymExpr::zero(cx))
+            }
             SymBytesKind::Word(word) => {
                 if offset >= 32 {
-                    cx.zero()
+                    SymExpr::zero(cx)
                 } else if let Some(byte) = word.known_byte(offset) {
-                    cx.constant(U256::from(byte))
+                    SymExpr::constant(cx, U256::from(byte))
                 } else {
                     word.extracted_byte(cx, offset)
                 }
@@ -149,17 +151,17 @@ impl SymBytes {
                     }
                     offset = offset.saturating_sub(bytes.len());
                 }
-                cx.zero()
+                SymExpr::zero(cx)
             }
             SymBytesKind::Slice { bytes, offset: base_offset, len } => {
                 if offset >= *len {
-                    cx.zero()
+                    SymExpr::zero(cx)
                 } else if let Some(base_offset) = base_offset.eval() {
                     let Ok(base_offset) = usize::try_from(base_offset) else {
-                        return cx.zero();
+                        return SymExpr::zero(cx);
                     };
                     let Some(offset) = base_offset.checked_add(offset) else {
-                        return cx.zero();
+                        return SymExpr::zero(cx);
                     };
                     bytes.byte(cx, offset)
                 } else {
@@ -168,13 +170,13 @@ impl SymBytes {
             }
             SymBytesKind::Sized { bytes, size, max_size } => {
                 if offset >= *max_size {
-                    return cx.zero();
+                    return SymExpr::zero(cx);
                 }
                 let source = bytes.byte(cx, offset);
-                let offset = cx.constant(U256::from(offset));
-                let condition = cx.cmp(SymBoolExprOp::Ult, offset, size.clone());
-                let zero = cx.zero();
-                cx.ite(condition, source, zero)
+                let offset = SymExpr::constant(cx, U256::from(offset));
+                let condition = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, offset, size.clone());
+                let zero = SymExpr::zero(cx);
+                SymExpr::ite(cx, condition, source, zero)
             }
         }
     }
@@ -185,13 +187,13 @@ impl SymBytes {
         offset: &SymExpr,
         delta: usize,
     ) -> SymExpr {
-        let mut result = cx.zero();
+        let mut result = SymExpr::zero(cx);
         for candidate in (delta..self.len()).rev() {
             let candidate_offset = candidate - delta;
-            let candidate_expr = cx.constant(U256::from(candidate_offset));
-            let condition = cx.eq(offset.clone(), candidate_expr);
+            let candidate_expr = SymExpr::constant(cx, U256::from(candidate_offset));
+            let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
             let byte = self.byte(cx, candidate);
-            result = cx.ite(condition, byte, result);
+            result = SymExpr::ite(cx, condition, byte, result);
         }
         result
     }
@@ -212,13 +214,15 @@ impl SymBytes {
             }
             SymBytesKind::Exprs(bytes) => {
                 let bytes = (0..len)
-                    .map(|idx| bytes.get(offset + idx).cloned().unwrap_or_else(|| cx.zero()))
+                    .map(|idx| {
+                        bytes.get(offset + idx).cloned().unwrap_or_else(|| SymExpr::zero(cx))
+                    })
                     .collect();
                 Self::exprs(cx, bytes)
             }
             SymBytesKind::Word(word) if offset == 0 && len == 32 => Self::word(cx, word.clone()),
             SymBytesKind::Word(_) | SymBytesKind::Sized { .. } => {
-                let offset = cx.constant(U256::from(offset));
+                let offset = SymExpr::constant(cx, U256::from(offset));
                 Self::slice_node(cx, self.clone(), offset, len)
             }
             SymBytesKind::Slice { bytes, offset: base_offset, .. } => {
@@ -228,7 +232,7 @@ impl SymBytes {
                 {
                     bytes.slice_concrete(cx, offset, len)
                 } else {
-                    let offset = cx.constant(U256::from(offset));
+                    let offset = SymExpr::constant(cx, U256::from(offset));
                     Self::slice_node(cx, self.clone(), offset, len)
                 }
             }
@@ -281,16 +285,18 @@ impl SymBytes {
                     let take = (bytes.len() - offset).min(32);
                     word[..take].copy_from_slice(&bytes[offset..offset + take]);
                 }
-                cx.constant(U256::from_be_bytes(word))
+                SymExpr::constant(cx, U256::from_be_bytes(word))
             }
             SymBytesKind::Exprs(bytes) => {
                 let bytes = (0..32)
-                    .map(|idx| bytes.get(offset + idx).cloned().unwrap_or_else(|| cx.zero()))
+                    .map(|idx| {
+                        bytes.get(offset + idx).cloned().unwrap_or_else(|| SymExpr::zero(cx))
+                    })
                     .collect::<Vec<_>>();
-                cx.from_bytes(bytes)
+                SymExpr::from_bytes(cx, bytes)
             }
             SymBytesKind::Word(word) if offset == 0 => word.clone(),
-            SymBytesKind::Word(_) if offset >= 32 => cx.zero(),
+            SymBytesKind::Word(_) if offset >= 32 => SymExpr::zero(cx),
             SymBytesKind::Slice { bytes, offset: base_offset, len } => {
                 if offset.checked_add(32).is_some_and(|end| end <= *len)
                     && let Some(base_offset) = base_offset.eval()
@@ -300,11 +306,11 @@ impl SymBytes {
                     return bytes.word_at(cx, base_offset);
                 }
                 let bytes = (0..32).map(|idx| self.byte(cx, offset + idx)).collect::<Vec<_>>();
-                cx.from_bytes(bytes)
+                SymExpr::from_bytes(cx, bytes)
             }
             _ => {
                 let bytes = (0..32).map(|idx| self.byte(cx, offset + idx)).collect::<Vec<_>>();
-                cx.from_bytes(bytes)
+                SymExpr::from_bytes(cx, bytes)
             }
         }
     }
@@ -318,10 +324,10 @@ impl SymBytes {
 
         let mut bytes = Vec::with_capacity(32);
         for _ in 0..32 - len {
-            bytes.push(cx.zero());
+            bytes.push(SymExpr::zero(cx));
         }
         bytes.extend((0..len).map(|idx| self.byte(cx, offset + idx)));
-        cx.from_bytes(bytes)
+        SymExpr::from_bytes(cx, bytes)
     }
 
     fn word_fragment_at(
@@ -336,7 +342,7 @@ impl SymBytes {
         debug_assert!(out_offset + len <= 32);
 
         if len == 0 {
-            return Some(cx.zero());
+            return Some(SymExpr::zero(cx));
         }
 
         match self.kind() {
@@ -347,7 +353,7 @@ impl SymBytes {
                     word[out_offset..out_offset + take]
                         .copy_from_slice(&bytes[offset..offset + take]);
                 }
-                Some(cx.constant(U256::from_be_bytes(word)))
+                Some(SymExpr::constant(cx, U256::from_be_bytes(word)))
             }
             SymBytesKind::Word(word) => {
                 Self::word_expr_fragment(cx, word.clone(), offset, len, out_offset)
@@ -355,7 +361,7 @@ impl SymBytes {
             SymBytesKind::Slice { bytes, offset: base_offset, len: slice_len } => {
                 let available = slice_len.saturating_sub(offset).min(len);
                 if available == 0 {
-                    return Some(cx.zero());
+                    return Some(SymExpr::zero(cx));
                 }
                 let base_offset =
                     base_offset.eval().and_then(|offset| usize::try_from(offset).ok())?;
@@ -365,7 +371,7 @@ impl SymBytes {
                 let mut offset = offset;
                 let mut out_offset = out_offset;
                 let mut remaining = len;
-                let mut out = cx.zero();
+                let mut out = SymExpr::zero(cx);
 
                 for bytes in values {
                     if remaining == 0 {
@@ -380,7 +386,7 @@ impl SymBytes {
 
                     let take = (bytes_len - offset).min(remaining);
                     let fragment = bytes.word_fragment_at(cx, offset, take, out_offset)?;
-                    out = cx.op(SymExprOp::Or, out, fragment);
+                    out = SymExpr::op(cx, SymExprOp::Or, out, fragment);
                     out_offset += take;
                     remaining -= take;
                     offset = 0;
@@ -401,7 +407,7 @@ impl SymBytes {
     ) -> Option<SymExpr> {
         let len = 32usize.checked_sub(offset)?.min(len);
         if len == 0 {
-            return Some(cx.zero());
+            return Some(SymExpr::zero(cx));
         }
         if offset == 0 && len == 32 && out_offset == 0 {
             return Some(word);
@@ -411,12 +417,12 @@ impl SymBytes {
         let dst_trailing_bits = (32 - (out_offset + len)) * 8;
         let mask = mask_bits(U256::MAX, len * 8);
 
-        let src_trailing_bits = cx.constant(U256::from(src_trailing_bits));
-        let expr = cx.op(SymExprOp::Shr, word, src_trailing_bits);
-        let mask = cx.constant(mask);
-        let expr = cx.op(SymExprOp::And, expr, mask);
-        let dst_trailing_bits = cx.constant(U256::from(dst_trailing_bits));
-        Some(cx.op(SymExprOp::Shl, expr, dst_trailing_bits))
+        let src_trailing_bits = SymExpr::constant(cx, U256::from(src_trailing_bits));
+        let expr = SymExpr::op(cx, SymExprOp::Shr, word, src_trailing_bits);
+        let mask = SymExpr::constant(cx, mask);
+        let expr = SymExpr::op(cx, SymExprOp::And, expr, mask);
+        let dst_trailing_bits = SymExpr::constant(cx, U256::from(dst_trailing_bits));
+        Some(SymExpr::op(cx, SymExprOp::Shl, expr, dst_trailing_bits))
     }
 
     pub(crate) fn materialize(&self, cx: &mut SymCx) -> Vec<SymExpr> {
@@ -442,10 +448,10 @@ impl SymBytes {
             match (actual.as_const(), expected.as_const()) {
                 (Some(actual), Some(expected)) if actual.to::<u8>() == expected.to::<u8>() => {}
                 (Some(_), Some(_)) => return None,
-                _ => conditions.push(cx.eq(actual, expected)),
+                _ => conditions.push(SymBoolExpr::eq(cx, actual, expected)),
             }
         }
-        Some(cx.and(conditions))
+        Some(SymBoolExpr::and(cx, conditions))
     }
 
     pub(crate) fn eval_model<M: SymbolicModelLookup + ?Sized>(

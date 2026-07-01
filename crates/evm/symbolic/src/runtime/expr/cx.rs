@@ -8,23 +8,33 @@ pub(crate) struct SymCx {
     cache: SymCxCache,
 }
 
-#[derive(Default)]
 struct SymCxCache {
-    zero: Option<SymExpr>,
-    one: Option<SymExpr>,
-    bool_true: Option<SymBoolExpr>,
-    bool_false: Option<SymBoolExpr>,
-    bytes_empty: Option<SymBytes>,
+    zero: SymExpr,
+    one: SymExpr,
+    bool_true: SymBoolExpr,
+    bool_false: SymBoolExpr,
+    bytes_empty: SymBytes,
 }
 
 impl SymCx {
     pub(crate) fn new() -> Self {
+        let mut words = HashCons::new();
+        let zero = SymExpr { kind: words.make(SymExprKind::Const(U256::ZERO)) };
+        let one = SymExpr { kind: words.make(SymExprKind::Const(U256::from(1))) };
+
+        let mut bools = HashCons::new();
+        let bool_true = SymBoolExpr { kind: bools.make(SymBoolExprKind::Const(true)) };
+        let bool_false = SymBoolExpr { kind: bools.make(SymBoolExprKind::Const(false)) };
+
+        let mut bytes = HashCons::new();
+        let bytes_empty = SymBytes { kind: bytes.make(SymBytesKind::Concrete(Vec::new())) };
+
         Self {
-            words: HashCons::new(),
-            bools: HashCons::new(),
-            bytes: HashCons::new(),
+            words,
+            bools,
+            bytes,
             symbols: HashMap::default(),
-            cache: SymCxCache::default(),
+            cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
         }
     }
 
@@ -38,49 +48,21 @@ impl SymCx {
 
     pub(in crate::runtime) fn mk_bytes_kind(&mut self, bytes: SymBytesKind) -> SymBytes {
         if matches!(&bytes, SymBytesKind::Concrete(bytes) if bytes.is_empty()) {
-            let table = &mut self.bytes;
-            return self
-                .cache
-                .bytes_empty
-                .get_or_insert_with(|| SymBytes { kind: table.make(bytes) })
-                .clone();
+            return self.cache.bytes_empty.clone();
         }
         SymBytes { kind: self.bytes.make(bytes) }
     }
 
-    pub(in crate::runtime::expr) fn cached_zero(&mut self) -> SymExpr {
-        let table = &mut self.words;
-        self.cache
-            .zero
-            .get_or_insert_with(|| SymExpr { kind: table.make(SymExprKind::Const(U256::ZERO)) })
-            .clone()
+    pub(in crate::runtime::expr) fn cached_zero(&self) -> SymExpr {
+        self.cache.zero.clone()
     }
 
-    pub(in crate::runtime::expr) fn cached_one(&mut self) -> SymExpr {
-        let table = &mut self.words;
-        self.cache
-            .one
-            .get_or_insert_with(|| SymExpr { kind: table.make(SymExprKind::Const(U256::from(1))) })
-            .clone()
+    pub(in crate::runtime::expr) fn cached_one(&self) -> SymExpr {
+        self.cache.one.clone()
     }
 
-    pub(in crate::runtime::expr) fn cached_bool(&mut self, value: bool) -> SymBoolExpr {
-        let table = &mut self.bools;
-        if value {
-            self.cache
-                .bool_true
-                .get_or_insert_with(|| SymBoolExpr {
-                    kind: table.make(SymBoolExprKind::Const(true)),
-                })
-                .clone()
-        } else {
-            self.cache
-                .bool_false
-                .get_or_insert_with(|| SymBoolExpr {
-                    kind: table.make(SymBoolExprKind::Const(false)),
-                })
-                .clone()
-        }
+    pub(in crate::runtime::expr) fn cached_bool(&self, value: bool) -> SymBoolExpr {
+        if value { self.cache.bool_true.clone() } else { self.cache.bool_false.clone() }
     }
 
     pub(crate) fn intern_expr(&mut self, expr: SymExpr) -> SymExpr {
@@ -120,18 +102,6 @@ impl SymCx {
         }
     }
 
-    pub(crate) fn zero(&mut self) -> SymExpr {
-        SymExpr::zero(self)
-    }
-
-    pub(crate) fn one(&mut self) -> SymExpr {
-        SymExpr::one(self)
-    }
-
-    pub(crate) fn constant(&mut self, value: U256) -> SymExpr {
-        SymExpr::constant(self, value)
-    }
-
     pub(crate) fn intern(&mut self, name: &str) -> Symbol {
         if let Some(symbol) = self.symbols.get(name) {
             return symbol.clone();
@@ -140,107 +110,6 @@ impl SymCx {
         let symbol = Symbol::new(name.clone());
         self.symbols.insert(name, symbol.clone());
         symbol
-    }
-
-    pub(crate) fn var(&mut self, name: &str) -> SymExpr {
-        SymExpr::var(self, name)
-    }
-
-    pub(crate) fn var_symbol(&mut self, name: Symbol) -> SymExpr {
-        SymExpr::var_symbol(self, name)
-    }
-
-    pub(crate) fn gas_left(&mut self, id: usize) -> SymExpr {
-        SymExpr::gas_left(self, id)
-    }
-
-    pub(crate) fn bool_constant(&mut self, value: bool) -> SymBoolExpr {
-        SymBoolExpr::constant(self, value)
-    }
-
-    pub(crate) fn not(&mut self, value: SymExpr) -> SymExpr {
-        SymExpr::not(self, value)
-    }
-
-    pub(crate) fn op(&mut self, op: SymExprOp, left: SymExpr, right: SymExpr) -> SymExpr {
-        SymExpr::op(self, op, left, right)
-    }
-
-    pub(crate) fn addmod(&mut self, left: SymExpr, right: SymExpr, modulus: SymExpr) -> SymExpr {
-        SymExpr::addmod(self, left, right, modulus)
-    }
-
-    pub(crate) fn mulmod(&mut self, left: SymExpr, right: SymExpr, modulus: SymExpr) -> SymExpr {
-        SymExpr::mulmod(self, left, right, modulus)
-    }
-
-    pub(crate) fn ite(
-        &mut self,
-        condition: SymBoolExpr,
-        then_expr: SymExpr,
-        else_expr: SymExpr,
-    ) -> SymExpr {
-        SymExpr::ite(self, condition, then_expr, else_expr)
-    }
-
-    pub(crate) fn bool_word(&mut self, value: SymBoolExpr) -> SymExpr {
-        SymExpr::bool_word(self, value)
-    }
-
-    #[allow(clippy::wrong_self_convention)]
-    pub(crate) fn from_bytes(&mut self, bytes: impl IntoIterator<Item = SymExpr>) -> SymExpr {
-        SymExpr::from_bytes(self, bytes)
-    }
-
-    pub(crate) fn keccak_symbol(
-        &mut self,
-        name: Symbol,
-        len: SymExpr,
-        bytes: Vec<SymExpr>,
-    ) -> SymExpr {
-        SymExpr::keccak_symbol(self, name, len, bytes)
-    }
-
-    pub(crate) fn hash_symbol(
-        &mut self,
-        name: Symbol,
-        algorithm: &'static str,
-        bytes: Vec<SymExpr>,
-    ) -> SymExpr {
-        SymExpr::hash_symbol(self, name, algorithm, bytes)
-    }
-
-    pub(crate) fn cmp_word_const(
-        &mut self,
-        op: SymBoolExprOp,
-        word: &SymExpr,
-        value: U256,
-    ) -> SymBoolExpr {
-        SymBoolExpr::cmp_word_const(self, op, word, value)
-    }
-
-    pub(crate) fn eq_word_const(&mut self, word: &SymExpr, value: U256) -> SymBoolExpr {
-        SymBoolExpr::eq_word_const(self, word, value)
-    }
-
-    pub(crate) fn eq(&mut self, left: SymExpr, right: SymExpr) -> SymBoolExpr {
-        SymBoolExpr::eq(self, left, right)
-    }
-
-    pub(crate) fn cmp(&mut self, op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> SymBoolExpr {
-        SymBoolExpr::cmp(self, op, left, right)
-    }
-
-    pub(crate) fn and(&mut self, values: Vec<SymBoolExpr>) -> SymBoolExpr {
-        SymBoolExpr::and(self, values)
-    }
-
-    pub(crate) fn or(&mut self, values: Vec<SymBoolExpr>) -> SymBoolExpr {
-        SymBoolExpr::or(self, values)
-    }
-
-    pub(crate) fn not_bool(&mut self, value: SymBoolExpr) -> SymBoolExpr {
-        SymBoolExpr::not_bool(self, value)
     }
 }
 
@@ -263,8 +132,8 @@ mod tests {
     #[test]
     fn hashconses_word_constants() {
         let mut cx = SymCx::new();
-        let first = cx.constant(U256::from(42));
-        let second = cx.constant(U256::from(42));
+        let first = SymExpr::constant(&mut cx, U256::from(42));
+        let second = SymExpr::constant(&mut cx, U256::from(42));
 
         assert!(first.ptr_eq(&second));
     }
@@ -272,11 +141,11 @@ mod tests {
     #[test]
     fn hashconses_word_expressions() {
         let mut cx = SymCx::new();
-        let x = cx.var("x");
-        let y = cx.var("y");
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
 
-        let first = cx.op(SymExprOp::Add, x.clone(), y.clone());
-        let second = cx.op(SymExprOp::Add, x, y);
+        let first = SymExpr::op(&mut cx, SymExprOp::Add, x.clone(), y.clone());
+        let second = SymExpr::op(&mut cx, SymExprOp::Add, x, y);
 
         assert!(first.ptr_eq(&second));
     }
@@ -284,11 +153,11 @@ mod tests {
     #[test]
     fn hashconses_bool_expressions() {
         let mut cx = SymCx::new();
-        let x = cx.var("x");
+        let x = SymExpr::var(&mut cx, "x");
 
-        let upper = cx.constant(U256::from(7));
-        let first = cx.cmp(SymBoolExprOp::Ult, x.clone(), upper.clone());
-        let second = cx.cmp(SymBoolExprOp::Ult, x, upper);
+        let upper = SymExpr::constant(&mut cx, U256::from(7));
+        let first = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), upper.clone());
+        let second = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, upper);
 
         assert!(first.ptr_eq(&second));
     }

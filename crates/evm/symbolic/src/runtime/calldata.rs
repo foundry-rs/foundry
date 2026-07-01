@@ -10,7 +10,7 @@ pub(crate) struct SymCalldata {
 impl SymCalldata {
     pub(crate) fn from_bytes(cx: &mut SymCx, bytes: SymBytes) -> Self {
         let size = bytes.len();
-        Self { size_word: cx.constant(U256::from(size)), size, bytes }
+        Self { size_word: SymExpr::constant(cx, U256::from(size)), size, bytes }
     }
 
     pub(crate) fn from_bytes_with_size(bytes: SymBytes, size_word: SymExpr) -> Self {
@@ -28,7 +28,7 @@ impl SymCalldata {
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(offset) = offset.as_const() {
             let Ok(offset) = usize::try_from(offset) else {
-                return Ok(cx.zero());
+                return Ok(SymExpr::zero(cx));
             };
             self.load(cx, offset)
         } else {
@@ -45,12 +45,12 @@ impl SymCalldata {
         cx: &mut SymCx,
         offset: &SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        let mut result = cx.zero();
+        let mut result = SymExpr::zero(cx);
         for candidate in (0..self.size).rev() {
-            let candidate_expr = cx.constant(U256::from(candidate));
-            let condition = cx.eq(offset.clone(), candidate_expr);
+            let candidate_expr = SymExpr::constant(cx, U256::from(candidate));
+            let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
             let word = self.load(cx, candidate)?;
-            result = cx.ite(condition, word, result);
+            result = SymExpr::ite(cx, condition, word, result);
         }
         Ok(result)
     }
@@ -82,14 +82,14 @@ impl BoundedCopySize {
 
     pub(crate) fn size_word(&self, cx: &mut SymCx) -> SymExpr {
         match self {
-            Self::Concrete(size) => cx.constant(U256::from(*size)),
+            Self::Concrete(size) => SymExpr::constant(cx, U256::from(*size)),
             Self::Symbolic { size, .. } => size.clone(),
         }
     }
 
     pub(crate) fn parts(&self, cx: &mut SymCx) -> (SymExpr, usize, bool) {
         match self {
-            Self::Concrete(size) => (cx.constant(U256::from(*size)), *size, false),
+            Self::Concrete(size) => (SymExpr::constant(cx, U256::from(*size)), *size, false),
             Self::Symbolic { size, max_size } => (size.clone(), *max_size, true),
         }
     }

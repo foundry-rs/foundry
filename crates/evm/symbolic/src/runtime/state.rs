@@ -42,10 +42,10 @@ impl PathState {
     ) -> Self {
         let constraints = calldata.constraints().to_vec();
         let call_data = calldata.call_data(cx);
-        let origin_word = cx.constant(address_word(caller));
-        let gas_price = cx.zero();
+        let origin_word = SymExpr::constant(cx, address_word(caller));
+        let gas_price = SymExpr::zero(cx);
         let block = SymbolicBlock::new(cx);
-        let callvalue = cx.constant(callvalue);
+        let callvalue = SymExpr::constant(cx, callvalue);
         let frame =
             CallFrame::new(cx, address, address, address, caller, callvalue, false, call_data);
         Self {
@@ -85,10 +85,10 @@ impl PathState {
         caller: Address,
         ffi_enabled: bool,
     ) -> Self {
-        let origin_word = cx.constant(address_word(caller));
-        let gas_price = cx.zero();
+        let origin_word = SymExpr::constant(cx, address_word(caller));
+        let gas_price = SymExpr::zero(cx);
         let block = SymbolicBlock::new(cx);
-        let callvalue = cx.zero();
+        let callvalue = SymExpr::zero(cx);
         let calldata = SymBytes::empty(cx);
         let calldata = SymCalldata::from_bytes(cx, calldata);
         let frame =
@@ -136,7 +136,7 @@ impl PathState {
             .as_ref()
             .and_then(|cheats| cheats.gas_price)
             .unwrap_or_else(|| executor.tx_env().gas_price());
-        self.gas_price = cx.constant(U256::from(gas_price));
+        self.gas_price = SymExpr::constant(cx, U256::from(gas_price));
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
@@ -246,7 +246,7 @@ impl PathState {
         expr.collect_eval_vars(&mut vars);
         let mut model = SymbolicModel::default();
         for var in vars {
-            let var_expr = cx.var_symbol(var.clone());
+            let var_expr = SymExpr::var_symbol(cx, var.clone());
             let value = self.constraints.iter().find_map(|constraint| {
                 constraint.forces_expr_const_with_context(&var_expr, &self.constraints)
             })?;
@@ -396,7 +396,7 @@ impl PathState {
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        self.stack.push(cx.op(op, a, b))?;
+        self.stack.push(SymExpr::op(cx, op, a, b))?;
         Ok(StepOutcome::Continue)
     }
 
@@ -407,10 +407,10 @@ impl PathState {
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        let zero = cx.zero();
-        let condition = cx.eq(b.clone(), zero.clone());
-        let expr = cx.op(op, a, b);
-        self.stack.push(cx.ite(condition, zero, expr))?;
+        let zero = SymExpr::zero(cx);
+        let condition = SymBoolExpr::eq(cx, b.clone(), zero.clone());
+        let expr = SymExpr::op(cx, op, a, b);
+        self.stack.push(SymExpr::ite(cx, condition, zero, expr))?;
         Ok(StepOutcome::Continue)
     }
 
@@ -421,8 +421,8 @@ impl PathState {
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        let condition = cx.cmp(op, a, b);
-        let value = cx.bool_word(condition);
+        let condition = SymBoolExpr::cmp(cx, op, a, b);
+        let value = SymExpr::bool_word(cx, condition);
         self.stack.push(value)?;
         Ok(StepOutcome::Continue)
     }
@@ -449,14 +449,14 @@ impl PathState {
                     ShiftKind::Sar => sar(value, shift),
                 }
             };
-            cx.constant(result)
+            SymExpr::constant(cx, result)
         } else {
             let expr = match kind {
-                ShiftKind::Shl => cx.op(SymExprOp::Shl, value, shift),
-                ShiftKind::Shr => cx.op(SymExprOp::Shr, value, shift),
-                ShiftKind::Sar => cx.op(SymExprOp::Sar, value, shift),
+                ShiftKind::Shl => SymExpr::op(cx, SymExprOp::Shl, value, shift),
+                ShiftKind::Shr => SymExpr::op(cx, SymExprOp::Shr, value, shift),
+                ShiftKind::Sar => SymExpr::op(cx, SymExprOp::Sar, value, shift),
             };
-            expr.known_word().map(|word| cx.constant(word)).unwrap_or(expr)
+            expr.known_word().map(|word| SymExpr::constant(cx, word)).unwrap_or(expr)
         };
         self.stack.push(result)?;
         Ok(StepOutcome::Continue)
@@ -467,7 +467,7 @@ impl PathState {
         let exponent = self.stack.pop()?;
         let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
             if let Some(base_value) = base.as_const() {
-                cx.constant(pow_mod(base_value, exponent))
+                SymExpr::constant(cx, pow_mod(base_value, exponent))
             } else if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) {
                 exp_expr_for_concrete_exponent(
                     cx,
@@ -487,12 +487,12 @@ impl PathState {
                 .upper_bound_usize(cx, &exponent)
                 .filter(|exponent| *exponent <= exponent_limit as usize)
                 .ok_or(SymbolicError::Unsupported("symbolic EXP exponent"))?;
-            let mut expr = cx.zero();
+            let mut expr = SymExpr::zero(cx);
             for candidate in (0..=max_exponent).rev() {
-                let candidate_expr = cx.constant(U256::from(candidate));
-                let condition = cx.eq(exponent.clone(), candidate_expr);
+                let candidate_expr = SymExpr::constant(cx, U256::from(candidate));
+                let condition = SymBoolExpr::eq(cx, exponent.clone(), candidate_expr);
                 let value = exp_expr_for_concrete_exponent(cx, base.clone(), candidate);
-                expr = cx.ite(condition, value, expr);
+                expr = SymExpr::ite(cx, condition, value, expr);
             }
             expr
         };
@@ -566,13 +566,13 @@ impl PathState {
     pub(crate) fn fresh_word(&mut self, cx: &mut SymCx, prefix: &'static str) -> SymExpr {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        cx.var(&format!("{prefix}_{id}"))
+        SymExpr::var(cx, &format!("{prefix}_{id}"))
     }
 
     pub(crate) fn fresh_gasleft(&mut self, cx: &mut SymCx) -> SymExpr {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        cx.gas_left(id)
+        SymExpr::gas_left(cx, id)
     }
 
     pub(crate) fn fresh_bounded_uint(&mut self, cx: &mut SymCx, bits: U256) -> SymExpr {
@@ -583,7 +583,12 @@ impl PathState {
             } else {
                 U256::from(1) << usize::try_from(bits).expect("checked bit width")
             };
-            self.constraints.push(cx.cmp_word_const(SymBoolExprOp::Ult, &value, upper));
+            self.constraints.push(SymBoolExpr::cmp_word_const(
+                cx,
+                SymBoolExprOp::Ult,
+                &value,
+                upper,
+            ));
         }
         value
     }
@@ -600,12 +605,14 @@ impl PathState {
         (0..len)
             .map(|_| {
                 let byte = self.fresh_bounded_uint(cx, U256::from(8));
-                self.constraints.push(cx.cmp_word_const(
+                self.constraints.push(SymBoolExpr::cmp_word_const(
+                    cx,
                     SymBoolExprOp::Uge,
                     &byte,
                     U256::from(0x20),
                 ));
-                self.constraints.push(cx.cmp_word_const(
+                self.constraints.push(SymBoolExpr::cmp_word_const(
+                    cx,
                     SymBoolExprOp::Ule,
                     &byte,
                     U256::from(0x7e),
@@ -618,14 +625,18 @@ impl PathState {
     pub(crate) fn fresh_bounded_int(&mut self, cx: &mut SymCx, bits: U256) -> SymExpr {
         let value = self.fresh_word(cx, "symbolic");
         if bits.is_zero() {
-            self.constraints.push(cx.eq_word_const(&value, U256::ZERO));
+            self.constraints.push(SymBoolExpr::eq_word_const(cx, &value, U256::ZERO));
         } else if bits < U256::from(256) {
             let magnitude =
                 U256::from(1) << (usize::try_from(bits).expect("checked bit width") - 1);
-            let lt = cx.cmp_word_const(SymBoolExprOp::Ult, &value, magnitude);
-            let ge =
-                cx.cmp_word_const(SymBoolExprOp::Uge, &value, U256::ZERO.wrapping_sub(magnitude));
-            let condition = cx.or(vec![lt, ge]);
+            let lt = SymBoolExpr::cmp_word_const(cx, SymBoolExprOp::Ult, &value, magnitude);
+            let ge = SymBoolExpr::cmp_word_const(
+                cx,
+                SymBoolExprOp::Uge,
+                &value,
+                U256::ZERO.wrapping_sub(magnitude),
+            );
+            let condition = SymBoolExpr::or(cx, vec![lt, ge]);
             self.constraints.push(condition);
         }
         value
@@ -671,7 +682,7 @@ impl PathState {
         } else {
             (U256::ZERO, self.caller_word.clone(), self.origin_word.clone())
         };
-        vec![cx.constant(mode), caller, origin]
+        vec![SymExpr::constant(cx, mode), caller, origin]
     }
 
     pub(crate) fn record_log(&mut self, log: SymbolicLog) {
@@ -795,28 +806,33 @@ impl ExpectedRevert {
                 if return_data.len() < prefix.len() {
                     return None;
                 }
-                let prefix_len = cx.constant(U256::from(prefix.len()));
-                conditions.push(cx.cmp(SymBoolExprOp::Uge, return_data.len_expr(), prefix_len));
+                let prefix_len = SymExpr::constant(cx, U256::from(prefix.len()));
+                conditions.push(SymBoolExpr::cmp(
+                    cx,
+                    SymBoolExprOp::Uge,
+                    return_data.len_expr(),
+                    prefix_len,
+                ));
                 conditions.extend((0..prefix.len()).map(|offset| {
                     let expected = prefix.byte(cx, offset);
                     let actual = return_data.byte(cx, offset);
-                    cx.eq(actual, expected)
+                    SymBoolExpr::eq(cx, actual, expected)
                 }));
             }
             ExpectedRevertData::Exact(data) => {
                 if return_data.len() < data.len() {
                     return None;
                 }
-                let len = cx.constant(U256::from(data.len()));
-                conditions.push(cx.eq(return_data.len_expr(), len));
+                let len = SymExpr::constant(cx, U256::from(data.len()));
+                conditions.push(SymBoolExpr::eq(cx, return_data.len_expr(), len));
                 conditions.extend((0..data.len()).map(|offset| {
                     let expected = data.byte(cx, offset);
                     let actual = return_data.byte(cx, offset);
-                    cx.eq(actual, expected)
+                    SymBoolExpr::eq(cx, actual, expected)
                 }));
             }
         }
-        Some(cx.and(conditions))
+        Some(SymBoolExpr::and(cx, conditions))
     }
 }
 
@@ -927,7 +943,7 @@ impl ExpectedCall {
             return Ok(None);
         };
         let callee_condition = self.callee.address_match_condition(cx, callee);
-        Ok(Some(cx.and(vec![callee_condition, data_condition])))
+        Ok(Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition])))
     }
 
     fn static_parts_match(
@@ -1005,7 +1021,7 @@ impl CallMock {
         }
         let data_condition = calldata.prefix_condition(cx, &self.data)?;
         let callee_condition = self.callee.address_match_condition(cx, callee);
-        Some(cx.and(vec![callee_condition, data_condition]))
+        Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition]))
     }
 
     fn static_parts_match(&self, value: Option<U256>) -> bool {
@@ -1075,7 +1091,7 @@ impl FunctionMock {
     ) -> Option<SymBoolExpr> {
         let data_condition = calldata.prefix_condition(cx, &self.data)?;
         let callee_condition = self.callee.address_match_condition(cx, callee);
-        Some(cx.and(vec![callee_condition, data_condition]))
+        Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition]))
     }
 }
 
@@ -1134,7 +1150,7 @@ impl ExpectedEmit {
             }
             match (template.topics.get(idx), actual.topics.get(idx)) {
                 (Some(left), Some(right)) => {
-                    conditions.push(cx.eq(left.clone(), right.clone()));
+                    conditions.push(SymBoolExpr::eq(cx, left.clone(), right.clone()));
                 }
                 (None, None) => {}
                 _ => return None,
@@ -1142,18 +1158,22 @@ impl ExpectedEmit {
         }
 
         if self.checks.data {
-            conditions.push(cx.eq(template.data_len.clone(), actual.data_len.clone()));
+            conditions.push(SymBoolExpr::eq(
+                cx,
+                template.data_len.clone(),
+                actual.data_len.clone(),
+            ));
             if template.data.len() != actual.data.len() {
                 return None;
             }
             conditions.extend((0..template.data.len()).map(|idx| {
                 let template = template.data.byte(cx, idx);
                 let actual = actual.data.byte(cx, idx);
-                cx.eq(template, actual)
+                SymBoolExpr::eq(cx, template, actual)
             }));
         }
 
-        Some(cx.and(conditions))
+        Some(SymBoolExpr::and(cx, conditions))
     }
 }
 
@@ -1252,11 +1272,11 @@ impl CallFrame {
         Self {
             pc: 0,
             address,
-            address_word: cx.constant(address_word(address)),
+            address_word: SymExpr::constant(cx, address_word(address)),
             code_address,
             storage_address,
             caller,
-            caller_word: cx.constant(address_word(caller)),
+            caller_word: SymExpr::constant(cx, address_word(caller)),
             callvalue,
             is_static,
             calldata,
@@ -1478,7 +1498,7 @@ impl SymbolicWorld {
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
         let base = self.storage_base(cx, executor, address, &key, concrete_key)?;
-        let read_key = concrete_key.map(|key| cx.constant(key)).unwrap_or(key);
+        let read_key = concrete_key.map(|key| SymExpr::constant(cx, key)).unwrap_or(key);
         Ok(StorageWrite::select_from(cx, &self.storage, address, read_key, base))
     }
 
@@ -1487,7 +1507,7 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {
-        let base = cx.zero();
+        let base = SymExpr::zero(cx);
         StorageWrite::select_from(cx, &self.transient_storage, address, key, base)
     }
 
@@ -1583,26 +1603,26 @@ impl SymbolicWorld {
     ) -> Result<SymExpr, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
             let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
-            return Ok(cx.var_symbol(name));
+            return Ok(SymExpr::var_symbol(cx, name));
         }
         if let Some(key) = concrete_key {
             return executor
                 .backend()
                 .storage_ref(address, key)
-                .map(|value| cx.constant(value))
+                .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()));
         }
         if let Some(key) = key.as_const() {
             executor
                 .backend()
                 .storage_ref(address, key)
-                .map(|value| cx.constant(value))
+                .map(|value| SymExpr::constant(cx, value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
         } else if self.zero_init_symbolic_storage {
-            Ok(cx.zero())
+            Ok(SymExpr::zero(cx))
         } else {
             let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
-            Ok(cx.var_symbol(name))
+            Ok(SymExpr::var_symbol(cx, name))
         }
     }
 
@@ -1627,12 +1647,12 @@ impl SymbolicWorld {
         address: Address,
     ) -> SymExpr {
         if self.destroyed_accounts.contains(&address) {
-            return cx.zero();
+            return SymExpr::zero(cx);
         }
         self.balances
             .get(&address)
             .cloned()
-            .unwrap_or_else(|| cx.constant(self.backend_balance(executor, address)))
+            .unwrap_or_else(|| SymExpr::constant(cx, self.backend_balance(executor, address)))
     }
 
     pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
@@ -1652,9 +1672,9 @@ impl SymbolicWorld {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            let address = cx.constant(address_word(*address));
-            let condition = cx.eq(expr.clone(), address);
-            result = cx.ite(condition, balance.clone(), result);
+            let address = SymExpr::constant(cx, address_word(*address));
+            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
+            result = SymExpr::ite(cx, condition, balance.clone(), result);
         }
 
         Ok(result)
@@ -1681,8 +1701,8 @@ impl SymbolicWorld {
         }
         let from_balance = self.balance_word_for_address(cx, executor, from);
         let to_balance = self.balance_word_for_address(cx, executor, to);
-        let from_balance = cx.op(SymExprOp::Sub, from_balance, value.clone());
-        let to_balance = cx.op(SymExprOp::Add, to_balance, value);
+        let from_balance = SymExpr::op(cx, SymExprOp::Sub, from_balance, value.clone());
+        let to_balance = SymExpr::op(cx, SymExprOp::Add, to_balance, value);
         self.set_balance_word(from, from_balance);
         self.set_balance_word(to, to_balance);
     }
@@ -1752,10 +1772,10 @@ impl SymbolicWorld {
         let balance = self.balance_word_for_address(cx, executor, address);
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
             let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
-            let beneficiary_balance = cx.op(SymExprOp::Add, beneficiary_balance, balance);
+            let beneficiary_balance = SymExpr::op(cx, SymExprOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
-        self.balances.insert(address, cx.zero());
+        self.balances.insert(address, SymExpr::zero(cx));
         self.code_cache.insert(address, SymCode::empty(cx));
         if !self.nonces.contains_key(&address) {
             let nonce = self.nonce(executor, address)?;
@@ -1781,9 +1801,9 @@ impl SymbolicWorld {
             let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
-            let beneficiary_balance = cx.op(SymExprOp::Add, beneficiary_balance, balance);
+            let beneficiary_balance = SymExpr::op(cx, SymExprOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
-            self.balances.insert(address, cx.zero());
+            self.balances.insert(address, SymExpr::zero(cx));
         }
     }
 
@@ -1887,7 +1907,7 @@ impl SymbolicWorld {
             let bytes = code.read_byte_exprs(cx, 0, code.len());
             Ok(keccak_word(cx, bytes))
         } else {
-            Ok(cx.zero())
+            Ok(SymExpr::zero(cx))
         }
     }
 
@@ -1899,21 +1919,21 @@ impl SymbolicWorld {
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(address) = self.resolve_address(&address_expr) {
             let len = self.extcode(cx, executor, address)?.len();
-            return Ok(cx.constant(U256::from(len)));
+            return Ok(SymExpr::constant(cx, U256::from(len)));
         }
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
         let len = self.extcode(cx, executor, representative)?.len();
-        let mut result = cx.constant(U256::from(len));
+        let mut result = SymExpr::constant(cx, U256::from(len));
         for (address, code) in &self.code_cache {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            let address = cx.constant(address_word(*address));
-            let condition = cx.eq(expr.clone(), address);
-            let len = cx.constant(U256::from(code.len()));
-            result = cx.ite(condition, len, result);
+            let address = SymExpr::constant(cx, address_word(*address));
+            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
+            let len = SymExpr::constant(cx, U256::from(code.len()));
+            result = SymExpr::ite(cx, condition, len, result);
         }
 
         Ok(result)
@@ -1935,14 +1955,14 @@ impl SymbolicWorld {
         let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
             let hash = if self.destroyed_accounts.contains(address) {
-                cx.zero()
+                SymExpr::zero(cx)
             } else {
                 let bytes = code.read_byte_exprs(cx, 0, code.len());
                 keccak_word(cx, bytes)
             };
-            let address = cx.constant(address_word(*address));
-            let condition = cx.eq(expr.clone(), address);
-            result = cx.ite(condition, hash, result);
+            let address = SymExpr::constant(cx, address_word(*address));
+            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
+            result = SymExpr::ite(cx, condition, hash, result);
         }
 
         Ok(result)
@@ -1970,14 +1990,14 @@ impl SymbolicWorld {
         let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
             let bytes = if self.destroyed_accounts.contains(address) {
-                (0..size).map(|_| cx.zero()).collect::<Vec<_>>()
+                (0..size).map(|_| SymExpr::zero(cx)).collect::<Vec<_>>()
             } else {
                 code.read_byte_exprs_offset(cx, offset.clone(), size)
             };
-            let address = cx.constant(address_word(*address));
-            let condition = cx.eq(expr.clone(), address);
+            let address = SymExpr::constant(cx, address_word(*address));
+            let condition = SymBoolExpr::eq(cx, expr.clone(), address);
             for (idx, byte) in bytes.into_iter().enumerate() {
-                result[idx] = cx.ite(condition.clone(), byte, result[idx].clone());
+                result[idx] = SymExpr::ite(cx, condition.clone(), byte, result[idx].clone());
             }
         }
 
@@ -2030,14 +2050,14 @@ pub(crate) struct SymbolicBlock {
 impl SymbolicBlock {
     pub(crate) fn new(cx: &mut SymCx) -> Self {
         Self {
-            chain_id: cx.constant(U256::from(1)),
+            chain_id: SymExpr::constant(cx, U256::from(1)),
             coinbase: Address::ZERO,
-            timestamp: cx.zero(),
-            number: cx.zero(),
-            difficulty: cx.zero(),
-            gaslimit: cx.zero(),
-            basefee: cx.zero(),
-            blob_basefee: cx.zero(),
+            timestamp: SymExpr::zero(cx),
+            number: SymExpr::zero(cx),
+            difficulty: SymExpr::zero(cx),
+            gaslimit: SymExpr::zero(cx),
+            basefee: SymExpr::zero(cx),
+            blob_basefee: SymExpr::zero(cx),
             block_hashes: HashMap::default(),
             blob_hashes: Vec::new(),
         }
@@ -2060,14 +2080,17 @@ impl SymbolicBlock {
             .unwrap_or_else(|| block.difficulty());
 
         Self {
-            chain_id: cx.constant(U256::from(evm_env.cfg_env.chain_id)),
+            chain_id: SymExpr::constant(cx, U256::from(evm_env.cfg_env.chain_id)),
             coinbase: block.beneficiary(),
-            timestamp: cx.constant(block.timestamp()),
-            number: cx.constant(block.number()),
-            difficulty: cx.constant(difficulty),
-            gaslimit: cx.constant(U256::from(block.gas_limit())),
-            basefee: cx.constant(U256::from(block.basefee())),
-            blob_basefee: cx.constant(U256::from(block.blob_gasprice().unwrap_or_default())),
+            timestamp: SymExpr::constant(cx, block.timestamp()),
+            number: SymExpr::constant(cx, block.number()),
+            difficulty: SymExpr::constant(cx, difficulty),
+            gaslimit: SymExpr::constant(cx, U256::from(block.gas_limit())),
+            basefee: SymExpr::constant(cx, U256::from(block.basefee())),
+            blob_basefee: SymExpr::constant(
+                cx,
+                U256::from(block.blob_gasprice().unwrap_or_default()),
+            ),
             block_hashes: HashMap::default(),
             blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
         }
@@ -2093,19 +2116,19 @@ impl SymbolicBlock {
     ) -> Result<SymExpr, SymbolicError> {
         let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
         if block_number >= current || current - block_number > U256::from(256) {
-            return Ok(cx.zero());
+            return Ok(SymExpr::zero(cx));
         }
         if let Some(hash) = self.block_hashes.get(&block_number) {
             return Ok(hash.clone());
         }
         let Ok(block_number) = u64::try_from(block_number) else {
-            return Ok(cx.zero());
+            return Ok(SymExpr::zero(cx));
         };
         let hash = executor
             .backend()
             .block_hash_ref(block_number)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
-        Ok(cx.constant(U256::from_be_slice(hash.as_slice())))
+        Ok(SymExpr::constant(cx, U256::from_be_slice(hash.as_slice())))
     }
 
     pub(crate) fn block_hash_word<FEN: FoundryEvmNetwork>(
@@ -2119,10 +2142,10 @@ impl SymbolicBlock {
         }
         let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
         if current.is_zero() {
-            return Ok(cx.zero());
+            return Ok(SymExpr::zero(cx));
         }
 
-        let mut result = cx.zero();
+        let mut result = SymExpr::zero(cx);
         let max_distance =
             usize::try_from(current.min(U256::from(256))).expect("checked blockhash distance");
         for distance in (1..=max_distance).rev() {
@@ -2131,9 +2154,9 @@ impl SymbolicBlock {
             if hash.as_const().is_some_and(|hash| hash.is_zero()) {
                 continue;
             }
-            let candidate = cx.constant(candidate);
-            let condition = cx.eq(block_number.clone(), candidate);
-            result = cx.ite(condition, hash, result);
+            let candidate = SymExpr::constant(cx, candidate);
+            let condition = SymBoolExpr::eq(cx, block_number.clone(), candidate);
+            result = SymExpr::ite(cx, condition, hash, result);
         }
 
         Ok(result)

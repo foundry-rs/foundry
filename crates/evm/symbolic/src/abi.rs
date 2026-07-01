@@ -189,7 +189,8 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         Ok(match ty {
             DynSolType::Bool => {
                 let word = self.fresh_word(&name);
-                state.constraints.push(self.cx.cmp_word_const(
+                state.constraints.push(SymBoolExpr::cmp_word_const(
+                    self.cx,
                     SymBoolExprOp::Ult,
                     &word,
                     U256::from(2),
@@ -226,7 +227,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                     .map(|idx| self.fresh_byte(state, &format!("{name}_{idx}"), false))
                     .collect();
                 SymbolicAbiValue::Bytes {
-                    len: self.cx.constant(U256::from(len)),
+                    len: SymExpr::constant(self.cx, U256::from(len)),
                     bytes: SymBytes::exprs(self.cx, bytes),
                 }
             }
@@ -309,7 +310,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                         .map(|idx| self.fresh_byte(&mut state, &format!("{name}_{idx}"), false))
                         .collect();
                     let value = SymbolicAbiValue::Bytes {
-                        len: self.cx.constant(U256::from(len)),
+                        len: SymExpr::constant(self.cx, U256::from(len)),
                         bytes: SymBytes::exprs(self.cx, bytes),
                     };
                     push_variant(&mut variants, (state, value), limit)?;
@@ -447,7 +448,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
     }
 
     pub(super) fn fresh_word(&mut self, name: &str) -> SymExpr {
-        self.cx.var(name)
+        SymExpr::var(self.cx, name)
     }
 
     pub(super) fn fresh_byte(
@@ -457,14 +458,21 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         printable: bool,
     ) -> SymExpr {
         let word = self.fresh_word(name);
-        state.constraints.push(self.cx.cmp_word_const(SymBoolExprOp::Ult, &word, U256::from(256)));
+        state.constraints.push(SymBoolExpr::cmp_word_const(
+            self.cx,
+            SymBoolExprOp::Ult,
+            &word,
+            U256::from(256),
+        ));
         if printable {
-            state.constraints.push(self.cx.cmp_word_const(
+            state.constraints.push(SymBoolExpr::cmp_word_const(
+                self.cx,
                 SymBoolExprOp::Uge,
                 &word,
                 U256::from(0x20),
             ));
-            state.constraints.push(self.cx.cmp_word_const(
+            state.constraints.push(SymBoolExpr::cmp_word_const(
+                self.cx,
                 SymBoolExprOp::Ule,
                 &word,
                 U256::from(0x7e),
@@ -534,7 +542,8 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         bits: usize,
     ) {
         if bits < 256 {
-            state.constraints.push(self.cx.cmp_word_const(
+            state.constraints.push(SymBoolExpr::cmp_word_const(
+                self.cx,
                 SymBoolExprOp::Ult,
                 word,
                 U256::from(1) << bits,
@@ -551,7 +560,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         if bits < 256 {
             let byte_index = U256::from(bits / 8 - 1);
             let signextended = signextend_word(self.cx, byte_index, word.clone());
-            state.constraints.push(self.cx.eq(word.clone(), signextended));
+            state.constraints.push(SymBoolExpr::eq(self.cx, word.clone(), signextended));
         }
     }
 
@@ -576,7 +585,7 @@ impl<'cx> SymbolicAbiEncoder<'cx> {
 
         for value in values {
             if value.is_dynamic() {
-                let offset = self.cx.constant(U256::from(head_size + tail_len));
+                let offset = SymExpr::constant(self.cx, U256::from(head_size + tail_len));
                 head.push(offset.into_bytes(self.cx));
                 let body = self.encode_dynamic_body(value);
                 tail_len += body.len();
@@ -615,11 +624,11 @@ impl<'cx> SymbolicAbiEncoder<'cx> {
                 encode_packed_bytes_with_len(self.cx, len.clone(), bytes)
             }
             SymbolicAbiValue::String { bytes } => {
-                let len = self.cx.constant(U256::from(bytes.len()));
+                let len = SymExpr::constant(self.cx, U256::from(bytes.len()));
                 encode_packed_bytes_with_len(self.cx, len, bytes)
             }
             SymbolicAbiValue::Array { elements } => {
-                let len = self.cx.constant(U256::from(elements.len()));
+                let len = SymExpr::constant(self.cx, U256::from(elements.len()));
                 let len = len.into_bytes(self.cx);
                 let elements = self.encode_sequence(elements.iter());
                 SymBytes::concat(self.cx, [len, elements])

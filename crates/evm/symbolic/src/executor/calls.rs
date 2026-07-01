@@ -26,11 +26,11 @@ impl SymbolicExecutor {
                 let value = state.stack.pop()?;
                 let value =
                     state.expect_constrained_word(&mut self.cx, value, "symbolic CALL value")?;
-                self.cx.constant(value)
+                SymExpr::constant(&mut self.cx, value)
             }
             (CallKind::Call, _) => state.stack.pop()?,
             (CallKind::CallCode, _) => state.stack.pop()?,
-            (CallKind::StaticCall | CallKind::DelegateCall, _) => self.cx.zero(),
+            (CallKind::StaticCall | CallKind::DelegateCall, _) => SymExpr::zero(&mut self.cx),
         };
         ensure_expr_not_gasleft(&value)?;
         let in_offset = state.stack.pop()?;
@@ -236,7 +236,7 @@ impl SymbolicExecutor {
         let mut candidates = candidates.into_iter().collect::<Vec<_>>();
         candidates.sort_unstable();
         for candidate in candidates {
-            let eq = self.cx.eq_word_const(value, candidate);
+            let eq = SymBoolExpr::eq_word_const(&mut self.cx, value, candidate);
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
             let eq_not = eq.not(&mut self.cx);
             let (neq_constraints, neq_sat) = self.constraints_with_condition(state, eq_not)?;
@@ -602,7 +602,7 @@ impl SymbolicExecutor {
             return Ok(false);
         }
 
-        let condition = self.cx.or(conditions);
+        let condition = SymBoolExpr::or(&mut self.cx, conditions);
         let (_match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
         if !match_sat {
@@ -824,14 +824,14 @@ impl SymbolicExecutor {
 
             state.return_data = return_data;
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-            state.stack.push(self.cx.one())?;
+            state.stack.push(SymExpr::one(&mut self.cx))?;
             return Ok(StepOutcome::Continue);
         }
 
         if is_console(to) {
             state.return_data = SymReturnData::empty(&mut self.cx);
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-            state.stack.push(self.cx.one())?;
+            state.stack.push(SymExpr::one(&mut self.cx))?;
             return Ok(StepOutcome::Continue);
         }
 
@@ -854,7 +854,7 @@ impl SymbolicExecutor {
                 let (return_data, reverts) = mock.into_parts();
                 state.return_data = return_data;
                 state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-                let success = self.cx.constant(U256::from(!reverts));
+                let success = SymExpr::constant(&mut self.cx, U256::from(!reverts));
                 state.stack.push(success)?;
                 return Ok(StepOutcome::Continue);
             }
@@ -905,12 +905,12 @@ impl SymbolicExecutor {
                         state.world.transfer(&mut self.cx, executor, state.address, to, value);
                     }
                     state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-                    state.stack.push(self.cx.one())?;
+                    state.stack.push(SymExpr::one(&mut self.cx))?;
                 }
                 None => {
                     state.return_data = SymReturnData::empty(&mut self.cx);
                     state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-                    state.stack.push(self.cx.zero())?;
+                    state.stack.push(SymExpr::zero(&mut self.cx))?;
                 }
             }
             return Ok(StepOutcome::Continue);
@@ -923,7 +923,7 @@ impl SymbolicExecutor {
             }
             state.return_data = SymReturnData::empty(&mut self.cx);
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
-            state.stack.push(self.cx.one())?;
+            state.stack.push(SymExpr::one(&mut self.cx))?;
             return Ok(StepOutcome::Continue);
         }
 
@@ -937,7 +937,7 @@ impl SymbolicExecutor {
                     .filter(|expr| state.world.resolve_address(expr) == Some(to))
                     .cloned()
             })
-            .unwrap_or_else(|| self.cx.constant(address_word(to)));
+            .unwrap_or_else(|| SymExpr::constant(&mut self.cx, address_word(to)));
         if matches!(kind, CallKind::DelegateCall) && state.prank.has_active() {
             return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
         }
@@ -959,7 +959,7 @@ impl SymbolicExecutor {
                 frame
             }
             CallKind::StaticCall => {
-                let value = self.cx.zero();
+                let value = SymExpr::zero(&mut self.cx);
                 let mut frame = CallFrame::new(
                     &mut self.cx,
                     to,
@@ -1073,7 +1073,7 @@ impl SymbolicExecutor {
                             out_offset.clone(),
                             &out_size,
                         )?;
-                        parent.stack.push(self.cx.one())?;
+                        parent.stack.push(SymExpr::one(&mut self.cx))?;
                         parents.push_back(parent);
                         continue;
                     }
@@ -1104,8 +1104,10 @@ impl SymbolicExecutor {
             }
             parent.return_data = outcome.return_data.clone();
             parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-            let success =
-                self.cx.constant(U256::from(matches!(outcome.status, TopLevelCallStatus::Success)));
+            let success = SymExpr::constant(
+                &mut self.cx,
+                U256::from(matches!(outcome.status, TopLevelCallStatus::Success)),
+            );
             parent.stack.push(success)?;
             parents.push_back(parent);
         }
@@ -1142,8 +1144,10 @@ impl SymbolicExecutor {
         let success_condition = kzg_success_witness_condition(&mut self.cx, &input, &input_len);
         let failure_condition =
             kzg_failure_witness_condition(&mut self.cx, state, &input, &input_len);
-        let modeled_condition =
-            self.cx.or(vec![success_condition.clone(), failure_condition.clone()]);
+        let modeled_condition = SymBoolExpr::or(
+            &mut self.cx,
+            vec![success_condition.clone(), failure_condition.clone()],
+        );
         let modeled_condition = modeled_condition.not(&mut self.cx);
         let (_, residual_sat) = self.constraints_with_condition(state, modeled_condition)?;
         if residual_sat {
@@ -1232,12 +1236,12 @@ impl SymbolicExecutor {
                     state.world.transfer(&mut self.cx, executor, state.address, to, value);
                 }
                 state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
-                state.stack.push(self.cx.one())?;
+                state.stack.push(SymExpr::one(&mut self.cx))?;
             }
             None => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
-                state.stack.push(self.cx.zero())?;
+                state.stack.push(SymExpr::zero(&mut self.cx))?;
             }
         }
         Ok(())
@@ -1257,13 +1261,13 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
-        let can_pay = self.cx.cmp(SymBoolExprOp::Uge, balance, value);
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
-                state.stack.push(self.cx.zero())?;
+                state.stack.push(SymExpr::zero(&mut self.cx))?;
                 Ok(false)
             }
             None => {
@@ -1281,7 +1285,7 @@ impl SymbolicExecutor {
                         failure.constraints = failure_constraints;
                         failure.return_data = SymReturnData::empty(&mut self.cx);
                         failure.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
-                        failure.stack.push(self.cx.zero())?;
+                        failure.stack.push(SymExpr::zero(&mut self.cx))?;
                         worklist.push_back(failure);
 
                         state.constraints = success_constraints;
@@ -1295,7 +1299,7 @@ impl SymbolicExecutor {
                         state.constraints = failure_constraints;
                         state.return_data = SymReturnData::empty(&mut self.cx);
                         state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
-                        state.stack.push(self.cx.zero())?;
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
                         Ok(false)
                     }
                     (false, false) => Ok(false),
@@ -1316,12 +1320,12 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
-        let can_pay = self.cx.cmp(SymBoolExprOp::Uge, balance, value);
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                state.stack.push(self.cx.zero())?;
+                state.stack.push(SymExpr::zero(&mut self.cx))?;
                 Ok(false)
             }
             None => {
@@ -1338,7 +1342,7 @@ impl SymbolicExecutor {
                         let mut failure = state.clone();
                         failure.constraints = failure_constraints;
                         failure.return_data = SymReturnData::empty(&mut self.cx);
-                        failure.stack.push(self.cx.zero())?;
+                        failure.stack.push(SymExpr::zero(&mut self.cx))?;
                         worklist.push_back(failure);
 
                         state.constraints = success_constraints;
@@ -1351,7 +1355,7 @@ impl SymbolicExecutor {
                     (false, true) => {
                         state.constraints = failure_constraints;
                         state.return_data = SymReturnData::empty(&mut self.cx);
-                        state.stack.push(self.cx.zero())?;
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
                         Ok(false)
                     }
                     (false, false) => Ok(false),
@@ -1389,8 +1393,8 @@ impl SymbolicExecutor {
         let candidate_constraints = candidates
             .iter()
             .map(|address| {
-                let address = self.cx.constant(address_word(*address));
-                self.cx.eq(target.clone(), address)
+                let address = SymExpr::constant(&mut self.cx, address_word(*address));
+                SymBoolExpr::eq(&mut self.cx, target.clone(), address)
             })
             .collect::<Vec<_>>();
         let mut outside_constraints = state.constraints.clone();
@@ -1428,13 +1432,13 @@ impl SymbolicExecutor {
                     );
                     branch.return_data = SymReturnData::empty(&mut self.cx);
                     branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-                    branch.stack.push(self.cx.one())?;
+                    branch.stack.push(SymExpr::one(&mut self.cx))?;
                     parents.push_back(branch);
                 }
             } else {
                 branch.return_data = SymReturnData::empty(&mut self.cx);
                 branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-                branch.stack.push(self.cx.one())?;
+                branch.stack.push(SymExpr::one(&mut self.cx))?;
                 parents.push_back(branch);
             }
         }
@@ -1562,7 +1566,7 @@ fn kzg_success_witness_condition(
 ) -> SymBoolExpr {
     let len = expr_eq_condition(cx, input_len, KZG_POINT_EVALUATION_INPUT_LEN);
     let bytes = bytes_eq_condition(cx, input, KZG_VERSIONED_HASH_OFFSET, &KZG_SUCCESS_INPUT);
-    cx.and(vec![len, bytes])
+    SymBoolExpr::and(cx, vec![len, bytes])
 }
 
 fn kzg_failure_witness_condition(
@@ -1580,32 +1584,32 @@ fn kzg_failure_witness_condition(
     let bad_proof = bytes_eq_condition(cx, input, KZG_PROOF_OFFSET, &KZG_INVALID_PROOF);
     let mut conditions = vec![
         len_ne_192,
-        cx.and(vec![len_192.clone(), bad_version]),
-        cx.and(vec![len_192.clone(), bad_z]),
-        cx.and(vec![len_192.clone(), bad_y]),
-        cx.and(vec![len_192.clone(), bad_proof]),
+        SymBoolExpr::and(cx, vec![len_192.clone(), bad_version]),
+        SymBoolExpr::and(cx, vec![len_192.clone(), bad_z]),
+        SymBoolExpr::and(cx, vec![len_192.clone(), bad_y]),
+        SymBoolExpr::and(cx, vec![len_192.clone(), bad_proof]),
     ];
 
     if let Some(commitment) = constrained_bytes_at(cx, state, input, KZG_COMMITMENT_OFFSET, 48) {
         let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
         let mismatch = kzg_versioned_hash_mismatch_condition(cx, input, &expected_hash);
-        conditions.push(cx.and(vec![len_192.clone(), mismatch]));
+        conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), mismatch]));
     }
 
     let expected_hash = &KZG_SUCCESS_INPUT[KZG_VERSIONED_HASH_OFFSET..KZG_Z_OFFSET];
     let commitment = &KZG_SUCCESS_INPUT[KZG_COMMITMENT_OFFSET..KZG_PROOF_OFFSET];
     let commitment_eq = bytes_eq_condition(cx, input, KZG_COMMITMENT_OFFSET, commitment);
     let hash_byte_mismatch = byte_eq_condition(cx, input, 1, expected_hash[1] ^ 1);
-    conditions.push(cx.and(vec![len_192.clone(), commitment_eq, hash_byte_mismatch]));
+    conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), commitment_eq, hash_byte_mismatch]));
 
     for commitment in [&KZG_ZERO_COMMITMENT, &KZG_ONE_COMMITMENT] {
         let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(commitment);
         let commitment_eq = bytes_eq_condition(cx, input, KZG_COMMITMENT_OFFSET, commitment);
         let mismatch = kzg_versioned_hash_mismatch_condition(cx, input, &expected_hash);
-        conditions.push(cx.and(vec![len_192.clone(), commitment_eq, mismatch]));
+        conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), commitment_eq, mismatch]));
     }
 
-    cx.or(conditions)
+    SymBoolExpr::or(cx, conditions)
 }
 
 fn kzg_versioned_hash_mismatch_condition(
@@ -1617,7 +1621,7 @@ fn kzg_versioned_hash_mismatch_condition(
 }
 
 fn expr_eq_condition(cx: &mut SymCx, expr: &SymExpr, value: usize) -> SymBoolExpr {
-    cx.eq_word_const(expr, U256::from(value))
+    SymBoolExpr::eq_word_const(cx, expr, U256::from(value))
 }
 
 fn expr_ne_condition(cx: &mut SymCx, expr: &SymExpr, value: usize) -> SymBoolExpr {
@@ -1628,14 +1632,14 @@ fn expr_ne_condition(cx: &mut SymCx, expr: &SymExpr, value: usize) -> SymBoolExp
 fn byte_eq_condition(cx: &mut SymCx, input: &[SymExpr], offset: usize, value: u8) -> SymBoolExpr {
     match input.get(offset) {
         Some(expr) => expr_eq_condition(cx, expr, value as usize),
-        None => cx.bool_constant(false),
+        None => SymBoolExpr::constant(cx, false),
     }
 }
 
 fn byte_ne_condition(cx: &mut SymCx, input: &[SymExpr], offset: usize, value: u8) -> SymBoolExpr {
     match input.get(offset) {
         Some(expr) => expr_ne_condition(cx, expr, value as usize),
-        None => cx.bool_constant(false),
+        None => SymBoolExpr::constant(cx, false),
     }
 }
 
@@ -1646,17 +1650,17 @@ fn bytes_eq_condition(
     bytes: &[u8],
 ) -> SymBoolExpr {
     let Some(end) = offset.checked_add(bytes.len()) else {
-        return cx.bool_constant(false);
+        return SymBoolExpr::constant(cx, false);
     };
     if end > input.len() {
-        return cx.bool_constant(false);
+        return SymBoolExpr::constant(cx, false);
     }
     let conditions = input[offset..end]
         .iter()
         .zip(bytes)
         .map(|(expr, byte)| expr_eq_condition(cx, expr, *byte as usize))
         .collect();
-    cx.and(conditions)
+    SymBoolExpr::and(cx, conditions)
 }
 
 fn bytes_ne_condition(
@@ -1666,17 +1670,17 @@ fn bytes_ne_condition(
     bytes: &[u8],
 ) -> SymBoolExpr {
     let Some(end) = offset.checked_add(bytes.len()) else {
-        return cx.bool_constant(false);
+        return SymBoolExpr::constant(cx, false);
     };
     if end > input.len() {
-        return cx.bool_constant(false);
+        return SymBoolExpr::constant(cx, false);
     }
     let conditions = input[offset..end]
         .iter()
         .zip(bytes)
         .map(|(expr, byte)| expr_ne_condition(cx, expr, *byte as usize))
         .collect();
-    cx.or(conditions)
+    SymBoolExpr::or(cx, conditions)
 }
 
 fn constrained_bytes_at(

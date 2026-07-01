@@ -117,8 +117,8 @@ impl SymbolicExecutor {
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
         state.origin = sender;
-        state.origin_word = self.cx.constant(address_word(sender));
-        let callvalue = self.cx.zero();
+        state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
+        let callvalue = SymExpr::zero(&mut self.cx);
         state.frame = CallFrame::new(
             &mut self.cx,
             target,

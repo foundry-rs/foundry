@@ -16,13 +16,13 @@ fn symbolic_calldata_variants(
 }
 
 fn add_words(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
-    cx.op(SymExprOp::Add, left, right)
+    SymExpr::op(cx, SymExprOp::Add, left, right)
 }
 
 macro_rules! sym_from_bytes {
     ($cx:ident, $bytes:expr) => {{
         let bytes = $bytes.collect::<Vec<_>>();
-        $cx.from_bytes(bytes)
+        SymExpr::from_bytes(&mut $cx, bytes)
     }};
 }
 
@@ -112,44 +112,44 @@ fn local_batches_respect_exploration_order() {
 fn binary_helpers_use_evm_operand_order() {
     let mut cx = SymCx::new();
     let mut state = empty_state();
-    state.stack.push(cx.constant(U256::from(2))).unwrap();
-    state.stack.push(cx.constant(U256::from(10))).unwrap();
+    state.stack.push(SymExpr::constant(&mut cx, U256::from(2))).unwrap();
+    state.stack.push(SymExpr::constant(&mut cx, U256::from(10))).unwrap();
 
     state.bin_word(&mut cx, SymExprOp::Sub).unwrap();
 
-    assert_eq!(state.stack.pop().unwrap(), cx.constant(U256::from(8)));
+    assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(&mut cx, U256::from(8)));
 }
 
 #[test]
 fn comparison_helpers_use_evm_operand_order() {
     let mut cx = SymCx::new();
     let mut state = empty_state();
-    state.stack.push(cx.constant(U256::from(2))).unwrap();
-    state.stack.push(cx.constant(U256::from(10))).unwrap();
+    state.stack.push(SymExpr::constant(&mut cx, U256::from(2))).unwrap();
+    state.stack.push(SymExpr::constant(&mut cx, U256::from(10))).unwrap();
 
     state.cmp_word(&mut cx, SymBoolExprOp::Ult).unwrap();
 
-    assert_eq!(state.stack.pop().unwrap(), cx.constant(U256::ZERO));
+    assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(&mut cx, U256::ZERO));
 }
 
 #[test]
 fn exp_helper_uses_evm_operand_order() {
     let mut cx = SymCx::new();
     let mut state = empty_state();
-    state.stack.push(cx.constant(U256::ZERO)).unwrap();
-    state.stack.push(cx.constant(U256::from(0x100))).unwrap();
+    state.stack.push(SymExpr::constant(&mut cx, U256::ZERO)).unwrap();
+    state.stack.push(SymExpr::constant(&mut cx, U256::from(0x100))).unwrap();
 
     state.exp_word(&mut cx).unwrap();
 
-    assert_eq!(state.stack.pop().unwrap(), cx.constant(U256::from(1)));
+    assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(&mut cx, U256::from(1)));
 }
 
 #[test]
 fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
     let mut cx = SymCx::new();
     let mut state = empty_state();
-    state.stack.push(cx.constant(U256::from(16))).unwrap();
-    state.stack.push(cx.var("base")).unwrap();
+    state.stack.push(SymExpr::constant(&mut cx, U256::from(16))).unwrap();
+    state.stack.push(SymExpr::var(&mut cx, "base")).unwrap();
 
     state.exp_word(&mut cx).unwrap();
 
@@ -164,12 +164,12 @@ fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
 fn exp_helper_expands_bounded_symbolic_exponent() {
     let mut cx = SymCx::new();
     let mut state = empty_state();
-    let exponent = cx.var("exponent");
-    let five = cx.constant(U256::from(5));
-    let bound = cx.cmp(SymBoolExprOp::Ule, exponent.clone(), five);
+    let exponent = SymExpr::var(&mut cx, "exponent");
+    let five = SymExpr::constant(&mut cx, U256::from(5));
+    let bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, exponent.clone(), five);
     state.constraints.push(bound);
     state.stack.push(exponent).unwrap();
-    state.stack.push(cx.constant(U256::from(3))).unwrap();
+    state.stack.push(SymExpr::constant(&mut cx, U256::from(3))).unwrap();
 
     state.exp_word(&mut cx).unwrap();
 
@@ -184,8 +184,8 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
 fn shift_helpers_accept_symbolic_amounts() {
     let mut cx = SymCx::new();
     let mut shl = empty_state();
-    shl.stack.push(cx.constant(U256::from(1))).unwrap();
-    shl.stack.push(cx.var("shift")).unwrap();
+    shl.stack.push(SymExpr::constant(&mut cx, U256::from(1))).unwrap();
+    shl.stack.push(SymExpr::var(&mut cx, "shift")).unwrap();
     shl.shift_word(&mut cx, ShiftKind::Shl).unwrap();
     let shifted = shl.stack.pop().unwrap();
 
@@ -199,8 +199,8 @@ fn shift_helpers_accept_symbolic_amounts() {
     );
 
     let mut shr = empty_state();
-    shr.stack.push(cx.constant(U256::from(1) << 255)).unwrap();
-    shr.stack.push(cx.var("shift")).unwrap();
+    shr.stack.push(SymExpr::constant(&mut cx, U256::from(1) << 255)).unwrap();
+    shr.stack.push(SymExpr::var(&mut cx, "shift")).unwrap();
     shr.shift_word(&mut cx, ShiftKind::Shr).unwrap();
     let shifted = shr.stack.pop().unwrap();
 
@@ -214,8 +214,8 @@ fn shift_helpers_accept_symbolic_amounts() {
     );
 
     let mut sar = empty_state();
-    sar.stack.push(cx.constant(U256::MAX)).unwrap();
-    sar.stack.push(cx.var("shift")).unwrap();
+    sar.stack.push(SymExpr::constant(&mut cx, U256::MAX)).unwrap();
+    sar.stack.push(SymExpr::var(&mut cx, "shift")).unwrap();
     sar.shift_word(&mut cx, ShiftKind::Sar).unwrap();
     let shifted = sar.stack.pop().unwrap();
 
@@ -229,29 +229,29 @@ fn shift_helpers_accept_symbolic_amounts() {
 fn symbolic_division_guards_zero_divisor() {
     let mut cx = SymCx::new();
     let mut state = empty_state();
-    state.stack.push(cx.var("den")).unwrap();
-    state.stack.push(cx.var("num")).unwrap();
+    state.stack.push(SymExpr::var(&mut cx, "den")).unwrap();
+    state.stack.push(SymExpr::var(&mut cx, "num")).unwrap();
 
     state.bin_word_div_zero_guard(&mut cx, SymExprOp::UDiv).unwrap();
 
-    let den = cx.var("den");
-    let zero = cx.zero();
-    let den_is_zero = cx.eq(den.clone(), zero.clone());
-    let num = cx.var("num");
-    let quotient = cx.op(SymExprOp::UDiv, num, den);
-    let expected = cx.ite(den_is_zero, zero, quotient);
+    let den = SymExpr::var(&mut cx, "den");
+    let zero = SymExpr::zero(&mut cx);
+    let den_is_zero = SymBoolExpr::eq(&mut cx, den.clone(), zero.clone());
+    let num = SymExpr::var(&mut cx, "num");
+    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, num, den);
+    let expected = SymExpr::ite(&mut cx, den_is_zero, zero, quotient);
     assert_eq!(state.stack.pop().unwrap(), expected);
 }
 
 #[test]
 fn symbolic_byte_extracts_with_concrete_index() {
     let mut cx = SymCx::new();
-    let word = cx.var("word");
+    let word = SymExpr::var(&mut cx, "word");
     let actual = byte_word(&mut cx, U256::from(0), word.clone());
-    let shift = cx.constant(U256::from(248));
-    let shifted = cx.op(SymExprOp::Shr, word, shift);
-    let mask = cx.constant(U256::from(0xff));
-    let expected = cx.op(SymExprOp::And, shifted, mask);
+    let shift = SymExpr::constant(&mut cx, U256::from(248));
+    let shifted = SymExpr::op(&mut cx, SymExprOp::Shr, word, shift);
+    let mask = SymExpr::constant(&mut cx, U256::from(0xff));
+    let expected = SymExpr::op(&mut cx, SymExprOp::And, shifted, mask);
     assert_eq!(actual, expected);
 }
 
@@ -259,8 +259,8 @@ fn symbolic_byte_extracts_with_concrete_index() {
 fn symbolic_byte_extracts_with_symbolic_index() {
     let mut cx = SymCx::new();
     let word = U256::from_be_bytes(core::array::from_fn::<_, 32, _>(|idx| idx as u8));
-    let index = cx.var("index");
-    let word = cx.constant(word);
+    let index = SymExpr::var(&mut cx, "index");
+    let word = SymExpr::constant(&mut cx, word);
     let byte = byte_word_dynamic(&mut cx, index, word);
 
     let in_range = BTreeMap::from([("index".to_string(), U256::from(9))]);
@@ -273,8 +273,8 @@ fn symbolic_byte_extracts_with_symbolic_index() {
 #[test]
 fn symbolic_signextend_accepts_symbolic_index() {
     let mut cx = SymCx::new();
-    let value = cx.constant(U256::from(0x80));
-    let index = cx.var("index");
+    let value = SymExpr::constant(&mut cx, U256::from(0x80));
+    let index = SymExpr::var(&mut cx, "index");
     let extended = signextend_word_dynamic(&mut cx, index, value);
 
     let zero_index = BTreeMap::from([("index".to_string(), U256::ZERO)]);
@@ -288,40 +288,52 @@ fn symbolic_signextend_accepts_symbolic_index() {
 fn symbolic_byte_preserves_concrete_packed_selector_bytes() {
     let mut cx = SymCx::new();
     let selector = U256::from(0x12345678);
-    let selector = cx.constant(selector);
-    let shift_224 = cx.constant(U256::from(224));
-    let selector = cx.op(SymExprOp::Shl, selector, shift_224);
-    let arg = cx.var("arg");
-    let shift_32 = cx.constant(U256::from(32));
-    let shifted_arg = cx.op(SymExprOp::Shr, arg, shift_32);
-    let packed = cx.op(SymExprOp::Or, selector, shifted_arg);
+    let selector = SymExpr::constant(&mut cx, selector);
+    let shift_224 = SymExpr::constant(&mut cx, U256::from(224));
+    let selector = SymExpr::op(&mut cx, SymExprOp::Shl, selector, shift_224);
+    let arg = SymExpr::var(&mut cx, "arg");
+    let shift_32 = SymExpr::constant(&mut cx, U256::from(32));
+    let shifted_arg = SymExpr::op(&mut cx, SymExprOp::Shr, arg, shift_32);
+    let packed = SymExpr::op(&mut cx, SymExprOp::Or, selector, shifted_arg);
 
-    assert_eq!(byte_word(&mut cx, U256::from(0), packed.clone()), cx.constant(U256::from(0x12)));
-    assert_eq!(byte_word(&mut cx, U256::from(1), packed.clone()), cx.constant(U256::from(0x34)));
-    assert_eq!(byte_word(&mut cx, U256::from(2), packed.clone()), cx.constant(U256::from(0x56)));
-    assert_eq!(byte_word(&mut cx, U256::from(3), packed), cx.constant(U256::from(0x78)));
+    assert_eq!(
+        byte_word(&mut cx, U256::from(0), packed.clone()),
+        SymExpr::constant(&mut cx, U256::from(0x12))
+    );
+    assert_eq!(
+        byte_word(&mut cx, U256::from(1), packed.clone()),
+        SymExpr::constant(&mut cx, U256::from(0x34))
+    );
+    assert_eq!(
+        byte_word(&mut cx, U256::from(2), packed.clone()),
+        SymExpr::constant(&mut cx, U256::from(0x56))
+    );
+    assert_eq!(
+        byte_word(&mut cx, U256::from(3), packed),
+        SymExpr::constant(&mut cx, U256::from(0x78))
+    );
 }
 
 #[test]
 fn word_reassembly_preserves_split_symbolic_word() {
     let mut cx = SymCx::new();
-    let value = cx.var("value");
-    let one = cx.one();
-    let original = cx.op(SymExprOp::Add, value, one);
+    let value = SymExpr::var(&mut cx, "value");
+    let one = SymExpr::one(&mut cx);
+    let original = SymExpr::op(&mut cx, SymExprOp::Add, value, one);
     let bytes = original.clone().into_byte_exprs(&mut cx);
 
-    assert_eq!(cx.from_bytes(bytes), original);
+    assert_eq!(SymExpr::from_bytes(&mut cx, bytes), original);
 }
 
 #[test]
 fn symbolic_address_aliases_match_abi_encoded_address_words() {
     let mut cx = SymCx::new();
-    let source = cx.var("beneficiary");
-    let address_mask = cx.constant((U256::from(1) << 160) - U256::from(1));
-    let masked = cx.op(SymExprOp::And, source.clone(), address_mask);
-    let mut encoded = vec![cx.zero(); 12];
+    let source = SymExpr::var(&mut cx, "beneficiary");
+    let address_mask = SymExpr::constant(&mut cx, (U256::from(1) << 160) - U256::from(1));
+    let masked = SymExpr::op(&mut cx, SymExprOp::And, source.clone(), address_mask);
+    let mut encoded = vec![SymExpr::zero(&mut cx); 12];
     encoded.extend((12..32).map(|idx| byte_word(&mut cx, U256::from(idx), masked.clone())));
-    let reassembled = cx.from_bytes(encoded);
+    let reassembled = SymExpr::from_bytes(&mut cx, encoded);
 
     assert!(source.symbolic_address_equivalent(&reassembled));
     assert_eq!(source.symbolic_address_key(), reassembled.symbolic_address_key());
@@ -331,14 +343,14 @@ fn symbolic_address_aliases_match_abi_encoded_address_words() {
 fn selector_shift_simplifies_to_concrete_word() {
     let mut cx = SymCx::new();
     let selector = U256::from(0x12345678);
-    let selector_word = cx.constant(selector);
-    let shift_224 = cx.constant(U256::from(224));
-    let shifted_selector = cx.op(SymExprOp::Shl, selector_word, shift_224.clone());
-    let arg = cx.var("arg");
-    let shift_32 = cx.constant(U256::from(32));
-    let shifted_arg = cx.op(SymExprOp::Shr, arg, shift_32);
-    let call_word = cx.op(SymExprOp::Or, shifted_selector, shifted_arg);
-    let selector_expr = cx.op(SymExprOp::Shr, call_word, shift_224);
+    let selector_word = SymExpr::constant(&mut cx, selector);
+    let shift_224 = SymExpr::constant(&mut cx, U256::from(224));
+    let shifted_selector = SymExpr::op(&mut cx, SymExprOp::Shl, selector_word, shift_224.clone());
+    let arg = SymExpr::var(&mut cx, "arg");
+    let shift_32 = SymExpr::constant(&mut cx, U256::from(32));
+    let shifted_arg = SymExpr::op(&mut cx, SymExprOp::Shr, arg, shift_32);
+    let call_word = SymExpr::op(&mut cx, SymExprOp::Or, shifted_selector, shifted_arg);
+    let selector_expr = SymExpr::op(&mut cx, SymExprOp::Shr, call_word, shift_224);
 
     assert_eq!(selector_expr.known_word(), Some(selector));
 }
@@ -348,22 +360,22 @@ fn selector_equality_folds_known_word_expressions() {
     let mut cx = SymCx::new();
     let selector = U256::from(0x12345678u32);
     let other = U256::from(0x9a8325a0u32);
-    let selector_word = cx.constant(selector);
-    let shift_224 = cx.constant(U256::from(224));
-    let shifted_selector = cx.op(SymExprOp::Shl, selector_word, shift_224.clone());
-    let arg = cx.var("arg");
-    let shift_32 = cx.constant(U256::from(32));
-    let shifted_arg = cx.op(SymExprOp::Shr, arg, shift_32);
-    let call_word = cx.op(SymExprOp::Or, shifted_selector, shifted_arg);
-    let selector_expr = cx.op(SymExprOp::Shr, call_word, shift_224);
+    let selector_word = SymExpr::constant(&mut cx, selector);
+    let shift_224 = SymExpr::constant(&mut cx, U256::from(224));
+    let shifted_selector = SymExpr::op(&mut cx, SymExprOp::Shl, selector_word, shift_224.clone());
+    let arg = SymExpr::var(&mut cx, "arg");
+    let shift_32 = SymExpr::constant(&mut cx, U256::from(32));
+    let shifted_arg = SymExpr::op(&mut cx, SymExprOp::Shr, arg, shift_32);
+    let call_word = SymExpr::op(&mut cx, SymExprOp::Or, shifted_selector, shifted_arg);
+    let selector_expr = SymExpr::op(&mut cx, SymExprOp::Shr, call_word, shift_224);
 
-    let selector_word = cx.constant(selector);
-    let actual = cx.eq(selector_expr.clone(), selector_word);
-    let expected = cx.bool_constant(true);
+    let selector_word = SymExpr::constant(&mut cx, selector);
+    let actual = SymBoolExpr::eq(&mut cx, selector_expr.clone(), selector_word);
+    let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
-    let other_word = cx.constant(other);
-    let actual = cx.eq(selector_expr, other_word);
-    let expected = cx.bool_constant(false);
+    let other_word = SymExpr::constant(&mut cx, other);
+    let actual = SymBoolExpr::eq(&mut cx, selector_expr, other_word);
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
 }
 
@@ -376,15 +388,15 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
         .remove(0);
     let selector = U256::from_be_slice(function.selector().as_slice());
     let call_data = calldata.call_data(&mut cx);
-    let offset = cx.zero();
+    let offset = SymExpr::zero(&mut cx);
     let loaded = call_data.load_word(&mut cx, offset).unwrap();
-    let shift = cx.constant(U256::from(224));
-    let selector_expr = cx.op(SymExprOp::Shr, loaded, shift);
+    let shift = SymExpr::constant(&mut cx, U256::from(224));
+    let selector_expr = SymExpr::op(&mut cx, SymExprOp::Shr, loaded, shift);
 
     assert_eq!(selector_expr.known_word(), Some(selector));
-    let selector_word = cx.constant(selector);
-    let actual = cx.eq(selector_expr, selector_word);
-    let expected = cx.bool_constant(true);
+    let selector_word = SymExpr::constant(&mut cx, selector);
+    let actual = SymBoolExpr::eq(&mut cx, selector_expr, selector_word);
+    let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
 }
 
@@ -412,12 +424,12 @@ fn dynamic_calldata_encodes_bounded_bytes() {
     let calldata = symbolic_calldata_variants(&mut cx, &function, &config).unwrap().remove(0);
     let call_data = calldata.call_data(&mut cx);
 
-    assert_eq!(call_data.size_word(), cx.constant(U256::from(100)));
-    assert_eq!(call_data.load(&mut cx, 4).unwrap(), cx.constant(U256::from(32)));
-    assert_eq!(call_data.load(&mut cx, 36).unwrap(), cx.constant(U256::from(3)));
-    let offset = cx.constant(U256::from(71));
+    assert_eq!(call_data.size_word(), SymExpr::constant(&mut cx, U256::from(100)));
+    assert_eq!(call_data.load(&mut cx, 4).unwrap(), SymExpr::constant(&mut cx, U256::from(32)));
+    assert_eq!(call_data.load(&mut cx, 36).unwrap(), SymExpr::constant(&mut cx, U256::from(3)));
+    let offset = SymExpr::constant(&mut cx, U256::from(71));
     let bytes = call_data.read_bytes_offset(&mut cx, offset, 1);
-    assert_eq!(bytes.byte(&mut cx, 0), cx.zero());
+    assert_eq!(bytes.byte(&mut cx, 0), SymExpr::zero(&mut cx));
 
     let model = BTreeMap::from([
         ("calldata_0_0".to_string(), U256::from(1)),
@@ -477,9 +489,9 @@ fn calldata_word_loads_preserve_structural_words() {
         .remove(0);
     let call_data = calldata.call_data(&mut cx);
 
-    assert_eq!(call_data.load(&mut cx, 4).unwrap(), cx.var("calldata_0"));
-    assert_eq!(call_data.load(&mut cx, 36).unwrap(), cx.var("calldata_1"));
-    assert_eq!(call_data.load(&mut cx, 68).unwrap(), cx.var("calldata_2"));
+    assert_eq!(call_data.load(&mut cx, 4).unwrap(), SymExpr::var(&mut cx, "calldata_0"));
+    assert_eq!(call_data.load(&mut cx, 36).unwrap(), SymExpr::var(&mut cx, "calldata_1"));
+    assert_eq!(call_data.load(&mut cx, 68).unwrap(), SymExpr::var(&mut cx, "calldata_2"));
 }
 
 #[test]
@@ -490,21 +502,21 @@ fn calldata_copy_to_memory_preserves_structural_words() {
         .unwrap()
         .remove(0);
     let mut memory = SymMemory::default();
-    let dest = cx.constant(U256::from(0x80));
-    let offset = cx.constant(U256::from(4));
+    let dest = SymExpr::constant(&mut cx, U256::from(0x80));
+    let offset = SymExpr::constant(&mut cx, U256::from(4));
     let call_data = calldata.call_data(&mut cx);
 
     memory.copy_calldata_to_offset(&mut cx, dest, offset, 64, &call_data).unwrap();
 
-    assert_eq!(memory.load_word(&mut cx, 0x80).unwrap(), cx.var("calldata_0"));
-    assert_eq!(memory.load_word(&mut cx, 0xa0).unwrap(), cx.var("calldata_1"));
+    assert_eq!(memory.load_word(&mut cx, 0x80).unwrap(), SymExpr::var(&mut cx, "calldata_0"));
+    assert_eq!(memory.load_word(&mut cx, 0xa0).unwrap(), SymExpr::var(&mut cx, "calldata_1"));
 }
 
 #[test]
 fn byte_concat_word_load_assembles_word_fragments() {
     let mut cx = SymCx::new();
     let selector = [0xde, 0xad, 0xbe, 0xef];
-    let word = cx.var("calldata_0");
+    let word = SymExpr::var(&mut cx, "calldata_0");
     let selector_bytes = SymBytes::concrete(&mut cx, selector.to_vec());
     let word_bytes = word.clone().into_bytes(&mut cx);
     let bytes = SymBytes::concat(&mut cx, [selector_bytes, word_bytes]);
@@ -534,7 +546,7 @@ fn byte_concat_word_load_assembles_word_fragments() {
 #[test]
 fn byte_concat_right_aligned_word_assembles_push_fragments() {
     let mut cx = SymCx::new();
-    let immediate = cx.var("push_data");
+    let immediate = SymExpr::var(&mut cx, "push_data");
     let opcode = SymBytes::concrete(&mut cx, vec![opcode::PUSH32]);
     let immediate_bytes = immediate.clone().into_bytes(&mut cx);
     let bytes = SymBytes::concat(&mut cx, [opcode, immediate_bytes]);
@@ -552,12 +564,14 @@ fn byte_concat_right_aligned_word_assembles_push_fragments() {
 #[test]
 fn calldata_load_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
-    let calldata_bytes = (0u8..40).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let calldata_bytes =
+        (0u8..40).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let calldata_bytes = SymBytes::exprs(&mut cx, calldata_bytes);
     let calldata = SymCalldata::from_bytes(&mut cx, calldata_bytes);
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     let loaded = calldata.load_word(&mut cx, offset).unwrap();
-    let expected = sym_from_bytes!(cx, (1u8..33).map(|idx| cx.constant(U256::from(idx + 1))));
+    let expected =
+        sym_from_bytes!(cx, (1u8..33).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))));
 
     assert_eq!(
         loaded.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(1))])).unwrap(),
@@ -574,22 +588,22 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let bytes = vec![
-        cx.constant(U256::from(0xaa)),
-        cx.constant(U256::from(0xbb)),
-        cx.constant(U256::from(0xcc)),
-        cx.constant(U256::from(0xdd)),
+        SymExpr::constant(&mut cx, U256::from(0xaa)),
+        SymExpr::constant(&mut cx, U256::from(0xbb)),
+        SymExpr::constant(&mut cx, U256::from(0xcc)),
+        SymExpr::constant(&mut cx, U256::from(0xdd)),
     ];
     let bytes = SymBytes::exprs(&mut cx, bytes);
     memory.store_bytes(&mut cx, 0, bytes);
-    let size = cx.var("size");
+    let size = SymExpr::var(&mut cx, "size");
     let bounded_size = BoundedCopySize::Symbolic { size, max_size: 4 };
-    let offset = cx.zero();
+    let offset = SymExpr::zero(&mut cx);
     let input = bounded_size.read_from_memory(&mut cx, &memory, offset);
     let calldata = bounded_size.calldata(&mut cx, input);
     let model = BTreeMap::from([("size".to_string(), U256::from(2))]);
 
     assert_eq!(calldata.size_word().eval_model(&model).unwrap(), U256::from(2));
-    let offset = cx.zero();
+    let offset = SymExpr::zero(&mut cx);
     let bytes = calldata.read_bytes_offset(&mut cx, offset, 4);
     assert_eq!(bytes.byte(&mut cx, 0).eval_model(&model).unwrap(), U256::from(0xaa));
     assert_eq!(bytes.byte(&mut cx, 1).eval_model(&model).unwrap(), U256::from(0xbb));
@@ -604,8 +618,8 @@ fn memory_copies_unaligned_symbolic_calldata_bytes() {
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
     let calldata = symbolic_calldata_variants(&mut cx, &function, &config).unwrap().remove(0);
     let mut memory = SymMemory::default();
-    let dest = cx.constant(U256::from(1));
-    let offset = cx.constant(U256::from(68));
+    let dest = SymExpr::constant(&mut cx, U256::from(1));
+    let offset = SymExpr::constant(&mut cx, U256::from(68));
     let call_data = calldata.call_data(&mut cx);
 
     memory.copy_calldata_to_offset(&mut cx, dest, offset, 3, &call_data).unwrap();
@@ -624,13 +638,14 @@ fn memory_copies_unaligned_symbolic_calldata_bytes() {
 #[test]
 fn memory_copies_symbolic_calldata_offset() {
     let mut cx = SymCx::new();
-    let calldata_bytes = (0u8..40).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let calldata_bytes =
+        (0u8..40).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let calldata_bytes = SymBytes::exprs(&mut cx, calldata_bytes);
     let calldata = SymCalldata::from_bytes(&mut cx, calldata_bytes);
     let mut memory = SymMemory::default();
 
-    let dest = cx.zero();
-    let offset = cx.var("offset");
+    let dest = SymExpr::zero(&mut cx);
+    let offset = SymExpr::var(&mut cx, "offset");
     memory.copy_calldata_to_offset(&mut cx, dest, offset, 2, &calldata).unwrap();
     let word = memory.load_word(&mut cx, 0).unwrap();
 
@@ -649,16 +664,17 @@ fn memory_copies_symbolic_calldata_offset() {
 #[test]
 fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
     let mut cx = SymCx::new();
-    let calldata_bytes = (0u8..8).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let calldata_bytes =
+        (0u8..8).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let calldata_bytes = SymBytes::exprs(&mut cx, calldata_bytes);
     let calldata = SymCalldata::from_bytes(&mut cx, calldata_bytes);
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0, tail);
-    let dest = cx.zero();
-    let offset = cx.zero();
-    let size = cx.var("size");
+    let dest = SymExpr::zero(&mut cx);
+    let offset = SymExpr::zero(&mut cx);
+    let size = SymExpr::var(&mut cx, "size");
 
     memory.copy_calldata_symbolic_size(&mut cx, dest, offset, size, 4, &calldata).unwrap();
 
@@ -679,12 +695,12 @@ fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
 fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0, tail);
-    let dest = cx.zero();
-    let size = cx.var("size");
-    let bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let dest = SymExpr::zero(&mut cx);
+    let size = SymExpr::var(&mut cx, "size");
+    let bytes = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let bytes = SymBytes::exprs(&mut cx, bytes);
     memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
 
@@ -705,12 +721,12 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
 fn memory_copies_folded_symbolic_size_prefix_only() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0, tail);
-    let dest = cx.zero();
-    let size = cx.constant(U256::from(2));
-    let bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let dest = SymExpr::zero(&mut cx);
+    let size = SymExpr::constant(&mut cx, U256::from(2));
+    let bytes = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let bytes = SymBytes::exprs(&mut cx, bytes);
     memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
 
@@ -724,13 +740,13 @@ fn memory_copies_folded_symbolic_size_prefix_only() {
 fn memory_skips_folded_zero_symbolic_size_copy() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let dest = cx.zero();
-    let size = cx.zero();
-    let bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let dest = SymExpr::zero(&mut cx);
+    let size = SymExpr::zero(&mut cx);
+    let bytes = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let bytes = SymBytes::exprs(&mut cx, bytes);
     memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
 
-    assert_eq!(memory.size_word(&mut cx), cx.zero());
+    assert_eq!(memory.size_word(&mut cx), SymExpr::zero(&mut cx));
     assert_eq!(
         memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &BTreeMap::new()).unwrap(),
         vec![0, 0, 0, 0]
@@ -741,12 +757,12 @@ fn memory_skips_folded_zero_symbolic_size_copy() {
 fn memory_reads_symbolic_size_with_zero_guarded_tail() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let source = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let source = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let source = SymBytes::exprs(&mut cx, source);
     memory.store_bytes(&mut cx, 32, source);
 
-    let offset = cx.constant(U256::from(32));
-    let size = cx.var("size");
+    let offset = SymExpr::constant(&mut cx, U256::from(32));
+    let size = SymExpr::var(&mut cx, "size");
     let bytes = memory.read_bytes_symbolic_size(&mut cx, offset, size, 4);
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
@@ -760,12 +776,12 @@ fn memory_reads_symbolic_size_with_zero_guarded_tail() {
 fn memory_reads_folded_symbolic_size_prefix_only() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let source = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let source = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let source = SymBytes::exprs(&mut cx, source);
     memory.store_bytes(&mut cx, 32, source);
 
-    let offset = cx.constant(U256::from(32));
-    let size = cx.constant(U256::from(2));
+    let offset = SymExpr::constant(&mut cx, U256::from(32));
+    let size = SymExpr::constant(&mut cx, U256::from(2));
     let bytes = memory.read_bytes_symbolic_size(&mut cx, offset, size, 4);
 
     assert_eq!(bytes.eval_model(&mut cx, &BTreeMap::new()).unwrap(), vec![1, 2, 0, 0]);
@@ -775,15 +791,16 @@ fn memory_reads_folded_symbolic_size_prefix_only() {
 fn memory_copies_symbolic_memory_size_with_guarded_tail() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0, tail);
-    let source_bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let source_bytes =
+        (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let source_bytes = SymBytes::exprs(&mut cx, source_bytes);
     memory.store_bytes(&mut cx, 32, source_bytes);
-    let dest = cx.zero();
-    let source = cx.constant(U256::from(32));
-    let size = cx.var("size");
+    let dest = SymExpr::zero(&mut cx);
+    let source = SymExpr::constant(&mut cx, U256::from(32));
+    let size = SymExpr::var(&mut cx, "size");
 
     memory.copy_memory_symbolic_size(&mut cx, dest, source, size, 4).unwrap();
 
@@ -804,15 +821,16 @@ fn memory_copies_symbolic_memory_size_with_guarded_tail() {
 fn memory_copies_symbolic_size_to_symbolic_dest() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0x80, tail);
-    let source_bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let source_bytes =
+        (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let source_bytes = SymBytes::exprs(&mut cx, source_bytes);
     memory.store_bytes(&mut cx, 0x20, source_bytes);
-    let dest = cx.var("dest");
-    let source = cx.constant(U256::from(0x20));
-    let size = cx.var("size");
+    let dest = SymExpr::var(&mut cx, "dest");
+    let source = SymExpr::constant(&mut cx, U256::from(0x20));
+    let size = SymExpr::var(&mut cx, "size");
 
     memory.copy_memory_symbolic_size(&mut cx, dest, source, size, 4).unwrap();
 
@@ -831,12 +849,12 @@ fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
     let mut cx = SymCx::new();
     let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0, tail);
-    let dest = cx.zero();
-    let offset = cx.zero();
-    let size = cx.var("size");
+    let dest = SymExpr::zero(&mut cx);
+    let offset = SymExpr::zero(&mut cx);
+    let size = SymExpr::var(&mut cx, "size");
 
     memory.copy_return_data_symbolic_size(&mut cx, dest, offset, size, 4, &return_data).unwrap();
 
@@ -857,7 +875,7 @@ fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
 fn returndata_reads_symbolic_offset() {
     let mut cx = SymCx::new();
     let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1, 2, 3, 4]);
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     let bytes = return_data.read_bytes_offset(&mut cx, offset, 2);
 
     let offset_one = BTreeMap::from([("offset".to_string(), U256::from(1))]);
@@ -871,11 +889,14 @@ fn returndata_reads_symbolic_offset() {
 fn memory_return_data_accepts_symbolic_size() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let bytes = vec![1, 2, 3, 4].into_iter().map(|byte| cx.constant(U256::from(byte))).collect();
+    let bytes = vec![1, 2, 3, 4]
+        .into_iter()
+        .map(|byte| SymExpr::constant(&mut cx, U256::from(byte)))
+        .collect();
     let bytes = SymBytes::exprs(&mut cx, bytes);
     memory.store_bytes(&mut cx, 0, bytes);
-    let offset = cx.zero();
-    let len = cx.var("len");
+    let offset = SymExpr::zero(&mut cx);
+    let len = SymExpr::var(&mut cx, "len");
 
     let return_data = memory.return_data_symbolic_size(&mut cx, offset, len, 4).unwrap();
 
@@ -888,15 +909,18 @@ fn memory_return_data_accepts_symbolic_size() {
 #[test]
 fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
     let mut cx = SymCx::new();
-    let bytes = vec![1, 2, 3, 4].into_iter().map(|byte| cx.constant(U256::from(byte))).collect();
+    let bytes = vec![1, 2, 3, 4]
+        .into_iter()
+        .map(|byte| SymExpr::constant(&mut cx, U256::from(byte)))
+        .collect();
     let bytes = SymBytes::exprs(&mut cx, bytes);
-    let len = cx.var("len");
+    let len = SymExpr::var(&mut cx, "len");
     let return_data = SymReturnData::from_bytes_with_len(bytes, len);
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0, tail);
-    let dest = cx.zero();
+    let dest = SymExpr::zero(&mut cx);
 
     memory
         .copy_call_output_offset(&mut cx, dest, &BoundedCopySize::Concrete(4), &return_data)
@@ -923,18 +947,18 @@ fn nested_dynamic_calldata_uses_preorder_lengths() {
     let calldata = symbolic_calldata_variants(&mut cx, &function, &config).unwrap().remove(0);
     let call_data = calldata.call_data(&mut cx);
 
-    assert_eq!(call_data.load(&mut cx, 4).unwrap(), cx.constant(U256::from(32)));
-    assert_eq!(call_data.load(&mut cx, 36).unwrap(), cx.constant(U256::from(64)));
-    assert_eq!(call_data.load(&mut cx, 68).unwrap(), cx.constant(U256::from(160)));
-    assert_eq!(call_data.load(&mut cx, 100).unwrap(), cx.constant(U256::from(2)));
-    assert_eq!(call_data.load(&mut cx, 196).unwrap(), cx.constant(U256::from(3)));
+    assert_eq!(call_data.load(&mut cx, 4).unwrap(), SymExpr::constant(&mut cx, U256::from(32)));
+    assert_eq!(call_data.load(&mut cx, 36).unwrap(), SymExpr::constant(&mut cx, U256::from(64)));
+    assert_eq!(call_data.load(&mut cx, 68).unwrap(), SymExpr::constant(&mut cx, U256::from(160)));
+    assert_eq!(call_data.load(&mut cx, 100).unwrap(), SymExpr::constant(&mut cx, U256::from(2)));
+    assert_eq!(call_data.load(&mut cx, 196).unwrap(), SymExpr::constant(&mut cx, U256::from(3)));
 }
 
 #[test]
 fn memory_round_trips_symbolic_words_as_bytes() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let value = cx.var("word");
+    let value = SymExpr::var(&mut cx, "word");
 
     memory.store_word(&mut cx, 7, value.clone());
 
@@ -949,10 +973,10 @@ fn memory_round_trips_symbolic_words_as_bytes() {
 fn memory_load_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let value = cx.var("word");
+    let value = SymExpr::var(&mut cx, "word");
 
     memory.store_word(&mut cx, 7, value);
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     let loaded = memory.load_word_offset(&mut cx, offset).unwrap();
 
     let model = BTreeMap::from([
@@ -972,9 +996,9 @@ fn memory_load_accepts_symbolic_offsets() {
 fn memory_store_word_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let value = cx.var("word");
+    let value = SymExpr::var(&mut cx, "word");
 
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     memory.store_word_offset(&mut cx, offset, value);
     let loaded = memory.load_word(&mut cx, 7).unwrap();
 
@@ -996,12 +1020,12 @@ fn memory_size_tracks_concrete_and_symbolic_extents() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
-    let concrete = cx.constant(U256::from(0x55));
+    let concrete = SymExpr::constant(&mut cx, U256::from(0x55));
     memory.store_word(&mut cx, 7, concrete);
-    assert_eq!(memory.size_word(&mut cx), cx.constant(U256::from(64)));
+    assert_eq!(memory.size_word(&mut cx), SymExpr::constant(&mut cx, U256::from(64)));
 
-    let offset = cx.var("offset");
-    let word = cx.var("word");
+    let offset = SymExpr::var(&mut cx, "offset");
+    let word = SymExpr::var(&mut cx, "word");
     memory.store_word_offset(&mut cx, offset, word);
     let size = memory.size_word(&mut cx);
 
@@ -1023,10 +1047,10 @@ fn memory_concrete_write_overrides_older_symbolic_write() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
-    let offset = cx.var("offset");
-    let word = cx.var("word");
+    let offset = SymExpr::var(&mut cx, "offset");
+    let word = SymExpr::var(&mut cx, "word");
     memory.store_word_offset(&mut cx, offset, word);
-    let concrete = cx.constant(U256::from(0x55));
+    let concrete = SymExpr::constant(&mut cx, U256::from(0x55));
     memory.store_word(&mut cx, 7, concrete);
     let loaded = memory.load_word(&mut cx, 7).unwrap();
 
@@ -1042,12 +1066,12 @@ fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
-    let write_offset = cx.var("write_offset");
-    let byte = cx.var("byte");
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let byte = SymExpr::var(&mut cx, "byte");
     memory.store_byte_offset(&mut cx, write_offset, byte);
-    let concrete = cx.constant(U256::from(0x55));
+    let concrete = SymExpr::constant(&mut cx, U256::from(0x55));
     memory.store_byte(&mut cx, 5, concrete);
-    let read_offset = cx.var("read_offset");
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
 
     let model = BTreeMap::from([
@@ -1063,13 +1087,13 @@ fn memory_symbolic_write_after_concrete_overwrite_still_applies() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
-    let older_offset = cx.var("older_offset");
-    let older_byte = cx.var("older_byte");
+    let older_offset = SymExpr::var(&mut cx, "older_offset");
+    let older_byte = SymExpr::var(&mut cx, "older_byte");
     memory.store_byte_offset(&mut cx, older_offset, older_byte);
-    let concrete = cx.constant(U256::from(0x55));
+    let concrete = SymExpr::constant(&mut cx, U256::from(0x55));
     memory.store_byte(&mut cx, 5, concrete);
-    let later_offset = cx.var("later_offset");
-    let later_byte = cx.var("later_byte");
+    let later_offset = SymExpr::var(&mut cx, "later_offset");
+    let later_byte = SymExpr::var(&mut cx, "later_byte");
     memory.store_byte_offset(&mut cx, later_offset, later_byte);
     let loaded = memory.byte(&mut cx, 5);
 
@@ -1095,8 +1119,8 @@ fn memory_store_byte_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
-    let offset = cx.var("offset");
-    let byte = cx.var("byte");
+    let offset = SymExpr::var(&mut cx, "offset");
+    let byte = SymExpr::var(&mut cx, "byte");
     memory.store_byte_offset(&mut cx, offset, byte);
     let loaded = memory.byte(&mut cx, 0x80);
 
@@ -1117,12 +1141,12 @@ fn memory_store_byte_accepts_symbolic_offsets() {
 fn memory_read_bytes_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let value = cx.var("word");
+    let value = SymExpr::var(&mut cx, "word");
 
     memory.store_word(&mut cx, 7, value);
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     let bytes = memory.read_bytes_offset(&mut cx, offset, 32).materialize(&mut cx);
-    let loaded = cx.from_bytes(bytes);
+    let loaded = SymExpr::from_bytes(&mut cx, bytes);
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
@@ -1141,10 +1165,10 @@ fn memory_read_bytes_accepts_symbolic_offsets() {
 fn memory_return_data_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let value = cx.var("word");
+    let value = SymExpr::var(&mut cx, "word");
 
     memory.store_word(&mut cx, 7, value);
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     let return_data = memory.return_data(&mut cx, offset, 32).unwrap();
     let loaded = return_data.load_word(&mut cx, 0).unwrap();
 
@@ -1159,11 +1183,11 @@ fn memory_return_data_accepts_symbolic_offsets() {
 fn memory_copy_accepts_symbolic_source_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let value = cx.var("word");
+    let value = SymExpr::var(&mut cx, "word");
 
     memory.store_word(&mut cx, 7, value);
-    let dest = cx.constant(U256::from(64));
-    let src = cx.var("src");
+    let dest = SymExpr::constant(&mut cx, U256::from(64));
+    let src = SymExpr::var(&mut cx, "src");
     memory.copy_memory_to_offset(&mut cx, dest, src, 32).unwrap();
     let loaded = memory.load_word(&mut cx, 64).unwrap();
 
@@ -1178,11 +1202,11 @@ fn memory_copy_accepts_symbolic_source_offsets() {
 fn memory_copy_accepts_symbolic_destination_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let value = cx.var("word");
+    let value = SymExpr::var(&mut cx, "word");
 
     memory.store_word(&mut cx, 7, value);
-    let dest = cx.var("dest");
-    let src = cx.constant(U256::from(7));
+    let dest = SymExpr::var(&mut cx, "dest");
+    let src = SymExpr::constant(&mut cx, U256::from(7));
     memory.copy_memory_to_offset(&mut cx, dest, src, 32).unwrap();
     let loaded = memory.load_word(&mut cx, 64).unwrap();
 
@@ -1203,10 +1227,10 @@ fn memory_copy_accepts_symbolic_destination_offsets() {
 fn memory_call_output_accepts_symbolic_destination_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let word = cx.var("word");
+    let word = SymExpr::var(&mut cx, "word");
     let bytes = word.into_bytes(&mut cx);
     let return_data = SymReturnData::from_bytes(&mut cx, bytes);
-    let dest = cx.var("dest");
+    let dest = SymExpr::var(&mut cx, "dest");
 
     memory
         .copy_call_output_offset(&mut cx, dest, &BoundedCopySize::Concrete(32), &return_data)
@@ -1225,11 +1249,11 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
     let mut cx = SymCx::new();
     let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0, tail);
-    let dest = cx.zero();
-    let size = cx.var("size");
+    let dest = SymExpr::zero(&mut cx);
+    let size = SymExpr::var(&mut cx, "size");
     let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
 
     memory.copy_call_output_offset(&mut cx, dest, &copy_size, &return_data).unwrap();
@@ -1252,11 +1276,11 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
     let mut cx = SymCx::new();
     let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0x80, tail);
-    let dest = cx.var("dest");
-    let size = cx.var("size");
+    let dest = SymExpr::var(&mut cx, "dest");
+    let size = SymExpr::var(&mut cx, "size");
     let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
 
     memory.copy_call_output_offset(&mut cx, dest, &copy_size, &return_data).unwrap();
@@ -1274,15 +1298,18 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
 #[test]
 fn memory_call_output_accepts_symbolic_destination_and_return_len() {
     let mut cx = SymCx::new();
-    let bytes = vec![1, 2, 3, 4].into_iter().map(|byte| cx.constant(U256::from(byte))).collect();
+    let bytes = vec![1, 2, 3, 4]
+        .into_iter()
+        .map(|byte| SymExpr::constant(&mut cx, U256::from(byte)))
+        .collect();
     let bytes = SymBytes::exprs(&mut cx, bytes);
-    let len = cx.var("len");
+    let len = SymExpr::var(&mut cx, "len");
     let return_data = SymReturnData::from_bytes_with_len(bytes, len);
     let mut memory = SymMemory::default();
-    let tail = cx.constant(U256::from(0xaa));
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
     let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
     memory.store_bytes(&mut cx, 0x80, tail);
-    let dest = cx.var("dest");
+    let dest = SymExpr::var(&mut cx, "dest");
 
     memory
         .copy_call_output_offset(&mut cx, dest, &BoundedCopySize::Concrete(4), &return_data)
@@ -1316,10 +1343,10 @@ fn compute_create2_cheatcode_helper_matches_create2_terms() {
     let mut cx = SymCx::new();
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
-    let salt = cx.var("salt");
+    let salt = SymExpr::var(&mut cx, "salt");
     let initcode = vec![opcode::STOP];
-    let initcode_hash = cx.constant(U256::from_be_bytes(keccak256(&initcode).0));
-    let creator_word = cx.constant(address_word(creator));
+    let initcode_hash = SymExpr::constant(&mut cx, U256::from_be_bytes(keccak256(&initcode).0));
+    let creator_word = SymExpr::constant(&mut cx, address_word(creator));
 
     let cheatcode_word = compute_create2_address_word(
         &mut cx,
@@ -1341,9 +1368,9 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash() {
     let mut cx = SymCx::new();
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
-    let salt = cx.var("salt");
-    let initcode_hash = cx.var("initcode_hash");
-    let creator_word = cx.constant(address_word(creator));
+    let salt = SymExpr::var(&mut cx, "salt");
+    let initcode_hash = SymExpr::var(&mut cx, "initcode_hash");
+    let creator_word = SymExpr::constant(&mut cx, address_word(creator));
 
     let first = compute_create2_address_word(
         &mut cx,
@@ -1366,8 +1393,8 @@ fn compute_create_cheatcode_helper_accepts_symbolic_nonce() {
     let mut cx = SymCx::new();
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
-    let nonce = cx.var("nonce");
-    let creator_word = cx.constant(address_word(creator));
+    let nonce = SymExpr::var(&mut cx, "nonce");
+    let creator_word = SymExpr::constant(&mut cx, address_word(creator));
 
     let first =
         compute_create_address_word(&mut cx, &mut state, creator_word.clone(), nonce.clone())
@@ -1383,8 +1410,8 @@ fn compute_create_cheatcode_helper_accepts_symbolic_deployer() {
     let mut cx = SymCx::new();
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
-    let deployer = cx.var("deployer");
-    let nonce = cx.var("nonce");
+    let deployer = SymExpr::var(&mut cx, "deployer");
+    let nonce = SymExpr::var(&mut cx, "nonce");
 
     let first = compute_create_address_word(&mut cx, &mut state, deployer.clone(), nonce.clone())
         .expect("symbolic deployer is supported");
@@ -1400,9 +1427,9 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_deployer() {
     let mut cx = SymCx::new();
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
-    let deployer = cx.var("deployer");
-    let salt = cx.var("salt");
-    let initcode_hash = cx.var("initcode_hash");
+    let deployer = SymExpr::var(&mut cx, "deployer");
+    let salt = SymExpr::var(&mut cx, "salt");
+    let initcode_hash = SymExpr::var(&mut cx, "initcode_hash");
 
     let first = compute_create2_address_word(
         &mut cx,
@@ -1424,11 +1451,14 @@ fn recorded_logs_return_data_matches_abi_encoding() {
     let mut cx = SymCx::new();
     let emitter = Address::from([0x33; 20]);
     let topic = B256::from([0x11; 32]);
-    let data = vec![cx.constant(U256::from(0x22)), cx.constant(U256::from(0x33))];
+    let data = vec![
+        SymExpr::constant(&mut cx, U256::from(0x22)),
+        SymExpr::constant(&mut cx, U256::from(0x33)),
+    ];
     let data = SymBytes::exprs(&mut cx, data);
     let log = SymbolicLog::new(
-        vec![cx.constant(U256::from_be_bytes(topic.0))],
-        cx.constant(U256::from(2)),
+        vec![SymExpr::constant(&mut cx, U256::from_be_bytes(topic.0))],
+        SymExpr::constant(&mut cx, U256::from(2)),
         data,
         emitter,
     );
@@ -1450,9 +1480,14 @@ fn recorded_logs_return_data_matches_abi_encoding() {
 fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
     let mut cx = SymCx::new();
     let emitter = Address::from([0x33; 20]);
-    let data = vec![cx.constant(U256::from(0x12)), cx.var("byte")];
+    let data = vec![SymExpr::constant(&mut cx, U256::from(0x12)), SymExpr::var(&mut cx, "byte")];
     let data = SymBytes::exprs(&mut cx, data);
-    let log = SymbolicLog::new(vec![cx.var("topic")], cx.constant(U256::from(2)), data, emitter);
+    let log = SymbolicLog::new(
+        vec![SymExpr::var(&mut cx, "topic")],
+        SymExpr::constant(&mut cx, U256::from(2)),
+        data,
+        emitter,
+    );
 
     let return_data = recorded_logs_json_return_data(&mut cx, vec![log]).unwrap();
     let encoded = (0..return_data.len()).map(|idx| return_data.byte(&mut cx, idx)).collect();
@@ -1478,12 +1513,12 @@ fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
 fn abi_bytes_encoding_accepts_symbolic_length() {
     let mut cx = SymCx::new();
     let bytes = vec![
-        cx.constant(U256::from(0x22)),
-        cx.constant(U256::from(0x33)),
-        cx.constant(U256::from(0x44)),
+        SymExpr::constant(&mut cx, U256::from(0x22)),
+        SymExpr::constant(&mut cx, U256::from(0x33)),
+        SymExpr::constant(&mut cx, U256::from(0x44)),
     ];
     let bytes = SymBytes::exprs(&mut cx, bytes);
-    let len = cx.var("len");
+    let len = SymExpr::var(&mut cx, "len");
     let encoded = encode_packed_bytes_with_len(&mut cx, len, &bytes);
 
     assert_eq!(
@@ -1499,10 +1534,10 @@ fn abi_bytes_encoding_accepts_symbolic_length() {
 fn symbolic_world_resolves_symbolic_create2_address_aliases() {
     let mut cx = SymCx::new();
     let mut world = SymbolicWorld::default();
-    let word = cx.var("create2_address");
+    let word = SymExpr::var(&mut cx, "create2_address");
     let address = world.symbolic_address_slot(word.clone());
-    let address_mask = cx.constant((U256::from(1) << 160) - U256::from(1));
-    let masked = cx.op(SymExprOp::And, word.clone(), address_mask);
+    let address_mask = SymExpr::constant(&mut cx, (U256::from(1) << 160) - U256::from(1));
+    let masked = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), address_mask);
 
     assert_eq!(world.resolve_address(&word), Some(address));
     assert_eq!(world.resolve_address(&masked), Some(address));
@@ -1515,7 +1550,7 @@ fn symbolic_create2_accepts_symbolic_salt() {
     let mut cx = SymCx::new();
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
-    let salt = cx.var("salt");
+    let salt = SymExpr::var(&mut cx, "salt");
     let initcode = SymCode::concrete(&mut cx, vec![opcode::STOP]);
 
     let (word, address) =
@@ -1532,8 +1567,8 @@ fn symbolic_create2_initcode_identity_uses_byte_semantics() {
     let mut cx = SymCx::new();
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
-    let salt = cx.var("salt");
-    let init_word = cx.var("init_word");
+    let salt = SymExpr::var(&mut cx, "salt");
+    let init_word = SymExpr::var(&mut cx, "init_word");
     let structural_bytes = init_word.clone().into_bytes(&mut cx);
     let structural = SymCode::from_bytes(&mut cx, structural_bytes);
     let init_bytes = init_word.into_byte_exprs(&mut cx);
@@ -1551,7 +1586,7 @@ fn symbolic_create2_initcode_identity_uses_byte_semantics() {
 #[test]
 fn symbolic_return_data_can_be_installed_as_runtime_code() {
     let mut cx = SymCx::new();
-    let runtime_byte = cx.var("runtime_byte");
+    let runtime_byte = SymExpr::var(&mut cx, "runtime_byte");
     let bytes = SymBytes::exprs(&mut cx, vec![runtime_byte.clone()]);
     let data = SymReturnData::from_bytes(&mut cx, bytes);
 
@@ -1563,9 +1598,9 @@ fn symbolic_return_data_can_be_installed_as_runtime_code() {
 #[test]
 fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
     let mut cx = SymCx::new();
-    let stop = cx.constant(U256::from(opcode::STOP));
+    let stop = SymExpr::constant(&mut cx, U256::from(opcode::STOP));
     let bytes = SymBytes::exprs(&mut cx, vec![stop]);
-    let len = cx.var("runtime_len");
+    let len = SymExpr::var(&mut cx, "runtime_len");
     let data = SymReturnData::from_bytes_with_len(bytes, len);
 
     assert!(matches!(
@@ -1592,27 +1627,27 @@ fn symbolic_world_tracks_created_code_and_nonce_overlay() {
 fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
-    let stop = cx.constant(U256::from(opcode::STOP));
-    let constructor_arg = cx.var("constructor_arg_byte");
+    let stop = SymExpr::constant(&mut cx, U256::from(opcode::STOP));
+    let constructor_arg = SymExpr::var(&mut cx, "constructor_arg_byte");
     let bytes = SymBytes::exprs(&mut cx, vec![stop, constructor_arg]);
     let initcode = SymCode::from_bytes(&mut cx, bytes);
 
     let init_bytes = initcode.read_bytes(&mut cx, 0, 2);
     memory.store_bytes(&mut cx, 0, init_bytes);
 
-    assert_eq!(memory.byte(&mut cx, 0), cx.constant(U256::from(opcode::STOP)));
-    assert_eq!(memory.byte(&mut cx, 1), cx.var("constructor_arg_byte"));
+    assert_eq!(memory.byte(&mut cx, 0), SymExpr::constant(&mut cx, U256::from(opcode::STOP)));
+    assert_eq!(memory.byte(&mut cx, 1), SymExpr::var(&mut cx, "constructor_arg_byte"));
 }
 
 #[test]
 fn symbolic_codecopy_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
-    let code_bytes = (0u8..40).map(|idx| cx.constant(U256::from(idx + 1))).collect();
+    let code_bytes = (0u8..40).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
     let code_bytes = SymBytes::exprs(&mut cx, code_bytes);
     let code = SymCode::from_bytes(&mut cx, code_bytes);
     let mut memory = SymMemory::default();
 
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     let code_bytes = code.read_bytes_offset(&mut cx, offset, 2);
     memory.store_bytes(&mut cx, 0, code_bytes);
     let word = memory.load_word(&mut cx, 0).unwrap();
@@ -1634,15 +1669,15 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
-    let stop = cx.constant(U256::from(opcode::STOP));
-    let arg = cx.var("arg");
+    let stop = SymExpr::constant(&mut cx, U256::from(opcode::STOP));
+    let arg = SymExpr::var(&mut cx, "arg");
     let bytes = SymBytes::exprs(&mut cx, vec![stop, arg]);
     memory.store_bytes(&mut cx, 7, bytes);
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     let initcode = SymCode::from_memory_offset(&mut cx, &memory, offset, 2);
     let mut bytes = initcode.read_bytes(&mut cx, 0, 2).materialize(&mut cx);
-    bytes.extend((0..30).map(|_| cx.zero()));
-    let word = cx.from_bytes(bytes);
+    bytes.extend((0..30).map(|_| SymExpr::zero(&mut cx)));
+    let word = SymExpr::from_bytes(&mut cx, bytes);
 
     let mut expected = [0u8; 32];
     expected[0] = opcode::STOP;
@@ -1658,10 +1693,10 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
 fn path_state_extracts_constrained_symbolic_usize() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
 
-    let seven = cx.constant(U256::from(7));
-    let constraint = cx.eq(offset.clone(), seven);
+    let seven = SymExpr::constant(&mut cx, U256::from(7));
+    let constraint = SymBoolExpr::eq(&mut cx, offset.clone(), seven);
     state.constraints.push(constraint);
 
     assert_eq!(state.constrained_usize(&mut cx, &offset), Some(7));
@@ -1671,10 +1706,10 @@ fn path_state_extracts_constrained_symbolic_usize() {
 fn path_state_extracts_symbolic_usize_upper_bound() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
-    let size = cx.var("size");
+    let size = SymExpr::var(&mut cx, "size");
 
-    let five = cx.constant(U256::from(5));
-    let constraint = cx.cmp(SymBoolExprOp::Ult, size.clone(), five);
+    let five = SymExpr::constant(&mut cx, U256::from(5));
+    let constraint = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, size.clone(), five);
     state.constraints.push(constraint);
 
     assert_eq!(state.upper_bound_usize(&mut cx, &size), Some(4));
@@ -1684,24 +1719,24 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
-    let offset = cx.var("offset");
+    let offset = SymExpr::var(&mut cx, "offset");
     let offset_expr = offset.clone();
-    let mask = cx.constant(U256::from(0xffff));
+    let mask = SymExpr::constant(&mut cx, U256::from(0xffff));
 
-    let masked_offset = cx.op(SymExprOp::And, offset_expr.clone(), mask.clone());
-    let offset_constraint = cx.eq(masked_offset, offset_expr.clone());
+    let masked_offset = SymExpr::op(&mut cx, SymExprOp::And, offset_expr.clone(), mask.clone());
+    let offset_constraint = SymBoolExpr::eq(&mut cx, masked_offset, offset_expr.clone());
     state.constraints.push(offset_constraint);
-    let expected_offset = cx.constant(U256::from(0x80));
-    let masked_offset = cx.op(SymExprOp::And, mask, offset_expr);
-    let condition = cx.eq(expected_offset, masked_offset);
-    let one = cx.one();
-    let zero = cx.zero();
-    let condition_word = cx.ite(condition, one, zero.clone());
-    let shifted_condition = cx.op(SymExprOp::Shr, condition_word, zero.clone());
-    let byte_mask = cx.constant(U256::from(0xff));
-    let bool_byte = cx.op(SymExprOp::And, shifted_condition, byte_mask);
-    let bool_word = cx.op(SymExprOp::Or, zero.clone(), bool_byte);
-    let bool_word_zero = cx.eq(bool_word, zero);
+    let expected_offset = SymExpr::constant(&mut cx, U256::from(0x80));
+    let masked_offset = SymExpr::op(&mut cx, SymExprOp::And, mask, offset_expr);
+    let condition = SymBoolExpr::eq(&mut cx, expected_offset, masked_offset);
+    let one = SymExpr::one(&mut cx);
+    let zero = SymExpr::zero(&mut cx);
+    let condition_word = SymExpr::ite(&mut cx, condition, one, zero.clone());
+    let shifted_condition = SymExpr::op(&mut cx, SymExprOp::Shr, condition_word, zero.clone());
+    let byte_mask = SymExpr::constant(&mut cx, U256::from(0xff));
+    let bool_byte = SymExpr::op(&mut cx, SymExprOp::And, shifted_condition, byte_mask);
+    let bool_word = SymExpr::op(&mut cx, SymExprOp::Or, zero.clone(), bool_byte);
+    let bool_word_zero = SymBoolExpr::eq(&mut cx, bool_word, zero);
     state.constraints.push(bool_word_zero.not(&mut cx));
 
     assert_eq!(state.constrained_usize(&mut cx, &offset), Some(0x80));
@@ -1711,15 +1746,15 @@ fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
 fn path_state_evaluates_compound_constrained_symbolic_word() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
-    let value = cx.var("value");
-    let beef = cx.constant(U256::from(0xbeef));
-    let value_constraint = cx.eq(value.clone(), beef);
+    let value = SymExpr::var(&mut cx, "value");
+    let beef = SymExpr::constant(&mut cx, U256::from(0xbeef));
+    let value_constraint = SymBoolExpr::eq(&mut cx, value.clone(), beef);
     state.constraints.push(value_constraint);
 
-    let zero = cx.zero();
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let masked_value = cx.op(SymExprOp::And, value, u64_max);
-    let encoded_word = cx.op(SymExprOp::Or, zero, masked_value);
+    let zero = SymExpr::zero(&mut cx);
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let masked_value = SymExpr::op(&mut cx, SymExprOp::And, value, u64_max);
+    let encoded_word = SymExpr::op(&mut cx, SymExprOp::Or, zero, masked_value);
 
     assert_eq!(state.constrained_word(&mut cx, &encoded_word), Some(U256::from(0xbeef)));
 }
@@ -1727,9 +1762,9 @@ fn path_state_evaluates_compound_constrained_symbolic_word() {
 #[test]
 fn symbolic_push_data_reconstructs_symbolic_word() {
     let mut cx = SymCx::new();
-    let push2 = cx.constant(U256::from(opcode::PUSH2));
-    let hi = cx.var("immutable_hi");
-    let lo = cx.var("immutable_lo");
+    let push2 = SymExpr::constant(&mut cx, U256::from(opcode::PUSH2));
+    let hi = SymExpr::var(&mut cx, "immutable_hi");
+    let lo = SymExpr::var(&mut cx, "immutable_lo");
     let bytes = SymBytes::exprs(&mut cx, vec![push2, hi, lo]);
     let code = SymCode::from_bytes(&mut cx, bytes);
 
@@ -1741,7 +1776,7 @@ fn symbolic_push_data_reconstructs_symbolic_word() {
 #[test]
 fn symbolic_push32_preserves_structural_word() {
     let mut cx = SymCx::new();
-    let immediate = cx.var("immutable");
+    let immediate = SymExpr::var(&mut cx, "immutable");
     let opcode = SymBytes::concrete(&mut cx, vec![opcode::PUSH32]);
     let immediate_bytes = immediate.clone().into_bytes(&mut cx);
     let bytes = SymBytes::concat(&mut cx, [opcode, immediate_bytes]);
@@ -1753,17 +1788,17 @@ fn symbolic_push32_preserves_structural_word() {
 #[test]
 fn abi_bytes_return_encodes_symbolic_bytes() {
     let mut cx = SymCx::new();
-    let byte_0 = cx.var("calldata_byte_0");
-    let byte_1 = cx.constant(U256::from(0x42));
+    let byte_0 = SymExpr::var(&mut cx, "calldata_byte_0");
+    let byte_1 = SymExpr::constant(&mut cx, U256::from(0x42));
     let ret = abi_bytes_return(&mut cx, vec![byte_0.clone(), byte_1.clone()]);
     let offset_bytes = (0..32).map(|idx| ret.byte(&mut cx, idx)).collect::<Vec<_>>();
-    let offset_word = cx.from_bytes(offset_bytes);
-    let offset = cx.constant(U256::from(32));
+    let offset_word = SymExpr::from_bytes(&mut cx, offset_bytes);
+    let offset = SymExpr::constant(&mut cx, U256::from(32));
 
     assert_eq!(offset_word, offset);
     let len_bytes = (32..64).map(|idx| ret.byte(&mut cx, idx)).collect::<Vec<_>>();
-    let len_word = cx.from_bytes(len_bytes);
-    let len = cx.constant(U256::from(2));
+    let len_word = SymExpr::from_bytes(&mut cx, len_bytes);
+    let len = SymExpr::constant(&mut cx, U256::from(2));
     assert_eq!(len_word, len);
     assert_eq!(ret.byte(&mut cx, 64), byte_0);
     assert_eq!(ret.byte(&mut cx, 65), byte_1);
@@ -1772,17 +1807,17 @@ fn abi_bytes_return_encodes_symbolic_bytes() {
 #[test]
 fn abi_bytes_return_can_encode_symbolic_length() {
     let mut cx = SymCx::new();
-    let len = cx.var("len");
-    let byte_0 = cx.var("byte_0");
-    let byte_1 = cx.var("byte_1");
+    let len = SymExpr::var(&mut cx, "len");
+    let byte_0 = SymExpr::var(&mut cx, "byte_0");
+    let byte_1 = SymExpr::var(&mut cx, "byte_1");
     let ret = abi_bytes_return_with_len(&mut cx, len.clone(), vec![byte_0.clone(), byte_1.clone()]);
     let offset_bytes = (0..32).map(|idx| ret.byte(&mut cx, idx)).collect::<Vec<_>>();
-    let offset_word = cx.from_bytes(offset_bytes);
-    let offset = cx.constant(U256::from(32));
+    let offset_word = SymExpr::from_bytes(&mut cx, offset_bytes);
+    let offset = SymExpr::constant(&mut cx, U256::from(32));
 
     assert_eq!(offset_word, offset);
     let len_bytes = (32..64).map(|idx| ret.byte(&mut cx, idx)).collect::<Vec<_>>();
-    let len_word = cx.from_bytes(len_bytes);
+    let len_word = SymExpr::from_bytes(&mut cx, len_bytes);
     assert_eq!(len_word, len);
     assert_eq!(ret.byte(&mut cx, 64), byte_0);
     assert_eq!(ret.byte(&mut cx, 65), byte_1);
@@ -1791,7 +1826,7 @@ fn abi_bytes_return_can_encode_symbolic_length() {
 #[test]
 fn symbolic_keccak_is_deterministic_for_same_symbolic_bytes() {
     let mut cx = SymCx::new();
-    let bytes = cx.var("slot_key").into_byte_exprs(&mut cx);
+    let bytes = SymExpr::var(&mut cx, "slot_key").into_byte_exprs(&mut cx);
 
     let first = keccak_word(&mut cx, bytes.clone());
     let second = keccak_word(&mut cx, bytes);
@@ -1803,14 +1838,18 @@ fn symbolic_keccak_is_deterministic_for_same_symbolic_bytes() {
 #[test]
 fn symbolic_keccak_tracks_symbolic_length() {
     let mut cx = SymCx::new();
-    let bytes = vec![cx.var("byte_0"), cx.var("byte_1"), cx.zero()];
-    let len = cx.var("len");
+    let bytes = vec![
+        SymExpr::var(&mut cx, "byte_0"),
+        SymExpr::var(&mut cx, "byte_1"),
+        SymExpr::zero(&mut cx),
+    ];
+    let len = SymExpr::var(&mut cx, "len");
 
     let word = keccak_word_with_len(&mut cx, bytes, len);
 
     let (hash_len, hash_bytes_len) =
         word.keccak_len_and_byte_count().expect("expected symbolic keccak term");
-    assert_eq!(hash_len, &cx.var("len"));
+    assert_eq!(hash_len, &SymExpr::var(&mut cx, "len"));
     assert_eq!(hash_bytes_len, 3);
 }
 
@@ -1819,8 +1858,8 @@ fn sym_expr_eval_computes_symbolic_keccak_from_model() {
     let mut cx = SymCx::new();
     let owner = Address::from([0x11; 20]);
     let slot = U256::from(1);
-    let mut bytes = cx.var("owner").into_byte_exprs(&mut cx);
-    bytes.extend(cx.constant(slot).into_byte_exprs(&mut cx));
+    let mut bytes = SymExpr::var(&mut cx, "owner").into_byte_exprs(&mut cx);
+    bytes.extend(SymExpr::constant(&mut cx, slot).into_byte_exprs(&mut cx));
     let word = keccak_word(&mut cx, bytes);
 
     let mut input = Vec::new();
@@ -1835,9 +1874,9 @@ fn sym_expr_eval_computes_symbolic_keccak_from_model() {
 #[test]
 fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     let mut cx = SymCx::new();
-    let input = vec![cx.var("input_0"), cx.var("input_1")];
+    let input = vec![SymExpr::var(&mut cx, "input_0"), SymExpr::var(&mut cx, "input_1")];
 
-    let input_len = cx.constant(U256::from(input.len()));
+    let input_len = SymExpr::constant(&mut cx, U256::from(input.len()));
     let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let sha = execute_symbolic_precompile(
         &mut cx,
@@ -1859,9 +1898,9 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     .unwrap()
     .unwrap();
     let sha_bytes = (0..32).map(|idx| sha.byte(&mut cx, idx)).collect::<Vec<_>>();
-    let sha_word = cx.from_bytes(sha_bytes);
+    let sha_word = SymExpr::from_bytes(&mut cx, sha_bytes);
     let sha_again_bytes = (0..32).map(|idx| sha_again.byte(&mut cx, idx)).collect::<Vec<_>>();
-    let sha_again_word = cx.from_bytes(sha_again_bytes);
+    let sha_again_word = SymExpr::from_bytes(&mut cx, sha_again_bytes);
 
     assert_eq!(sha.len(), 32);
     assert_eq!(sha_word, sha_again_word);
@@ -1890,7 +1929,7 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
 
     assert_eq!(ecrecover.len(), 32);
     for idx in 0..12 {
-        assert_eq!(ecrecover.byte(&mut cx, idx), cx.zero());
+        assert_eq!(ecrecover.byte(&mut cx, idx), SymExpr::zero(&mut cx));
     }
     for idx in 0..32 {
         assert_eq!(ecrecover.byte(&mut cx, idx), ecrecover_again.byte(&mut cx, idx));
@@ -1919,7 +1958,7 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
 
     assert_eq!(ripemd.len(), 32);
     for idx in 0..12 {
-        assert_eq!(ripemd.byte(&mut cx, idx), cx.zero());
+        assert_eq!(ripemd.byte(&mut cx, idx), SymExpr::zero(&mut cx));
     }
     for idx in 0..32 {
         assert_eq!(ripemd.byte(&mut cx, idx), ripemd_again.byte(&mut cx, idx));
@@ -1930,12 +1969,12 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
 fn identity_precompile_preserves_symbolic_input_len() {
     let mut cx = SymCx::new();
     let input = vec![
-        cx.constant(U256::from(1)),
-        cx.constant(U256::from(2)),
-        cx.constant(U256::from(3)),
-        cx.constant(U256::from(4)),
+        SymExpr::constant(&mut cx, U256::from(1)),
+        SymExpr::constant(&mut cx, U256::from(2)),
+        SymExpr::constant(&mut cx, U256::from(3)),
+        SymExpr::constant(&mut cx, U256::from(4)),
     ];
-    let input_len = cx.var("size");
+    let input_len = SymExpr::var(&mut cx, "size");
     let input = SymBytes::exprs(&mut cx, input);
     let return_data = execute_symbolic_precompile(
         &mut cx,
@@ -1949,22 +1988,22 @@ fn identity_precompile_preserves_symbolic_input_len() {
 
     assert_eq!(return_data.len(), 4);
     assert_eq!(return_data.len_word(), input_len);
-    assert_eq!(return_data.byte(&mut cx, 0), cx.constant(U256::from(1)));
-    assert_eq!(return_data.byte(&mut cx, 3), cx.constant(U256::from(4)));
+    assert_eq!(return_data.byte(&mut cx, 0), SymExpr::constant(&mut cx, U256::from(1)));
+    assert_eq!(return_data.byte(&mut cx, 3), SymExpr::constant(&mut cx, U256::from(4)));
 }
 
 #[test]
 fn advanced_precompiles_accept_symbolic_payloads() {
     let mut cx = SymCx::new();
-    let mut modexp_input = vec![cx.zero(); 99];
-    modexp_input[31] = cx.constant(U256::from(1));
-    modexp_input[63] = cx.constant(U256::from(1));
-    modexp_input[95] = cx.constant(U256::from(1));
-    modexp_input[96] = cx.var("base");
-    modexp_input[97] = cx.constant(U256::from(5));
-    modexp_input[98] = cx.constant(U256::from(13));
+    let mut modexp_input = vec![SymExpr::zero(&mut cx); 99];
+    modexp_input[31] = SymExpr::constant(&mut cx, U256::from(1));
+    modexp_input[63] = SymExpr::constant(&mut cx, U256::from(1));
+    modexp_input[95] = SymExpr::constant(&mut cx, U256::from(1));
+    modexp_input[96] = SymExpr::var(&mut cx, "base");
+    modexp_input[97] = SymExpr::constant(&mut cx, U256::from(5));
+    modexp_input[98] = SymExpr::constant(&mut cx, U256::from(13));
 
-    let modexp_len = cx.constant(U256::from(modexp_input.len()));
+    let modexp_len = SymExpr::constant(&mut cx, U256::from(modexp_input.len()));
     let input = SymBytes::exprs(&mut cx, modexp_input.clone());
     let modexp = execute_symbolic_precompile(
         &mut cx,
@@ -1975,7 +2014,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     )
     .unwrap()
     .unwrap();
-    let modexp_len = cx.constant(U256::from(modexp_input.len()));
+    let modexp_len = SymExpr::constant(&mut cx, U256::from(modexp_input.len()));
     let input = SymBytes::exprs(&mut cx, modexp_input.clone());
     let modexp_again = execute_symbolic_precompile(
         &mut cx,
@@ -1989,9 +2028,9 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     assert_eq!(modexp.len(), 1);
     assert_eq!(modexp.byte(&mut cx, 0), modexp_again.byte(&mut cx, 0));
 
-    let mut blake_input = vec![cx.var("blake_input"); 213];
-    blake_input[212] = cx.zero();
-    let blake_len = cx.constant(U256::from(213));
+    let mut blake_input = vec![SymExpr::var(&mut cx, "blake_input"); 213];
+    blake_input[212] = SymExpr::zero(&mut cx);
+    let blake_len = SymExpr::constant(&mut cx, U256::from(213));
     let blake_input = SymBytes::exprs(&mut cx, blake_input);
     let blake = execute_symbolic_precompile(
         &mut cx,
@@ -2008,8 +2047,8 @@ fn advanced_precompiles_accept_symbolic_payloads() {
 #[test]
 fn validity_sensitive_symbolic_precompiles_report_incomplete() {
     let mut cx = SymCx::new();
-    let bn_input = vec![cx.var("point"); 128];
-    let bn_len = cx.constant(U256::from(128));
+    let bn_input = vec![SymExpr::var(&mut cx, "point"); 128];
+    let bn_len = SymExpr::constant(&mut cx, U256::from(128));
     let bn_input = SymBytes::exprs(&mut cx, bn_input);
     let err = execute_symbolic_precompile(
         &mut cx,
@@ -2024,8 +2063,8 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
         SymbolicError::Unsupported("symbolic bn254 precompile validity not modeled")
     ));
 
-    let blake_input = vec![cx.var("blake_input"); 213];
-    let blake_len = cx.constant(U256::from(213));
+    let blake_input = vec![SymExpr::var(&mut cx, "blake_input"); 213];
+    let blake_len = SymExpr::constant(&mut cx, U256::from(213));
     let blake_input = SymBytes::exprs(&mut cx, blake_input);
     let err = execute_symbolic_precompile(
         &mut cx,
@@ -2045,10 +2084,10 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
 fn symbolic_storage_read_after_write_accepts_symbolic_keys() {
     let mut cx = SymCx::new();
     let address = Address::from([0x11; 20]);
-    let key = cx.var("slot");
-    let value = cx.var("value");
+    let key = SymExpr::var(&mut cx, "slot");
+    let value = SymExpr::var(&mut cx, "value");
     let writes = vec![StorageWrite::new(address, key.clone(), value.clone())];
-    let base = cx.zero();
+    let base = SymExpr::zero(&mut cx);
 
     assert_eq!(StorageWrite::select_from(&mut cx, &writes, address, key, base), value);
 }
@@ -2057,15 +2096,15 @@ fn symbolic_storage_read_after_write_accepts_symbolic_keys() {
 fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
     let mut cx = SymCx::new();
     let address = Address::from([0x11; 20]);
-    let write_key = cx.var("write_slot");
-    let read_key = cx.var("read_slot");
-    let value = cx.var("value");
+    let write_key = SymExpr::var(&mut cx, "write_slot");
+    let read_key = SymExpr::var(&mut cx, "read_slot");
+    let value = SymExpr::var(&mut cx, "value");
     let writes = vec![StorageWrite::new(address, write_key.clone(), value.clone())];
-    let base = cx.zero();
+    let base = SymExpr::zero(&mut cx);
     let selected = StorageWrite::select_from(&mut cx, &writes, address, read_key.clone(), base);
-    let keys_match = cx.eq(read_key, write_key);
-    let zero = cx.zero();
-    let expected = cx.ite(keys_match, value, zero);
+    let keys_match = SymBoolExpr::eq(&mut cx, read_key, write_key);
+    let zero = SymExpr::zero(&mut cx);
+    let expected = SymExpr::ite(&mut cx, keys_match, value, zero);
 
     assert_eq!(selected, expected);
 }
@@ -2073,51 +2112,51 @@ fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
 #[test]
 fn symbolic_storage_key_equality_decomposes_keccak_offsets() {
     let mut cx = SymCx::new();
-    let owner = cx.var("owner");
+    let owner = SymExpr::var(&mut cx, "owner");
     let owner_bytes = owner.into_byte_exprs(&mut cx);
     let base = keccak_word(&mut cx, owner_bytes);
-    let left_index = cx.var("left_index");
-    let right_index = cx.var("right_index");
+    let left_index = SymExpr::var(&mut cx, "left_index");
+    let right_index = SymExpr::var(&mut cx, "right_index");
     let left = add_words(&mut cx, base.clone(), left_index);
     let right = add_words(&mut cx, base, right_index);
 
     let actual = left.storage_key_eq(&mut cx, &right);
-    let left_index = cx.var("left_index");
-    let right_index = cx.var("right_index");
-    let expected = cx.eq(left_index, right_index);
+    let left_index = SymExpr::var(&mut cx, "left_index");
+    let right_index = SymExpr::var(&mut cx, "right_index");
+    let expected = SymBoolExpr::eq(&mut cx, left_index, right_index);
     assert_eq!(actual, expected);
 }
 
 #[test]
 fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
     let mut cx = SymCx::new();
-    let left_owner = cx.var("left_owner");
+    let left_owner = SymExpr::var(&mut cx, "left_owner");
     let left_base = keccak_word(&mut cx, vec![left_owner]);
-    let right_owner = cx.var("right_owner");
+    let right_owner = SymExpr::var(&mut cx, "right_owner");
     let right_base = keccak_word(&mut cx, vec![right_owner]);
-    let index = cx.var("index");
+    let index = SymExpr::var(&mut cx, "index");
 
     let left = add_words(&mut cx, left_base, index.clone());
     let right = add_words(&mut cx, right_base, index);
     let condition = left.storage_key_eq(&mut cx, &right);
 
-    let left_owner = cx.var("left_owner");
-    let right_owner = cx.var("right_owner");
-    let expected = cx.eq(left_owner, right_owner);
+    let left_owner = SymExpr::var(&mut cx, "left_owner");
+    let right_owner = SymExpr::var(&mut cx, "right_owner");
+    let expected = SymBoolExpr::eq(&mut cx, left_owner, right_owner);
     assert_eq!(condition, expected);
 }
 
 #[test]
 fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
     let mut cx = SymCx::new();
-    let owner = cx.var("owner");
+    let owner = SymExpr::var(&mut cx, "owner");
     let owner = owner.into_byte_exprs(&mut cx);
     let owner = keccak_word(&mut cx, owner);
-    let zero = cx.zero();
+    let zero = SymExpr::zero(&mut cx);
     let layout_key = add_words(&mut cx, owner, zero);
-    let plain_slot = cx.zero();
+    let plain_slot = SymExpr::zero(&mut cx);
     let actual = layout_key.storage_key_eq(&mut cx, &plain_slot);
-    let expected = cx.bool_constant(false);
+    let expected = SymBoolExpr::constant(&mut cx, false);
 
     assert_eq!(actual, expected);
 }
@@ -2125,16 +2164,16 @@ fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
 #[test]
 fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
     let mut cx = SymCx::new();
-    let owner = cx.var("owner");
-    let spender = cx.var("spender");
-    let recipient = cx.var("recipient");
+    let owner = SymExpr::var(&mut cx, "owner");
+    let spender = SymExpr::var(&mut cx, "spender");
+    let recipient = SymExpr::var(&mut cx, "recipient");
 
     let mut balance_key_bytes = recipient.into_byte_exprs(&mut cx);
-    balance_key_bytes.extend(cx.constant(U256::ZERO).into_byte_exprs(&mut cx));
+    balance_key_bytes.extend(SymExpr::constant(&mut cx, U256::ZERO).into_byte_exprs(&mut cx));
     let balance_key = keccak_word(&mut cx, balance_key_bytes);
 
     let mut inner_key_bytes = owner.into_byte_exprs(&mut cx);
-    inner_key_bytes.extend(cx.constant(U256::from(1)).into_byte_exprs(&mut cx));
+    inner_key_bytes.extend(SymExpr::constant(&mut cx, U256::from(1)).into_byte_exprs(&mut cx));
     let inner_key = keccak_word(&mut cx, inner_key_bytes);
 
     let mut allowance_key_bytes = spender.into_byte_exprs(&mut cx);
@@ -2149,7 +2188,7 @@ fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
     ]);
     let condition = balance_key.storage_key_eq(&mut cx, &allowance_key);
 
-    assert_eq!(condition, cx.bool_constant(false));
+    assert_eq!(condition, SymBoolExpr::constant(&mut cx, false));
     assert!(!condition.eval_model(&model).unwrap());
 }
 
@@ -2158,14 +2197,22 @@ fn symbolic_world_snapshot_restores_overlay_state() {
     let mut cx = SymCx::new();
     let address = Address::from([0x11; 20]);
     let mut world = SymbolicWorld::default();
-    world.sstore(address, cx.constant(U256::from(1)), cx.constant(U256::from(2)));
+    world.sstore(
+        address,
+        SymExpr::constant(&mut cx, U256::from(1)),
+        SymExpr::constant(&mut cx, U256::from(2)),
+    );
 
     let snapshot = world.snapshot_state();
-    world.sstore(address, cx.constant(U256::from(1)), cx.constant(U256::from(3)));
+    world.sstore(
+        address,
+        SymExpr::constant(&mut cx, U256::from(1)),
+        SymExpr::constant(&mut cx, U256::from(3)),
+    );
 
     assert!(world.restore_snapshot(snapshot));
     assert_eq!(world.storage_len(), 1);
-    assert_eq!(world.storage_value(0), Some(&cx.constant(U256::from(2))));
+    assert_eq!(world.storage_value(0), Some(&SymExpr::constant(&mut cx, U256::from(2))));
 }
 
 #[test]
@@ -2262,17 +2309,17 @@ fn calldata_variant_expansion_respects_path_width() {
 #[test]
 fn symbolic_signextend_uses_sign_bit_ite() {
     let mut cx = SymCx::new();
-    let word = cx.var("word");
+    let word = SymExpr::var(&mut cx, "word");
     let actual = signextend_word(&mut cx, U256::ZERO, word.clone());
-    let sign_mask = cx.constant(U256::from(0x80));
-    let sign_bit = cx.op(SymExprOp::And, word.clone(), sign_mask);
-    let zero = cx.zero();
-    let sign_bit_zero = cx.eq(sign_bit, zero);
-    let positive_mask = cx.constant(U256::from(0x7f));
-    let positive = cx.op(SymExprOp::And, word.clone(), positive_mask);
-    let negative_mask = cx.constant(!U256::from(0x7f));
-    let negative = cx.op(SymExprOp::Or, word, negative_mask);
-    let expected = cx.ite(sign_bit_zero, positive, negative);
+    let sign_mask = SymExpr::constant(&mut cx, U256::from(0x80));
+    let sign_bit = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), sign_mask);
+    let zero = SymExpr::zero(&mut cx);
+    let sign_bit_zero = SymBoolExpr::eq(&mut cx, sign_bit, zero);
+    let positive_mask = SymExpr::constant(&mut cx, U256::from(0x7f));
+    let positive = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), positive_mask);
+    let negative_mask = SymExpr::constant(&mut cx, !U256::from(0x7f));
+    let negative = SymExpr::op(&mut cx, SymExprOp::Or, word, negative_mask);
+    let expected = SymExpr::ite(&mut cx, sign_bit_zero, positive, negative);
     assert_eq!(actual, expected);
 }
 
@@ -2326,9 +2373,9 @@ sat
     #x00)
 )
 ";
-    let calldata = cx.var("calldata_0");
-    let one = cx.constant(U256::from(1));
-    let constraints = vec![cx.eq(calldata, one)];
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraints = vec![SymBoolExpr::eq(&mut cx, calldata, one)];
 
     let err = validate_solver_model_output(output, &constraints).unwrap_err();
 
@@ -2338,19 +2385,20 @@ sat
 #[test]
 fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
     let mut cx = SymCx::new();
-    let var = cx.var("calldata_0");
+    let var = SymExpr::var(&mut cx, "calldata_0");
     let msg_sender = U256::from_str_radix("1804c8ab1f12e6bbf3894d4083f33e07309d1f38", 16).unwrap();
-    let product = cx.op(SymExprOp::Mul, var.clone(), var.clone());
-    let sender_word = cx.constant(msg_sender);
-    let product_below_sender = cx.cmp(SymBoolExprOp::Ult, product, sender_word.clone());
-    let above_sender = cx.cmp(SymBoolExprOp::Ugt, var.clone(), sender_word);
-    let mask_800 = cx.constant(U256::from(0x800));
-    let masked_800 = cx.op(SymExprOp::And, var.clone(), mask_800);
-    let zero = cx.zero();
-    let has_800 = cx.eq(masked_800, zero.clone()).not(&mut cx);
-    let mask_10000 = cx.constant(U256::from(0x10000));
-    let masked_10000 = cx.op(SymExprOp::And, var, mask_10000);
-    let lacks_10000 = cx.eq(masked_10000, zero);
+    let product = SymExpr::op(&mut cx, SymExprOp::Mul, var.clone(), var.clone());
+    let sender_word = SymExpr::constant(&mut cx, msg_sender);
+    let product_below_sender =
+        SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, product, sender_word.clone());
+    let above_sender = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, var.clone(), sender_word);
+    let mask_800 = SymExpr::constant(&mut cx, U256::from(0x800));
+    let masked_800 = SymExpr::op(&mut cx, SymExprOp::And, var.clone(), mask_800);
+    let zero = SymExpr::zero(&mut cx);
+    let has_800 = SymBoolExpr::eq(&mut cx, masked_800, zero.clone()).not(&mut cx);
+    let mask_10000 = SymExpr::constant(&mut cx, U256::from(0x10000));
+    let masked_10000 = SymExpr::op(&mut cx, SymExprOp::And, var, mask_10000);
+    let lacks_10000 = SymBoolExpr::eq(&mut cx, masked_10000, zero);
     let constraints = vec![product_below_sender, above_sender, has_800, lacks_10000];
 
     let model = fallback_single_var_model(&constraints).unwrap();
@@ -2361,108 +2409,108 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
 #[test]
 fn expression_op_simplifies_exact_arithmetic_identities() {
     let mut cx = SymCx::new();
-    let x = cx.var("x");
+    let x = SymExpr::var(&mut cx, "x");
 
-    let zero = cx.zero();
-    let actual = cx.op(SymExprOp::Mul, x.clone(), zero.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let actual = SymExpr::op(&mut cx, SymExprOp::Mul, x.clone(), zero.clone());
     assert_eq!(actual, zero);
-    let one = cx.one();
-    let actual = cx.op(SymExprOp::Mul, one, x.clone());
+    let one = SymExpr::one(&mut cx);
+    let actual = SymExpr::op(&mut cx, SymExprOp::Mul, one, x.clone());
     assert_eq!(actual, x);
-    let x = cx.var("x");
-    let one = cx.one();
-    let actual = cx.op(SymExprOp::UDiv, x.clone(), one);
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::one(&mut cx);
+    let actual = SymExpr::op(&mut cx, SymExprOp::UDiv, x.clone(), one);
     assert_eq!(actual, x);
-    let x = cx.var("x");
-    let one = cx.one();
-    let actual = cx.op(SymExprOp::URem, x, one);
-    let zero = cx.zero();
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::one(&mut cx);
+    let actual = SymExpr::op(&mut cx, SymExprOp::URem, x, one);
+    let zero = SymExpr::zero(&mut cx);
     assert_eq!(actual, zero);
-    let x = cx.var("x");
-    let x_again = cx.var("x");
-    let actual = cx.op(SymExprOp::Sub, x, x_again);
-    let zero = cx.zero();
+    let x = SymExpr::var(&mut cx, "x");
+    let x_again = SymExpr::var(&mut cx, "x");
+    let actual = SymExpr::op(&mut cx, SymExprOp::Sub, x, x_again);
+    let zero = SymExpr::zero(&mut cx);
     assert_eq!(actual, zero);
-    let x = cx.var("x");
-    let max = cx.constant(U256::MAX);
-    let actual = cx.op(SymExprOp::And, x.clone(), max);
+    let x = SymExpr::var(&mut cx, "x");
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let actual = SymExpr::op(&mut cx, SymExprOp::And, x.clone(), max);
     assert_eq!(actual, x);
-    let x = cx.var("x");
-    let actual = cx.op(SymExprOp::And, x.clone(), x.clone());
+    let x = SymExpr::var(&mut cx, "x");
+    let actual = SymExpr::op(&mut cx, SymExprOp::And, x.clone(), x.clone());
     assert_eq!(actual, x);
-    let mask = cx.constant((U256::from(1) << 160) - U256::from(1));
-    let x = cx.var("x");
-    let masked = cx.op(SymExprOp::And, x, mask.clone());
-    let actual = cx.op(SymExprOp::And, masked.clone(), mask);
+    let mask = SymExpr::constant(&mut cx, (U256::from(1) << 160) - U256::from(1));
+    let x = SymExpr::var(&mut cx, "x");
+    let masked = SymExpr::op(&mut cx, SymExprOp::And, x, mask.clone());
+    let actual = SymExpr::op(&mut cx, SymExprOp::And, masked.clone(), mask);
     assert_eq!(actual, masked);
-    let six = cx.constant(U256::from(6));
-    let seven = cx.constant(U256::from(7));
-    let actual = cx.op(SymExprOp::Mul, six, seven);
-    let forty_two = cx.constant(U256::from(42));
+    let six = SymExpr::constant(&mut cx, U256::from(6));
+    let seven = SymExpr::constant(&mut cx, U256::from(7));
+    let actual = SymExpr::op(&mut cx, SymExprOp::Mul, six, seven);
+    let forty_two = SymExpr::constant(&mut cx, U256::from(42));
     assert_eq!(actual, forty_two);
 }
 
 #[test]
 fn bool_word_equality_simplifies_to_condition() {
     let mut cx = SymCx::new();
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let condition = cx.cmp(SymBoolExprOp::Ult, x, y);
-    let word = cx.bool_word(condition.clone());
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, y);
+    let word = SymExpr::bool_word(&mut cx, condition.clone());
 
-    let one = cx.one();
-    assert_eq!(cx.eq(word.clone(), one), condition);
-    let one = cx.one();
-    assert_eq!(cx.eq(one, word.clone()), condition);
+    let one = SymExpr::one(&mut cx);
+    assert_eq!(SymBoolExpr::eq(&mut cx, word.clone(), one), condition);
+    let one = SymExpr::one(&mut cx);
+    assert_eq!(SymBoolExpr::eq(&mut cx, one, word.clone()), condition);
     let expected = condition.not(&mut cx);
-    let zero = cx.zero();
-    assert_eq!(cx.eq(word.clone(), zero), expected);
-    let two = cx.constant(U256::from(2));
-    let actual = cx.eq(word, two);
-    let expected = cx.bool_constant(false);
+    let zero = SymExpr::zero(&mut cx);
+    assert_eq!(SymBoolExpr::eq(&mut cx, word.clone(), zero), expected);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let actual = SymBoolExpr::eq(&mut cx, word, two);
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
 }
 
 #[test]
 fn inverted_bool_word_equality_simplifies_to_condition() {
     let mut cx = SymCx::new();
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let condition = cx.cmp(SymBoolExprOp::Ult, x, y);
-    let zero = cx.zero();
-    let one = cx.one();
-    let word = cx.ite(condition.clone(), zero, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, y);
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let word = SymExpr::ite(&mut cx, condition.clone(), zero, one);
 
-    let one = cx.one();
-    let actual = cx.eq(word.clone(), one);
+    let one = SymExpr::one(&mut cx);
+    let actual = SymBoolExpr::eq(&mut cx, word.clone(), one);
     let expected = condition.clone().not(&mut cx);
     assert_eq!(actual, expected);
-    let zero = cx.zero();
-    assert_eq!(cx.eq(word, zero), condition);
+    let zero = SymExpr::zero(&mut cx);
+    assert_eq!(SymBoolExpr::eq(&mut cx, word, zero), condition);
 }
 
 #[test]
 fn bool_comparison_folds_reflexive_operands() {
     let mut cx = SymCx::new();
 
-    let x = cx.var("x");
-    let actual = cx.cmp(SymBoolExprOp::Ult, x.clone(), x.clone());
-    let expected = cx.bool_constant(false);
+    let x = SymExpr::var(&mut cx, "x");
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), x.clone());
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let actual = cx.cmp(SymBoolExprOp::Ugt, x.clone(), x.clone());
-    let expected = cx.bool_constant(false);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), x.clone());
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let actual = cx.cmp(SymBoolExprOp::Ule, x.clone(), x.clone());
-    let expected = cx.bool_constant(true);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, x.clone(), x.clone());
+    let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
-    let actual = cx.cmp(SymBoolExprOp::Uge, x.clone(), x.clone());
-    let expected = cx.bool_constant(true);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, x.clone(), x.clone());
+    let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
-    let actual = cx.cmp(SymBoolExprOp::Slt, x.clone(), x.clone());
-    let expected = cx.bool_constant(false);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Slt, x.clone(), x.clone());
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let actual = cx.cmp(SymBoolExprOp::Sgt, x.clone(), x);
-    let expected = cx.bool_constant(false);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Sgt, x.clone(), x);
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
 }
 
@@ -2470,45 +2518,45 @@ fn bool_comparison_folds_reflexive_operands() {
 fn bool_comparison_folds_unsigned_boundaries() {
     let mut cx = SymCx::new();
 
-    let zero = cx.zero();
-    let x = cx.var("x");
-    let actual = cx.cmp(SymBoolExprOp::Ugt, zero, x);
-    let expected = cx.bool_constant(false);
+    let zero = SymExpr::zero(&mut cx);
+    let x = SymExpr::var(&mut cx, "x");
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, zero, x);
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let zero = cx.zero();
-    let x = cx.var("x");
-    let actual = cx.cmp(SymBoolExprOp::Ule, zero, x);
-    let expected = cx.bool_constant(true);
+    let zero = SymExpr::zero(&mut cx);
+    let x = SymExpr::var(&mut cx, "x");
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, zero, x);
+    let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
-    let x = cx.var("x");
-    let zero = cx.zero();
-    let actual = cx.cmp(SymBoolExprOp::Ult, x, zero);
-    let expected = cx.bool_constant(false);
+    let x = SymExpr::var(&mut cx, "x");
+    let zero = SymExpr::zero(&mut cx);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, zero);
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let x = cx.var("x");
-    let zero = cx.zero();
-    let actual = cx.cmp(SymBoolExprOp::Uge, x, zero);
-    let expected = cx.bool_constant(true);
+    let x = SymExpr::var(&mut cx, "x");
+    let zero = SymExpr::zero(&mut cx);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, x, zero);
+    let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
-    let max = cx.constant(U256::MAX);
-    let x = cx.var("x");
-    let actual = cx.cmp(SymBoolExprOp::Ult, max, x);
-    let expected = cx.bool_constant(false);
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let x = SymExpr::var(&mut cx, "x");
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, max, x);
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let max = cx.constant(U256::MAX);
-    let x = cx.var("x");
-    let actual = cx.cmp(SymBoolExprOp::Uge, max, x);
-    let expected = cx.bool_constant(true);
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let x = SymExpr::var(&mut cx, "x");
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, max, x);
+    let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
-    let x = cx.var("x");
-    let max = cx.constant(U256::MAX);
-    let actual = cx.cmp(SymBoolExprOp::Ugt, x, max);
-    let expected = cx.bool_constant(false);
+    let x = SymExpr::var(&mut cx, "x");
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x, max);
+    let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let x = cx.var("x");
-    let max = cx.constant(U256::MAX);
-    let actual = cx.cmp(SymBoolExprOp::Ule, x, max);
-    let expected = cx.bool_constant(true);
+    let x = SymExpr::var(&mut cx, "x");
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, x, max);
+    let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
 }
 
@@ -2522,29 +2570,29 @@ fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
     assert_eq!(U256::MAX.mul_mod(U256::MAX, U256::MAX), U256::ZERO);
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
-    let a = cx.var("a");
-    let two = cx.constant(U256::from(2));
-    let max = cx.constant(U256::MAX);
-    let addmod = cx.addmod(a, two, max);
+    let a = SymExpr::var(&mut cx, "a");
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let addmod = SymExpr::addmod(&mut cx, a, two, max);
     assert_eq!(addmod.eval_model(&model).unwrap(), U256::from(2));
-    let a = cx.var("a");
-    let a_again = cx.var("a");
-    let max = cx.constant(U256::MAX);
-    let mulmod = cx.mulmod(a, a_again, max);
+    let a = SymExpr::var(&mut cx, "a");
+    let a_again = SymExpr::var(&mut cx, "a");
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let mulmod = SymExpr::mulmod(&mut cx, a, a_again, max);
     assert_eq!(mulmod.eval_model(&model).unwrap(), U256::ZERO);
 }
 
 #[test]
 fn exact_modular_arithmetic_smt_widens_before_modulo() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let two = cx.constant(U256::from(2));
-    let m = cx.var("m");
-    let addmod = cx.addmod(a, two, m).smt();
-    let a = cx.var("a");
-    let b = cx.var("b");
-    let m = cx.var("m");
-    let mulmod = cx.mulmod(a, b, m).smt();
+    let a = SymExpr::var(&mut cx, "a");
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let m = SymExpr::var(&mut cx, "m");
+    let addmod = SymExpr::addmod(&mut cx, a, two, m).smt();
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
+    let m = SymExpr::var(&mut cx, "m");
+    let mulmod = SymExpr::mulmod(&mut cx, a, b, m).smt();
 
     assert!(addmod.contains("((_ zero_extend 256) a)"));
     assert!(addmod.contains("bvadd"));
@@ -2557,12 +2605,12 @@ fn exact_modular_arithmetic_smt_widens_before_modulo() {
 #[test]
 fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let two = cx.constant(U256::from(2));
-    let max = cx.constant(U256::MAX);
-    let addmod = cx.addmod(a, two, max);
-    let one = cx.constant(U256::from(1));
-    let constraints = vec![cx.eq(addmod, one)];
+    let a = SymExpr::var(&mut cx, "a");
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let addmod = SymExpr::addmod(&mut cx, a, two, max);
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraints = vec![SymBoolExpr::eq(&mut cx, addmod, one)];
     let output = format!("sat\n((define-fun a () (_ BitVec 256) #x{}))\n", "f".repeat(64));
 
     let err = validate_solver_model_output(&output, &constraints).unwrap_err();
@@ -2573,11 +2621,11 @@ fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
 #[test]
 fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
     let mut cx = SymCx::new();
-    let numerator = cx.var("numerator");
-    let denominator = cx.var("denominator");
-    let div = cx.op(SymExprOp::UDiv, numerator, denominator);
-    let zero = cx.zero();
-    let original = cx.eq(div, zero);
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let denominator = SymExpr::var(&mut cx, "denominator");
+    let div = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, denominator);
+    let zero = SymExpr::zero(&mut cx);
+    let original = SymBoolExpr::eq(&mut cx, div, zero);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
     assert!(!normalized.smt().contains("bvudiv"));
@@ -2603,11 +2651,11 @@ fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
 #[test]
 fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
     let mut cx = SymCx::new();
-    let numerator = cx.var("numerator");
-    let denominator = cx.var("denominator");
-    let div = cx.op(SymExprOp::UDiv, numerator, denominator);
-    let zero = cx.zero();
-    let original = cx.cmp(SymBoolExprOp::Ugt, div, zero);
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let denominator = SymExpr::var(&mut cx, "denominator");
+    let div = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, denominator);
+    let zero = SymExpr::zero(&mut cx);
+    let original = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, div, zero);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
     assert!(!normalized.smt().contains("bvudiv"));
@@ -2633,15 +2681,15 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
 #[test]
 fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     let mut cx = SymCx::new();
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let ten = cx.constant(U256::from(10));
-    let a = cx.cmp(SymBoolExprOp::Ult, x.clone(), ten);
-    let three = cx.constant(U256::from(3));
-    let b = cx.eq(y.clone(), three);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let a = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), ten);
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let b = SymBoolExpr::eq(&mut cx, y.clone(), three);
     let grouped = vec![
         {
-            let value = cx.bool_constant(true);
+            let value = SymBoolExpr::constant(&mut cx, true);
             SymBoolExpr::raw_and(&mut cx, vec![b.clone(), value, a.clone()])
         },
         a.clone(),
@@ -2652,23 +2700,23 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
 
     assert_eq!(normalized, vec![b, a]);
 
-    let x_eq_y = cx.eq(x, y);
-    let false_expr = cx.bool_constant(false);
-    let true_expr = cx.bool_constant(true);
+    let x_eq_y = SymBoolExpr::eq(&mut cx, x, y);
+    let false_expr = SymBoolExpr::constant(&mut cx, false);
+    let true_expr = SymBoolExpr::constant(&mut cx, true);
     let unsat = normalize_constraints_for_solver(&mut cx, &[x_eq_y, false_expr, true_expr]);
-    assert_eq!(unsat, vec![cx.bool_constant(false)]);
+    assert_eq!(unsat, vec![SymBoolExpr::constant(&mut cx, false)]);
 }
 
 #[test]
 fn solver_normalizes_erc4626_style_share_zero_predicate() {
     let mut cx = SymCx::new();
-    let assets = cx.var("assets");
-    let supply = cx.var("supply");
-    let total_assets = cx.var("total_assets");
-    let numerator = cx.op(SymExprOp::Mul, assets, supply);
-    let shares = cx.op(SymExprOp::UDiv, numerator, total_assets);
-    let zero = cx.zero();
-    let constraints = vec![cx.eq(shares, zero)];
+    let assets = SymExpr::var(&mut cx, "assets");
+    let supply = SymExpr::var(&mut cx, "supply");
+    let total_assets = SymExpr::var(&mut cx, "total_assets");
+    let numerator = SymExpr::op(&mut cx, SymExprOp::Mul, assets, supply);
+    let shares = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, total_assets);
+    let zero = SymExpr::zero(&mut cx);
+    let constraints = vec![SymBoolExpr::eq(&mut cx, shares, zero)];
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
 
     assert_eq!(normalized.len(), 1);
@@ -2679,11 +2727,11 @@ fn solver_normalizes_erc4626_style_share_zero_predicate() {
 #[test]
 fn solver_rebuilds_word_from_extracted_byte_terms() {
     let mut cx = SymCx::new();
-    let word = cx.var("word");
-    let mask = cx.constant(U256::from(u64::MAX));
-    let masked = cx.op(SymExprOp::And, word, mask);
+    let word = SymExpr::var(&mut cx, "word");
+    let mask = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let masked = SymExpr::op(&mut cx, SymExprOp::And, word, mask);
     let bytes = masked.clone().into_byte_exprs(&mut cx);
-    let rebuilt_word = cx.from_bytes(bytes);
+    let rebuilt_word = SymExpr::from_bytes(&mut cx, bytes);
     let rebuilt = normalize_expr_for_solver(&mut cx, rebuilt_word);
 
     assert_eq!(rebuilt, normalize_expr_for_solver(&mut cx, masked));
@@ -2692,15 +2740,15 @@ fn solver_rebuilds_word_from_extracted_byte_terms() {
 #[test]
 fn solver_rebuilds_word_from_shifted_fragments() {
     let mut cx = SymCx::new();
-    let word = cx.var("word");
-    let low_mask = cx.constant(mask_bits(U256::MAX, 32));
-    let low_bits = cx.op(SymExprOp::And, word.clone(), low_mask);
-    let shift = cx.constant(U256::from(32));
-    let shifted = cx.op(SymExprOp::Shr, word.clone(), shift.clone());
-    let high_mask = cx.constant(mask_bits(U256::MAX, 224));
-    let masked_high = cx.op(SymExprOp::And, shifted, high_mask);
-    let high_bits = cx.op(SymExprOp::Shl, masked_high, shift);
-    let rebuilt_expr = cx.op(SymExprOp::Or, low_bits, high_bits);
+    let word = SymExpr::var(&mut cx, "word");
+    let low_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 32));
+    let low_bits = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), low_mask);
+    let shift = SymExpr::constant(&mut cx, U256::from(32));
+    let shifted = SymExpr::op(&mut cx, SymExprOp::Shr, word.clone(), shift.clone());
+    let high_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 224));
+    let masked_high = SymExpr::op(&mut cx, SymExprOp::And, shifted, high_mask);
+    let high_bits = SymExpr::op(&mut cx, SymExprOp::Shl, masked_high, shift);
+    let rebuilt_expr = SymExpr::op(&mut cx, SymExprOp::Or, low_bits, high_bits);
     let rebuilt = normalize_expr_for_solver(&mut cx, rebuilt_expr);
 
     assert_eq!(rebuilt, word);
@@ -2709,83 +2757,86 @@ fn solver_rebuilds_word_from_shifted_fragments() {
 #[test]
 fn solver_simplifies_selector_prefixed_word_fragment() {
     let mut cx = SymCx::new();
-    let x = cx.var("calldata_0");
-    let y = cx.var("calldata_1");
-    let low_32 = cx.constant(mask_bits(U256::MAX, 32));
-    let low_224 = cx.constant(mask_bits(U256::MAX, 224));
-    let selector = cx.constant(U256::from(0x771602f7u64) << 224);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let low_32 = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 32));
+    let low_224 = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 224));
+    let selector = SymExpr::constant(&mut cx, U256::from(0x771602f7u64) << 224);
 
-    let shift_32 = cx.constant(U256::from(32));
-    let shifted_x = cx.op(SymExprOp::Shr, x.clone(), shift_32.clone());
-    let x_high = cx.op(SymExprOp::And, shifted_x, low_224.clone());
-    let first_word = cx.op(SymExprOp::Or, selector, x_high);
-    let shifted_y = cx.op(SymExprOp::Shr, y.clone(), shift_32.clone());
-    let y_high = cx.op(SymExprOp::And, shifted_y, low_224.clone());
-    let x_low = cx.op(SymExprOp::And, x.clone(), low_32.clone());
-    let shift_224 = cx.constant(U256::from(224));
-    let x_low_shifted = cx.op(SymExprOp::Shl, x_low, shift_224.clone());
-    let second_word = cx.op(SymExprOp::Or, y_high, x_low_shifted);
-    let second_word_shifted = cx.op(SymExprOp::Shr, second_word.clone(), shift_224);
-    let rebuilt_low = cx.op(SymExprOp::And, second_word_shifted, low_32);
-    let first_word_masked = cx.op(SymExprOp::And, first_word, low_224);
-    let rebuilt_high = cx.op(SymExprOp::Shl, first_word_masked, shift_32.clone());
-    let rebuilt = cx.op(SymExprOp::Or, rebuilt_low, rebuilt_high);
+    let shift_32 = SymExpr::constant(&mut cx, U256::from(32));
+    let shifted_x = SymExpr::op(&mut cx, SymExprOp::Shr, x.clone(), shift_32.clone());
+    let x_high = SymExpr::op(&mut cx, SymExprOp::And, shifted_x, low_224.clone());
+    let first_word = SymExpr::op(&mut cx, SymExprOp::Or, selector, x_high);
+    let shifted_y = SymExpr::op(&mut cx, SymExprOp::Shr, y.clone(), shift_32.clone());
+    let y_high = SymExpr::op(&mut cx, SymExprOp::And, shifted_y, low_224.clone());
+    let x_low = SymExpr::op(&mut cx, SymExprOp::And, x.clone(), low_32.clone());
+    let shift_224 = SymExpr::constant(&mut cx, U256::from(224));
+    let x_low_shifted = SymExpr::op(&mut cx, SymExprOp::Shl, x_low, shift_224.clone());
+    let second_word = SymExpr::op(&mut cx, SymExprOp::Or, y_high, x_low_shifted);
+    let second_word_shifted = SymExpr::op(&mut cx, SymExprOp::Shr, second_word.clone(), shift_224);
+    let rebuilt_low = SymExpr::op(&mut cx, SymExprOp::And, second_word_shifted, low_32);
+    let first_word_masked = SymExpr::op(&mut cx, SymExprOp::And, first_word, low_224);
+    let rebuilt_high = SymExpr::op(&mut cx, SymExprOp::Shl, first_word_masked, shift_32.clone());
+    let rebuilt = SymExpr::op(&mut cx, SymExprOp::Or, rebuilt_low, rebuilt_high);
 
     assert_eq!(normalize_expr_for_solver(&mut cx, rebuilt), x);
 
-    let next_low_mask = cx.constant(mask_bits(U256::MAX, 32));
-    let next_low = cx.op(SymExprOp::And, y.clone(), next_low_mask);
-    let next_high_mask = cx.constant(mask_bits(U256::MAX, 224));
-    let next_high = cx.op(SymExprOp::And, second_word, next_high_mask);
-    let next_high_shifted = cx.op(SymExprOp::Shl, next_high, shift_32);
-    let rebuilt_next = cx.op(SymExprOp::Or, next_low, next_high_shifted);
+    let next_low_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 32));
+    let next_low = SymExpr::op(&mut cx, SymExprOp::And, y.clone(), next_low_mask);
+    let next_high_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 224));
+    let next_high = SymExpr::op(&mut cx, SymExprOp::And, second_word, next_high_mask);
+    let next_high_shifted = SymExpr::op(&mut cx, SymExprOp::Shl, next_high, shift_32);
+    let rebuilt_next = SymExpr::op(&mut cx, SymExprOp::Or, next_low, next_high_shifted);
 
     assert_eq!(normalize_expr_for_solver(&mut cx, rebuilt_next), y);
 }
 
 fn checked_mul_guard_word(cx: &mut SymCx, zero_operand: &SymExpr, expected: &SymExpr) -> SymExpr {
-    let zero = cx.zero();
-    let operand_is_zero = cx.eq(zero_operand.clone(), zero.clone());
-    let product = cx.op(SymExprOp::Mul, zero_operand.clone(), expected.clone());
-    let quotient = cx.op(SymExprOp::UDiv, product, zero_operand.clone());
-    let checked_product = cx.ite(operand_is_zero.clone(), zero, quotient);
-    let operand_is_zero_word = cx.bool_word(operand_is_zero);
-    let product_matches_expected = cx.eq(checked_product, expected.clone());
-    let product_matches_expected_word = cx.bool_word(product_matches_expected);
+    let zero = SymExpr::zero(cx);
+    let operand_is_zero = SymBoolExpr::eq(cx, zero_operand.clone(), zero.clone());
+    let product = SymExpr::op(cx, SymExprOp::Mul, zero_operand.clone(), expected.clone());
+    let quotient = SymExpr::op(cx, SymExprOp::UDiv, product, zero_operand.clone());
+    let checked_product = SymExpr::ite(cx, operand_is_zero.clone(), zero, quotient);
+    let operand_is_zero_word = SymExpr::bool_word(cx, operand_is_zero);
+    let product_matches_expected = SymBoolExpr::eq(cx, checked_product, expected.clone());
+    let product_matches_expected_word = SymExpr::bool_word(cx, product_matches_expected);
 
-    cx.op(SymExprOp::Or, operand_is_zero_word, product_matches_expected_word)
+    SymExpr::op(cx, SymExprOp::Or, operand_is_zero_word, product_matches_expected_word)
 }
 
 #[test]
 fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
     let mut cx = SymCx::new();
-    let a_word = cx.var("a");
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let a = cx.op(SymExprOp::And, a_word, u64_max);
-    let b_word = cx.var("b");
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let b = cx.op(SymExprOp::And, b_word, u64_max);
+    let a_word = SymExpr::var(&mut cx, "a");
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let a = SymExpr::op(&mut cx, SymExprOp::And, a_word, u64_max);
+    let b_word = SymExpr::var(&mut cx, "b");
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let b = SymExpr::op(&mut cx, SymExprOp::And, b_word, u64_max);
     let guard = checked_mul_guard_word(&mut cx, &a, &b);
-    let zero = cx.zero();
-    let guard_is_zero = cx.eq(guard, zero);
+    let zero = SymExpr::zero(&mut cx);
+    let guard_is_zero = SymBoolExpr::eq(&mut cx, guard, zero);
 
-    assert_eq!(normalize_bool_for_solver(&mut cx, guard_is_zero), cx.bool_constant(false));
+    assert_eq!(
+        normalize_bool_for_solver(&mut cx, guard_is_zero),
+        SymBoolExpr::constant(&mut cx, false)
+    );
 }
 
 #[test]
 fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let factor = cx.constant(U256::from(1_000_000_000_000_000_000u128));
+    let a = SymExpr::var(&mut cx, "a");
+    let factor = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u128));
     let guard = checked_mul_guard_word(&mut cx, &a, &factor);
-    let zero = cx.zero();
-    let guard_is_false = cx.eq(guard, zero);
-    let thousand = cx.constant(U256::from(1000));
-    let upper_bound = cx.cmp(SymBoolExprOp::Ule, a, thousand);
+    let zero = SymExpr::zero(&mut cx);
+    let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
+    let thousand = SymExpr::constant(&mut cx, U256::from(1000));
+    let upper_bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, a, thousand);
     let constraints = vec![upper_bound, guard_is_false.clone()];
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
 
-    assert_eq!(normalized, vec![cx.bool_constant(false)]);
+    assert_eq!(normalized, vec![SymBoolExpr::constant(&mut cx, false)]);
 
     for value in [U256::ZERO, U256::from(1), U256::from(1000)] {
         let model = BTreeMap::from([("a".to_string(), value)]);
@@ -2796,20 +2847,20 @@ fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
 #[test]
 fn solver_normalizes_guarded_self_division_guard() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let zero = cx.zero();
-    let a_is_zero = cx.eq(a.clone(), zero.clone());
-    let quotient = cx.op(SymExprOp::UDiv, a.clone(), a);
-    let checked_quotient = cx.ite(a_is_zero.clone(), zero.clone(), quotient);
-    let a_is_zero_word = cx.bool_word(a_is_zero);
-    let one = cx.one();
-    let quotient_is_one = cx.eq(checked_quotient, one);
-    let quotient_is_one_word = cx.bool_word(quotient_is_one);
-    let guard = cx.op(SymExprOp::Or, a_is_zero_word, quotient_is_one_word);
-    let original = cx.eq(guard, zero);
+    let a = SymExpr::var(&mut cx, "a");
+    let zero = SymExpr::zero(&mut cx);
+    let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
+    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
+    let checked_quotient = SymExpr::ite(&mut cx, a_is_zero.clone(), zero.clone(), quotient);
+    let a_is_zero_word = SymExpr::bool_word(&mut cx, a_is_zero);
+    let one = SymExpr::one(&mut cx);
+    let quotient_is_one = SymBoolExpr::eq(&mut cx, checked_quotient, one);
+    let quotient_is_one_word = SymExpr::bool_word(&mut cx, quotient_is_one);
+    let guard = SymExpr::op(&mut cx, SymExprOp::Or, a_is_zero_word, quotient_is_one_word);
+    let original = SymBoolExpr::eq(&mut cx, guard, zero);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
-    assert_eq!(normalized, cx.bool_constant(false));
+    assert_eq!(normalized, SymBoolExpr::constant(&mut cx, false));
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
@@ -2820,18 +2871,18 @@ fn solver_normalizes_guarded_self_division_guard() {
 #[test]
 fn solver_normalizes_guarded_self_division_word() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let zero = cx.zero();
-    let a_is_zero = cx.eq(a.clone(), zero.clone());
-    let quotient = cx.op(SymExprOp::UDiv, a.clone(), a);
-    let checked_quotient = cx.ite(a_is_zero.clone(), zero, quotient);
+    let a = SymExpr::var(&mut cx, "a");
+    let zero = SymExpr::zero(&mut cx);
+    let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
+    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
+    let checked_quotient = SymExpr::ite(&mut cx, a_is_zero.clone(), zero, quotient);
     let normalized = normalize_expr_for_solver(&mut cx, checked_quotient.clone());
 
     assert!(!normalized.smt().contains("bvudiv"));
     let a_is_nonzero = a_is_zero.not(&mut cx);
-    let one = cx.one();
-    let zero = cx.zero();
-    let expected = cx.ite(a_is_nonzero, one, zero);
+    let one = SymExpr::one(&mut cx);
+    let zero = SymExpr::zero(&mut cx);
+    let expected = SymExpr::ite(&mut cx, a_is_nonzero, one, zero);
     assert_eq!(normalized, expected);
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
@@ -2846,11 +2897,11 @@ fn solver_normalizes_guarded_self_division_word() {
 #[test]
 fn solver_does_not_invert_guarded_zero_self_division() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let zero = cx.zero();
-    let a_is_zero = cx.eq(a.clone(), zero.clone());
-    let quotient = cx.op(SymExprOp::UDiv, a.clone(), a);
-    let mirrored = cx.ite(a_is_zero, quotient, zero);
+    let a = SymExpr::var(&mut cx, "a");
+    let zero = SymExpr::zero(&mut cx);
+    let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
+    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
+    let mirrored = SymExpr::ite(&mut cx, a_is_zero, quotient, zero);
     let normalized = normalize_expr_for_solver(&mut cx, mirrored.clone());
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
@@ -2862,55 +2913,58 @@ fn solver_does_not_invert_guarded_zero_self_division() {
 #[test]
 fn solver_normalizes_guarded_self_division_add_overflow_guard() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let zero = cx.zero();
-    let a_is_zero = cx.eq(a.clone(), zero.clone());
-    let quotient = cx.op(SymExprOp::UDiv, a.clone(), a);
-    let checked_quotient = cx.ite(a_is_zero, zero, quotient);
-    let one = cx.one();
-    let sum = cx.op(SymExprOp::Add, one, checked_quotient.clone());
-    let condition = cx.cmp(SymBoolExprOp::Ugt, checked_quotient, sum);
+    let a = SymExpr::var(&mut cx, "a");
+    let zero = SymExpr::zero(&mut cx);
+    let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
+    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
+    let checked_quotient = SymExpr::ite(&mut cx, a_is_zero, zero, quotient);
+    let one = SymExpr::one(&mut cx);
+    let sum = SymExpr::op(&mut cx, SymExprOp::Add, one, checked_quotient.clone());
+    let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, checked_quotient, sum);
 
-    assert_eq!(normalize_bool_for_solver(&mut cx, condition), cx.bool_constant(false));
+    assert_eq!(
+        normalize_bool_for_solver(&mut cx, condition),
+        SymBoolExpr::constant(&mut cx, false)
+    );
 }
 
 #[test]
 fn solver_normalizes_checked_mul_guard_with_context_bound() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let scale = cx.constant(U256::from(1_000_000_000_000_000_000u128));
+    let a = SymExpr::var(&mut cx, "a");
+    let scale = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u128));
     let guard = checked_mul_guard_word(&mut cx, &a, &scale);
-    let zero = cx.zero();
-    let a_positive = cx.cmp(SymBoolExprOp::Ugt, a.clone(), zero.clone());
-    let thousand = cx.constant(U256::from(1000));
-    let above_thousand = cx.cmp(SymBoolExprOp::Ugt, a, thousand).not(&mut cx);
-    let guard_is_zero = cx.eq(guard, zero);
+    let zero = SymExpr::zero(&mut cx);
+    let a_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a.clone(), zero.clone());
+    let thousand = SymExpr::constant(&mut cx, U256::from(1000));
+    let above_thousand = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a, thousand).not(&mut cx);
+    let guard_is_zero = SymBoolExpr::eq(&mut cx, guard, zero);
     let constraints = vec![a_positive, above_thousand, guard_is_zero];
 
     assert_eq!(
         normalize_constraints_for_solver(&mut cx, &constraints),
-        vec![cx.bool_constant(false)]
+        vec![SymBoolExpr::constant(&mut cx, false)]
     );
 }
 
 #[test]
 fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let scale = cx.constant(U256::from(1_000_000_000_000_000_000u128));
+    let a = SymExpr::var(&mut cx, "a");
+    let scale = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u128));
     let guard = checked_mul_guard_word(&mut cx, &a, &scale);
-    let zero = cx.zero();
-    let guard_is_zero = cx.eq(guard, zero);
+    let zero = SymExpr::zero(&mut cx);
+    let guard_is_zero = SymBoolExpr::eq(&mut cx, guard, zero);
 
     assert_ne!(
         normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&guard_is_zero)),
-        vec![cx.bool_constant(false)]
+        vec![SymBoolExpr::constant(&mut cx, false)]
     );
-    let max = cx.constant(U256::MAX);
-    let bound = cx.cmp(SymBoolExprOp::Ule, a, max);
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, a, max);
     assert_ne!(
         normalize_constraints_for_solver(&mut cx, &[bound, guard_is_zero.clone()]),
-        vec![cx.bool_constant(false)]
+        vec![SymBoolExpr::constant(&mut cx, false)]
     );
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
@@ -2920,14 +2974,14 @@ fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
 #[test]
 fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let b = cx.var("b");
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
     let guard = checked_mul_guard_word(&mut cx, &a, &b);
-    let zero = cx.zero();
-    let original = cx.eq(guard, zero);
+    let zero = SymExpr::zero(&mut cx);
+    let original = SymBoolExpr::eq(&mut cx, guard, zero);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
-    assert_ne!(normalized, cx.bool_constant(false));
+    assert_ne!(normalized, SymBoolExpr::constant(&mut cx, false));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(2))]);
     assert!(original.eval_model(&model).unwrap());
@@ -2937,13 +2991,13 @@ fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
 #[test]
 fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let factor = cx.constant(U256::from(2));
+    let a = SymExpr::var(&mut cx, "a");
+    let factor = SymExpr::constant(&mut cx, U256::from(2));
     let guard = checked_mul_guard_word(&mut cx, &a, &factor);
-    let zero = cx.zero();
-    let original = cx.eq(guard, zero);
-    let max = cx.constant(U256::MAX);
-    let bound = cx.cmp(SymBoolExprOp::Ule, a, max);
+    let zero = SymExpr::zero(&mut cx);
+    let original = SymBoolExpr::eq(&mut cx, guard, zero);
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, a, max);
     let normalized = normalize_constraints_for_solver(&mut cx, &[bound, original.clone()]);
 
     assert!(!matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)));
@@ -2956,33 +3010,36 @@ fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
 #[test]
 fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
     let mut cx = SymCx::new();
-    let a_raw = cx.var("a");
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let a = cx.op(SymExprOp::And, a_raw, u64_max);
-    let b_raw = cx.var("b");
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let b_masked = cx.op(SymExprOp::And, b_raw, u64_max);
-    let numerator = cx.op(SymExprOp::Mul, b_masked, a.clone());
-    let denominator_raw = cx.var("denominator");
-    let high_mask = cx.constant(U256::MAX >> 64);
-    let denominator = cx.op(SymExprOp::And, denominator_raw, high_mask);
-    let b = cx.op(SymExprOp::UDiv, numerator, denominator);
-    let sum = cx.op(SymExprOp::Add, a.clone(), b);
-    let condition = cx.cmp(SymBoolExprOp::Ugt, a, sum);
+    let a_raw = SymExpr::var(&mut cx, "a");
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let a = SymExpr::op(&mut cx, SymExprOp::And, a_raw, u64_max);
+    let b_raw = SymExpr::var(&mut cx, "b");
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let b_masked = SymExpr::op(&mut cx, SymExprOp::And, b_raw, u64_max);
+    let numerator = SymExpr::op(&mut cx, SymExprOp::Mul, b_masked, a.clone());
+    let denominator_raw = SymExpr::var(&mut cx, "denominator");
+    let high_mask = SymExpr::constant(&mut cx, U256::MAX >> 64);
+    let denominator = SymExpr::op(&mut cx, SymExprOp::And, denominator_raw, high_mask);
+    let b = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, denominator);
+    let sum = SymExpr::op(&mut cx, SymExprOp::Add, a.clone(), b);
+    let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a, sum);
 
-    assert_eq!(normalize_bool_for_solver(&mut cx, condition), cx.bool_constant(false));
+    assert_eq!(
+        normalize_bool_for_solver(&mut cx, condition),
+        SymBoolExpr::constant(&mut cx, false)
+    );
 }
 
 #[test]
 fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let b = cx.var("b");
-    let sum = cx.op(SymExprOp::Add, a.clone(), b);
-    let original = cx.cmp(SymBoolExprOp::Ugt, a, sum);
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
+    let sum = SymExpr::op(&mut cx, SymExprOp::Add, a.clone(), b);
+    let original = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a, sum);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
-    assert_ne!(normalized, cx.bool_constant(false));
+    assert_ne!(normalized, SymBoolExpr::constant(&mut cx, false));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(1))]);
     assert!(original.eval_model(&model).unwrap());
@@ -2992,26 +3049,27 @@ fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
 #[test]
 fn solver_detects_monotonic_product_contradiction() {
     let mut cx = SymCx::new();
-    let ink_word = cx.var("ink");
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let ink = cx.op(SymExprOp::And, ink_word, u64_max);
-    let art_word = cx.var("art");
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let art = cx.op(SymExprOp::And, art_word, u64_max);
-    let spot_word = cx.var("spot");
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let spot = cx.op(SymExprOp::And, spot_word, u64_max);
-    let rate_word = cx.var("rate");
-    let u64_max = cx.constant(U256::from(u64::MAX));
-    let rate = cx.op(SymExprOp::And, rate_word, u64_max);
-    let zero = cx.zero();
-    let ink_positive = cx.cmp(SymBoolExprOp::Ugt, ink.clone(), zero.clone());
-    let art_above_ink = cx.cmp(SymBoolExprOp::Ugt, art.clone(), ink.clone());
-    let spot_positive = cx.cmp(SymBoolExprOp::Ugt, spot.clone(), zero);
-    let rate_above_spot = cx.cmp(SymBoolExprOp::Ugt, rate.clone(), spot.clone());
-    let left_product = cx.op(SymExprOp::Mul, ink, spot);
-    let right_product = cx.op(SymExprOp::Mul, art, rate);
-    let wrapping = cx.cmp(SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
+    let ink_word = SymExpr::var(&mut cx, "ink");
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let ink = SymExpr::op(&mut cx, SymExprOp::And, ink_word, u64_max);
+    let art_word = SymExpr::var(&mut cx, "art");
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let art = SymExpr::op(&mut cx, SymExprOp::And, art_word, u64_max);
+    let spot_word = SymExpr::var(&mut cx, "spot");
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let spot = SymExpr::op(&mut cx, SymExprOp::And, spot_word, u64_max);
+    let rate_word = SymExpr::var(&mut cx, "rate");
+    let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let rate = SymExpr::op(&mut cx, SymExprOp::And, rate_word, u64_max);
+    let zero = SymExpr::zero(&mut cx);
+    let ink_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, ink.clone(), zero.clone());
+    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
+    let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
+    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
+    let left_product = SymExpr::op(&mut cx, SymExprOp::Mul, ink, spot);
+    let right_product = SymExpr::op(&mut cx, SymExprOp::Mul, art, rate);
+    let wrapping =
+        SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
 
     assert!(product_monotonic_unsat(&mut cx, &constraints));
@@ -3020,18 +3078,19 @@ fn solver_detects_monotonic_product_contradiction() {
 #[test]
 fn solver_does_not_prune_wrapping_product_inequality() {
     let mut cx = SymCx::new();
-    let ink = cx.var("ink");
-    let art = cx.var("art");
-    let spot = cx.var("spot");
-    let rate = cx.var("rate");
-    let zero = cx.zero();
-    let ink_positive = cx.cmp(SymBoolExprOp::Ugt, ink.clone(), zero.clone());
-    let art_above_ink = cx.cmp(SymBoolExprOp::Ugt, art.clone(), ink.clone());
-    let spot_positive = cx.cmp(SymBoolExprOp::Ugt, spot.clone(), zero);
-    let rate_above_spot = cx.cmp(SymBoolExprOp::Ugt, rate.clone(), spot.clone());
-    let left_product = cx.op(SymExprOp::Mul, ink, spot);
-    let right_product = cx.op(SymExprOp::Mul, art, rate);
-    let wrapping = cx.cmp(SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
+    let ink = SymExpr::var(&mut cx, "ink");
+    let art = SymExpr::var(&mut cx, "art");
+    let spot = SymExpr::var(&mut cx, "spot");
+    let rate = SymExpr::var(&mut cx, "rate");
+    let zero = SymExpr::zero(&mut cx);
+    let ink_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, ink.clone(), zero.clone());
+    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
+    let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
+    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
+    let left_product = SymExpr::op(&mut cx, SymExprOp::Mul, ink, spot);
+    let right_product = SymExpr::op(&mut cx, SymExprOp::Mul, art, rate);
+    let wrapping =
+        SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
 
     assert!(!product_monotonic_unsat(&mut cx, &constraints));
@@ -3048,31 +3107,31 @@ fn solver_does_not_prune_wrapping_product_inequality() {
 #[test]
 fn hard_arithmetic_detection_flags_symbolic_mul_div_and_mod() {
     let mut cx = SymCx::new();
-    let x = cx.var("x");
-    let y = cx.var("y");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
 
-    assert!(cx.op(SymExprOp::Mul, x.clone(), y.clone()).contains_hard_arith());
-    assert!(cx.op(SymExprOp::UDiv, x.clone(), y.clone()).contains_hard_arith());
-    assert!(cx.op(SymExprOp::URem, x.clone(), y).contains_hard_arith());
-    let one = cx.constant(U256::from(1));
-    let mul = cx.op(SymExprOp::Mul, x, one);
+    assert!(SymExpr::op(&mut cx, SymExprOp::Mul, x.clone(), y.clone()).contains_hard_arith());
+    assert!(SymExpr::op(&mut cx, SymExprOp::UDiv, x.clone(), y.clone()).contains_hard_arith());
+    assert!(SymExpr::op(&mut cx, SymExprOp::URem, x.clone(), y).contains_hard_arith());
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let mul = SymExpr::op(&mut cx, SymExprOp::Mul, x, one);
     assert!(!mul.contains_hard_arith());
 }
 
 #[test]
 fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
     let mut cx = SymCx::new();
-    let first = cx.var("first");
-    let donation = cx.var("donation");
-    let second = cx.var("second");
-    let denominator = cx.op(SymExprOp::Add, first.clone(), donation.clone());
-    let numerator = cx.op(SymExprOp::Mul, second.clone(), first.clone());
-    let shares = cx.op(SymExprOp::UDiv, numerator, denominator);
-    let zero = cx.zero();
-    let first_nonzero = cx.cmp(SymBoolExprOp::Ugt, first, zero.clone());
-    let donation_nonzero = cx.cmp(SymBoolExprOp::Ugt, donation, zero.clone());
-    let second_nonzero = cx.cmp(SymBoolExprOp::Ugt, second, zero.clone());
-    let shares_zero = cx.eq(shares, zero);
+    let first = SymExpr::var(&mut cx, "first");
+    let donation = SymExpr::var(&mut cx, "donation");
+    let second = SymExpr::var(&mut cx, "second");
+    let denominator = SymExpr::op(&mut cx, SymExprOp::Add, first.clone(), donation.clone());
+    let numerator = SymExpr::op(&mut cx, SymExprOp::Mul, second.clone(), first.clone());
+    let shares = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, denominator);
+    let zero = SymExpr::zero(&mut cx);
+    let first_nonzero = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, first, zero.clone());
+    let donation_nonzero = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, donation, zero.clone());
+    let second_nonzero = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, second, zero.clone());
+    let shares_zero = SymBoolExpr::eq(&mut cx, shares, zero);
     let constraints = vec![first_nonzero, donation_nonzero, second_nonzero, shares_zero];
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
@@ -3083,18 +3142,19 @@ fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
 #[test]
 fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
     let mut cx = SymCx::new();
-    let ink = cx.var("ink");
-    let art = cx.var("art");
-    let spot = cx.var("spot");
-    let rate = cx.var("rate");
-    let zero = cx.zero();
-    let ink_positive = cx.cmp(SymBoolExprOp::Ugt, ink.clone(), zero.clone());
-    let art_above_ink = cx.cmp(SymBoolExprOp::Ugt, art.clone(), ink.clone());
-    let spot_positive = cx.cmp(SymBoolExprOp::Ugt, spot.clone(), zero);
-    let rate_above_spot = cx.cmp(SymBoolExprOp::Ugt, rate.clone(), spot.clone());
-    let left_product = cx.op(SymExprOp::Mul, ink, spot);
-    let right_product = cx.op(SymExprOp::Mul, art, rate);
-    let wrapping = cx.cmp(SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
+    let ink = SymExpr::var(&mut cx, "ink");
+    let art = SymExpr::var(&mut cx, "art");
+    let spot = SymExpr::var(&mut cx, "spot");
+    let rate = SymExpr::var(&mut cx, "rate");
+    let zero = SymExpr::zero(&mut cx);
+    let ink_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, ink.clone(), zero.clone());
+    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
+    let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
+    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
+    let left_product = SymExpr::op(&mut cx, SymExprOp::Mul, ink, spot);
+    let right_product = SymExpr::op(&mut cx, SymExprOp::Mul, art, rate);
+    let wrapping =
+        SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
@@ -3105,12 +3165,12 @@ fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
 #[test]
 fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let zero = cx.zero();
-    let positive = cx.cmp(SymBoolExprOp::Ugt, a.clone(), zero.clone());
-    let max = cx.constant(U256::MAX);
-    let product = cx.mulmod(a.clone(), a, max);
-    let exact = cx.eq(product, zero);
+    let a = SymExpr::var(&mut cx, "a");
+    let zero = SymExpr::zero(&mut cx);
+    let positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a.clone(), zero.clone());
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let product = SymExpr::mulmod(&mut cx, a.clone(), a, max);
+    let exact = SymBoolExpr::eq(&mut cx, product, zero);
     let constraints = vec![positive, exact];
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
@@ -3122,23 +3182,23 @@ fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
 #[test]
 fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
     let mut cx = SymCx::new();
-    let a = cx.var("a");
-    let b = cx.var("b");
-    let c = cx.var("c");
-    let d = cx.var("d");
-    let e = cx.var("e");
-    let f = cx.var("f");
-    let product = cx.op(SymExprOp::Mul, a, b);
-    let one = cx.constant(U256::from(1));
-    let product_eq_one = cx.eq(product, one);
-    let three = cx.constant(U256::from(3));
-    let c_eq_three = cx.eq(c, three);
-    let four = cx.constant(U256::from(4));
-    let d_eq_four = cx.eq(d, four);
-    let five = cx.constant(U256::from(5));
-    let e_eq_five = cx.eq(e, five);
-    let six = cx.constant(U256::from(6));
-    let f_eq_six = cx.eq(f, six);
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
+    let c = SymExpr::var(&mut cx, "c");
+    let d = SymExpr::var(&mut cx, "d");
+    let e = SymExpr::var(&mut cx, "e");
+    let f = SymExpr::var(&mut cx, "f");
+    let product = SymExpr::op(&mut cx, SymExprOp::Mul, a, b);
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let product_eq_one = SymBoolExpr::eq(&mut cx, product, one);
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let c_eq_three = SymBoolExpr::eq(&mut cx, c, three);
+    let four = SymExpr::constant(&mut cx, U256::from(4));
+    let d_eq_four = SymBoolExpr::eq(&mut cx, d, four);
+    let five = SymExpr::constant(&mut cx, U256::from(5));
+    let e_eq_five = SymBoolExpr::eq(&mut cx, e, five);
+    let six = SymExpr::constant(&mut cx, U256::from(6));
+    let f_eq_six = SymBoolExpr::eq(&mut cx, f, six);
     let constraints = vec![product_eq_one, c_eq_three, d_eq_four, e_eq_five, f_eq_six];
 
     let Some(model) = hard_arith_fallback_model(&constraints) else { return };
@@ -3149,11 +3209,11 @@ fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
 #[test]
 fn hard_arithmetic_fallback_skips_symbolic_hashes() {
     let mut cx = SymCx::new();
-    let x = cx.var("x");
-    let hash = cx.hash_symbol(Symbol::intern("hash"), "sha256", vec![x.clone()]);
-    let product = cx.op(SymExprOp::Mul, x, hash);
-    let one = cx.constant(U256::from(1));
-    let constraints = vec![cx.eq(product, one)];
+    let x = SymExpr::var(&mut cx, "x");
+    let hash = SymExpr::hash_symbol(&mut cx, Symbol::intern("hash"), "sha256", vec![x.clone()]);
+    let product = SymExpr::op(&mut cx, SymExprOp::Mul, x, hash);
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraints = vec![SymBoolExpr::eq(&mut cx, product, one)];
 
     assert!(hard_arith_fallback_model(&constraints).is_none());
 }
@@ -3396,14 +3456,14 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let marker = portfolio_test_marker("hard-arith-is-sat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let zero = cx.zero();
-    let x_positive = cx.cmp(SymBoolExprOp::Ugt, x.clone(), zero.clone());
-    let y_positive = cx.cmp(SymBoolExprOp::Ugt, y.clone(), zero);
-    let product = cx.op(SymExprOp::Mul, x, y);
-    let four = cx.constant(U256::from(4));
-    let product_eq_four = cx.eq(product, four);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let zero = SymExpr::zero(&mut cx);
+    let x_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), zero.clone());
+    let y_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, y.clone(), zero);
+    let product = SymExpr::op(&mut cx, SymExprOp::Mul, x, y);
+    let four = SymExpr::constant(&mut cx, U256::from(4));
+    let product_eq_four = SymBoolExpr::eq(&mut cx, product, four);
     let constraints = vec![x_positive, y_positive, product_eq_four];
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
     let model = hard_arith_fallback_model(&normalized).unwrap();
@@ -3429,14 +3489,14 @@ fn model_uses_validated_hard_arithmetic_fallback_cache() {
     let marker = portfolio_test_marker("hard-arith-model-cache");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let zero = cx.zero();
-    let x_positive = cx.cmp(SymBoolExprOp::Ugt, x.clone(), zero.clone());
-    let y_positive = cx.cmp(SymBoolExprOp::Ugt, y.clone(), zero);
-    let product = cx.op(SymExprOp::Mul, x, y);
-    let four = cx.constant(U256::from(4));
-    let product_eq_four = cx.eq(product, four);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let zero = SymExpr::zero(&mut cx);
+    let x_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), zero.clone());
+    let y_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, y.clone(), zero);
+    let product = SymExpr::op(&mut cx, SymExprOp::Mul, x, y);
+    let four = SymExpr::constant(&mut cx, U256::from(4));
+    let product_eq_four = SymBoolExpr::eq(&mut cx, product, four);
     let constraints = vec![x_positive, y_positive, product_eq_four];
 
     let first = solver.model(&mut cx, &constraints).unwrap();
@@ -3463,13 +3523,13 @@ fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
     let marker = portfolio_test_marker("hard-arith-is-sat-unsat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let zero = cx.zero();
-    let x_is_zero = cx.eq(x.clone(), zero);
-    let product = cx.op(SymExprOp::Mul, x, y);
-    let one = cx.one();
-    let product_eq_one = cx.eq(product, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let zero = SymExpr::zero(&mut cx);
+    let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
+    let product = SymExpr::op(&mut cx, SymExprOp::Mul, x, y);
+    let one = SymExpr::one(&mut cx);
+    let product_eq_one = SymBoolExpr::eq(&mut cx, product, one);
     let constraints = vec![x_is_zero, product_eq_one];
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
 
@@ -3492,14 +3552,17 @@ fn sat_cache_reuses_normalized_is_sat_results() {
     let marker = portfolio_test_marker("sat-cache");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let one = cx.constant(U256::from(1));
-    let two = cx.constant(U256::from(2));
-    let constraints =
-        vec![cx.bool_constant(true), cx.eq(x.clone(), one.clone()), cx.eq(y.clone(), two.clone())];
-    let y_eq_two = cx.eq(y, two);
-    let x_eq_one = cx.eq(x, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let constraints = vec![
+        SymBoolExpr::constant(&mut cx, true),
+        SymBoolExpr::eq(&mut cx, x.clone(), one.clone()),
+        SymBoolExpr::eq(&mut cx, y.clone(), two.clone()),
+    ];
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
     let reordered_constraints = vec![y_eq_two, x_eq_one];
 
     assert!(solver.is_sat(&mut cx, &constraints).unwrap());
@@ -3521,19 +3584,19 @@ fn sat_cache_reuses_nested_commutative_results() {
     let marker = portfolio_test_marker("sat-cache-canonical");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let three = cx.constant(U256::from(3));
-    let one = cx.constant(U256::from(1));
-    let sum = cx.op(SymExprOp::Add, x.clone(), y.clone());
-    let sum_eq_three = cx.eq(sum, three.clone());
-    let x_eq_one = cx.eq(x.clone(), one.clone());
-    let constraints = vec![cx.and(vec![sum_eq_three, x_eq_one])];
-    let one_eq_x = cx.eq(one, x);
-    let x_again = cx.var("x");
-    let reordered_sum = cx.op(SymExprOp::Add, y, x_again);
-    let three_eq_sum = cx.eq(three, reordered_sum);
-    let reordered_constraints = vec![cx.and(vec![one_eq_x, three_eq_sum])];
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let sum = SymExpr::op(&mut cx, SymExprOp::Add, x.clone(), y.clone());
+    let sum_eq_three = SymBoolExpr::eq(&mut cx, sum, three.clone());
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x.clone(), one.clone());
+    let constraints = vec![SymBoolExpr::and(&mut cx, vec![sum_eq_three, x_eq_one])];
+    let one_eq_x = SymBoolExpr::eq(&mut cx, one, x);
+    let x_again = SymExpr::var(&mut cx, "x");
+    let reordered_sum = SymExpr::op(&mut cx, SymExprOp::Add, y, x_again);
+    let three_eq_sum = SymBoolExpr::eq(&mut cx, three, reordered_sum);
+    let reordered_constraints = vec![SymBoolExpr::and(&mut cx, vec![one_eq_x, three_eq_sum])];
 
     assert!(solver.is_sat(&mut cx, &constraints).unwrap());
     assert!(solver.is_sat(&mut cx, &reordered_constraints).unwrap());
@@ -3553,9 +3616,9 @@ fn sat_cache_deduplicates_repeated_constraints() {
     let marker = portfolio_test_marker("sat-cache-dedup");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let constraint = cx.eq(x, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraint = SymBoolExpr::eq(&mut cx, x, one);
     let duplicated = vec![constraint.clone(), constraint.clone()];
     let deduplicated = vec![constraint];
 
@@ -3577,9 +3640,9 @@ fn sat_cache_deduplicates_nested_repeated_constraints() {
     let marker = portfolio_test_marker("sat-cache-nested-dedup");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let constraint = cx.eq(x, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraint = SymBoolExpr::eq(&mut cx, x, one);
     let duplicated =
         vec![SymBoolExpr::raw_and(&mut cx, vec![constraint.clone(), constraint.clone()])];
     let deduplicated = vec![constraint];
@@ -3602,15 +3665,15 @@ fn sat_cache_flattens_grouped_conjunction_keys() {
     let marker = portfolio_test_marker("sat-cache-and-flatten");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let z = cx.var("z");
-    let one = cx.constant(U256::from(1));
-    let a = cx.eq(x, one);
-    let two = cx.constant(U256::from(2));
-    let b = cx.eq(y, two);
-    let three = cx.constant(U256::from(3));
-    let c = cx.eq(z, three);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let a = SymBoolExpr::eq(&mut cx, x, one);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let b = SymBoolExpr::eq(&mut cx, y, two);
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let c = SymBoolExpr::eq(&mut cx, z, three);
     let child = SymBoolExpr::raw_and(&mut cx, vec![b.clone(), c.clone()]);
     let grouped = vec![SymBoolExpr::raw_and(&mut cx, vec![child, a.clone()])];
     let split = vec![c, a, b];
@@ -3633,20 +3696,20 @@ fn sat_cache_reuses_reversed_comparisons() {
     let marker = portfolio_test_marker("sat-cache-reversed-cmp");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
-    let x = cx.var("x");
-    let y = cx.var("y");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
 
-    let ugt = cx.cmp(SymBoolExprOp::Ugt, x.clone(), y.clone());
+    let ugt = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), y.clone());
     assert!(solver.is_sat(&mut cx, &[ugt]).unwrap());
-    let ult = cx.cmp(SymBoolExprOp::Ult, y.clone(), x.clone());
+    let ult = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, y.clone(), x.clone());
     assert!(solver.is_sat(&mut cx, &[ult]).unwrap());
-    let uge = cx.cmp(SymBoolExprOp::Uge, x.clone(), y.clone());
+    let uge = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, x.clone(), y.clone());
     assert!(solver.is_sat(&mut cx, &[uge]).unwrap());
-    let ule = cx.cmp(SymBoolExprOp::Ule, y.clone(), x.clone());
+    let ule = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, y.clone(), x.clone());
     assert!(solver.is_sat(&mut cx, &[ule]).unwrap());
-    let sgt = cx.cmp(SymBoolExprOp::Sgt, x.clone(), y.clone());
+    let sgt = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Sgt, x.clone(), y.clone());
     assert!(solver.is_sat(&mut cx, &[sgt]).unwrap());
-    let slt = cx.cmp(SymBoolExprOp::Slt, y, x);
+    let slt = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Slt, y, x);
     assert!(solver.is_sat(&mut cx, &[slt]).unwrap());
 
     let stats = solver.stats();
@@ -3664,11 +3727,11 @@ fn sat_cache_reuses_unsat_branch_complement() {
     let marker = portfolio_test_marker("sat-cache-branch-complement");
     let commands = vec![counted_solver_command_sequence(&marker, &["sat", "unsat"])];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = cx.var("x");
-    let ten = cx.constant(U256::from(10));
-    let base = cx.cmp(SymBoolExprOp::Ult, x.clone(), ten);
-    let one = cx.constant(U256::from(1));
-    let condition = cx.eq(x, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let base = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), ten);
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let condition = SymBoolExpr::eq(&mut cx, x, one);
     let not_condition = condition.clone().not(&mut cx);
 
     assert!(solver.is_sat(&mut cx, std::slice::from_ref(&base)).unwrap());
@@ -3690,13 +3753,13 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     let marker = portfolio_test_marker("sat-cache-unsat-base-branch-complement");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = cx.var("x");
-    let two = cx.constant(U256::from(2));
-    let one = cx.constant(U256::from(1));
-    let lower = cx.cmp(SymBoolExprOp::Uge, x.clone(), two);
-    let upper = cx.cmp(SymBoolExprOp::Ule, x.clone(), one.clone());
-    let base = cx.and(vec![lower, upper]);
-    let condition = cx.eq(x, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let lower = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, x.clone(), two);
+    let upper = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, x.clone(), one.clone());
+    let base = SymBoolExpr::and(&mut cx, vec![lower, upper]);
+    let condition = SymBoolExpr::eq(&mut cx, x, one);
 
     assert!(!solver.is_sat_branch(&mut cx, &[base.clone(), condition.clone()]).unwrap());
     let not_condition = condition.not(&mut cx);
@@ -3717,9 +3780,9 @@ fn sat_cache_does_not_cache_unknown_results() {
     let marker = portfolio_test_marker("sat-cache-unknown");
     let commands = vec![counted_solver_command(&marker, "unknown")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 4, false);
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let constraints = vec![cx.eq(x, one)];
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraints = vec![SymBoolExpr::eq(&mut cx, x, one)];
 
     assert!(matches!(solver.is_sat(&mut cx, &constraints), Err(SymbolicError::SolverUnknown)));
     assert!(matches!(solver.is_sat(&mut cx, &constraints), Err(SymbolicError::SolverUnknown)));
@@ -3744,14 +3807,17 @@ fn model_cache_reuses_normalized_model_results() {
         #x0000000000000000000000000000000000000000000000000000000000000002))";
     let commands = vec![counted_solver_command(&marker, model_output)];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let y = cx.var("y");
-    let one = cx.constant(U256::from(1));
-    let two = cx.constant(U256::from(2));
-    let constraints =
-        vec![cx.bool_constant(true), cx.eq(x.clone(), one.clone()), cx.eq(y.clone(), two.clone())];
-    let y_eq_two = cx.eq(y, two);
-    let x_eq_one = cx.eq(x, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let constraints = vec![
+        SymBoolExpr::constant(&mut cx, true),
+        SymBoolExpr::eq(&mut cx, x.clone(), one.clone()),
+        SymBoolExpr::eq(&mut cx, y.clone(), two.clone()),
+    ];
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
     let reordered_constraints = vec![y_eq_two, x_eq_one];
 
     assert_eq!(
@@ -3782,9 +3848,9 @@ fn model_query_populates_sat_cache() {
         #x0000000000000000000000000000000000000000000000000000000000000001))";
     let commands = vec![counted_solver_command(&marker, model_output)];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let constraints = vec![cx.eq(x, one)];
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraints = vec![SymBoolExpr::eq(&mut cx, x, one)];
 
     assert_eq!(
         solver.model(&mut cx, &constraints).unwrap().get(&Symbol::intern("x")),
@@ -3806,9 +3872,9 @@ fn model_query_populates_sat_cache() {
 fn direct_contradiction_is_sat_short_circuits_locally() {
     let mut cx = SymCx::new();
     let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let constraint = cx.eq(x, one);
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraint = SymBoolExpr::eq(&mut cx, x, one);
     let constraints = vec![constraint.clone(), constraint.not(&mut cx)];
 
     assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
@@ -3826,12 +3892,12 @@ fn is_sat_reuses_cached_unsat_subset() {
     let marker = portfolio_test_marker("unsat-subset-cache");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let x_eq_one = cx.eq(x, one);
-    let y = cx.var("y");
-    let two = cx.constant(U256::from(2));
-    let y_eq_two = cx.eq(y, two);
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
+    let y = SymExpr::var(&mut cx, "y");
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
 
     assert!(!solver.is_sat(&mut cx, std::slice::from_ref(&x_eq_one)).unwrap());
     assert!(!solver.is_sat(&mut cx, &[x_eq_one, y_eq_two]).unwrap());
@@ -3854,12 +3920,12 @@ fn is_sat_does_not_reuse_cached_sat_subset() {
     let marker = portfolio_test_marker("sat-subset-cache");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let x_eq_one = cx.eq(x, one);
-    let y = cx.var("y");
-    let two = cx.constant(U256::from(2));
-    let y_eq_two = cx.eq(y, two);
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
+    let y = SymExpr::var(&mut cx, "y");
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
 
     assert!(solver.is_sat(&mut cx, std::slice::from_ref(&x_eq_one)).unwrap());
     assert!(matches!(
@@ -3883,9 +3949,9 @@ fn model_short_circuits_when_sat_cache_proved_unsat() {
     let marker = portfolio_test_marker("model-cache-unsat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let constraints = vec![cx.eq(x, one)];
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraints = vec![SymBoolExpr::eq(&mut cx, x, one)];
 
     assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
     assert!(
@@ -3983,11 +4049,11 @@ fn portfolio_scheduler_promotes_recent_sat_winner() {
     ];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 2, false);
 
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let first = vec![cx.eq(x.clone(), one)];
-    let two = cx.constant(U256::from(2));
-    let second = vec![cx.eq(x, two)];
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let first = vec![SymBoolExpr::eq(&mut cx, x.clone(), one)];
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let second = vec![SymBoolExpr::eq(&mut cx, x, two)];
 
     assert!(solver.is_sat(&mut cx, &first).unwrap());
     assert!(marker.exists());
@@ -4025,11 +4091,11 @@ fn portfolio_scheduler_promotes_recent_unsat_winner() {
 
     solver.capture_diagnostics();
 
-    let x = cx.var("x");
-    let one = cx.constant(U256::from(1));
-    let first = vec![cx.eq(x.clone(), one)];
-    let two = cx.constant(U256::from(2));
-    let second = vec![cx.eq(x, two)];
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let first = vec![SymBoolExpr::eq(&mut cx, x.clone(), one)];
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let second = vec![SymBoolExpr::eq(&mut cx, x, two)];
 
     assert!(!solver.is_sat(&mut cx, &first).unwrap());
     assert!(!solver.is_sat(&mut cx, &second).unwrap());
@@ -4074,12 +4140,12 @@ fn portfolio_scheduler_penalizes_invalid_models() {
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 16, false);
 
     for query in 0..=PORTFOLIO_SCHEDULER_HISTORY {
-        let calldata = cx.var("calldata_0");
-        let one = cx.constant(U256::from(1));
-        let calldata_constraint = cx.eq(calldata, one);
-        let portfolio_query = cx.var(&format!("portfolio_query_{query}"));
-        let zero = cx.zero();
-        let query_constraint = cx.eq(portfolio_query, zero);
+        let calldata = SymExpr::var(&mut cx, "calldata_0");
+        let one = SymExpr::constant(&mut cx, U256::from(1));
+        let calldata_constraint = SymBoolExpr::eq(&mut cx, calldata, one);
+        let portfolio_query = SymExpr::var(&mut cx, &format!("portfolio_query_{query}"));
+        let zero = SymExpr::zero(&mut cx);
+        let query_constraint = SymBoolExpr::eq(&mut cx, portfolio_query, zero);
         let constraints = vec![calldata_constraint, query_constraint];
         assert_eq!(
             solver.model(&mut cx, &constraints).unwrap().get(&Symbol::intern("calldata_0")),
@@ -4213,13 +4279,13 @@ fn solver_smt_dump_shares_repeated_subterms() {
         .unwrap(),
     ];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 1, true);
-    let calldata = cx.var("calldata_0");
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
     let byte = calldata.extracted_byte(&mut cx, 0);
-    let shift = cx.constant(U256::from(248));
-    let shifted = cx.op(SymExprOp::Shl, byte, shift);
-    let zero = cx.zero();
-    let shifted_zero = cx.eq(shifted.clone(), zero.clone());
-    let shifted_positive = cx.cmp(SymBoolExprOp::Ugt, shifted, zero);
+    let shift = SymExpr::constant(&mut cx, U256::from(248));
+    let shifted = SymExpr::op(&mut cx, SymExprOp::Shl, byte, shift);
+    let zero = SymExpr::zero(&mut cx);
+    let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero.clone());
+    let shifted_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, shifted, zero);
     let constraints = vec![shifted_zero, shifted_positive];
 
     solver.capture_diagnostics();

@@ -41,22 +41,22 @@ impl SymExpr {
 
     pub(crate) fn address_match_condition(&self, cx: &mut SymCx, address: Address) -> SymBoolExpr {
         if let Some(word) = self.as_const() {
-            return cx.bool_constant(word == address_word(address));
+            return SymBoolExpr::constant(cx, word == address_word(address));
         }
         let Some(terms) = self.address_byte_terms(cx) else {
-            let address = cx.constant(address_word(address));
-            return cx.eq(self.clone(), address);
+            let address = Self::constant(cx, address_word(address));
+            return SymBoolExpr::eq(cx, self.clone(), address);
         };
         let bytes = address.as_slice();
         let conditions = terms
             .into_iter()
             .enumerate()
             .map(|(index, term)| {
-                let byte = cx.constant(U256::from(bytes[index]));
-                cx.eq(term, byte)
+                let byte = Self::constant(cx, U256::from(bytes[index]));
+                SymBoolExpr::eq(cx, term, byte)
             })
             .collect();
-        cx.and(conditions)
+        SymBoolExpr::and(cx, conditions)
     }
 
     pub(crate) fn symbolic_address_equivalent(&self, alias: &Self) -> bool {

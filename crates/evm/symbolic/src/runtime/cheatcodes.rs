@@ -273,7 +273,7 @@ pub(crate) const fn abi_static_input_size(words: usize) -> usize {
 }
 
 pub(crate) fn abi_bytes_return(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymReturnData {
-    let len = cx.constant(U256::from(bytes.len()));
+    let len = SymExpr::constant(cx, U256::from(bytes.len()));
     abi_bytes_return_with_len(cx, len, bytes)
 }
 
@@ -282,20 +282,24 @@ pub(crate) fn abi_bytes_return_with_len(
     len: SymExpr,
     bytes: Vec<SymExpr>,
 ) -> SymReturnData {
-    let mut out = cx.constant(U256::from(32)).into_byte_exprs(cx);
+    let mut out = SymExpr::constant(cx, U256::from(32)).into_byte_exprs(cx);
     out.extend(len.into_byte_exprs(cx));
     out.extend(bytes.iter().cloned());
-    out.resize_with(64 + bytes.len().next_multiple_of(32), || cx.zero());
+    out.resize_with(64 + bytes.len().next_multiple_of(32), || SymExpr::zero(cx));
     SymReturnData::from_byte_exprs(cx, out)
 }
 
 pub(crate) fn abi_concrete_bytes_return(cx: &mut SymCx, bytes: &[u8]) -> SymReturnData {
-    let bytes = bytes.iter().map(|byte| cx.constant(U256::from(*byte))).collect();
+    let bytes = bytes.iter().map(|byte| SymExpr::constant(cx, U256::from(*byte))).collect();
     abi_bytes_return(cx, bytes)
 }
 
 pub(crate) fn abi_concrete_value_return(cx: &mut SymCx, value: DynSolValue) -> SymReturnData {
-    let bytes = value.abi_encode().into_iter().map(|byte| cx.constant(U256::from(byte))).collect();
+    let bytes = value
+        .abi_encode()
+        .into_iter()
+        .map(|byte| SymExpr::constant(cx, U256::from(byte)))
+        .collect();
     SymReturnData::from_byte_exprs(cx, bytes)
 }
 
@@ -317,7 +321,9 @@ pub(crate) fn recorded_logs_return_data(cx: &mut SymCx, logs: Vec<SymbolicLog>) 
                     elements: vec![
                         SymbolicAbiValue::Array { elements: topics },
                         SymbolicAbiValue::Bytes { len: data_len, bytes: data },
-                        SymbolicAbiValue::Address { word: cx.constant(address_word(emitter)) },
+                        SymbolicAbiValue::Address {
+                            word: SymExpr::constant(cx, address_word(emitter)),
+                        },
                     ],
                 }
             })
@@ -393,7 +399,7 @@ pub(crate) fn complete_cheatcode_call(
 ) -> Result<(), SymbolicError> {
     state.return_data = return_data;
     state.copy_call_output_offset(cx, out_offset, out_size)?;
-    state.stack.push(cx.one())?;
+    state.stack.push(SymExpr::one(cx))?;
     Ok(())
 }
 
@@ -407,7 +413,7 @@ pub(crate) fn storage_slots_abi_array(cx: &mut SymCx, slots: Vec<SymExpr>) -> Sy
 }
 
 pub(crate) fn push_ascii(cx: &mut SymCx, out: &mut Vec<SymExpr>, value: &str) {
-    out.extend(value.bytes().map(|byte| cx.constant(U256::from(byte))));
+    out.extend(value.bytes().map(|byte| SymExpr::constant(cx, U256::from(byte))));
 }
 
 pub(crate) fn push_hex_word(cx: &mut SymCx, out: &mut Vec<SymExpr>, word: SymExpr) {
@@ -420,14 +426,17 @@ pub(crate) fn push_hex_byte(cx: &mut SymCx, out: &mut Vec<SymExpr>, byte: SymExp
     let byte = byte.low_byte(cx);
     let (high, low) = if let Some(value) = byte.as_const() {
         (
-            cx.constant(U256::from(value.to::<u8>() >> 4)),
-            cx.constant(U256::from(value.to::<u8>() & 0x0f)),
+            SymExpr::constant(cx, U256::from(value.to::<u8>() >> 4)),
+            SymExpr::constant(cx, U256::from(value.to::<u8>() & 0x0f)),
         )
     } else {
         let expr = byte;
-        let shift = cx.constant(U256::from(4));
-        let mask = cx.constant(U256::from(0x0f));
-        (cx.op(SymExprOp::Shr, expr.clone(), shift), cx.op(SymExprOp::And, expr, mask))
+        let shift = SymExpr::constant(cx, U256::from(4));
+        let mask = SymExpr::constant(cx, U256::from(0x0f));
+        (
+            SymExpr::op(cx, SymExprOp::Shr, expr.clone(), shift),
+            SymExpr::op(cx, SymExprOp::And, expr, mask),
+        )
     };
     out.push(hex_nibble_ascii(cx, high));
     out.push(hex_nibble_ascii(cx, low));
@@ -438,15 +447,15 @@ pub(crate) fn hex_nibble_ascii(cx: &mut SymCx, nibble: SymExpr) -> SymExpr {
     if let Some(value) = nibble.as_const() {
         let nibble = value.to::<u8>() & 0x0f;
         let byte = if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) };
-        cx.constant(U256::from(byte))
+        SymExpr::constant(cx, U256::from(byte))
     } else {
-        let ten = cx.constant(U256::from(10));
-        let condition = cx.cmp(SymBoolExprOp::Ult, nibble.clone(), ten);
-        let zero = cx.constant(U256::from(b'0'));
-        let digit = cx.op(SymExprOp::Add, nibble.clone(), zero);
-        let alpha_base = cx.constant(U256::from(b'a' - 10));
-        let alpha = cx.op(SymExprOp::Add, nibble, alpha_base);
-        cx.ite(condition, digit, alpha)
+        let ten = SymExpr::constant(cx, U256::from(10));
+        let condition = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, nibble.clone(), ten);
+        let zero = SymExpr::constant(cx, U256::from(b'0'));
+        let digit = SymExpr::op(cx, SymExprOp::Add, nibble.clone(), zero);
+        let alpha_base = SymExpr::constant(cx, U256::from(b'a' - 10));
+        let alpha = SymExpr::op(cx, SymExprOp::Add, nibble, alpha_base);
+        SymExpr::ite(cx, condition, digit, alpha)
     }
 }
 
@@ -806,7 +815,8 @@ pub(crate) fn dyn_potential_revert(
     };
 
     let reverter = dyn_address(reverter)?;
-    let reverter = (reverter != Address::ZERO).then(|| cx.constant(address_word(reverter)));
+    let reverter =
+        (reverter != Address::ZERO).then(|| SymExpr::constant(cx, address_word(reverter)));
     let revert_data = SymBytes::concrete(cx, dyn_bytes(revert_data)?);
     let data = if dyn_bool(partial_match)? {
         ExpectedRevertData::prefix(revert_data)
@@ -953,9 +963,9 @@ pub(crate) fn sign_hash_words(
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.sign"))?;
     Ok(vec![
-        cx.constant(U256::from(sig.v() as u64 + 27)),
-        cx.constant(sig.r()),
-        cx.constant(sig.s()),
+        SymExpr::constant(cx, U256::from(sig.v() as u64 + 27)),
+        SymExpr::constant(cx, sig.r()),
+        SymExpr::constant(cx, sig.s()),
     ])
 }
 
@@ -970,7 +980,7 @@ pub(crate) fn sign_compact_hash_words(
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.signCompact"))?;
     let y_parity = U256::from(sig.v() as u64) << 255;
-    Ok(vec![cx.constant(sig.r()), cx.constant(sig.s() | y_parity)])
+    Ok(vec![SymExpr::constant(cx, sig.r()), SymExpr::constant(cx, sig.s() | y_parity)])
 }
 
 pub(crate) fn derive_private_key<W: Wordlist>(
