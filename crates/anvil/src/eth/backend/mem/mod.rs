@@ -3718,6 +3718,14 @@ where
         block: &Block,
         block_hash: B256,
     ) -> Result<BlockOpcodeGas, BlockchainError> {
+        if block.body.transactions.is_empty() {
+            return Ok(BlockOpcodeGas {
+                block_hash,
+                block_number: block.header.number(),
+                transactions: Vec::new(),
+            });
+        }
+
         let parent_hash = block.header.parent_hash;
 
         let trace = |parent_state: &StateDb| -> Result<Vec<TransactionOpcodeGas>, BlockchainError> {

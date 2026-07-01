@@ -98,6 +98,20 @@ async fn test_trace_block_opcode_gas_local() {
     let signer: EthereumWallet = wallets[0].clone().into();
     let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
 
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    for block_id in [BlockId::number(0), BlockId::hash(genesis.header.hash), BlockId::earliest()] {
+        let opcode_gas: Option<BlockOpcodeGas> = handle
+            .http_provider()
+            .raw_request("trace_blockOpcodeGas".into(), (block_id,))
+            .await
+            .unwrap();
+        let opcode_gas = opcode_gas.unwrap();
+
+        assert_eq!(opcode_gas.block_hash, genesis.header.hash);
+        assert_eq!(opcode_gas.block_number, genesis.header.number);
+        assert!(opcode_gas.transactions.is_empty());
+    }
+
     let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
     let receipt =
         storage.setValue("bar".to_string()).send().await.unwrap().get_receipt().await.unwrap();
