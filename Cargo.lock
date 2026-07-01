@@ -5400,7 +5400,7 @@ dependencies = [
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
  "fs_extra",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "path-slash",
  "rand 0.9.4",
  "rayon",
