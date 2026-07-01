@@ -1824,6 +1824,7 @@ true}]}"#;
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
+    #[test]
     fn test_serde_trace_transaction_opcode_gas() {
         let s = r#"{"method": "trace_transactionOpcodeGas", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
