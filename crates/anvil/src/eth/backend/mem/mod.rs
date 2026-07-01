@@ -65,14 +65,15 @@ use alloy_primitives::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides,
+    BlockTransactions, EIP1186AccountProofResponse as AccountProof,
+    EIP1186StorageProof as StorageProof, Filter, Header as AlloyHeader, Index, Log, Transaction,
+    TransactionReceipt,
     anvil::Forking,
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
     simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
-    state::EvmOverrides,
+    state::{EvmOverrides, StateOverride},
     trace::{
         filter::TraceFilter,
         geth::{
@@ -3182,69 +3183,210 @@ where
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingCallOptions {
-            tracing_options, block_overrides, state_overrides, ..
+            tracing_options,
+            block_overrides,
+            state_overrides,
+            tx_index,
         } = opts;
+
+        if let Some(tx_index) = tx_index {
+            return self
+                .call_with_tracing_at_tx_index(
+                    request,
+                    fee_details,
+                    block_request,
+                    tx_index,
+                    tracing_options,
+                    state_overrides,
+                    block_overrides,
+                )
+                .await;
+        }
+
+        self.with_database_at(block_request, |state, block| {
+            let cache_db = CacheDB::new(state);
+            self.trace_call_with_state(
+                request,
+                fee_details,
+                block,
+                cache_db,
+                tracing_options,
+                state_overrides,
+                block_overrides,
+            )
+        })
+        .await?
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn call_with_tracing_at_tx_index(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        fee_details: FeeDetails,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        tx_index: u64,
+        tracing_options: GethDebugTracingOptions,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<BlockOverrides>,
+    ) -> Result<GethTrace, BlockchainError> {
+        let tx_index = usize::try_from(tx_index).map_err(|_| {
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "tx_index {tx_index} does not fit in usize"
+            )))
+        })?;
+        let block_number = match block_request {
+            Some(BlockRequest::Pending(_)) => {
+                return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                    "tx_index is not supported for pending blocks".to_string(),
+                )));
+            }
+            Some(BlockRequest::Number(number)) => number,
+            None => self.best_number(),
+        };
+        let block_id = BlockId::Number(BlockNumber::Number(block_number));
+
+        if let Some(block) = self.get_block(block_id) {
+            return self.mined_trace_call_at_tx_index(
+                request,
+                fee_details,
+                &block,
+                tx_index,
+                tracing_options,
+                state_overrides,
+                block_overrides,
+            );
+        }
+
+        if let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(block_number)
+        {
+            let opts = GethDebugTracingCallOptions {
+                tracing_options,
+                state_overrides,
+                block_overrides,
+                tx_index: Some(tx_index as u64),
+            };
+            return Ok(fork.debug_trace_call(request, block_id, opts).await?);
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn mined_trace_call_at_tx_index(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        fee_details: FeeDetails,
+        block: &Block,
+        tx_index: usize,
+        tracing_options: GethDebugTracingOptions,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<BlockOverrides>,
+    ) -> Result<GethTrace, BlockchainError> {
+        let transaction_count = block.body.transactions.len();
+        if tx_index >= transaction_count {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "tx_index {tx_index} out of bounds for block with {transaction_count} transactions"
+            ))));
+        }
+
+        let pool_txs: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>> = block.body.transactions
+            [..tx_index]
+            .iter()
+            .map(|tx| {
+                let pending_tx =
+                    PendingTransaction::from_maybe_impersonated(tx.clone()).expect("is valid");
+                Arc::new(PoolTransaction {
+                    pending_transaction: pending_tx,
+                    requires: vec![],
+                    provides: vec![],
+                    priority: crate::eth::pool::transactions::TransactionPriority(0),
+                })
+            })
+            .collect();
+
+        let trace = |parent_state: &StateDb| -> Result<GethTrace, BlockchainError> {
+            let mut cache_db =
+                AnvilCacheDB::new(Box::new(parent_state) as Box<dyn MaybeFullDatabase + '_>);
+
+            let mut evm_env = self.evm_env.read().clone();
+            evm_env.block_env = block_env_from_header(&block.header);
+
+            let spec_id = *evm_env.spec_id();
+            let inspector_tx_config = self.inspector_tx_config();
+            let gas_config = self.pool_tx_gas_config(&evm_env);
+
+            self.execute_with_block_executor(
+                &mut cache_db,
+                &evm_env,
+                block.header.parent_hash,
+                spec_id,
+                &pool_txs,
+                &gas_config,
+                &inspector_tx_config,
+                &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
+            );
+
+            let cache_db = cache_db.0;
+            self.trace_call_with_state(
+                request,
+                fee_details,
+                evm_env.block_env,
+                cache_db,
+                tracing_options,
+                state_overrides,
+                block_overrides,
+            )
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn trace_call_with_state(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        fee_details: FeeDetails,
+        mut block: BlockEnv,
+        mut cache_db: CacheDB<Box<dyn MaybeFullDatabase + '_>>,
+        tracing_options: GethDebugTracingOptions,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<BlockOverrides>,
+    ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
+        let block_number = block.number;
 
-        self.with_database_at(block_request, |state, mut block| {
-            let block_number = block.number;
+        if let Some(state_overrides) = state_overrides {
+            apply_state_overrides(state_overrides, &mut cache_db)?;
+        }
+        if let Some(block_overrides) = block_overrides {
+            cache_db.apply_block_overrides(block_overrides, &mut block);
+        }
 
-            let mut cache_db = CacheDB::new(state);
-            if let Some(state_overrides) = state_overrides {
-                apply_state_overrides(state_overrides, &mut cache_db)?;
-            }
-            if let Some(block_overrides) = block_overrides {
-                cache_db.apply_block_overrides(block_overrides, &mut block);
-            }
+        if let Some(tracer) = tracer {
+            return match tracer {
+                GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
+                    GethDebugBuiltInTracerType::CallTracer => {
+                        let call_config = call_config_from_tracer_config(tracer_config)
+                            .map_err(|e| RpcError::invalid_params(e.to_string()))?;
 
-            if let Some(tracer) = tracer {
-                return match tracer {
-                    GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
-                        GethDebugBuiltInTracerType::CallTracer => {
-                            let call_config = call_config_from_tracer_config(tracer_config)
-                                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+                        let mut inspector = self.build_inspector().with_tracing_config(
+                            TracingInspectorConfig::from_geth_call_config(&call_config),
+                        );
 
-                            let mut inspector = self.build_inspector().with_tracing_config(
-                                TracingInspectorConfig::from_geth_call_config(&call_config),
-                            );
-
-                            let (evm_env, tx_env, op_deposit) =
-                                self.build_call_env(request, fee_details, block);
-                            let ResultAndState { result, state: _ } = self
-                                .transact_with_inspector_ref(
-                                    &cache_db,
-                                    &evm_env,
-                                    &mut inspector,
-                                    tx_env,
-                                    op_deposit,
-                                )?;
-
-                            inspector.print_logs();
-                            if self.print_traces {
-                                inspector.print_traces(self.call_trace_decoder.clone());
-                            }
-
-                            let tracing_inspector = inspector.tracer.expect("tracer disappeared");
-
-                            Ok(tracing_inspector
-                                .into_geth_builder()
-                                .geth_call_traces(call_config, result.tx_gas_used())
-                                .into())
-                        }
-                        GethDebugBuiltInTracerType::PreStateTracer => {
-                            let pre_state_config = tracer_config
-                                .into_pre_state_config()
-                                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
-
-                            let mut inspector = TracingInspector::new(
-                                TracingInspectorConfig::from_geth_prestate_config(
-                                    &pre_state_config,
-                                ),
-                            );
-
-                            let (evm_env, tx_env, op_deposit) =
-                                self.build_call_env(request, fee_details, block);
-                            let result = self.transact_with_inspector_ref(
+                        let (evm_env, tx_env, op_deposit) =
+                            self.build_call_env(request, fee_details, block);
+                        let ResultAndState { result, state: _ } = self
+                            .transact_with_inspector_ref(
                                 &cache_db,
                                 &evm_env,
                                 &mut inspector,
@@ -3252,77 +3394,106 @@ where
                                 op_deposit,
                             )?;
 
-                            Ok(inspector
-                                .into_geth_builder()
-                                .geth_prestate_traces(&result, &pre_state_config, cache_db)?
-                                .into())
+                        inspector.print_logs();
+                        if self.print_traces {
+                            inspector.print_traces(self.call_trace_decoder.clone());
                         }
-                        GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
-                        GethDebugBuiltInTracerType::FourByteTracer
-                        | GethDebugBuiltInTracerType::MuxTracer
-                        | GethDebugBuiltInTracerType::FlatCallTracer
-                        | GethDebugBuiltInTracerType::Erc7562Tracer => {
-                            Err(RpcError::invalid_params("unsupported tracer type").into())
-                        }
-                    },
-                    #[cfg(not(feature = "js-tracer"))]
-                    GethDebugTracerType::JsTracer(_) => {
-                        Err(RpcError::invalid_params("unsupported tracer type").into())
+
+                        let tracing_inspector = inspector.tracer.expect("tracer disappeared");
+
+                        Ok(tracing_inspector
+                            .into_geth_builder()
+                            .geth_call_traces(call_config, result.tx_gas_used())
+                            .into())
                     }
-                    #[cfg(feature = "js-tracer")]
-                    GethDebugTracerType::JsTracer(code) => {
-                        let config = tracer_config.into_json();
-                        let mut inspector =
-                            revm_inspectors::tracing::js::JsInspector::new(code, config)
-                                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+                    GethDebugBuiltInTracerType::PreStateTracer => {
+                        let pre_state_config = tracer_config
+                            .into_pre_state_config()
+                            .map_err(|e| RpcError::invalid_params(e.to_string()))?;
+
+                        let mut inspector = TracingInspector::new(
+                            TracingInspectorConfig::from_geth_prestate_config(&pre_state_config),
+                        );
 
                         let (evm_env, tx_env, op_deposit) =
-                            self.build_call_env(request, fee_details, block.clone());
+                            self.build_call_env(request, fee_details, block);
                         let result = self.transact_with_inspector_ref(
                             &cache_db,
                             &evm_env,
                             &mut inspector,
-                            tx_env.clone(),
+                            tx_env,
                             op_deposit,
                         )?;
-                        let res = inspector
-                            .json_result(result, &tx_env, &block, &cache_db)
+
+                        Ok(inspector
+                            .into_geth_builder()
+                            .geth_prestate_traces(&result, &pre_state_config, cache_db)?
+                            .into())
+                    }
+                    GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
+                    GethDebugBuiltInTracerType::FourByteTracer
+                    | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::FlatCallTracer
+                    | GethDebugBuiltInTracerType::Erc7562Tracer => {
+                        Err(RpcError::invalid_params("unsupported tracer type").into())
+                    }
+                },
+                #[cfg(not(feature = "js-tracer"))]
+                GethDebugTracerType::JsTracer(_) => {
+                    Err(RpcError::invalid_params("unsupported tracer type").into())
+                }
+                #[cfg(feature = "js-tracer")]
+                GethDebugTracerType::JsTracer(code) => {
+                    let config = tracer_config.into_json();
+                    let mut inspector =
+                        revm_inspectors::tracing::js::JsInspector::new(code, config)
                             .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
-                        Ok(GethTrace::JS(res))
-                    }
-                };
-            }
+                    let (evm_env, tx_env, op_deposit) =
+                        self.build_call_env(request, fee_details, block.clone());
+                    let result = self.transact_with_inspector_ref(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        tx_env.clone(),
+                        op_deposit,
+                    )?;
+                    let res = inspector
+                        .json_result(result, &tx_env, &block, &cache_db)
+                        .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
-            // defaults to StructLog tracer used since no tracer is specified
-            let mut inspector = self
-                .build_inspector()
-                .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
+                    Ok(GethTrace::JS(res))
+                }
+            };
+        }
 
-            let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block);
-            let ResultAndState { result, state: _ } = self.transact_with_inspector_ref(
-                &cache_db,
-                &evm_env,
-                &mut inspector,
-                tx_env,
-                op_deposit,
-            )?;
+        // defaults to StructLog tracer used since no tracer is specified
+        let mut inspector = self
+            .build_inspector()
+            .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
-            let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
+        let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block);
+        let ResultAndState { result, state: _ } = self.transact_with_inspector_ref(
+            &cache_db,
+            &evm_env,
+            &mut inspector,
+            tx_env,
+            op_deposit,
+        )?;
 
-            let tracing_inspector = inspector.tracer.expect("tracer disappeared");
-            let return_value = out.as_ref().map(|o| o.data()).cloned().unwrap_or_default();
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
 
-            trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
+        let tracing_inspector = inspector.tracer.expect("tracer disappeared");
+        let return_value = out.as_ref().map(|o| o.data()).cloned().unwrap_or_default();
 
-            let res = tracing_inspector
-                .into_geth_builder()
-                .geth_traces(gas_used, return_value, config)
-                .into();
+        trace!(target: "backend", ?exit_reason, ?out, %gas_used, %block_number, "trace call");
 
-            Ok(res)
-        })
-        .await?
+        let res = tracing_inspector
+            .into_geth_builder()
+            .geth_traces(gas_used, return_value, config)
+            .into();
+
+        Ok(res)
     }
 
     /// Helper function to execute a closure with the database at a specific block

@@ -31,7 +31,7 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 
@@ -609,6 +609,106 @@ async fn test_debug_trace_call_state_override() {
             unreachable!()
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_tx_index() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let from = wallets[0].address();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    for (offset, value) in ["first", "second", "third"].into_iter().enumerate() {
+        let set_value = simple_storage_contract.setValue(value.to_string());
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(*simple_storage_contract.address())
+            .with_input(set_value.calldata().to_owned())
+            .nonce(nonce + offset as u64);
+        let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    }
+
+    api.mine_one().await;
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let get_value = simple_storage_contract.getValue();
+    let call = TransactionRequest::default()
+        .from(from)
+        .to(*simple_storage_contract.address())
+        .with_input(get_value.calldata().to_owned());
+
+    for (tx_index, expected) in [(0, "init value"), (1, "first"), (2, "second")] {
+        let trace = provider
+            .debug_trace_call(
+                WithOtherFields::new(call.clone()),
+                BlockId::number(block_number),
+                GethDebugTracingCallOptions::default().with_tx_index(tx_index),
+            )
+            .await
+            .unwrap();
+        match trace {
+            GethTrace::Default(default_frame) => {
+                assert_eq!(
+                    default_frame.return_value,
+                    Bytes::from(String::from(expected).abi_encode())
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_tx_index_fork_lazy_state() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1));
+    let _ = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".parse().unwrap();
+    let total_supply = TransactionRequest::default()
+        .from(from)
+        .to(usdc)
+        .with_input(Bytes::from_hex("18160ddd").unwrap());
+
+    let tx_index_trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(total_supply.clone()),
+            BlockId::number(block_number),
+            GethDebugTracingCallOptions::default().with_tx_index(0),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(tx_index_frame) = tx_index_trace else { unreachable!() };
+
+    let latest_trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(total_supply),
+            BlockId::number(block_number),
+            GethDebugTracingCallOptions::default(),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(latest_frame) = latest_trace else { unreachable!() };
+
+    assert!(!tx_index_frame.return_value.is_empty());
+    assert_eq!(tx_index_frame.return_value, latest_frame.return_value);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2656>

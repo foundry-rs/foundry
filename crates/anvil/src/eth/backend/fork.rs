@@ -22,7 +22,7 @@ use alloy_rpc_types::{
     simulate::{SimulatePayload, SimulatedBlock},
     state::StateOverride,
     trace::{
-        geth::{GethDebugTracingOptions, GethTrace, TraceResult},
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{
             LocalizedTransactionTrace as Trace, TraceResults, TraceResultsWithTransactionHash,
@@ -301,6 +301,15 @@ impl<N: Network> ClientFork<N> {
         storage.geth_transaction_traces.insert(hash, trace.clone());
 
         Ok(trace)
+    }
+
+    pub async fn debug_trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        block_id: BlockId,
+        opts: GethDebugTracingCallOptions,
+    ) -> Result<GethTrace, TransportError> {
+        self.provider().raw_request("debug_traceCall".into(), (request, block_id, opts)).await
     }
 
     pub async fn debug_code_by_hash(
