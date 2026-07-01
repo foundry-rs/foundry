@@ -1,8 +1,9 @@
-use super::{hashcons::HashCons, *};
+use super::{super::hashcons::HashCons, *};
 
 pub(crate) struct SymCx {
     words: HashCons<SymExprKind>,
     bools: HashCons<SymBoolExprKind>,
+    bytes: HashCons<SymBytesKind>,
     symbols: HashMap<Arc<str>, Symbol>,
     cache: SymCxCache,
 }
@@ -13,6 +14,7 @@ struct SymCxCache {
     one: Option<SymExpr>,
     bool_true: Option<SymBoolExpr>,
     bool_false: Option<SymBoolExpr>,
+    bytes_empty: Option<SymBytes>,
 }
 
 impl SymCx {
@@ -20,6 +22,7 @@ impl SymCx {
         Self {
             words: HashCons::new(),
             bools: HashCons::new(),
+            bytes: HashCons::new(),
             symbols: HashMap::default(),
             cache: SymCxCache::default(),
         }
@@ -27,6 +30,18 @@ impl SymCx {
 
     pub(in crate::runtime::expr) fn make_expr(&mut self, expr: SymExprKind) -> SymExpr {
         SymExpr { kind: self.words.make(expr) }
+    }
+
+    pub(in crate::runtime) fn make_bytes(&mut self, bytes: SymBytesKind) -> SymBytes {
+        if matches!(&bytes, SymBytesKind::Concrete(bytes) if bytes.is_empty()) {
+            if let Some(bytes) = &self.cache.bytes_empty {
+                return bytes.clone();
+            }
+            let bytes = SymBytes { kind: self.bytes.make(bytes) };
+            self.cache.bytes_empty = Some(bytes.clone());
+            return bytes;
+        }
+        SymBytes { kind: self.bytes.make(bytes) }
     }
 
     pub(crate) fn intern_expr(&mut self, expr: SymExpr) -> SymExpr {

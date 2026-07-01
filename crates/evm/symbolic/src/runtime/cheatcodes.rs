@@ -309,7 +309,7 @@ pub(crate) fn recorded_logs_return_data(cx: &mut SymCx, logs: Vec<SymbolicLog>) 
                     .iter()
                     .cloned()
                     .map(|topic| SymbolicAbiValue::FixedBytes {
-                        bytes: topic.into_bytes(),
+                        bytes: topic.into_bytes(cx),
                         size: 32,
                     })
                     .collect();
@@ -379,7 +379,7 @@ pub(crate) fn accesses_return_data(
 ) -> SymReturnData {
     let reads = record.map(|record| record.read_slots(target)).unwrap_or_default();
     let writes = record.map(|record| record.write_slots(target)).unwrap_or_default();
-    let values = [storage_slots_abi_array(reads), storage_slots_abi_array(writes)];
+    let values = [storage_slots_abi_array(cx, reads), storage_slots_abi_array(cx, writes)];
     let bytes = encode_sequence(cx, values.iter());
     SymReturnData::from_bytes(cx, bytes)
 }
@@ -397,11 +397,11 @@ pub(crate) fn complete_cheatcode_call(
     Ok(())
 }
 
-pub(crate) fn storage_slots_abi_array(slots: Vec<SymExpr>) -> SymbolicAbiValue {
+pub(crate) fn storage_slots_abi_array(cx: &mut SymCx, slots: Vec<SymExpr>) -> SymbolicAbiValue {
     SymbolicAbiValue::Array {
         elements: slots
             .into_iter()
-            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: slot.into_bytes(), size: 32 })
+            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: slot.into_bytes(cx), size: 32 })
             .collect(),
     }
 }
@@ -807,7 +807,7 @@ pub(crate) fn dyn_potential_revert(
 
     let reverter = dyn_address(reverter)?;
     let reverter = (reverter != Address::ZERO).then(|| cx.constant(address_word(reverter)));
-    let revert_data = SymBytes::concrete(dyn_bytes(revert_data)?);
+    let revert_data = SymBytes::concrete(cx, dyn_bytes(revert_data)?);
     let data = if dyn_bool(partial_match)? {
         ExpectedRevertData::prefix(revert_data)
     } else {

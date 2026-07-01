@@ -1,7 +1,9 @@
-use super::*;
+use super::{hashcons::HashConsed, *};
 
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct SymBytes(Arc<SymBytesKind>);
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SymBytes {
+    pub(in crate::runtime) kind: HashConsed<SymBytesKind>,
+}
 
 impl fmt::Debug for SymBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -9,8 +11,8 @@ impl fmt::Debug for SymBytes {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum SymBytesKind {
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub(in crate::runtime) enum SymBytesKind {
     Concrete(Vec<u8>),
     Exprs(Vec<SymExpr>),
     Word(SymExpr),
@@ -19,29 +21,21 @@ enum SymBytesKind {
     Sized { bytes: SymBytes, size: SymExpr, max_size: usize },
 }
 
-static BYTES_EMPTY: LazyLock<Arc<SymBytesKind>> =
-    LazyLock::new(|| Arc::new(SymBytesKind::Concrete(Vec::new())));
-
-impl Default for SymBytes {
-    fn default() -> Self {
-        Self(BYTES_EMPTY.clone())
-    }
-}
-
 impl SymBytes {
-    fn from_kind(kind: SymBytesKind) -> Self {
-        match kind {
-            SymBytesKind::Concrete(bytes) if bytes.is_empty() => Self::default(),
-            kind => Self(Arc::new(kind)),
-        }
+    fn from_kind(cx: &mut SymCx, kind: SymBytesKind) -> Self {
+        cx.make_bytes(kind)
     }
 
     fn kind(&self) -> &SymBytesKind {
-        self.0.as_ref()
+        self.kind.value()
     }
 
-    pub(crate) fn concrete(bytes: Vec<u8>) -> Self {
-        Self::from_kind(SymBytesKind::Concrete(bytes))
+    pub(crate) fn empty(cx: &mut SymCx) -> Self {
+        Self::from_kind(cx, SymBytesKind::Concrete(Vec::new()))
+    }
+
+    pub(crate) fn concrete(cx: &mut SymCx, bytes: Vec<u8>) -> Self {
+        Self::from_kind(cx, SymBytesKind::Concrete(bytes))
     }
 
     pub(crate) fn as_concrete_slice(&self) -> Option<&[u8]> {
@@ -51,23 +45,23 @@ impl SymBytes {
         }
     }
 
-    pub(crate) fn exprs(bytes: Vec<SymExpr>) -> Self {
+    pub(crate) fn exprs(cx: &mut SymCx, bytes: Vec<SymExpr>) -> Self {
         if let Ok(concrete) = concrete_expr_bytes(&bytes, "symbolic bytes") {
-            Self::concrete(concrete)
+            Self::concrete(cx, concrete)
         } else {
-            Self::from_kind(SymBytesKind::Exprs(bytes))
+            Self::from_kind(cx, SymBytesKind::Exprs(bytes))
         }
     }
 
-    pub(crate) fn word(word: SymExpr) -> Self {
+    pub(crate) fn word(cx: &mut SymCx, word: SymExpr) -> Self {
         if let Some(word) = word.as_const() {
-            Self::concrete(word.to_be_bytes::<32>().to_vec())
+            Self::concrete(cx, word.to_be_bytes::<32>().to_vec())
         } else {
-            Self::from_kind(SymBytesKind::Word(word))
+            Self::from_kind(cx, SymBytesKind::Word(word))
         }
     }
 
-    pub(crate) fn concat(bytes: impl IntoIterator<Item = Self>) -> Self {
+    pub(crate) fn concat(cx: &mut SymCx, bytes: impl IntoIterator<Item = Self>) -> Self {
         let mut out = Vec::new();
         for bytes in bytes {
             match bytes.kind() {
@@ -77,39 +71,40 @@ impl SymBytes {
             }
         }
         match out.len() {
-            0 => Self::default(),
+            0 => Self::empty(cx),
             1 => out.pop().expect("single item exists"),
-            _ => Self::from_kind(SymBytesKind::Concat(out)),
+            _ => Self::from_kind(cx, SymBytesKind::Concat(out)),
         }
     }
 
     pub(crate) fn slice(cx: &mut SymCx, bytes: Self, offset: SymExpr, len: usize) -> Self {
         if len == 0 {
-            return Self::default();
+            return Self::empty(cx);
         }
         if let Some(offset) = offset.eval() {
             let Ok(offset) = usize::try_from(offset) else {
-                return Self::concrete(vec![0; len]);
+                return Self::concrete(cx, vec![0; len]);
             };
             return bytes.slice_concrete(cx, offset, len);
         }
-        Self::slice_node(bytes, offset, len)
+        Self::slice_node(cx, bytes, offset, len)
     }
 
-    fn slice_node(bytes: Self, offset: SymExpr, len: usize) -> Self {
-        Self::from_kind(SymBytesKind::Slice { bytes, offset, len })
+    fn slice_node(cx: &mut SymCx, bytes: Self, offset: SymExpr, len: usize) -> Self {
+        Self::from_kind(cx, SymBytesKind::Slice { bytes, offset, len })
     }
 
     pub(crate) fn sized(cx: &mut SymCx, bytes: Self, size: SymExpr, max_size: usize) -> Self {
         if max_size == 0 {
-            return Self::default();
+            return Self::empty(cx);
         }
         if let Some(size) = size.eval() {
             let size = usize::try_from(size).map_or(max_size, |size| size.min(max_size));
             let bytes = bytes.slice_concrete(cx, 0, size);
-            return Self::concat([bytes, Self::concrete(vec![0; max_size - size])]);
+            let padding = Self::concrete(cx, vec![0; max_size - size]);
+            return Self::concat(cx, [bytes, padding]);
         }
-        Self::from_kind(SymBytesKind::Sized { bytes, size, max_size })
+        Self::from_kind(cx, SymBytesKind::Sized { bytes, size, max_size })
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -203,7 +198,7 @@ impl SymBytes {
 
     pub(crate) fn slice_concrete(&self, cx: &mut SymCx, offset: usize, len: usize) -> Self {
         if len == 0 {
-            return Self::default();
+            return Self::empty(cx);
         }
         if offset == 0 && len == self.len() {
             return self.clone();
@@ -213,17 +208,18 @@ impl SymBytes {
                 let out = (0..len)
                     .map(|idx| bytes.get(offset + idx).copied().unwrap_or_default())
                     .collect();
-                Self::concrete(out)
+                Self::concrete(cx, out)
             }
-            SymBytesKind::Exprs(bytes) => Self::exprs(
-                (0..len)
+            SymBytesKind::Exprs(bytes) => {
+                let bytes = (0..len)
                     .map(|idx| bytes.get(offset + idx).cloned().unwrap_or_else(|| cx.zero()))
-                    .collect(),
-            ),
-            SymBytesKind::Word(word) if offset == 0 && len == 32 => Self::word(word.clone()),
+                    .collect();
+                Self::exprs(cx, bytes)
+            }
+            SymBytesKind::Word(word) if offset == 0 && len == 32 => Self::word(cx, word.clone()),
             SymBytesKind::Word(_) | SymBytesKind::Sized { .. } => {
                 let offset = cx.constant(U256::from(offset));
-                Self::slice_node(self.clone(), offset, len)
+                Self::slice_node(cx, self.clone(), offset, len)
             }
             SymBytesKind::Slice { bytes, offset: base_offset, .. } => {
                 if let Some(base_offset) = base_offset.eval()
@@ -233,7 +229,7 @@ impl SymBytes {
                     bytes.slice_concrete(cx, offset, len)
                 } else {
                     let offset = cx.constant(U256::from(offset));
-                    Self::slice_node(self.clone(), offset, len)
+                    Self::slice_node(cx, self.clone(), offset, len)
                 }
             }
             SymBytesKind::Concat(values) => {
@@ -262,9 +258,9 @@ impl SymBytes {
                 }
 
                 if len != 0 {
-                    out.push(Self::concrete(vec![0; len]));
+                    out.push(Self::concrete(cx, vec![0; len]));
                 }
-                Self::concat(out)
+                Self::concat(cx, out)
             }
         }
     }

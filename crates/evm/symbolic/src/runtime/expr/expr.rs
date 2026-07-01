@@ -1,5 +1,4 @@
-use super::{hashcons::HashConsed, *};
-use std::hash::{Hash, Hasher};
+use super::{super::hashcons::HashConsed, *};
 
 pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();
@@ -291,35 +290,9 @@ fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
     Some(source)
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SymExpr {
     pub(in crate::runtime::expr) kind: HashConsed<SymExprKind>,
-}
-
-impl PartialEq for SymExpr {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind.ptr_eq(&other.kind)
-    }
-}
-
-impl Eq for SymExpr {}
-
-impl Hash for SymExpr {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.kind.hash(state);
-    }
-}
-
-impl PartialOrd for SymExpr {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SymExpr {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.kind.cmp(&other.kind)
-    }
 }
 
 impl fmt::Debug for SymExpr {
@@ -328,7 +301,7 @@ impl fmt::Debug for SymExpr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::runtime) enum SymExprKind {
     Const(U256),
     Var(Symbol),
@@ -395,11 +368,11 @@ impl SymExpr {
     }
 
     pub(crate) fn into_byte_exprs(self, cx: &mut SymCx) -> Vec<Self> {
-        SymBytes::word(self).materialize(cx)
+        SymBytes::word(cx, self).materialize(cx)
     }
 
-    pub(crate) fn into_bytes(self) -> SymBytes {
-        SymBytes::word(self)
+    pub(crate) fn into_bytes(self, cx: &mut SymCx) -> SymBytes {
+        SymBytes::word(cx, self)
     }
 
     pub(crate) fn from_bytes(cx: &mut SymCx, bytes: impl IntoIterator<Item = Self>) -> Self {
@@ -1093,7 +1066,7 @@ fn write_smt_wide_modular_arithmetic(
     out.push_str("))))");
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SymExprOp {
     Add,
     Sub,

@@ -1,35 +1,8 @@
-use super::{hashcons::HashConsed, *};
-use std::hash::{Hash, Hasher};
+use super::{super::hashcons::HashConsed, *};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SymBoolExpr {
     pub(in crate::runtime::expr) kind: HashConsed<SymBoolExprKind>,
-}
-
-impl PartialEq for SymBoolExpr {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind.ptr_eq(&other.kind)
-    }
-}
-
-impl Eq for SymBoolExpr {}
-
-impl Hash for SymBoolExpr {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.kind.hash(state);
-    }
-}
-
-impl PartialOrd for SymBoolExpr {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SymBoolExpr {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.kind.cmp(&other.kind)
-    }
 }
 
 impl fmt::Debug for SymBoolExpr {
@@ -38,7 +11,7 @@ impl fmt::Debug for SymBoolExpr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::runtime) enum SymBoolExprKind {
     Const(bool),
     Not(SymBoolExpr),
@@ -367,7 +340,7 @@ impl SymBoolExpr {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SymBoolExprOp {
     Ult,
     Ugt,

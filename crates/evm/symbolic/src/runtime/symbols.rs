@@ -25,7 +25,7 @@ impl SymbolicModelLookup for BTreeMap<String, U256> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Symbol(Arc<str>);
 
 impl Symbol {

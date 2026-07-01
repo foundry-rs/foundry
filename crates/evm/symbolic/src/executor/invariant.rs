@@ -12,7 +12,7 @@ impl SymbolicExecutor {
         after_invariant: Option<&Function>,
         completed_paths: &mut usize,
     ) -> Result<Vec<InvariantCheckOutcome>, SymbolicError> {
-        let calldata = SymbolicCalldata::selector_only(invariant)?;
+        let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
         let call_data = calldata.call_data(&mut self.cx);
         let constraints = calldata.into_constraints();
         let outcomes = self.execute_sequence_call(
@@ -44,7 +44,7 @@ impl SymbolicExecutor {
                 continue;
             };
 
-            let after_calldata = SymbolicCalldata::selector_only(after_invariant)?;
+            let after_calldata = SymbolicCalldata::selector_only(&mut self.cx, after_invariant)?;
             let calldata = after_calldata.call_data(&mut self.cx);
             let constraints = after_calldata.constraints().to_vec();
             for after_outcome in self.execute_sequence_call(
@@ -114,7 +114,7 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
     ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
         state.world.clear_transaction_scoped_state();
-        let code = state.world.extcode(executor, target)?;
+        let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
         state.origin = sender;
         state.origin_word = self.cx.constant(address_word(sender));

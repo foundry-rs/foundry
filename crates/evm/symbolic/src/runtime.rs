@@ -7,6 +7,7 @@ mod cheatcodes;
 mod control;
 mod evm;
 mod expr;
+mod hashcons;
 mod memory;
 mod precompiles;
 mod solver;

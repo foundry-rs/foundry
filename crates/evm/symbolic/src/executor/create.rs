@@ -83,14 +83,15 @@ impl SymbolicExecutor {
         let mut failure_world = state.world.clone();
         failure_world.increment_nonce(executor, state.address)?;
 
-        if failure_world.has_code_or_nonce(executor, created)? {
+        if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
             state.return_data = SymReturnData::empty(&mut self.cx);
             state.stack.push(self.cx.zero())?;
             return Ok(StepOutcome::Continue);
         }
 
-        let calldata = SymCalldata::from_bytes(&mut self.cx, SymBytes::default());
+        let calldata = SymBytes::empty(&mut self.cx);
+        let calldata = SymCalldata::from_bytes(&mut self.cx, calldata);
         let mut frame = CallFrame::new(
             &mut self.cx,
             created,

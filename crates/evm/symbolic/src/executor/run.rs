@@ -196,7 +196,7 @@ impl SymbolicExecutor {
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
-        let code = SymCode::from_bytecode(&bytecode);
+        let code = SymCode::from_bytecode(&mut self.cx, &bytecode);
         let mut roots = Vec::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config, &mut self.cx)? {
             let corpus_seed_models = input

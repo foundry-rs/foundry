@@ -89,7 +89,8 @@ impl PathState {
         let gas_price = cx.zero();
         let block = SymbolicBlock::new(cx);
         let callvalue = cx.zero();
-        let calldata = SymCalldata::from_bytes(cx, SymBytes::default());
+        let calldata = SymBytes::empty(cx);
+        let calldata = SymCalldata::from_bytes(cx, calldata);
         let frame =
             CallFrame::new(cx, address, address, address, caller, callvalue, false, calldata);
         Self {
@@ -1724,13 +1725,14 @@ impl SymbolicWorld {
 
     pub(crate) fn has_code_or_nonce<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
         if self.destroyed_accounts.contains(&address) {
             return Ok(false);
         }
-        Ok(!self.extcode(executor, address)?.is_empty() || self.nonce(executor, address)? != 0)
+        Ok(!self.extcode(cx, executor, address)?.is_empty() || self.nonce(executor, address)? != 0)
     }
 
     pub(crate) fn install_code(&mut self, address: Address, code: SymCode) {
@@ -1754,7 +1756,7 @@ impl SymbolicWorld {
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
         self.balances.insert(address, cx.zero());
-        self.code_cache.insert(address, SymCode::default());
+        self.code_cache.insert(address, SymCode::empty(cx));
         if !self.nonces.contains_key(&address) {
             let nonce = self.nonce(executor, address)?;
             self.nonces.insert(address, nonce);
@@ -1787,6 +1789,7 @@ impl SymbolicWorld {
 
     pub(crate) fn account_exists<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
@@ -1827,7 +1830,7 @@ impl SymbolicWorld {
         if let Some(code) = account.code.as_ref()
             && !code.is_empty()
         {
-            self.code_cache.insert(address, SymCode::from_bytecode(code));
+            self.code_cache.insert(address, SymCode::from_bytecode(cx, code));
             self.existing_accounts.insert(address);
             return Ok(true);
         }
@@ -1837,18 +1840,19 @@ impl SymbolicWorld {
 
     pub(crate) fn extcode<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<SymCode, SymbolicError> {
         if is_known_cheatcode(address) {
-            return Ok(SymCode::concrete(vec![0]));
+            return Ok(SymCode::concrete(cx, vec![0]));
         }
         let spec_id: SpecId = executor.spec_id().into();
         if is_supported_precompile(address, spec_id) {
-            return Ok(SymCode::default());
+            return Ok(SymCode::empty(cx));
         }
         if self.destroyed_accounts.contains(&address) {
-            return Ok(SymCode::default());
+            return Ok(SymCode::empty(cx));
         }
         if let Some(code) = self.code_cache.get(&address) {
             return Ok(code.clone());
@@ -1865,7 +1869,9 @@ impl SymbolicWorld {
             self.existing_accounts.insert(address);
         }
         let bytecode = account.as_ref().and_then(|account| account.code.as_ref());
-        let code = bytecode.map(SymCode::from_bytecode).unwrap_or_default();
+        let code = bytecode
+            .map(|bytecode| SymCode::from_bytecode(cx, bytecode))
+            .unwrap_or_else(|| SymCode::empty(cx));
         self.code_cache.insert(address, code.clone());
         Ok(code)
     }
@@ -1876,8 +1882,8 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<SymExpr, SymbolicError> {
-        if self.account_exists(executor, address)? {
-            let code = self.extcode(executor, address)?;
+        if self.account_exists(cx, executor, address)? {
+            let code = self.extcode(cx, executor, address)?;
             let bytes = code.read_byte_exprs(cx, 0, code.len());
             Ok(keccak_word(cx, bytes))
         } else {
@@ -1892,13 +1898,13 @@ impl SymbolicWorld {
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(address) = self.resolve_address(&address_expr) {
-            let len = self.extcode(executor, address)?.len();
+            let len = self.extcode(cx, executor, address)?.len();
             return Ok(cx.constant(U256::from(len)));
         }
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
-        let len = self.extcode(executor, representative)?.len();
+        let len = self.extcode(cx, executor, representative)?.len();
         let mut result = cx.constant(U256::from(len));
         for (address, code) in &self.code_cache {
             if self.destroyed_accounts.contains(address) {
@@ -1951,12 +1957,12 @@ impl SymbolicWorld {
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
         if let Some(address) = self.resolve_address(&address_expr) {
-            return Ok(self.extcode(executor, address)?.read_bytes_offset(cx, offset, size));
+            return Ok(self.extcode(cx, executor, address)?.read_bytes_offset(cx, offset, size));
         }
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
-        let mut result = self.extcode(executor, representative)?.read_byte_exprs_offset(
+        let mut result = self.extcode(cx, executor, representative)?.read_byte_exprs_offset(
             cx,
             offset.clone(),
             size,
@@ -1975,11 +1981,12 @@ impl SymbolicWorld {
             }
         }
 
-        Ok(SymBytes::exprs(result))
+        Ok(SymBytes::exprs(cx, result))
     }
 
     pub(crate) fn symbolic_call_targets<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
     ) -> Result<Vec<Address>, SymbolicError> {
         let mut addresses = HashSet::<Address>::default();
@@ -1998,7 +2005,7 @@ impl SymbolicWorld {
             if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
                 continue;
             }
-            if !self.extcode(executor, address)?.is_empty() {
+            if !self.extcode(cx, executor, address)?.is_empty() {
                 targets.push(address);
             }
         }

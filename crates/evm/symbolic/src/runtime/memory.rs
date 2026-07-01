@@ -99,7 +99,8 @@ impl SymMemory {
     }
 
     pub(crate) fn store_word(&mut self, cx: &mut SymCx, offset: usize, value: SymExpr) {
-        self.store_bytes(cx, offset, value.into_bytes());
+        let bytes = value.into_bytes(cx);
+        self.store_bytes(cx, offset, bytes);
     }
 
     pub(crate) fn store_word_offset(&mut self, cx: &mut SymCx, offset: SymExpr, value: SymExpr) {
@@ -108,13 +109,14 @@ impl SymMemory {
                 self.store_word(cx, offset, value);
             }
         } else {
-            self.store_symbolic_bytes(offset, value.into_bytes());
+            self.store_symbolic_bytes(offset, value.into_bytes(cx));
         }
     }
 
     pub(crate) fn store_byte(&mut self, cx: &mut SymCx, offset: usize, value: SymExpr) {
         let byte = value.low_byte(cx);
-        self.store_bytes(cx, offset, SymBytes::exprs(vec![byte]));
+        let bytes = SymBytes::exprs(cx, vec![byte]);
+        self.store_bytes(cx, offset, bytes);
     }
 
     pub(crate) fn store_byte_offset(&mut self, cx: &mut SymCx, offset: SymExpr, value: SymExpr) {
@@ -124,7 +126,8 @@ impl SymMemory {
             }
         } else {
             let byte = value.low_byte(cx);
-            self.store_symbolic_bytes(offset, SymBytes::exprs(vec![byte]));
+            let bytes = SymBytes::exprs(cx, vec![byte]);
+            self.store_symbolic_bytes(offset, bytes);
         }
     }
 
@@ -239,22 +242,23 @@ impl SymMemory {
     ) -> SymBytes {
         if let Some(offset) = offset.as_const() {
             let Ok(offset) = usize::try_from(offset) else {
-                return SymBytes::concrete(vec![0; size]);
+                return SymBytes::concrete(cx, vec![0; size]);
             };
             if let Some(bytes) = self.read_stored_bytes(cx, offset, size) {
                 return bytes;
             }
-            SymBytes::exprs((0..size).map(|idx| self.byte(cx, offset + idx)).collect())
+            let bytes = (0..size).map(|idx| self.byte(cx, offset + idx)).collect();
+            SymBytes::exprs(cx, bytes)
         } else {
-            SymBytes::exprs(
-                (0..size).map(|idx| self.byte_dynamic_with_delta(cx, &offset, idx)).collect(),
-            )
+            let bytes =
+                (0..size).map(|idx| self.byte_dynamic_with_delta(cx, &offset, idx)).collect();
+            SymBytes::exprs(cx, bytes)
         }
     }
 
     fn read_stored_bytes(&self, cx: &mut SymCx, offset: usize, size: usize) -> Option<SymBytes> {
         if size == 0 {
-            return Some(SymBytes::default());
+            return Some(SymBytes::empty(cx));
         }
         let end = offset.checked_add(size)?;
 
@@ -306,11 +310,11 @@ impl SymMemory {
         pieces.extend(
             unresolved
                 .into_iter()
-                .map(|(start, end)| (start - offset, SymBytes::concrete(vec![0; end - start]))),
+                .map(|(start, end)| (start - offset, SymBytes::concrete(cx, vec![0; end - start]))),
         );
         pieces.sort_by_key(|(offset, _)| *offset);
 
-        Some(SymBytes::concat(pieces.into_iter().map(|(_, bytes)| bytes)))
+        Some(SymBytes::concat(cx, pieces.into_iter().map(|(_, bytes)| bytes)))
     }
 
     pub(crate) fn read_byte_exprs_symbolic_size(
@@ -332,10 +336,9 @@ impl SymMemory {
     ) -> SymBytes {
         if let Some(size) = size.eval() {
             let size = usize::try_from(size).map_or(max_size, |size| size.min(max_size));
-            return SymBytes::concat([
-                self.read_bytes_offset(cx, offset, size),
-                SymBytes::concrete(vec![0; max_size - size]),
-            ]);
+            let bytes = self.read_bytes_offset(cx, offset, size);
+            let padding = SymBytes::concrete(cx, vec![0; max_size - size]);
+            return SymBytes::concat(cx, [bytes, padding]);
         }
 
         let bytes = self.read_bytes_offset(cx, offset, max_size);
@@ -433,18 +436,18 @@ impl SymMemory {
                         self.copy_size_byte_at(cx, dest + idx, idx, &size, source)
                     })
                     .collect::<Vec<_>>();
-                self.store_bytes(cx, dest, SymBytes::exprs(bytes));
+                let bytes = SymBytes::exprs(cx, bytes);
+                self.store_bytes(cx, dest, bytes);
             }
         } else {
-            let bytes = SymBytes::exprs(
-                (0..src.len())
-                    .map(|idx| {
-                        let existing = self.byte_dynamic_with_delta(cx, &dest, idx);
-                        let source = src.byte(cx, idx);
-                        Self::copy_size_byte(cx, idx, &size, source, existing)
-                    })
-                    .collect(),
-            );
+            let bytes = (0..src.len())
+                .map(|idx| {
+                    let existing = self.byte_dynamic_with_delta(cx, &dest, idx);
+                    let source = src.byte(cx, idx);
+                    Self::copy_size_byte(cx, idx, &size, source, existing)
+                })
+                .collect();
+            let bytes = SymBytes::exprs(cx, bytes);
             self.store_symbolic_bytes(dest, bytes);
         }
         Ok(())
@@ -460,7 +463,8 @@ impl SymMemory {
     ) -> Result<(), SymbolicError> {
         if let Some(offset) = offset.as_const() {
             let Ok(offset) = usize::try_from(offset) else {
-                self.copy_bytes_offset(cx, dest, SymBytes::concrete(vec![0; size]));
+                let bytes = SymBytes::concrete(cx, vec![0; size]);
+                self.copy_bytes_offset(cx, dest, bytes);
                 return Ok(());
             };
             let offset = cx.constant(U256::from(offset));
@@ -580,7 +584,8 @@ impl SymMemory {
                         let bytes = (0..size)
                             .map(|idx| self.call_output_byte(cx, &dest, idx, None, return_data))
                             .collect::<Vec<_>>();
-                        self.store_bytes_offset(cx, dest, SymBytes::exprs(bytes));
+                        let bytes = SymBytes::exprs(cx, bytes);
+                        self.store_bytes_offset(cx, dest, bytes);
                     } else {
                         let offset = cx.zero();
                         let bytes = return_data.read_bytes_offset(cx, offset, size);
@@ -597,7 +602,8 @@ impl SymMemory {
                             self.call_output_byte(cx, &dest, idx, Some(&output_size), return_data)
                         })
                         .collect::<Vec<_>>();
-                    self.store_bytes_offset(cx, dest, SymBytes::exprs(bytes));
+                    let bytes = SymBytes::exprs(cx, bytes);
+                    self.store_bytes_offset(cx, dest, bytes);
                 }
             }
         }
@@ -703,7 +709,7 @@ impl SymMemory {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SymCode {
     bytes: SymBytes,
     jump_table: JumpTable,
@@ -717,8 +723,13 @@ pub(crate) enum GuardedOpcode {
 }
 
 impl SymCode {
+    pub(crate) fn empty(cx: &mut SymCx) -> Self {
+        Self { bytes: SymBytes::empty(cx), jump_table: JumpTable::default() }
+    }
+
     pub(crate) fn from_byte_exprs(cx: &mut SymCx, bytes: Vec<SymExpr>) -> Self {
-        Self::from_bytes(cx, SymBytes::exprs(bytes))
+        let bytes = SymBytes::exprs(cx, bytes);
+        Self::from_bytes(cx, bytes)
     }
 
     pub(crate) fn from_bytes(cx: &mut SymCx, bytes: SymBytes) -> Self {
@@ -736,12 +747,12 @@ impl SymCode {
         Self { bytes, jump_table }
     }
 
-    pub(crate) fn concrete(bytes: Vec<u8>) -> Self {
-        Self::from_bytecode(&Bytecode::new_legacy(Bytes::from(bytes)))
+    pub(crate) fn concrete(cx: &mut SymCx, bytes: Vec<u8>) -> Self {
+        Self::from_bytecode(cx, &Bytecode::new_legacy(Bytes::from(bytes)))
     }
 
-    pub(crate) fn from_bytecode(bytecode: &Bytecode) -> Self {
-        let bytes = SymBytes::concrete(bytecode.original_byte_slice().to_vec());
+    pub(crate) fn from_bytecode(cx: &mut SymCx, bytecode: &Bytecode) -> Self {
+        let bytes = SymBytes::concrete(cx, bytecode.original_byte_slice().to_vec());
         let jump_table = bytecode.legacy_jump_table().cloned().unwrap_or_default();
         Self { bytes, jump_table }
     }
@@ -902,20 +913,23 @@ pub(crate) struct SymReturnData {
 
 impl SymReturnData {
     pub(crate) fn empty(cx: &mut SymCx) -> Self {
-        Self { len_word: cx.zero(), bytes: SymBytes::default() }
+        Self { len_word: cx.zero(), bytes: SymBytes::empty(cx) }
     }
 
     pub(crate) fn from_words(cx: &mut SymCx, words: Vec<SymExpr>) -> Self {
-        let bytes = SymBytes::concat(words.into_iter().map(SymExpr::into_bytes));
+        let bytes = words.into_iter().map(|word| word.into_bytes(cx)).collect::<Vec<_>>();
+        let bytes = SymBytes::concat(cx, bytes);
         Self::from_bytes(cx, bytes)
     }
 
     pub(crate) fn from_concrete_bytes(cx: &mut SymCx, bytes: Vec<u8>) -> Self {
-        Self::from_bytes(cx, SymBytes::concrete(bytes))
+        let bytes = SymBytes::concrete(cx, bytes);
+        Self::from_bytes(cx, bytes)
     }
 
     pub(crate) fn from_byte_exprs(cx: &mut SymCx, bytes: Vec<SymExpr>) -> Self {
-        Self::from_bytes(cx, SymBytes::exprs(bytes))
+        let bytes = SymBytes::exprs(cx, bytes);
+        Self::from_bytes(cx, bytes)
     }
 
     pub(crate) fn from_bytes(cx: &mut SymCx, bytes: SymBytes) -> Self {

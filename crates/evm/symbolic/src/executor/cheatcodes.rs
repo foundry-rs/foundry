@@ -152,7 +152,7 @@ impl SymbolicExecutor {
 
         let mut initcode = artifact_code(&artifact, false)?;
         initcode.extend_from_slice(&constructor_args);
-        let initcode = SymCode::concrete(initcode);
+        let initcode = SymCode::concrete(&mut self.cx, initcode);
 
         let nonce = state.world.nonce(executor, state.address)?;
         let created = state.address.create(nonce);
@@ -160,7 +160,7 @@ impl SymbolicExecutor {
 
         let mut failure_world = state.world.clone();
         failure_world.increment_nonce(executor, state.address)?;
-        if failure_world.has_code_or_nonce(executor, created)? {
+        if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
             let zero = self.cx.zero();
             let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
@@ -169,7 +169,8 @@ impl SymbolicExecutor {
         }
 
         let zero = self.cx.zero();
-        let calldata = SymCalldata::from_bytes(&mut self.cx, SymBytes::default());
+        let calldata = SymBytes::empty(&mut self.cx);
+        let calldata = SymCalldata::from_bytes(&mut self.cx, calldata);
         let mut frame = CallFrame::new(
             &mut self.cx,
             created,
@@ -600,9 +601,10 @@ impl SymbolicExecutor {
             expectRevert_1Call::SELECTOR => {
                 let selector =
                     read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     None,
                     1,
                 ));
@@ -616,9 +618,10 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectRevert",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::exact(SymBytes::exprs(data)),
+                    ExpectedRevertData::exact(data),
                     None,
                     1,
                 ));
@@ -636,9 +639,10 @@ impl SymbolicExecutor {
                 let selector =
                     read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
                 let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     Some(reverter),
                     1,
                 ));
@@ -653,9 +657,10 @@ impl SymbolicExecutor {
                     "symbolic vm.expectRevert",
                 )?;
                 let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::exact(SymBytes::exprs(data)),
+                    ExpectedRevertData::exact(data),
                     Some(reverter),
                     1,
                 ));
@@ -680,9 +685,10 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.expectRevert",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     None,
                     count,
                 ));
@@ -703,9 +709,10 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.expectRevert",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::exact(SymBytes::exprs(data)),
+                    ExpectedRevertData::exact(data),
                     None,
                     count,
                 ));
@@ -737,9 +744,10 @@ impl SymbolicExecutor {
                     2,
                     "symbolic vm.expectRevert",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     Some(reverter),
                     count,
                 ));
@@ -761,9 +769,10 @@ impl SymbolicExecutor {
                     2,
                     "symbolic vm.expectRevert",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::exact(SymBytes::exprs(data)),
+                    ExpectedRevertData::exact(data),
                     Some(reverter),
                     count,
                 ));
@@ -771,9 +780,10 @@ impl SymbolicExecutor {
             expectPartialRevert_0Call::SELECTOR => {
                 let selector =
                     read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     None,
                     1,
                 ));
@@ -782,9 +792,10 @@ impl SymbolicExecutor {
                 let selector =
                     read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
                 let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     Some(reverter),
                     1,
                 ));
@@ -929,15 +940,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
-                return Ok(self.set_expected_call(
-                    state,
-                    callee,
-                    None,
-                    None,
-                    None,
-                    SymBytes::exprs(data),
-                    None,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.set_expected_call(state, callee, None, None, None, data, None));
             }
             expectCall_1Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -956,13 +960,14 @@ impl SymbolicExecutor {
                     2,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     None,
                     None,
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     Some(count),
                 ));
             }
@@ -983,13 +988,14 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     None,
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     None,
                 ));
             }
@@ -1017,13 +1023,14 @@ impl SymbolicExecutor {
                     3,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     None,
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     Some(count),
                 ));
             }
@@ -1051,13 +1058,14 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     Some(gas),
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     None,
                 ));
             }
@@ -1092,13 +1100,14 @@ impl SymbolicExecutor {
                     4,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     Some(gas),
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     Some(count),
                 ));
             }
@@ -1126,13 +1135,14 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     None,
                     Some(min_gas),
-                    SymBytes::exprs(data),
+                    data,
                     None,
                 ));
             }
@@ -1167,13 +1177,14 @@ impl SymbolicExecutor {
                     4,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     None,
                     Some(min_gas),
-                    SymBytes::exprs(data),
+                    data,
                     Some(count),
                 ));
             }
@@ -1215,14 +1226,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCall",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    None,
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], false));
             }
             mockCall_1Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1249,14 +1254,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCall",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    Some(value),
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], false));
             }
             mockCall_2Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1269,14 +1268,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCall",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    None,
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], false));
             }
             mockCall_3Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1296,14 +1289,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCall",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    Some(value),
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], false));
             }
             mockCalls_0Call::SELECTOR | mockCalls_1Call::SELECTOR => {
                 let has_value = selector == mockCalls_1Call::SELECTOR;
@@ -1336,14 +1323,8 @@ impl SymbolicExecutor {
                     self.config.max_dynamic_length as usize,
                     self.config.max_calldata_bytes as usize,
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    value,
-                    SymBytes::exprs(data),
-                    returns,
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, value, data, returns, false));
             }
             mockCallRevert_0Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1363,14 +1344,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCallRevert",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    None,
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    true,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], true));
             }
             mockCallRevert_1Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1397,14 +1372,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCallRevert",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    Some(value),
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    true,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], true));
             }
             mockCallRevert_2Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1417,14 +1386,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCallRevert",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    None,
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    true,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], true));
             }
             mockCallRevert_3Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1444,14 +1407,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCallRevert",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    Some(value),
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    true,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], true));
             }
             mockFunctionCall::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
@@ -1470,7 +1427,8 @@ impl SymbolicExecutor {
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockFunction",
                 )?;
-                return Ok(self.set_function_mock(state, callee, target, SymBytes::exprs(data)));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.set_function_mock(state, callee, target, data));
             }
             prank_0Call::SELECTOR => {
                 let caller = read_abi_address_word_or_symbolic_slot_arg(
@@ -1998,7 +1956,11 @@ impl SymbolicExecutor {
             resetNonceCall::SELECTOR => {
                 let target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
-                let nonce = if state.world.extcode(executor, target)?.is_empty() { 0 } else { 1 };
+                let nonce = if state.world.extcode(&mut self.cx, executor, target)?.is_empty() {
+                    0
+                } else {
+                    1
+                };
                 state.world.set_nonce(target, nonce);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }

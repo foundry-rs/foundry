@@ -37,8 +37,149 @@ fn normalize_constraint_batch(
 }
 
 fn sort_dedup_bool_exprs(exprs: &mut Vec<SymBoolExpr>) {
-    exprs.sort();
+    exprs.sort_by_cached_key(bool_structural_key);
     exprs.dedup();
+}
+
+fn bool_structural_key(expr: &SymBoolExpr) -> String {
+    let mut key = String::new();
+    write_bool_structural_key(&mut key, expr);
+    key
+}
+
+fn expr_structural_key(expr: &SymExpr) -> String {
+    let mut key = String::new();
+    write_expr_structural_key(&mut key, expr);
+    key
+}
+
+fn expr_should_swap(left: &SymExpr, right: &SymExpr) -> bool {
+    expr_structural_key(right) < expr_structural_key(left)
+}
+
+fn write_bool_structural_key(out: &mut String, expr: &SymBoolExpr) {
+    match expr.kind() {
+        SymBoolExprKind::Const(value) => {
+            let _ = write!(out, "0:{value}");
+        }
+        SymBoolExprKind::Not(value) => {
+            out.push_str("1:");
+            write_bool_structural_key(out, value);
+        }
+        SymBoolExprKind::And(values) => {
+            let _ = write!(out, "2:{}:", values.len());
+            for value in values.iter() {
+                write_bool_structural_key(out, value);
+                out.push(';');
+            }
+        }
+        SymBoolExprKind::Eq(left, right) => {
+            out.push_str("3:");
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+        }
+        SymBoolExprKind::Cmp(op, left, right) => {
+            let _ = write!(out, "4:{}:", bool_op_key(*op));
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+        }
+    }
+}
+
+fn write_expr_structural_key(out: &mut String, expr: &SymExpr) {
+    match expr.kind() {
+        SymExprKind::Const(value) => {
+            let _ = write!(out, "0:{value:064x}");
+        }
+        SymExprKind::Var(name) => {
+            let _ = write!(out, "1:{}", name.as_str());
+        }
+        SymExprKind::GasLeft(id) => {
+            let _ = write!(out, "2:{id:020}");
+        }
+        SymExprKind::Keccak { name, len, bytes } => {
+            let _ = write!(out, "3:{}:", name.as_str());
+            write_expr_structural_key(out, len);
+            write_exprs_structural_key(out, bytes);
+        }
+        SymExprKind::Hash { name, algorithm, bytes } => {
+            let _ = write!(out, "4:{}:{algorithm}:", name.as_str());
+            write_exprs_structural_key(out, bytes);
+        }
+        SymExprKind::Not(value) => {
+            out.push_str("5:");
+            write_expr_structural_key(out, value);
+        }
+        SymExprKind::Op(op, left, right) => {
+            let _ = write!(out, "6:{}:", expr_op_key(*op));
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+        }
+        SymExprKind::AddMod { left, right, modulus } => {
+            out.push_str("7:");
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+            out.push(':');
+            write_expr_structural_key(out, modulus);
+        }
+        SymExprKind::MulMod { left, right, modulus } => {
+            out.push_str("8:");
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+            out.push(':');
+            write_expr_structural_key(out, modulus);
+        }
+        SymExprKind::Ite(condition, then_expr, else_expr) => {
+            out.push_str("9:");
+            write_bool_structural_key(out, condition);
+            out.push(':');
+            write_expr_structural_key(out, then_expr);
+            out.push(':');
+            write_expr_structural_key(out, else_expr);
+        }
+    }
+}
+
+fn write_exprs_structural_key(out: &mut String, exprs: &[SymExpr]) {
+    let _ = write!(out, "{}:", exprs.len());
+    for expr in exprs {
+        write_expr_structural_key(out, expr);
+        out.push(';');
+    }
+}
+
+const fn bool_op_key(op: SymBoolExprOp) -> u8 {
+    match op {
+        SymBoolExprOp::Ult => 0,
+        SymBoolExprOp::Ugt => 1,
+        SymBoolExprOp::Ule => 2,
+        SymBoolExprOp::Uge => 3,
+        SymBoolExprOp::Slt => 4,
+        SymBoolExprOp::Sgt => 5,
+    }
+}
+
+const fn expr_op_key(op: SymExprOp) -> u8 {
+    match op {
+        SymExprOp::Add => 0,
+        SymExprOp::Sub => 1,
+        SymExprOp::Mul => 2,
+        SymExprOp::UDiv => 3,
+        SymExprOp::URem => 4,
+        SymExprOp::SDiv => 5,
+        SymExprOp::SRem => 6,
+        SymExprOp::And => 7,
+        SymExprOp::Or => 8,
+        SymExprOp::Xor => 9,
+        SymExprOp::Shl => 10,
+        SymExprOp::Shr => 11,
+        SymExprOp::Sar => 12,
+    }
 }
 
 /// Returns a structural key for normalized solver cache lookups.
@@ -58,15 +199,15 @@ pub(super) fn constraint_cache_key(
 pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
     constraints.iter().any(|constraint| match constraint.kind() {
         SymBoolExprKind::Const(false) => true,
-        SymBoolExprKind::Not(inner) => constraints.binary_search(inner).is_ok(),
+        SymBoolExprKind::Not(inner) => constraints.contains(inner),
         _ => {
             let negated = constraint.clone().not(cx);
-            constraints.binary_search(&negated).is_ok()
+            constraints.contains(&negated)
         }
     })
 }
 
-/// Returns whether every expression in sorted `subset` appears in sorted `superset`.
+/// Returns whether every expression in `subset` appears in `superset`.
 pub(super) fn sorted_bool_exprs_are_subset(
     subset: &[SymBoolExpr],
     superset: &[SymBoolExpr],
@@ -75,17 +216,8 @@ pub(super) fn sorted_bool_exprs_are_subset(
         return false;
     }
 
-    let mut superset = superset.iter();
-    for expected in subset {
-        loop {
-            match superset.next() {
-                Some(candidate) if candidate < expected => {}
-                Some(candidate) if candidate == expected => break,
-                _ => return false,
-            }
-        }
-    }
-    true
+    let superset: HashSet<_> = superset.iter().collect();
+    subset.iter().all(|expected| superset.contains(expected))
 }
 
 /// Normalizes one boolean expression into an equivalent, solver-friendlier form.
@@ -112,7 +244,11 @@ impl SymBoolExpr {
             SymBoolExprKind::Eq(left, right) => {
                 let left = left.clone().cache_key(cx);
                 let right = right.clone().cache_key(cx);
-                if left <= right { cx.eq(left, right) } else { cx.eq(right, left) }
+                if expr_should_swap(&left, &right) {
+                    cx.eq(right, left)
+                } else {
+                    cx.eq(left, right)
+                }
             }
             SymBoolExprKind::Cmp(op, left, right) => {
                 let left = left.clone().cache_key(cx);
@@ -164,14 +300,26 @@ impl SymExpr {
 
     fn cache_key_node(cx: &mut SymCx, expr: Self) -> Self {
         match expr.kind() {
-            SymExprKind::Op(op, left, right) if op.is_commutative() && right < left => {
-                cx.op(*op, right.clone(), left.clone())
+            SymExprKind::Op(op, left, right) if op.is_commutative() => {
+                if expr_should_swap(left, right) {
+                    cx.op(*op, right.clone(), left.clone())
+                } else {
+                    expr
+                }
             }
-            SymExprKind::AddMod { left, right, modulus } if right < left => {
-                cx.addmod(right.clone(), left.clone(), modulus.clone())
+            SymExprKind::AddMod { left, right, modulus } => {
+                if expr_should_swap(left, right) {
+                    cx.addmod(right.clone(), left.clone(), modulus.clone())
+                } else {
+                    expr
+                }
             }
-            SymExprKind::MulMod { left, right, modulus } if right < left => {
-                cx.mulmod(right.clone(), left.clone(), modulus.clone())
+            SymExprKind::MulMod { left, right, modulus } => {
+                if expr_should_swap(left, right) {
+                    cx.mulmod(right.clone(), left.clone(), modulus.clone())
+                } else {
+                    expr
+                }
             }
             SymExprKind::Ite(cond, left, right) => {
                 let cond = cond.clone().cache_key(cx);
@@ -701,7 +849,13 @@ fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
             @ (SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor),
             left,
             right,
-        ) if right < left => cx.op(*op, right.clone(), left.clone()),
+        ) => {
+            if expr_should_swap(left, right) {
+                cx.op(*op, right.clone(), left.clone())
+            } else {
+                expr
+            }
+        }
         SymExprKind::Ite(cond, left, right) => {
             normalize_ite_expr_for_solver(cx, cond.clone(), left.clone(), right.clone())
         }

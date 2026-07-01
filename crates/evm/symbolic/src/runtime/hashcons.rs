@@ -1,6 +1,5 @@
 use hashbrown::{HashTable, hash_table::Entry};
 use std::{
-    cmp::Ordering,
     collections::hash_map::DefaultHasher,
     fmt,
     hash::{BuildHasher, BuildHasherDefault, Hash, Hasher},
@@ -13,8 +12,7 @@ type HashBuilder = BuildHasherDefault<DefaultHasher>;
 ///
 /// Equality is pointer equality only. Hashing writes the cached structural hash
 /// instead of walking the value.
-#[derive(Clone)]
-pub(super) struct HashConsed<T> {
+pub(in crate::runtime) struct HashConsed<T> {
     inner: Arc<HashConsedInner<T>>,
 }
 
@@ -28,15 +26,15 @@ impl<T> HashConsed<T> {
         self.inner.hash
     }
 
-    pub(super) fn ptr_eq(&self, other: &Self) -> bool {
+    pub(in crate::runtime) fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
-    pub(super) fn value(&self) -> &T {
+    pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
     }
 
-    pub(super) fn into_value(self) -> T
+    pub(in crate::runtime) fn into_value(self) -> T
     where
         T: Clone,
     {
@@ -44,6 +42,12 @@ impl<T> HashConsed<T> {
             Ok(inner) => inner.value,
             Err(inner) => inner.value.clone(),
         }
+    }
+}
+
+impl<T> Clone for HashConsed<T> {
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -61,26 +65,6 @@ impl<T> Hash for HashConsed<T> {
     }
 }
 
-impl<T> PartialOrd for HashConsed<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T> Ord for HashConsed<T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.cached_hash()
-            .cmp(&other.cached_hash())
-            .then_with(|| self.ptr_addr().cmp(&other.ptr_addr()))
-    }
-}
-
-impl<T> HashConsed<T> {
-    fn ptr_addr(&self) -> usize {
-        Arc::as_ptr(&self.inner).cast::<()>() as usize
-    }
-}
-
 impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.value().fmt(f)
@@ -92,7 +76,7 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
 /// The table stores weak references so interned values disappear when the rest of
 /// the symbolic state stops using them. `make` only looks up and inserts; dead
 /// weak entries are ignored and left in the table until the context is dropped.
-pub(super) struct HashCons<T> {
+pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
     hash_builder: HashBuilder,
 }
@@ -109,7 +93,7 @@ impl<T> HashConsEntry<T> {
 }
 
 impl<T> HashCons<T> {
-    pub(super) fn new() -> Self {
+    pub(in crate::runtime) fn new() -> Self {
         Self { table: HashTable::new(), hash_builder: HashBuilder::default() }
     }
 
@@ -119,7 +103,7 @@ impl<T> HashCons<T> {
 }
 
 impl<T: Eq + Hash> HashCons<T> {
-    pub(super) fn make(&mut self, value: T) -> HashConsed<T> {
+    pub(in crate::runtime) fn make(&mut self, value: T) -> HashConsed<T> {
         let hash = self.hash(&value);
         let mut found = None;
         match self.table.entry(

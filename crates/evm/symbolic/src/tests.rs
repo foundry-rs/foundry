@@ -2,14 +2,9 @@ use super::{abi::*, runtime::*, *};
 
 fn empty_state() -> PathState {
     let mut cx = SymCx::new();
-    PathState::new(
-        &mut cx,
-        Address::ZERO,
-        Address::ZERO,
-        U256::ZERO,
-        SymbolicCalldata::selector_only(&Function::parse("empty()").unwrap()).unwrap(),
-        false,
-    )
+    let calldata =
+        SymbolicCalldata::selector_only(&mut cx, &Function::parse("empty()").unwrap()).unwrap();
+    PathState::new(&mut cx, Address::ZERO, Address::ZERO, U256::ZERO, calldata, false)
 }
 
 fn symbolic_calldata_variants(
@@ -510,8 +505,9 @@ fn byte_concat_word_load_assembles_word_fragments() {
     let mut cx = SymCx::new();
     let selector = [0xde, 0xad, 0xbe, 0xef];
     let word = cx.var("calldata_0");
-    let bytes =
-        SymBytes::concat([SymBytes::concrete(selector.to_vec()), word.clone().into_bytes()]);
+    let selector_bytes = SymBytes::concrete(&mut cx, selector.to_vec());
+    let word_bytes = word.clone().into_bytes(&mut cx);
+    let bytes = SymBytes::concat(&mut cx, [selector_bytes, word_bytes]);
 
     assert_eq!(bytes.word_at(&mut cx, 4), word);
 
@@ -539,10 +535,9 @@ fn byte_concat_word_load_assembles_word_fragments() {
 fn byte_concat_right_aligned_word_assembles_push_fragments() {
     let mut cx = SymCx::new();
     let immediate = cx.var("push_data");
-    let bytes = SymBytes::concat([
-        SymBytes::concrete(vec![opcode::PUSH32]),
-        immediate.clone().into_bytes(),
-    ]);
+    let opcode = SymBytes::concrete(&mut cx, vec![opcode::PUSH32]);
+    let immediate_bytes = immediate.clone().into_bytes(&mut cx);
+    let bytes = SymBytes::concat(&mut cx, [opcode, immediate_bytes]);
 
     assert_eq!(bytes.right_aligned_word(&mut cx, 1, 32), immediate);
     assert_eq!(
@@ -558,7 +553,8 @@ fn byte_concat_right_aligned_word_assembles_push_fragments() {
 fn calldata_load_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let calldata_bytes = (0u8..40).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    let calldata = SymCalldata::from_bytes(&mut cx, SymBytes::exprs(calldata_bytes));
+    let calldata_bytes = SymBytes::exprs(&mut cx, calldata_bytes);
+    let calldata = SymCalldata::from_bytes(&mut cx, calldata_bytes);
     let offset = cx.var("offset");
     let loaded = calldata.load_word(&mut cx, offset).unwrap();
     let expected = sym_from_bytes!(cx, (1u8..33).map(|idx| cx.constant(U256::from(idx + 1))));
@@ -583,7 +579,8 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
         cx.constant(U256::from(0xcc)),
         cx.constant(U256::from(0xdd)),
     ];
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(bytes));
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.store_bytes(&mut cx, 0, bytes);
     let size = cx.var("size");
     let bounded_size = BoundedCopySize::Symbolic { size, max_size: 4 };
     let offset = cx.zero();
@@ -628,7 +625,8 @@ fn memory_copies_unaligned_symbolic_calldata_bytes() {
 fn memory_copies_symbolic_calldata_offset() {
     let mut cx = SymCx::new();
     let calldata_bytes = (0u8..40).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    let calldata = SymCalldata::from_bytes(&mut cx, SymBytes::exprs(calldata_bytes));
+    let calldata_bytes = SymBytes::exprs(&mut cx, calldata_bytes);
+    let calldata = SymCalldata::from_bytes(&mut cx, calldata_bytes);
     let mut memory = SymMemory::default();
 
     let dest = cx.zero();
@@ -652,10 +650,12 @@ fn memory_copies_symbolic_calldata_offset() {
 fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
     let mut cx = SymCx::new();
     let calldata_bytes = (0u8..8).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    let calldata = SymCalldata::from_bytes(&mut cx, SymBytes::exprs(calldata_bytes));
+    let calldata_bytes = SymBytes::exprs(&mut cx, calldata_bytes);
+    let calldata = SymCalldata::from_bytes(&mut cx, calldata_bytes);
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0, tail);
     let dest = cx.zero();
     let offset = cx.zero();
     let size = cx.var("size");
@@ -680,11 +680,13 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0, tail);
     let dest = cx.zero();
     let size = cx.var("size");
     let bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    memory.copy_bytes_size_offset(&mut cx, dest, size, SymBytes::exprs(bytes)).unwrap();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
     assert_eq!(
@@ -704,11 +706,13 @@ fn memory_copies_folded_symbolic_size_prefix_only() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0, tail);
     let dest = cx.zero();
     let size = cx.constant(U256::from(2));
     let bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    memory.copy_bytes_size_offset(&mut cx, dest, size, SymBytes::exprs(bytes)).unwrap();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
 
     assert_eq!(
         memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &BTreeMap::new()).unwrap(),
@@ -723,7 +727,8 @@ fn memory_skips_folded_zero_symbolic_size_copy() {
     let dest = cx.zero();
     let size = cx.zero();
     let bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    memory.copy_bytes_size_offset(&mut cx, dest, size, SymBytes::exprs(bytes)).unwrap();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
 
     assert_eq!(memory.size_word(&mut cx), cx.zero());
     assert_eq!(
@@ -737,7 +742,8 @@ fn memory_reads_symbolic_size_with_zero_guarded_tail() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let source = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    memory.store_bytes(&mut cx, 32, SymBytes::exprs(source));
+    let source = SymBytes::exprs(&mut cx, source);
+    memory.store_bytes(&mut cx, 32, source);
 
     let offset = cx.constant(U256::from(32));
     let size = cx.var("size");
@@ -755,7 +761,8 @@ fn memory_reads_folded_symbolic_size_prefix_only() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let source = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    memory.store_bytes(&mut cx, 32, SymBytes::exprs(source));
+    let source = SymBytes::exprs(&mut cx, source);
+    memory.store_bytes(&mut cx, 32, source);
 
     let offset = cx.constant(U256::from(32));
     let size = cx.constant(U256::from(2));
@@ -769,9 +776,11 @@ fn memory_copies_symbolic_memory_size_with_guarded_tail() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0, tail);
     let source_bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    memory.store_bytes(&mut cx, 32, SymBytes::exprs(source_bytes));
+    let source_bytes = SymBytes::exprs(&mut cx, source_bytes);
+    memory.store_bytes(&mut cx, 32, source_bytes);
     let dest = cx.zero();
     let source = cx.constant(U256::from(32));
     let size = cx.var("size");
@@ -796,9 +805,11 @@ fn memory_copies_symbolic_size_to_symbolic_dest() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0x80, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0x80, tail);
     let source_bytes = (0u8..4).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    memory.store_bytes(&mut cx, 0x20, SymBytes::exprs(source_bytes));
+    let source_bytes = SymBytes::exprs(&mut cx, source_bytes);
+    memory.store_bytes(&mut cx, 0x20, source_bytes);
     let dest = cx.var("dest");
     let source = cx.constant(U256::from(0x20));
     let size = cx.var("size");
@@ -821,7 +832,8 @@ fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
     let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0, tail);
     let dest = cx.zero();
     let offset = cx.zero();
     let size = cx.var("size");
@@ -860,7 +872,8 @@ fn memory_return_data_accepts_symbolic_size() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let bytes = vec![1, 2, 3, 4].into_iter().map(|byte| cx.constant(U256::from(byte))).collect();
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(bytes));
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.store_bytes(&mut cx, 0, bytes);
     let offset = cx.zero();
     let len = cx.var("len");
 
@@ -875,15 +888,14 @@ fn memory_return_data_accepts_symbolic_size() {
 #[test]
 fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
     let mut cx = SymCx::new();
-    let return_data = SymReturnData::from_bytes_with_len(
-        SymBytes::exprs(
-            vec![1, 2, 3, 4].into_iter().map(|byte| cx.constant(U256::from(byte))).collect(),
-        ),
-        cx.var("len"),
-    );
+    let bytes = vec![1, 2, 3, 4].into_iter().map(|byte| cx.constant(U256::from(byte))).collect();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    let len = cx.var("len");
+    let return_data = SymReturnData::from_bytes_with_len(bytes, len);
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0, tail);
     let dest = cx.zero();
 
     memory
@@ -1192,7 +1204,8 @@ fn memory_call_output_accepts_symbolic_destination_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let word = cx.var("word");
-    let return_data = SymReturnData::from_bytes(&mut cx, word.into_bytes());
+    let bytes = word.into_bytes(&mut cx);
+    let return_data = SymReturnData::from_bytes(&mut cx, bytes);
     let dest = cx.var("dest");
 
     memory
@@ -1213,7 +1226,8 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
     let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0, tail);
     let dest = cx.zero();
     let size = cx.var("size");
     let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
@@ -1239,7 +1253,8 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
     let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0x80, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0x80, tail);
     let dest = cx.var("dest");
     let size = cx.var("size");
     let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
@@ -1259,15 +1274,14 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
 #[test]
 fn memory_call_output_accepts_symbolic_destination_and_return_len() {
     let mut cx = SymCx::new();
-    let return_data = SymReturnData::from_bytes_with_len(
-        SymBytes::exprs(
-            vec![1, 2, 3, 4].into_iter().map(|byte| cx.constant(U256::from(byte))).collect(),
-        ),
-        cx.var("len"),
-    );
+    let bytes = vec![1, 2, 3, 4].into_iter().map(|byte| cx.constant(U256::from(byte))).collect();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    let len = cx.var("len");
+    let return_data = SymReturnData::from_bytes_with_len(bytes, len);
     let mut memory = SymMemory::default();
     let tail = cx.constant(U256::from(0xaa));
-    memory.store_bytes(&mut cx, 0x80, SymBytes::exprs(vec![tail; 4]));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0x80, tail);
     let dest = cx.var("dest");
 
     memory
@@ -1315,10 +1329,9 @@ fn compute_create2_cheatcode_helper_matches_create2_terms() {
         initcode_hash,
     )
     .unwrap();
+    let initcode = SymCode::concrete(&mut cx, initcode);
     let opcode_word =
-        create2_address_word(&mut cx, &mut state, creator, salt, &SymCode::concrete(initcode))
-            .unwrap()
-            .0;
+        create2_address_word(&mut cx, &mut state, creator, salt, &initcode).unwrap().0;
 
     assert_eq!(cheatcode_word, opcode_word);
 }
@@ -1411,10 +1424,12 @@ fn recorded_logs_return_data_matches_abi_encoding() {
     let mut cx = SymCx::new();
     let emitter = Address::from([0x33; 20]);
     let topic = B256::from([0x11; 32]);
+    let data = vec![cx.constant(U256::from(0x22)), cx.constant(U256::from(0x33))];
+    let data = SymBytes::exprs(&mut cx, data);
     let log = SymbolicLog::new(
         vec![cx.constant(U256::from_be_bytes(topic.0))],
         cx.constant(U256::from(2)),
-        SymBytes::exprs(vec![cx.constant(U256::from(0x22)), cx.constant(U256::from(0x33))]),
+        data,
         emitter,
     );
 
@@ -1435,24 +1450,21 @@ fn recorded_logs_return_data_matches_abi_encoding() {
 fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
     let mut cx = SymCx::new();
     let emitter = Address::from([0x33; 20]);
-    let log = SymbolicLog::new(
-        vec![cx.var("topic")],
-        cx.constant(U256::from(2)),
-        SymBytes::exprs(vec![cx.constant(U256::from(0x12)), cx.var("byte")]),
-        emitter,
-    );
+    let data = vec![cx.constant(U256::from(0x12)), cx.var("byte")];
+    let data = SymBytes::exprs(&mut cx, data);
+    let log = SymbolicLog::new(vec![cx.var("topic")], cx.constant(U256::from(2)), data, emitter);
 
     let return_data = recorded_logs_json_return_data(&mut cx, vec![log]).unwrap();
-    let encoded =
-        SymBytes::exprs((0..return_data.len()).map(|idx| return_data.byte(&mut cx, idx)).collect())
-            .eval_model(
-                &mut cx,
-                &BTreeMap::from([
-                    ("topic".to_string(), U256::from(0xabcd)),
-                    ("byte".to_string(), U256::from(0xef)),
-                ]),
-            )
-            .unwrap();
+    let encoded = (0..return_data.len()).map(|idx| return_data.byte(&mut cx, idx)).collect();
+    let encoded = SymBytes::exprs(&mut cx, encoded)
+        .eval_model(
+            &mut cx,
+            &BTreeMap::from([
+                ("topic".to_string(), U256::from(0xabcd)),
+                ("byte".to_string(), U256::from(0xef)),
+            ]),
+        )
+        .unwrap();
     let decoded = DynSolType::String.abi_decode(&encoded).unwrap();
     let DynSolValue::String(json) = decoded else { panic!("expected string return") };
 
@@ -1465,12 +1477,14 @@ fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
 #[test]
 fn abi_bytes_encoding_accepts_symbolic_length() {
     let mut cx = SymCx::new();
-    let bytes = SymBytes::exprs(vec![
+    let bytes = vec![
         cx.constant(U256::from(0x22)),
         cx.constant(U256::from(0x33)),
         cx.constant(U256::from(0x44)),
-    ]);
-    let encoded = encode_packed_bytes_with_len(cx.var("len"), &bytes);
+    ];
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    let len = cx.var("len");
+    let encoded = encode_packed_bytes_with_len(&mut cx, len, &bytes);
 
     assert_eq!(
         encoded
@@ -1502,7 +1516,7 @@ fn symbolic_create2_accepts_symbolic_salt() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
     let salt = cx.var("salt");
-    let initcode = SymCode::concrete(vec![opcode::STOP]);
+    let initcode = SymCode::concrete(&mut cx, vec![opcode::STOP]);
 
     let (word, address) =
         create2_address_word(&mut cx, &mut state, creator, salt, &initcode).unwrap();
@@ -1520,7 +1534,8 @@ fn symbolic_create2_initcode_identity_uses_byte_semantics() {
     let mut state = PathState::empty(&mut cx, creator, Address::from([0xaa; 20]), false);
     let salt = cx.var("salt");
     let init_word = cx.var("init_word");
-    let structural = SymCode::from_bytes(&mut cx, init_word.clone().into_bytes());
+    let structural_bytes = init_word.clone().into_bytes(&mut cx);
+    let structural = SymCode::from_bytes(&mut cx, structural_bytes);
     let init_bytes = init_word.into_byte_exprs(&mut cx);
     let materialized = SymCode::from_byte_exprs(&mut cx, init_bytes);
 
@@ -1537,7 +1552,8 @@ fn symbolic_create2_initcode_identity_uses_byte_semantics() {
 fn symbolic_return_data_can_be_installed_as_runtime_code() {
     let mut cx = SymCx::new();
     let runtime_byte = cx.var("runtime_byte");
-    let data = SymReturnData::from_bytes(&mut cx, SymBytes::exprs(vec![runtime_byte.clone()]));
+    let bytes = SymBytes::exprs(&mut cx, vec![runtime_byte.clone()]);
+    let data = SymReturnData::from_bytes(&mut cx, bytes);
 
     let code = data.to_code(&mut cx).unwrap();
 
@@ -1547,10 +1563,10 @@ fn symbolic_return_data_can_be_installed_as_runtime_code() {
 #[test]
 fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
     let mut cx = SymCx::new();
-    let data = SymReturnData::from_bytes_with_len(
-        SymBytes::exprs(vec![cx.constant(U256::from(opcode::STOP))]),
-        cx.var("runtime_len"),
-    );
+    let stop = cx.constant(U256::from(opcode::STOP));
+    let bytes = SymBytes::exprs(&mut cx, vec![stop]);
+    let len = cx.var("runtime_len");
+    let data = SymReturnData::from_bytes_with_len(bytes, len);
 
     assert!(matches!(
         data.to_code(&mut cx),
@@ -1560,13 +1576,15 @@ fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
 
 #[test]
 fn symbolic_world_tracks_created_code_and_nonce_overlay() {
+    let mut cx = SymCx::new();
     let created = Address::from([0x22; 20]);
     let mut world = SymbolicWorld::default();
 
-    world.install_code(created, SymCode::concrete(vec![opcode::STOP]));
+    let code = SymCode::concrete(&mut cx, vec![opcode::STOP]);
+    world.install_code(created, code.clone());
     world.set_nonce(created, 1);
 
-    assert_eq!(world.cached_code(created), Some(&SymCode::concrete(vec![opcode::STOP])));
+    assert_eq!(world.cached_code(created), Some(&code));
     assert_eq!(world.cached_nonce(created), Some(1));
 }
 
@@ -1576,7 +1594,8 @@ fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
     let mut memory = SymMemory::default();
     let stop = cx.constant(U256::from(opcode::STOP));
     let constructor_arg = cx.var("constructor_arg_byte");
-    let initcode = SymCode::from_bytes(&mut cx, SymBytes::exprs(vec![stop, constructor_arg]));
+    let bytes = SymBytes::exprs(&mut cx, vec![stop, constructor_arg]);
+    let initcode = SymCode::from_bytes(&mut cx, bytes);
 
     let init_bytes = initcode.read_bytes(&mut cx, 0, 2);
     memory.store_bytes(&mut cx, 0, init_bytes);
@@ -1589,7 +1608,8 @@ fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
 fn symbolic_codecopy_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let code_bytes = (0u8..40).map(|idx| cx.constant(U256::from(idx + 1))).collect();
-    let code = SymCode::from_bytes(&mut cx, SymBytes::exprs(code_bytes));
+    let code_bytes = SymBytes::exprs(&mut cx, code_bytes);
+    let code = SymCode::from_bytes(&mut cx, code_bytes);
     let mut memory = SymMemory::default();
 
     let offset = cx.var("offset");
@@ -1616,7 +1636,8 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
 
     let stop = cx.constant(U256::from(opcode::STOP));
     let arg = cx.var("arg");
-    memory.store_bytes(&mut cx, 7, SymBytes::exprs(vec![stop, arg]));
+    let bytes = SymBytes::exprs(&mut cx, vec![stop, arg]);
+    memory.store_bytes(&mut cx, 7, bytes);
     let offset = cx.var("offset");
     let initcode = SymCode::from_memory_offset(&mut cx, &memory, offset, 2);
     let mut bytes = initcode.read_bytes(&mut cx, 0, 2).materialize(&mut cx);
@@ -1709,7 +1730,8 @@ fn symbolic_push_data_reconstructs_symbolic_word() {
     let push2 = cx.constant(U256::from(opcode::PUSH2));
     let hi = cx.var("immutable_hi");
     let lo = cx.var("immutable_lo");
-    let code = SymCode::from_bytes(&mut cx, SymBytes::exprs(vec![push2, hi, lo]));
+    let bytes = SymBytes::exprs(&mut cx, vec![push2, hi, lo]);
+    let code = SymCode::from_bytes(&mut cx, bytes);
 
     let word = code.push_data_word(&mut cx, 1, 2);
 
@@ -1720,13 +1742,10 @@ fn symbolic_push_data_reconstructs_symbolic_word() {
 fn symbolic_push32_preserves_structural_word() {
     let mut cx = SymCx::new();
     let immediate = cx.var("immutable");
-    let code = SymCode::from_bytes(
-        &mut cx,
-        SymBytes::concat([
-            SymBytes::concrete(vec![opcode::PUSH32]),
-            immediate.clone().into_bytes(),
-        ]),
-    );
+    let opcode = SymBytes::concrete(&mut cx, vec![opcode::PUSH32]);
+    let immediate_bytes = immediate.clone().into_bytes(&mut cx);
+    let bytes = SymBytes::concat(&mut cx, [opcode, immediate_bytes]);
+    let code = SymCode::from_bytes(&mut cx, bytes);
 
     assert_eq!(code.push_data_word(&mut cx, 1, 32), immediate);
 }
@@ -1819,19 +1838,21 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     let input = vec![cx.var("input_0"), cx.var("input_1")];
 
     let input_len = cx.constant(U256::from(input.len()));
+    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let sha = execute_symbolic_precompile(
         &mut cx,
         precompile_address(2),
-        SymBytes::exprs(input.clone()),
+        input_bytes,
         input_len.clone(),
         SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
+    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let sha_again = execute_symbolic_precompile(
         &mut cx,
         precompile_address(2),
-        SymBytes::exprs(input.clone()),
+        input_bytes,
         input_len.clone(),
         SpecId::CANCUN,
     )
@@ -1846,19 +1867,21 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     assert_eq!(sha_word, sha_again_word);
     assert_eq!(sha_word.hash_algorithm(), Some("sha256"));
 
+    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let ecrecover = execute_symbolic_precompile(
         &mut cx,
         precompile_address(1),
-        SymBytes::exprs(input.clone()),
+        input_bytes,
         input_len.clone(),
         SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
+    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let ecrecover_again = execute_symbolic_precompile(
         &mut cx,
         precompile_address(1),
-        SymBytes::exprs(input.clone()),
+        input_bytes,
         input_len.clone(),
         SpecId::CANCUN,
     )
@@ -1873,19 +1896,21 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
         assert_eq!(ecrecover.byte(&mut cx, idx), ecrecover_again.byte(&mut cx, idx));
     }
 
+    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let ripemd = execute_symbolic_precompile(
         &mut cx,
         precompile_address(3),
-        SymBytes::exprs(input.clone()),
+        input_bytes,
         input_len.clone(),
         SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
+    let input_bytes = SymBytes::exprs(&mut cx, input);
     let ripemd_again = execute_symbolic_precompile(
         &mut cx,
         precompile_address(3),
-        SymBytes::exprs(input),
+        input_bytes,
         input_len,
         SpecId::CANCUN,
     )
@@ -1911,10 +1936,11 @@ fn identity_precompile_preserves_symbolic_input_len() {
         cx.constant(U256::from(4)),
     ];
     let input_len = cx.var("size");
+    let input = SymBytes::exprs(&mut cx, input);
     let return_data = execute_symbolic_precompile(
         &mut cx,
         precompile_address(4),
-        SymBytes::exprs(input),
+        input,
         input_len.clone(),
         SpecId::CANCUN,
     )
@@ -1939,20 +1965,22 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     modexp_input[98] = cx.constant(U256::from(13));
 
     let modexp_len = cx.constant(U256::from(modexp_input.len()));
+    let input = SymBytes::exprs(&mut cx, modexp_input.clone());
     let modexp = execute_symbolic_precompile(
         &mut cx,
         precompile_address(5),
-        SymBytes::exprs(modexp_input.clone()),
+        input,
         modexp_len,
         SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
     let modexp_len = cx.constant(U256::from(modexp_input.len()));
+    let input = SymBytes::exprs(&mut cx, modexp_input.clone());
     let modexp_again = execute_symbolic_precompile(
         &mut cx,
         precompile_address(5),
-        SymBytes::exprs(modexp_input.clone()),
+        input,
         modexp_len,
         SpecId::CANCUN,
     )
@@ -1964,10 +1992,11 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     let mut blake_input = vec![cx.var("blake_input"); 213];
     blake_input[212] = cx.zero();
     let blake_len = cx.constant(U256::from(213));
+    let blake_input = SymBytes::exprs(&mut cx, blake_input);
     let blake = execute_symbolic_precompile(
         &mut cx,
         precompile_address(9),
-        SymBytes::exprs(blake_input),
+        blake_input,
         blake_len,
         SpecId::CANCUN,
     )
@@ -1981,10 +2010,11 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
     let mut cx = SymCx::new();
     let bn_input = vec![cx.var("point"); 128];
     let bn_len = cx.constant(U256::from(128));
+    let bn_input = SymBytes::exprs(&mut cx, bn_input);
     let err = execute_symbolic_precompile(
         &mut cx,
         precompile_address(6),
-        SymBytes::exprs(bn_input),
+        bn_input,
         bn_len,
         SpecId::CANCUN,
     )
@@ -1996,10 +2026,11 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
 
     let blake_input = vec![cx.var("blake_input"); 213];
     let blake_len = cx.constant(U256::from(213));
+    let blake_input = SymBytes::exprs(&mut cx, blake_input);
     let err = execute_symbolic_precompile(
         &mut cx,
         precompile_address(9),
-        SymBytes::exprs(blake_input),
+        blake_input,
         blake_len,
         SpecId::CANCUN,
     )

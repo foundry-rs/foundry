@@ -916,7 +916,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         }
 
-        let child_code = state.world.extcode(executor, code_address)?;
+        let child_code = state.world.extcode(&mut self.cx, executor, code_address)?;
         if child_code.is_empty() {
             if matches!(kind, CallKind::Call) {
                 state.world.transfer(&mut self.cx, executor, state.address, to, value);
@@ -1376,7 +1376,7 @@ impl SymbolicExecutor {
         out_offset: SymExpr,
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
-        let mut candidates = state.world.symbolic_call_targets(executor)?;
+        let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
         candidates.extend((1..=10).map(precompile_address));
         candidates.sort();
         candidates.dedup();
