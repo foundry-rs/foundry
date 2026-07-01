@@ -1319,7 +1319,11 @@ impl<N: Network> Backend<N> {
         let hardfork = self.tempo_hardfork();
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
-            TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
+            TempoBlockEnv {
+                inner: evm_env.block_env.clone(),
+                timestamp_millis_part: 0,
+                ..Default::default()
+            },
         );
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
@@ -1396,7 +1400,11 @@ impl<N: Network> Backend<N> {
                     .cfg_env
                     .clone()
                     .with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
-                TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
+                TempoBlockEnv {
+                    inner: evm_env.block_env.clone(),
+                    timestamp_millis_part: 0,
+                    ..Default::default()
+                },
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
