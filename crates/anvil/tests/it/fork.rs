@@ -6,6 +6,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_eips::{
+    eip2718::Decodable2718,
     eip7840::BlobParams,
     eip7910::{EthConfig, SystemContract},
 };
@@ -24,8 +25,10 @@ use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::Et
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
+use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
+use revm::precompile::PrecompileStatus;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -41,9 +44,9 @@ const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
 /// Represents an anvil fork of an anvil node
 #[expect(unused)]
 pub struct LocalFork {
-    origin_api: EthApi,
+    origin_api: EthApi<FoundryNetwork>,
     origin_handle: NodeHandle,
-    fork_api: EthApi,
+    fork_api: EthApi<FoundryNetwork>,
     fork_handle: NodeHandle,
 }
 
@@ -99,6 +102,40 @@ async fn test_fork_gas_limit_disabled_from_config() {
         .from(handle.dev_wallets().next().unwrap().address());
     let tx = WithOtherFields::new(tx);
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+}
+
+// `debug_getRawReceipts` must serve pre-fork blocks from the upstream provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_receipts() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // A pre-fork block known to contain transactions.
+    let block_number = BLOCK_NUMBER - 1;
+    let rpc_receipts =
+        provider.get_block_receipts(BlockId::number(block_number)).await.unwrap().unwrap();
+    assert!(!rpc_receipts.is_empty());
+
+    let block = provider.get_block(BlockId::number(block_number)).await.unwrap().unwrap();
+    let raw_by_number: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawReceipts", (BlockId::number(block_number),))
+        .await
+        .unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawReceipts", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), rpc_receipts.len());
+
+    // Each entry decodes back into a receipt envelope matching the RPC receipt.
+    for (raw, rpc) in raw_by_number.iter().zip(rpc_receipts.iter()) {
+        let decoded = FoundryReceiptEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
+        assert_eq!(decoded.status(), rpc.status());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -556,7 +593,7 @@ async fn can_reset_fork_to_new_fork() {
     let optimism = next_rpc_endpoint(NamedChain::Optimism);
 
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(optimism.to_string()),
+        json_rpc_url: Some(optimism.clone()),
         block_number: Some(124659890),
     }))
     .await
@@ -810,6 +847,16 @@ async fn test_fork_base_fee() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_pre_london_base_fee_is_null() {
+    let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(12_000_000u64))).await;
+
+    let provider = handle.http_provider();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_init_base_fee() {
     let (api, handle) = spawn(fork_config().with_fork_block_number(Some(13184859u64))).await;
 
@@ -830,6 +877,39 @@ async fn test_fork_init_base_fee() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_init_blob_base_fee_with_explicit_base_fee() {
+    let fork_rpc_url = rpc::next_http_archive_rpc_url();
+    let fork_block_number = 24_127_158u64;
+    let (default_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_rpc_url.clone()))
+            .with_fork_block_number(Some(fork_block_number)),
+    )
+    .await;
+    let explicit_base_fee = default_api
+        .block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .base_fee_per_gas
+        .unwrap();
+    let (explicit_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_rpc_url))
+            .with_fork_block_number(Some(fork_block_number))
+            .with_base_fee(Some(explicit_base_fee)),
+    )
+    .await;
+
+    let default_blob_base_fee = default_api.blob_base_fee().unwrap();
+    let explicit_blob_base_fee = explicit_api.blob_base_fee().unwrap();
+
+    assert!(default_blob_base_fee > U256::from(1));
+    assert_eq!(explicit_blob_base_fee, default_blob_base_fee);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn flaky_test_reset_fork_on_new_blocks() {
     let (api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
@@ -840,7 +920,9 @@ async fn flaky_test_reset_fork_on_new_blocks() {
 
     let current_block = anvil_provider.get_block_number().await.unwrap();
 
-    handle.task_manager().spawn_reset_on_new_polled_blocks(provider.clone(), api);
+    handle
+        .task_manager()
+        .spawn_reset_on_new_polled_blocks::<alloy_network::AnyNetwork, _>(provider.clone(), api);
 
     let mut stream = provider
         .watch_blocks()
@@ -1219,7 +1301,7 @@ async fn flaky_test_arbitrum_fork_dev_balance() {
 
 // <https://github.com/foundry-rs/foundry/issues/9152>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_arb_fork_mining() {
+async fn flaky_test_arb_fork_mining() {
     let fork_block_number = 394274860u64;
     let fork_rpc = next_rpc_endpoint(NamedChain::Arbitrum);
     let (api, _handle) = spawn(
@@ -1412,6 +1494,31 @@ async fn test_immutable_fork_transaction_hash() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_by_number_full_refetches_missing_cached_transactions() {
+    let (api, _) = spawn(fork_config()).await;
+
+    let block =
+        api.block_by_number_full(BlockNumberOrTag::Number(BLOCK_NUMBER)).await.unwrap().unwrap();
+    let block_txs = block.transactions.as_transactions().unwrap();
+    let original_len = block_txs.len();
+    let missing_hash = *block_txs[0].tx_hash();
+
+    let fork = api.backend.get_fork().unwrap();
+    {
+        let mut storage = fork.storage.write();
+        assert!(storage.transactions.remove(&missing_hash).is_some());
+    }
+
+    let refreshed =
+        api.block_by_number_full(BlockNumberOrTag::Number(BLOCK_NUMBER)).await.unwrap().unwrap();
+    let refreshed_txs = refreshed.transactions.as_transactions().unwrap();
+
+    assert_eq!(refreshed_txs.len(), original_len);
+    assert_eq!(refreshed_txs[0].tx_hash(), &missing_hash);
+    assert!(fork.storage.read().transactions.contains_key(&missing_hash));
+}
+
 // <https://github.com/foundry-rs/foundry/issues/4700>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_query_at_fork_block() {
@@ -1550,7 +1657,7 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     let number = info.fork_config.fork_block_number.unwrap();
     assert_eq!(number, BLOCK_NUMBER);
 
-    async fn get_block_from_cache_path(api: &mut EthApi) -> u64 {
+    async fn get_block_from_cache_path(api: &mut EthApi<FoundryNetwork>) -> u64 {
         let db = api.backend.get_db().read().await;
         let cache_path = db.maybe_inner().unwrap().cache().cache_path().unwrap();
         cache_path
@@ -1879,7 +1986,9 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
                             bytes: Bytes::copy_from_slice(input.data),
                             gas_used: 0,
                             gas_refunded: 0,
-                            reverted: false,
+                            status: PrecompileStatus::Success,
+                            state_gas_used: 0,
+                            reservoir: input.reservoir,
                         })
                     },
                 ),
@@ -1946,5 +2055,63 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
         &expected_blob_params,
         &expected_precompiles,
         &expected_system_contracts,
+    );
+}
+
+// Regression tests: verify that `anvil_setRpcUrl` and `anvil_reset` keep
+// `ClientForkConfig.fork_urls` in sync so that subsequent resets don't
+// silently revert to stale URLs.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_rpc_url_syncs_fork_config() {
+    // Spawn an origin node and fork off it
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_url = origin_handle.http_endpoint();
+
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
+
+    // Verify initial fork URL
+    let fork = api.backend.get_fork().unwrap();
+    assert_eq!(fork.config.read().fork_urls, vec![origin_url.clone()]);
+
+    // Spawn a second origin to use as the new URL
+    let (_origin2_api, origin2_handle) = spawn(NodeConfig::test()).await;
+    let new_url = origin2_handle.http_endpoint();
+
+    // Set RPC URL via the API
+    api.anvil_set_rpc_url(new_url.clone()).await.unwrap();
+
+    // Verify ClientForkConfig is updated
+    let fork = api.backend.get_fork().unwrap();
+    assert_eq!(
+        fork.config.read().fork_urls,
+        vec![new_url.clone()],
+        "ClientForkConfig.fork_urls should be updated after anvil_setRpcUrl"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_reset_with_url_updates_fork_urls() {
+    // Spawn an origin node and fork off it
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_url = origin_handle.http_endpoint();
+
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
+
+    // Spawn a second origin
+    let (_origin2_api, origin2_handle) = spawn(NodeConfig::test()).await;
+    let new_url = origin2_handle.http_endpoint();
+
+    // Reset fork with a new URL
+    api.anvil_reset(Some(Forking { json_rpc_url: Some(new_url.clone()), block_number: None }))
+        .await
+        .unwrap();
+
+    // Verify the fork config uses the new URL, not the old one
+    let fork = api.backend.get_fork().unwrap();
+    assert_eq!(
+        fork.config.read().fork_urls,
+        vec![new_url.clone()],
+        "ClientForkConfig.fork_urls should reflect the new URL after anvil_reset"
     );
 }

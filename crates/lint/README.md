@@ -8,13 +8,47 @@ It helps enforce best practices and improve code quality within Foundry projects
 `forge-lint` includes rules across several categories:
 
 - **High Severity:**
+  - `incorrect-exp`: Flags `^` (bitwise xor) used where `**` (exponentiation) was likely intended.
   - `incorrect-shift`: Warns against shift operations where operands might be in the wrong order.
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
+  - `arbitrary-send-erc20`: Flags `transferFrom`/`safeTransferFrom` calls whose `from` argument is not provably `msg.sender` or `address(this)`.
+  - `arbitrary-send-erc20-permit`: Flags arbitrary `transferFrom` calls preceded by a covering `permit`; on non-permit tokens with a fallback (e.g. WETH) the permit silently succeeds and previously-approved tokens can be drained.
+  - `controlled-delegatecall`: Flags `delegatecall` calls whose target is not provably trusted.
+  - `encode-packed-collision`: Flags `abi.encodePacked()` calls with multiple dynamic-type arguments (`string`, `bytes`, dynamic arrays) that can produce hash collisions.
+  - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
+  - `reentrancy-eth`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
+  - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
 - **Medium Severity:**
+  - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
+  - `boolean-cst`: Flags misuse of boolean constants.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
+  - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
+  - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
+  - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
+  - `mapping-deletion`: `delete` on a value containing a mapping does not clear the mapping.
+  - `reentrancy-no-eth`: Flags non-ETH external calls followed by writes to state that was read before the call.
+  - `tautological-compare`: Comparing an expression with itself is always true or false.
+  - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
+  - `uninitialized-local`: Local variable is read before being explicitly initialized.
+  - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
+  - `unused-return`: Return value of an external call is not used.
+  - `locked-ether`: Contracts that can receive ETH but have no mechanism to send it out.
+  - `non-reentrant-not-first`: `nonReentrant` should be the first modifier on guarded entry points.
+  - `weak-prng`: Flags randomness-like expressions derived from predictable on-chain values.
+- **Low Severity:**
+  - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
+  - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
+  - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
+  - `incorrect-modifier`: Modifiers should not be able to finish without executing `_` or reverting.
+  - `missing-events-access-control`: Access control changes should emit events.
+  - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
+  - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
+  - `return-bomb`: External calls with a gas limit should not consume unbounded return data.
 - **Informational / Style Guide:**
+  - `boolean-equal`: Boolean comparisons to constants should be simplified.
+  - `too-many-digits`: Numeric literals with 5+ consecutive zeros are error-prone.
   - `pascal-case-struct`: Flags for struct names not adhering to `PascalCase`.
   - `mixed-case-function`: Flags for function names not adhering to `mixedCase`.
   - `mixed-case-variable`: Flags for mutable variable names not adhering to `mixedCase`.
@@ -24,9 +58,25 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unaliased-plain-import`: Use named imports `{A, B}` or alias `import ".." as X`.
   - `named-struct-fields`: Prefer initializing structs with named fields.
   - `unsafe-cheatcode`: Usage of unsafe cheatcodes that can perform dangerous operations.
+  - `multi-contract-file`: Prefer having only one contract, interface, or library per file.
+  - `interface-file-naming`: Interface file names should be prefixed with `I`.
+  - `interface-naming`: Interface names should be prefixed with `I`.
+  - `pragma-inconsistent`: Flags projects whose source files declare different Solidity pragma version requirements.
+  - `redundant-base-constructor-call`: Flags explicit empty base-constructor arguments (e.g. `is A()`) when the base requires no arguments.
+  - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
+  - `low-level-calls`: Direct use of low-level calls should be avoided.
+  - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
+  - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.
+  - `costly-loop`: Flags storage variable writes inside loops; accumulate into a local variable and write once after the loop instead.
+  - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
+  - `could-be-constant`: Recommends declaring never-written state variables with a compile-time-constant initializer as `constant`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
+  - `external-function`: `public` functions never called internally should be declared `external` to avoid copying reference-type arguments into memory.
+  - `unused-state-variables`: State variables that are never used should be removed.
+  - `var-read-using-this`: Reads of state variables (or other `view`/`pure` functions) via `this` cause an unnecessary `STATICCALL`; access them directly.
+  - `write-after-write`: Flags storage variables written consecutively without the first value ever being read; only the final write is needed.
 - **Code Size:**
   - `unwrapped-modifier-logic`: Recommends wrapping modifier logic to reduce contract code size.
 
@@ -75,4 +125,3 @@ Guidelines for contributing to `forge lint`:
 ### Developing a New Lint Rule
 
 Check the [dev docs](../../docs/dev/lintrules.md) for a full implementation guide.
-

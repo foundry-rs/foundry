@@ -36,8 +36,8 @@ impl MutatorType {
     }
 
     /// Returns the operators that are excluded by default.
-    pub fn default_excluded() -> Vec<Self> {
-        vec![]
+    pub const fn default_excluded() -> Vec<Self> {
+        Vec::new()
     }
 }
 
@@ -48,6 +48,28 @@ pub struct MutationConfig {
     pub include_operators: Vec<MutatorType>,
     /// Exclude additional operators beyond the defaults.
     pub exclude_operators: Vec<MutatorType>,
+    /// Per-mutant wall-clock timeout, in seconds.
+    ///
+    /// When set, each mutant's compile-and-test work is bounded by this
+    /// duration; mutants that exceed it are recorded as `TimedOut`. This is
+    /// the analog of `invariant.timeout` for mutation campaigns.
+    ///
+    /// Note: enforcement is best-effort. Background work for a timed-out
+    /// mutant may continue briefly until the underlying compile / test loop
+    /// reaches a checkpoint, but the worker slot is freed immediately so
+    /// other mutants can proceed. Cleanup backlog is bounded by the configured
+    /// mutation worker count.
+    pub timeout: Option<u32>,
+    /// Override `optimizer_runs` for mutation testing compile-and-test runs.
+    ///
+    /// This lets mutation campaigns use a faster compiler profile without
+    /// changing the project's normal build settings.
+    pub optimizer_runs: Option<u32>,
+    /// Override `via_ir` for mutation testing compile-and-test runs.
+    ///
+    /// This lets mutation campaigns disable the IR pipeline without changing
+    /// the project's normal build settings.
+    pub via_ir: Option<bool>,
 }
 
 impl MutationConfig {

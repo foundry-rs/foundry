@@ -10,6 +10,10 @@ use std::path::PathBuf;
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     pub runs: u32,
+    /// Optional 1-based fuzz run to execute.
+    pub run: Option<u32>,
+    /// Optional fuzz worker ID to pair with `run`.
+    pub worker: Option<u32>,
     /// Fails the fuzzed test if a revert occurs.
     pub fail_on_revert: bool,
     /// The maximum number of test case rejections allowed,
@@ -37,12 +41,14 @@ impl Default for FuzzConfig {
     fn default() -> Self {
         Self {
             runs: 256,
+            run: None,
+            worker: None,
             fail_on_revert: true,
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
-            corpus: FuzzCorpusConfig::default(),
+            corpus: FuzzCorpusConfig { payable_value_weight: 0, ..Default::default() },
             failure_persist_dir: None,
             show_logs: false,
             timeout: None,
@@ -71,16 +77,25 @@ pub struct FuzzDictionaryConfig {
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
     ///
     /// This limit is put in place to prevent memory blowup.
-    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
+    #[serde(
+        deserialize_with = "crate::deserialize_usize_or_max",
+        serialize_with = "crate::serialize_usize_or_max"
+    )]
     pub max_fuzz_dictionary_addresses: usize,
     /// How many values to record at most.
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
-    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
+    #[serde(
+        deserialize_with = "crate::deserialize_usize_or_max",
+        serialize_with = "crate::serialize_usize_or_max"
+    )]
     pub max_fuzz_dictionary_values: usize,
     /// How many literal values to seed from the AST, at most.
     ///
     /// This value is independent from the max amount of addresses and values.
-    #[serde(deserialize_with = "crate::deserialize_usize_or_max")]
+    #[serde(
+        deserialize_with = "crate::deserialize_usize_or_max",
+        serialize_with = "crate::serialize_usize_or_max"
+    )]
     pub max_fuzz_dictionary_literals: usize,
 }
 
@@ -113,22 +128,92 @@ pub struct FuzzCorpusConfig {
     pub corpus_min_size: usize,
     /// Whether to collect and display edge coverage metrics.
     pub show_edge_coverage: bool,
+    /// Whether EVM edge coverage should use collision-free dense IDs.
+    pub evm_edge_coverage_collision_free: bool,
+    /// Whether EVM edge coverage IDs should include call-frame depth.
+    pub evm_edge_coverage_include_call_depth: bool,
+    /// Whether to collect edge coverage from native Rust crates compiled with
+    /// SanitizerCoverage instrumentation (e.g. precompile implementations).
+    /// Requires building forge with a `RUSTC_WRAPPER` that injects sancov flags.
+    pub sancov_edges: bool,
+    /// Whether to capture comparison operands from sancov-instrumented crates
+    /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
+    pub sancov_trace_cmp: bool,
+    /// Percent chance of generating fresh transaction input instead of continuing from corpus
+    /// input during coverage-guided campaigns.
+    #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    pub corpus_random_sequence_weight: u32,
+    /// Percent chance that generated payable calls carry non-zero `msg.value`.
+    #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    pub payable_value_weight: u32,
+    /// Weights for coverage-guided corpus mutation strategies.
+    #[serde(flatten)]
+    pub mutation_weights: FuzzCorpusMutationWeights,
 }
 
 impl FuzzCorpusConfig {
+    pub const DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 10;
+    pub const ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 50;
+
     pub fn with_test(&mut self, contract: &str, test: &str) {
         if let Some(corpus_dir) = &self.corpus_dir {
             self.corpus_dir = Some(canonicalized(corpus_dir.join(contract).join(test)));
         }
     }
 
-    /// Whether edge coverage should be collected and displayed.
-    pub fn collect_edge_coverage(&self) -> bool {
-        self.corpus_dir.is_some() || self.show_edge_coverage
+    /// Whether any edge coverage (EVM or sancov) should be collected.
+    pub const fn collect_edge_coverage(&self) -> bool {
+        self.corpus_dir.is_some() || self.show_edge_coverage || self.sancov_edges
+    }
+
+    /// Whether the EVM `EdgeCovInspector` should be enabled.
+    ///
+    /// Disabled when sancov edge coverage is active — sancov provides the
+    /// coverage signal and EVM hits from the Solidity handler would dilute it.
+    /// Trace-cmp-only mode keeps EVM edges enabled since trace-cmp only
+    /// contributes dictionary entries, not edge coverage.
+    pub const fn collect_evm_edge_coverage(&self) -> bool {
+        !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
+    }
+
+    /// Whether EVM comparison operand capture is enabled.
+    ///
+    /// EVM comparison operands are only useful for coverage-guided fuzzing, so they are derived
+    /// from corpus mode. Disabled when sancov edge coverage is active because sancov replaces EVM
+    /// bytecode coverage as the guidance signal.
+    pub fn collect_evm_cmp_log(&self) -> bool {
+        !self.sancov_edges
+            && self.corpus_dir.is_some()
+            && self.mutation_weights.effective().mutation_weight_cmp > 0
+    }
+
+    /// Whether EVM edge coverage should use collision-free dense IDs.
+    pub const fn evm_edge_coverage_collision_free(&self) -> bool {
+        self.evm_edge_coverage_collision_free
+    }
+
+    /// Whether EVM edge coverage IDs should include call-frame depth.
+    pub const fn evm_edge_coverage_include_call_depth(&self) -> bool {
+        self.evm_edge_coverage_include_call_depth
+    }
+
+    /// Whether sancov edge coverage collection is enabled.
+    pub const fn collect_sancov_edges(&self) -> bool {
+        self.sancov_edges
+    }
+
+    /// Whether sancov trace-cmp capture is enabled.
+    pub const fn collect_sancov_trace_cmp(&self) -> bool {
+        self.sancov_trace_cmp
+    }
+
+    /// Whether either sancov coverage mode is active.
+    pub const fn sancov_active(&self) -> bool {
+        self.sancov_edges || self.sancov_trace_cmp
     }
 
     /// Whether coverage guided fuzzing is enabled.
-    pub fn is_coverage_guided(&self) -> bool {
+    pub const fn is_coverage_guided(&self) -> bool {
         self.corpus_dir.is_some()
     }
 }
@@ -141,6 +226,62 @@ impl Default for FuzzCorpusConfig {
             corpus_min_mutations: 5,
             corpus_min_size: 0,
             show_edge_coverage: false,
+            evm_edge_coverage_collision_free: true,
+            evm_edge_coverage_include_call_depth: false,
+            sancov_edges: false,
+            sancov_trace_cmp: false,
+            corpus_random_sequence_weight: Self::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT,
+            payable_value_weight: 15,
+            mutation_weights: FuzzCorpusMutationWeights::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FuzzCorpusMutationWeights {
+    /// Weight for splicing two corpus sequences.
+    pub mutation_weight_splice: u32,
+    /// Weight for repeating part of a corpus sequence.
+    pub mutation_weight_repeat: u32,
+    /// Weight for interleaving two corpus sequences.
+    pub mutation_weight_interleave: u32,
+    /// Weight for replacing a corpus sequence prefix with generated calls.
+    pub mutation_weight_prefix: u32,
+    /// Weight for replacing a corpus sequence suffix with generated calls.
+    pub mutation_weight_suffix: u32,
+    /// Weight for ABI-aware argument mutation.
+    pub mutation_weight_abi: u32,
+    /// Weight for comparison-operand guided argument mutation.
+    pub mutation_weight_cmp: u32,
+}
+
+impl FuzzCorpusMutationWeights {
+    pub const fn total(&self) -> u64 {
+        self.mutation_weight_splice as u64
+            + self.mutation_weight_repeat as u64
+            + self.mutation_weight_interleave as u64
+            + self.mutation_weight_prefix as u64
+            + self.mutation_weight_suffix as u64
+            + self.mutation_weight_abi as u64
+            + self.mutation_weight_cmp as u64
+    }
+
+    /// Returns defaults if every configured weight is zero.
+    pub fn effective(self) -> Self {
+        if self.total() == 0 { Self::default() } else { self }
+    }
+}
+
+impl Default for FuzzCorpusMutationWeights {
+    fn default() -> Self {
+        Self {
+            mutation_weight_splice: 1,
+            mutation_weight_repeat: 1,
+            mutation_weight_interleave: 1,
+            mutation_weight_prefix: 1,
+            mutation_weight_suffix: 1,
+            mutation_weight_abi: 1,
+            mutation_weight_cmp: 1,
         }
     }
 }

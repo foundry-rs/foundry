@@ -15,7 +15,7 @@
 //! - State preconditions (reentrancy guards, paused checks)
 
 use eyre::Result;
-use solar::ast::{CallArgsKind, ExprKind};
+use solar::ast::{CallArgsKind, Expr, ExprKind, UnOpKind};
 
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
@@ -59,61 +59,48 @@ impl Mutator for RequireMutator {
         let line_number = context.line_number();
         let column_number = context.column_number();
 
-        // Extract condition text from source
         let source = context.source.unwrap_or("");
-        let condition_text = extract_span_text(source, condition_expr.span);
 
-        // Build the rest of the call (message argument if present)
+        // Build the rest of the call (message and other arguments after the condition,
+        // if any) using span-based extraction so that commas inside the condition
+        // expression (e.g. `require(foo(a, b))`) do not break splitting.
         let rest_args = if args_exprs.len() > 1 {
-            let first_comma = original.find(',').unwrap_or(original.len());
-            let close_paren = original.rfind(')').unwrap_or(original.len());
-            if first_comma < close_paren {
-                original[first_comma..close_paren].to_string()
-            } else {
-                String::new()
-            }
+            // Extract from the character right after the condition expression up to
+            // the last argument's end.
+            let start = condition_expr.span.hi().0 as usize;
+            let end = args_exprs.last().map(|e| e.span.hi().0 as usize).unwrap_or(start);
+            source.get(start..end).map(|s| s.to_string()).unwrap_or_default()
         } else {
             String::new()
         };
 
         let mut mutants = Vec::new();
-
-        // Mutation 1: require(x) -> require(true)
-        // This is security-critical: if tests pass, the condition was never actually needed
-        let mutated_true = format!("{func_name}(true{rest_args})");
-        mutants.push(Mutant {
-            span: expr.span,
-            mutation: MutationType::RequireCondition { mutated_call: mutated_true },
-            path: context.path.clone(),
-            original: original.clone(),
-            source_line: source_line.clone(),
-            line_number,
-            column_number,
-        });
-
-        let mutated_false = format!("{func_name}(false{rest_args})");
-        mutants.push(Mutant {
-            span: expr.span,
-            mutation: MutationType::RequireCondition { mutated_call: mutated_false },
-            path: context.path.clone(),
-            original: original.clone(),
-            source_line: source_line.clone(),
-            line_number,
-            column_number,
-        });
-
-        if !condition_text.trim().starts_with('!') {
-            let mutated_inverted = format!("{func_name}(!({condition_text}){rest_args})");
+        let mut push_mutant = |mutated_call: String, original: String, source_line: String| {
+            if mutated_call.trim() == original.trim() {
+                return;
+            }
             mutants.push(Mutant {
                 span: expr.span,
-                mutation: MutationType::RequireCondition { mutated_call: mutated_inverted },
+                mutation: MutationType::RequireCondition { mutated_call },
                 path: context.path.clone(),
                 original,
                 source_line,
                 line_number,
                 column_number,
             });
-        }
+        };
+
+        // Mutation 1: require(x) -> require(true)
+        // This is security-critical: if tests pass, the condition was never actually needed
+        let mutated_true = format!("{func_name}(true{rest_args})");
+        push_mutant(mutated_true, original.clone(), source_line.clone());
+
+        let mutated_false = format!("{func_name}(false{rest_args})");
+        push_mutant(mutated_false, original.clone(), source_line.clone());
+
+        let inverted_condition = invert_condition_text(source, condition_expr);
+        let mutated_inverted = format!("{func_name}({inverted_condition}{rest_args})");
+        push_mutant(mutated_inverted, original, source_line);
 
         Ok(mutants)
     }
@@ -144,4 +131,16 @@ fn extract_span_text(source: &str, span: solar::ast::Span) -> String {
     let lo = span.lo().0 as usize;
     let hi = span.hi().0 as usize;
     source.get(lo..hi).map(|s| s.to_string()).unwrap_or_default()
+}
+
+fn invert_condition_text(source: &str, condition_expr: &Expr<'_>) -> String {
+    match &condition_expr.kind {
+        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
+            extract_span_text(source, inner.span)
+        }
+        _ => {
+            let condition = extract_span_text(source, condition_expr.span);
+            format!("!({})", condition.trim())
+        }
+    }
 }

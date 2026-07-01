@@ -1,20 +1,11 @@
-use rstest::*;
-
 use crate::mutation::mutators::{
-    delete_expression_mutator::DeleteExpressionMutator,
-    tests::helper::{MutatorTestCase, MutatorTester},
+    delete_expression_mutator::DeleteExpressionMutator, tests::helper::mutator_tests,
 };
 
-impl MutatorTester for DeleteExpressionMutator {}
-
-#[rstest]
-#[case::delete_expr("delete x", Some(vec!["x"]))]
-#[case::non_delete("a = b + c", None)]
-fn test_mutator_delete_expr(
-    #[case] input: &'static str,
-    #[case] expected_mutations: Option<Vec<&'static str>>,
-) {
-    let mutator: DeleteExpressionMutator = DeleteExpressionMutator;
-    let test_case = MutatorTestCase { input, expected_mutations };
-    DeleteExpressionMutator::test_mutator(mutator, test_case);
-}
+// `delete x` is replaced by `assert(true)` (a no-op statement) — the test
+// expects the mutation's *replacement text*, not the original expression
+// stripped of the `delete` keyword.
+mutator_tests!(DeleteExpressionMutator;
+    delete_expr: "delete x"  => Some(vec!["assert(true)"]);
+    non_delete:  "a = b + c" => None;
+);

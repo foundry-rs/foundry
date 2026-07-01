@@ -33,10 +33,10 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_cache: bool,
 
-    /// Enable dynamic test linking.
+    /// Disable dynamic test linking.
     #[arg(long, conflicts_with = "no_cache")]
     #[serde(skip)]
-    pub dynamic_test_linking: bool,
+    pub no_dynamic_test_linking: bool,
 
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
@@ -184,12 +184,15 @@ impl BuildOpts {
 impl<'a> From<&'a BuildOpts> for Figment {
     fn from(args: &'a BuildOpts) -> Self {
         let root = if let Some(config_path) = &args.project_paths.config_path {
-            if !config_path.exists() {
-                panic!("error: config-path `{}` does not exist", config_path.display())
-            }
-            if !config_path.ends_with(Config::FILE_NAME) {
-                panic!("error: the config-path must be a path to a foundry.toml file")
-            }
+            assert!(
+                config_path.exists(),
+                "error: config-path `{}` does not exist",
+                config_path.display()
+            );
+            assert!(
+                config_path.ends_with(Config::FILE_NAME),
+                "error: the config-path must be a path to a foundry.toml file"
+            );
             let config_path = canonicalized(config_path);
             config_path.parent().unwrap().to_path_buf()
         } else {
@@ -265,8 +268,8 @@ impl Provider for BuildOpts {
             dict.insert("cache".to_string(), false.into());
         }
 
-        if self.dynamic_test_linking {
-            dict.insert("dynamic_test_linking".to_string(), true.into());
+        if self.no_dynamic_test_linking {
+            dict.insert("dynamic_test_linking".to_string(), false.into());
         }
 
         if self.build_info {
@@ -275,6 +278,10 @@ impl Provider for BuildOpts {
 
         if self.compiler.ast {
             dict.insert("ast".to_string(), true.into());
+        }
+
+        if self.compiler.experimental {
+            dict.insert("experimental".to_string(), true.into());
         }
 
         if let Some(optimize) = self.compiler.optimize {

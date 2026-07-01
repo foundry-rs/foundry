@@ -48,10 +48,13 @@ pub struct LogsArgs {
     #[arg(long)]
     subscribe: bool,
 
-    /// Number of blocks to query in each chunk when the provider has range limits.
-    /// Defaults to 10000 blocks per chunk.
-    #[arg(long, default_value_t = 10000)]
-    query_size: u64,
+    /// Split the query into chunks of this many blocks to work around provider range/result
+    /// limits.
+    ///
+    /// When omitted, the range is queried in a single request. Pass a value (e.g. `10000`) to
+    /// fetch the logs in `query-size`-block chunks instead.
+    #[arg(long, value_name = "BLOCKS")]
+    query_size: Option<u64>,
 
     #[command(flatten)]
     rpc: RpcOpts,
@@ -93,11 +96,16 @@ impl LogsArgs {
         let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
-            let logs = cast.filter_logs_chunked(filter, query_size).await?;
+            let logs = match query_size {
+                Some(chunk_size) => cast.filter_logs_chunked(filter, chunk_size).await?,
+                None => cast.filter_logs(filter).await?,
+            };
             sh_println!("{logs}")?;
             return Ok(());
         }
 
+        // JSON envelope intentionally unsupported for streaming: --subscribe emits NDJSON events
+        // continuously; a terminal JsonEnvelope is pointless.
         // FIXME: this is a hotfix for <https://github.com/foundry-rs/foundry/issues/7682>
         //  currently the alloy `eth_subscribe` impl does not work with all transports, so we use
         // the builtin transport here for now

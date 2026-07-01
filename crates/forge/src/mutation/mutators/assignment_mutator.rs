@@ -35,6 +35,7 @@ impl Mutator for AssignmentMutator {
                     line_number,
                     column_number,
                 }]),
+                OwnedLiteral::Number(val) if *val == U256::ZERO => Ok(vec![]),
                 OwnedLiteral::Number(val) => Ok(vec![
                     Mutant {
                         span: replacement_span,
@@ -47,10 +48,14 @@ impl Mutator for AssignmentMutator {
                         line_number,
                         column_number,
                     },
+                    // Negation of a numeric literal must be carried textually:
+                    // applying `-*val` on a `U256` wraps via two's complement
+                    // and would render as a huge unsigned literal (e.g. `1`
+                    // becomes `2^256 - 1`), producing wrong-source mutants.
                     Mutant {
                         span: replacement_span,
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
-                            OwnedLiteral::Number(-*val),
+                            OwnedLiteral::NegatedNumber(*val),
                         )),
                         path: context.path.clone(),
                         original,
@@ -63,6 +68,10 @@ impl Mutator for AssignmentMutator {
                 OwnedLiteral::Rational(_) => Ok(vec![]),
                 OwnedLiteral::Address(_) => Ok(vec![]),
                 OwnedLiteral::Err(_) => Ok(vec![]),
+                // `NegatedNumber` is only ever constructed *as* a mutant; it
+                // does not appear as an original literal in the source AST,
+                // so there is nothing to mutate here.
+                OwnedLiteral::NegatedNumber(_) => Ok(vec![]),
             },
             AssignVarTypes::Identifier(ref ident) => Ok(vec![
                 Mutant {
@@ -115,7 +124,8 @@ impl Mutator for AssignmentMutator {
 fn extract_rhs_info<'ast>(context: &MutationContext<'ast>) -> Option<(AssignVarTypes, Span)> {
     let relevant_expr_for_rhs = if let Some(var_definition) = context.var_definition {
         var_definition.initializer.as_ref()?
-    } else if let Some(expr) = context.expr {
+    } else {
+        let expr = context.expr?;
         match &expr.kind {
             ExprKind::Assign(_lhs, _op_opt, rhs_actual_expr) => &**rhs_actual_expr,
             // If the context.expr is already what we want to get the type from
@@ -123,8 +133,6 @@ fn extract_rhs_info<'ast>(context: &MutationContext<'ast>) -> Option<(AssignVarT
             ExprKind::Lit(..) | ExprKind::Ident(..) => expr,
             _ => return None,
         }
-    } else {
-        return None; // No var_definition or expr in context (shouldn't happen?)
     };
 
     match &relevant_expr_for_rhs.kind {

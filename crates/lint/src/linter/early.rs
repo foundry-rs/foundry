@@ -36,7 +36,10 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
     ) {
     }
     fn check_doc_comment(&mut self, _ctx: &LintContext, _cmnt: &'ast ast::DocComment) {}
-    // TODO: Add methods for each required AST node type
+    fn check_item(&mut self, _ctx: &LintContext, _item: &'ast ast::Item<'ast>) {}
+    fn check_stmt(&mut self, _ctx: &LintContext, _stmt: &'ast ast::Stmt<'ast>) {}
+    fn check_path(&mut self, _ctx: &LintContext, _path: &'ast ast::PathSlice) {}
+    fn check_ty(&mut self, _ctx: &LintContext, _ty: &'ast ast::Type<'ast>) {}
 
     /// Should be called after the source unit has been visited. Enables lints that require
     /// knowledge of the entire AST to perform their analysis.
@@ -171,6 +174,31 @@ where
         self.walk_item_contract(contract)
     }
 
-    // TODO: Add methods for each required AST node type, mirroring `solar::ast::visit::Visit`
-    // method sigs + adding `LintContext`
+    fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_item(self.ctx, item)
+        }
+        self.walk_item(item)
+    }
+
+    fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_stmt(self.ctx, stmt)
+        }
+        self.walk_stmt(stmt)
+    }
+
+    fn visit_path(&mut self, path: &'ast ast::PathSlice) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_path(self.ctx, path)
+        }
+        self.walk_path(path)
+    }
+
+    fn visit_ty(&mut self, ty: &'ast ast::Type<'ast>) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_ty(self.ctx, ty)
+        }
+        self.walk_ty(ty)
+    }
 }

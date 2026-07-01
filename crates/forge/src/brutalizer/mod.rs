@@ -37,7 +37,7 @@ struct BrutalizerVisitor<'src> {
 }
 
 impl<'src> BrutalizerVisitor<'src> {
-    fn new(source: &'src str) -> Self {
+    const fn new(source: &'src str) -> Self {
         Self {
             transforms: Vec::new(),
             source,
@@ -48,7 +48,7 @@ impl<'src> BrutalizerVisitor<'src> {
     }
 }
 
-impl<'ast> Visit<'ast> for BrutalizerVisitor<'ast> {
+impl<'ast, 'src> Visit<'ast> for BrutalizerVisitor<'src> {
     type BreakValue = ();
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
@@ -137,14 +137,15 @@ pub fn brutalize_source(path: &Path, source: &str) -> eyre::Result<String> {
 
     let result = sess.enter(|| -> solar::interface::Result<Vec<BrutalizerTransform>> {
         let arena = solar::ast::Arena::new();
-        let mut parser = Parser::from_lazy_source_code(
-            &sess,
-            &arena,
-            FileName::from(path.to_path_buf()),
-            || Ok(source.to_string()),
-        )?;
-
-        let ast = parser.parse_file().map_err(|e| e.emit())?;
+        let ast = {
+            let mut parser = Parser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::from(path.to_path_buf()),
+                || Ok(source.to_string()),
+            )?;
+            parser.parse_file().map_err(|e| e.emit())?
+        };
 
         let mut visitor = BrutalizerVisitor::new(source);
         let _ = visitor.visit_source_unit(&ast);

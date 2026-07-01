@@ -85,7 +85,7 @@ impl MutationContext<'_> {
 
 impl<'a> MutationContext<'a> {
     #[must_use]
-    pub fn builder() -> MutationContextBuilder<'a> {
+    pub const fn builder() -> MutationContextBuilder<'a> {
         MutationContextBuilder::new()
     }
 }
@@ -101,7 +101,7 @@ pub struct MutationContextBuilder<'a> {
 
 impl<'a> MutationContextBuilder<'a> {
     // Create a new empty builder
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         MutationContextBuilder {
             path: None,
             span: None,
@@ -119,31 +119,31 @@ impl<'a> MutationContextBuilder<'a> {
     }
 
     // Required
-    pub fn with_span(mut self, span: Span) -> Self {
+    pub const fn with_span(mut self, span: Span) -> Self {
         self.span = Some(span);
         self
     }
 
     // Optional
-    pub fn with_expr(mut self, expr: &'a Expr<'a>) -> Self {
+    pub const fn with_expr(mut self, expr: &'a Expr<'a>) -> Self {
         self.expr = Some(expr);
         self
     }
 
     // Optional
-    pub fn with_var_definition(mut self, var_definition: &'a VariableDefinition<'a>) -> Self {
+    pub const fn with_var_definition(mut self, var_definition: &'a VariableDefinition<'a>) -> Self {
         self.var_definition = Some(var_definition);
         self
     }
 
     // Optional
-    pub fn with_yul_expr(mut self, yul_expr: &'a yul::Expr<'a>) -> Self {
+    pub const fn with_yul_expr(mut self, yul_expr: &'a yul::Expr<'a>) -> Self {
         self.yul_expr = Some(yul_expr);
         self
     }
 
     // Optional - provide source code for extracting original text
-    pub fn with_source(mut self, source: &'a str) -> Self {
+    pub const fn with_source(mut self, source: &'a str) -> Self {
         self.source = Some(source);
         self
     }

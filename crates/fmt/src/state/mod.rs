@@ -44,19 +44,19 @@ pub(super) struct CallContext {
 }
 
 impl CallContext {
-    pub(super) fn nested(size: usize) -> Self {
+    pub(super) const fn nested(size: usize) -> Self {
         Self { kind: CallContextKind::Nested, size, has_indent: false }
     }
 
-    pub(super) fn chained(size: usize, has_indent: bool) -> Self {
+    pub(super) const fn chained(size: usize, has_indent: bool) -> Self {
         Self { kind: CallContextKind::Chained, size, has_indent }
     }
 
-    pub(super) fn is_nested(&self) -> bool {
+    pub(super) const fn is_nested(&self) -> bool {
         matches!(self.kind, CallContextKind::Nested)
     }
 
-    pub(super) fn is_chained(&self) -> bool {
+    pub(super) const fn is_chained(&self) -> bool {
         matches!(self.kind, CallContextKind::Chained)
     }
 }
@@ -86,10 +86,13 @@ impl CallStack {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    /// Returns true if any chained call in the stack has its own indentation.
+    /// Returns true if the direct parent chain has its own indentation.
     /// Used to determine if commasep should skip its own indentation (to avoid double indent).
-    pub(crate) fn has_chain_with_indent(&self) -> bool {
-        self.stack.iter().any(|call| call.is_chained() && call.has_indent)
+    pub(crate) const fn has_indented_parent_chain(&self) -> bool {
+        matches!(
+            self.stack.as_slice(),
+            [.., parent, last] if last.is_nested() && parent.is_chained() && parent.has_indent
+        )
     }
 }
 
@@ -201,11 +204,7 @@ impl<'sess> State<'sess, '_> {
         Self {
             s: pp::Printer::new(
                 config.line_length,
-                if matches!(config.style, IndentStyle::Tab) {
-                    Some(config.tab_width)
-                } else {
-                    None
-                },
+                matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
             ),
             ind: config.tab_width as isize,
             sm,
@@ -440,8 +439,8 @@ impl State<'_, '_> {
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[') | Some('(') | Some('{') => self.config.bracket_spacing,
-                    Some(',') | Some(';') => true,
+                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some(',' | ';') => true,
                     _ => false,
                 };
             }
@@ -482,10 +481,10 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn cmnt_config(&self) -> CommentConfig {
-        CommentConfig { ..Default::default() }
+        Default::default()
     }
 
-    fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
+    const fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
         // Intetionally no-op. Handled with `self.comments`.
         let _ = docs;
     }
@@ -707,16 +706,23 @@ impl<'sess> State<'sess, '_> {
             if i + 1 < lines.len() {
                 let next_line = &lines[i + 1];
 
-                // Check if next line is has the same prefix and is not empty
+                // Check if next line has the same prefix and is not empty.
                 if next_line.starts_with(prefix) && !next_line.trim().is_empty() {
+                    let next_content = next_line[prefix.len()..].trim_start();
+
+                    // Keep each NatSpec tag on its own doc-comment line. Merging a wrapped
+                    // `@dev`/`@param` line with the following tag changes the tag boundary.
+                    if next_content.starts_with('@') {
+                        result.push(current_line.clone());
+                        i += 1;
+                        continue;
+                    }
+
                     // Only merge if the current line doesn't fit within available width
                     if estimate_line_width(current_line, self.config.tab_width) > self.space_left()
                     {
                         // Merge the lines and let the wrapper handle breaking if needed
-                        let merged_line = format!(
-                            "{current_line} {next_content}",
-                            next_content = &next_line[prefix.len()..].trim_start()
-                        );
+                        let merged_line = format!("{current_line} {next_content}");
                         result.push(merged_line);
 
                         // Skip both lines since they are merged
@@ -1065,12 +1071,12 @@ impl CommentConfig {
         Self { skip_blanks: Some(Skip::Trailing), ..Default::default() }
     }
 
-    pub(crate) fn offset(mut self, off: isize) -> Self {
+    pub(crate) const fn offset(mut self, off: isize) -> Self {
         self.offset = off;
         self
     }
 
-    pub(crate) fn no_breaks(mut self) -> Self {
+    pub(crate) const fn no_breaks(mut self) -> Self {
         self.iso_no_break = true;
         self.trailing_no_break = true;
         self.mixed_no_break_prev = true;
@@ -1078,28 +1084,28 @@ impl CommentConfig {
         self
     }
 
-    pub(crate) fn trailing_no_break(mut self) -> Self {
+    pub(crate) const fn trailing_no_break(mut self) -> Self {
         self.trailing_no_break = true;
         self
     }
 
-    pub(crate) fn mixed_no_break(mut self) -> Self {
+    pub(crate) const fn mixed_no_break(mut self) -> Self {
         self.mixed_no_break_prev = true;
         self.mixed_no_break_post = true;
         self
     }
 
-    pub(crate) fn mixed_no_break_post(mut self) -> Self {
+    pub(crate) const fn mixed_no_break_post(mut self) -> Self {
         self.mixed_no_break_post = true;
         self
     }
 
-    pub(crate) fn mixed_prev_space(mut self) -> Self {
+    pub(crate) const fn mixed_prev_space(mut self) -> Self {
         self.mixed_prev_space = true;
         self
     }
 
-    pub(crate) fn mixed_post_nbsp(mut self) -> Self {
+    pub(crate) const fn mixed_post_nbsp(mut self) -> Self {
         self.mixed_post_nbsp = true;
         self
     }

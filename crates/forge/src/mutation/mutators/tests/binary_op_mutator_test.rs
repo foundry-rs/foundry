@@ -1,31 +1,20 @@
-use rstest::*;
+use crate::mutation::mutators::{binary_op_mutator::BinaryOpMutator, tests::helper::mutator_tests};
 
-use crate::mutation::mutators::{
-    binary_op_mutator::BinaryOpMutator,
-    tests::helper::{MutatorTestCase, MutatorTester},
-};
-
-impl MutatorTester for BinaryOpMutator {}
-
-#[rstest]
-#[case::add("x + y", Some(vec!["x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]))]
-#[case::sub("x - y", Some(vec!["x + y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]))]
-#[case::mul("x * y", Some(vec!["x + y", "x - y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]))]
-#[case::div("x / y", Some(vec!["x + y", "x - y", "x * y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]))]
-#[case::modulus("x % y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]))]
-#[case::pow("x ** y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]))]
-#[case::bit_shift_left("x << y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]))]
-#[case::bit_shift_right("x >> y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >>> y", "x & y", "x | y", "x ^ y"]))]
-#[case::bit_shift_right_unsigned("x >>> y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x & y", "x | y", "x ^ y"]))]
-#[case::bit_and("x & y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x | y", "x ^ y"]))]
-#[case::bit_or("x | y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x ^ y"]))]
-#[case::bit_xor("x ^ y", Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y"]))]
-#[case::non_binary("a = true", None)]
-fn test_mutator_bitwise(
-    #[case] input: &'static str,
-    #[case] expected_mutations: Option<Vec<&'static str>>,
-) {
-    let mutator: BinaryOpMutator = BinaryOpMutator;
-    let test_case = MutatorTestCase { input, expected_mutations };
-    BinaryOpMutator::test_mutator(mutator, test_case);
-}
+mutator_tests!(BinaryOpMutator;
+    add:                       "x + y"   => Some(vec!["x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]);
+    sub:                       "x - y"   => Some(vec!["x + y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]);
+    mul:                       "x * y"   => Some(vec!["x + y", "x - y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]);
+    div:                       "x / y"   => Some(vec!["x + y", "x - y", "x * y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]);
+    modulus:                   "x % y"   => Some(vec!["x + y", "x - y", "x * y", "x / y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]);
+    pow:                       "x ** y"  => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x << y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]);
+    bit_shift_left:            "x << y"  => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x >> y", "x >>> y", "x & y", "x | y", "x ^ y"]);
+    bit_shift_right:           "x >> y"  => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >>> y", "x & y", "x | y", "x ^ y"]);
+    bit_shift_right_unsigned:  "x >>> y" => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x & y", "x | y", "x ^ y"]);
+    bit_and:                   "x & y"   => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x | y", "x ^ y"]);
+    bit_or:                    "x | y"   => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x ^ y"]);
+    bit_xor:                   "x ^ y"   => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y"]);
+    non_binary:                "a = true" => None;
+    compound_assign_add:       "a += b" => Some(vec!["a >>= b", "a <<= b", "a &= b", "a |= b", "a ^= b", "a -= b", "a *= b", "a /= b", "a %= b"]);
+    compound_assign_sub:       "a -= b" => Some(vec!["a >>= b", "a <<= b", "a &= b", "a |= b", "a ^= b", "a += b", "a *= b", "a /= b", "a %= b"]);
+    compound_assign_mul:       "a *= b" => Some(vec!["a >>= b", "a <<= b", "a &= b", "a |= b", "a ^= b", "a += b", "a -= b", "a /= b", "a %= b"]);
+);

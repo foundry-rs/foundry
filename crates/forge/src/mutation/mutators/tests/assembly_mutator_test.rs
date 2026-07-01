@@ -456,6 +456,7 @@ fn yul_mutations(source: &str) -> Vec<YulMutation> {
         )?;
 
         let ast = parser.parse_file().map_err(|e| e.emit())?;
+        drop(parser);
 
         let mut visitor = MutantVisitor::default(PathBuf::from("test.sol")).with_source(source);
         let _ = visitor.visit_source_unit(&ast);

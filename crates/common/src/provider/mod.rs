@@ -1,6 +1,8 @@
 //! Provider-related instantiation and usage utilities.
 
 pub mod curl_transport;
+pub mod fee;
+pub mod mpp;
 pub mod runtime_transport;
 
 use crate::{
@@ -8,6 +10,7 @@ use crate::{
     provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
 };
 use alloy_chains::NamedChain;
+use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_network::{Network, NetworkWallet};
 use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
@@ -15,7 +18,9 @@ use alloy_provider::{
     network::{AnyNetwork, EthereumWallet},
 };
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::{layers::RetryBackoffLayer, utils::guess_local_url};
+use alloy_transport::{
+    TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
+};
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
 use reqwest::Url;
@@ -24,8 +29,14 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    task::{Context, Poll},
     time::Duration,
 };
+use tower::Service;
 use url::ParseError;
 
 /// The assumed block time for unknown chains.
@@ -72,6 +83,56 @@ pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
 #[inline]
 pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
     ProviderBuilder::new(builder.as_ref()).build()
+}
+
+/// A round-robin transport that distributes requests across multiple transports.
+///
+/// Each request is sent to exactly one transport, rotating through the list.
+/// Failover on error is handled by the retry layer above this service.
+#[derive(Clone)]
+pub struct RoundRobinService<S> {
+    transports: Arc<Vec<S>>,
+    next: Arc<AtomicUsize>,
+}
+
+impl<S> RoundRobinService<S> {
+    /// Creates a new round-robin service from a non-empty list of transports.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `transports` is empty.
+    pub fn new(transports: Vec<S>) -> Self {
+        assert!(!transports.is_empty(), "RoundRobinService requires at least one transport");
+        Self { transports: Arc::new(transports), next: Arc::new(AtomicUsize::new(0)) }
+    }
+}
+
+impl<S> Service<RequestPacket> for RoundRobinService<S>
+where
+    S: Service<
+            RequestPacket,
+            Response = ResponsePacket,
+            Error = TransportError,
+            Future = TransportFut<'static>,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        let transports = self.transports.clone();
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % transports.len();
+        let mut transport = transports[idx].clone();
+        transport.call(req)
+    }
 }
 
 /// Helper type to construct a `RetryProvider`
@@ -160,9 +221,10 @@ impl<N: Network> ProviderBuilder<N> {
     /// Defaults to `http://localhost:8545` and `Mainnet`.
     pub fn from_config(config: &Config) -> Result<Self> {
         let url = config.get_rpc_url_or_localhost_http()?;
-        let mut builder = Self::new(url.as_ref());
-
-        builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
+        let mut builder = Self::new(url.as_ref())
+            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
+            .no_proxy(config.eth_rpc_no_proxy)
+            .curl_mode(config.eth_rpc_curl);
 
         if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
             builder = builder.chain(chain);
@@ -189,19 +251,19 @@ impl<N: Network> ProviderBuilder<N> {
     /// response body has finished.
     ///
     /// Default is no timeout.
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub const fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
     /// Sets the chain of the node the provider will connect to
-    pub fn chain(mut self, chain: NamedChain) -> Self {
+    pub const fn chain(mut self, chain: NamedChain) -> Self {
         self.chain = chain;
         self
     }
 
     /// How often to retry a failed request
-    pub fn max_retry(mut self, max_retry: u32) -> Self {
+    pub const fn max_retry(mut self, max_retry: u32) -> Self {
         self.max_retry = max_retry;
         self
     }
@@ -220,7 +282,7 @@ impl<N: Network> ProviderBuilder<N> {
     }
 
     /// The starting backoff delay to use after the first failed request
-    pub fn initial_backoff(mut self, initial_backoff: u64) -> Self {
+    pub const fn initial_backoff(mut self, initial_backoff: u64) -> Self {
         self.initial_backoff = initial_backoff;
         self
     }
@@ -228,7 +290,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// Sets the number of assumed available compute units per second
     ///
     /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    pub fn compute_units_per_second(mut self, compute_units_per_second: u64) -> Self {
+    pub const fn compute_units_per_second(mut self, compute_units_per_second: u64) -> Self {
         self.compute_units_per_second = compute_units_per_second;
         self
     }
@@ -236,7 +298,10 @@ impl<N: Network> ProviderBuilder<N> {
     /// Sets the number of assumed available compute units per second
     ///
     /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    pub fn compute_units_per_second_opt(mut self, compute_units_per_second: Option<u64>) -> Self {
+    pub const fn compute_units_per_second_opt(
+        mut self,
+        compute_units_per_second: Option<u64>,
+    ) -> Self {
         if let Some(cups) = compute_units_per_second {
             self.compute_units_per_second = cups;
         }
@@ -246,7 +311,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// Sets the provider to be local.
     ///
     /// This is useful for local dev nodes.
-    pub fn local(mut self, is_local: bool) -> Self {
+    pub const fn local(mut self, is_local: bool) -> Self {
         self.is_local = is_local;
         self
     }
@@ -254,7 +319,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// Sets aggressive `max_retry` and `initial_backoff` values
     ///
     /// This is only recommend for local dev nodes
-    pub fn aggressive(self) -> Self {
+    pub const fn aggressive(self) -> Self {
         self.max_retry(100).initial_backoff(100).local(true)
     }
 
@@ -278,7 +343,7 @@ impl<N: Network> ProviderBuilder<N> {
     }
 
     /// Sets whether to accept invalid certificates.
-    pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
+    pub const fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
         self.accept_invalid_certs = accept_invalid_certs;
         self
     }
@@ -287,7 +352,7 @@ impl<N: Network> ProviderBuilder<N> {
     ///
     /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
     /// where system proxy detection via SCDynamicStore causes crashes.
-    pub fn no_proxy(mut self, no_proxy: bool) -> Self {
+    pub const fn no_proxy(mut self, no_proxy: bool) -> Self {
         self.no_proxy = no_proxy;
         self
     }
@@ -296,7 +361,7 @@ impl<N: Network> ProviderBuilder<N> {
     ///
     /// When enabled, the provider will print equivalent curl commands to stdout
     /// instead of actually executing the RPC requests.
-    pub fn curl_mode(mut self, curl_mode: bool) -> Self {
+    pub const fn curl_mode(mut self, curl_mode: bool) -> Self {
         self.curl_mode = curl_mode;
         self
     }
@@ -319,6 +384,7 @@ impl<N: Network> ProviderBuilder<N> {
             ..
         } = self;
         let url = url?;
+        let no_proxy = no_proxy || is_local;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
@@ -363,6 +429,74 @@ impl<N: Network> ProviderBuilder<N> {
 }
 
 impl<N: Network> ProviderBuilder<N> {
+    /// Constructs a `RetryProvider` backed by multiple URLs using round-robin load balancing.
+    ///
+    /// Each request is sent to exactly one transport, rotating through the list via
+    /// [`RoundRobinService`]. There is no health scoring or endpoint deprioritization.
+    /// On failure, the `RetryBackoffLayer` retries the request, which naturally hits
+    /// the next transport in the rotation.
+    pub fn build_fallback(self, urls: Vec<String>) -> Result<RetryProvider<N>> {
+        let Self {
+            chain,
+            max_retry,
+            initial_backoff,
+            timeout,
+            compute_units_per_second,
+            jwt,
+            headers,
+            accept_invalid_certs,
+            no_proxy,
+            curl_mode,
+            ..
+        } = self;
+
+        eyre::ensure!(!urls.is_empty(), "at least one fork URL is required");
+        eyre::ensure!(!curl_mode, "curl mode is not supported with multiple fork URLs");
+
+        // Build a RuntimeTransport for each URL, using the same URL normalization
+        // as ProviderBuilder::new() (handles localhost:port, raw socket addrs, IPC paths)
+        let mut parsed_urls = Vec::with_capacity(urls.len());
+        let transports: Vec<_> = urls
+            .iter()
+            .map(|url_str| {
+                let builder = Self::new(url_str);
+                let url = builder.url?;
+                let transport_no_proxy = no_proxy || builder.is_local;
+                parsed_urls.push(url.clone());
+                Ok(RuntimeTransportBuilder::new(url)
+                    .with_timeout(timeout)
+                    .with_headers(headers.clone())
+                    .with_jwt(jwt.clone())
+                    .accept_invalid_certs(accept_invalid_certs)
+                    .no_proxy(transport_no_proxy)
+                    .build())
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let round_robin = RoundRobinService::new(transports);
+
+        let retry_layer =
+            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        // Use normalized/parsed URLs for local detection, consistent with build()
+        let is_local = parsed_urls.iter().all(|url| guess_local_url(url.as_str()));
+        let client = ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local);
+
+        if !is_local {
+            client.set_poll_interval(
+                chain
+                    .average_blocktime_hint()
+                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
+                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
+                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
+            );
+        }
+
+        let provider =
+            AlloyProviderBuilder::<_, _, N>::default().connect_provider(RootProvider::new(client));
+
+        Ok(provider)
+    }
+
     /// Constructs the `RetryProvider` with a wallet.
     pub fn build_with_wallet<W: NetworkWallet<N> + Clone>(
         self,
@@ -387,6 +521,7 @@ impl<N: Network> ProviderBuilder<N> {
             ..
         } = self;
         let url = url?;
+        let no_proxy = no_proxy || is_local;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
@@ -469,5 +604,22 @@ mod tests {
 
         let url = builder.url.unwrap();
         assert_eq!(url, Url::parse("http://localhost:8545").unwrap());
+    }
+
+    #[test]
+    fn from_config_applies_rpc_transport_options() {
+        let config = Config {
+            eth_rpc_url: Some("http://example.com".to_string()),
+            eth_rpc_accept_invalid_certs: true,
+            eth_rpc_no_proxy: true,
+            eth_rpc_timeout: Some(7),
+            ..Default::default()
+        };
+
+        let builder = ProviderBuilder::<AnyNetwork>::from_config(&config).unwrap();
+
+        assert!(builder.accept_invalid_certs);
+        assert!(builder.no_proxy);
+        assert_eq!(builder.timeout, Duration::from_secs(7));
     }
 }

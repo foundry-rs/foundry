@@ -96,7 +96,7 @@ interface Vm {
         address emitter;
     }
 
-    /// Gas used. Returned by `lastCallGas`.
+    /// Gas used. Returned by `lastCallGas` and `lastFrameGas`.
     struct Gas {
         /// The gas limit of the call.
         uint64 gasLimit;
@@ -563,6 +563,14 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
 
+    /// Executes an RLP-encoded signed transaction with full EVM semantics (like `--isolate` mode).
+    /// The transaction is decoded from EIP-2718 format (type byte prefix + RLP payload) or legacy RLP.
+    /// Returns the execution output bytes.
+    ///
+    /// This cheatcode is not allowed in `forge script` contexts.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
+
     // -------- Account State --------
 
     /// Sets an address' balance.
@@ -589,6 +597,16 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function store(address target, bytes32 slot, bytes32 value) external;
 
+    /// Sets a TIP-20 token's logo URI directly in storage.
+    /// This bypasses the token admin check, but still validates the URI against T5 constraints.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setTip20LogoURI(address token, string calldata newLogoURI) external;
+
+    /// Sets a TIP-20 token's logo URI directly in storage.
+    /// This bypasses the token admin check, but still validates the URI against T5 constraints.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setLogoURI(address token, string calldata newLogoURI) external;
+
     /// Marks the slots of an account and the account address as cold.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function cool(address target) external;
@@ -609,6 +627,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function coolSlot(address target, bytes32 slot) external;
 
+    /// Returns true if isolated test execution is enabled.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isIsolateMode() external view returns (bool result);
+
     /// Returns the test or script execution evm version.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
@@ -620,6 +642,16 @@ interface Vm {
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
     function setEvmVersion(string calldata evm) external;
+
+    /// Returns `true` if `spender` is on the active Tempo hardfork's implicit-approval list,
+    /// meaning it can pull TIP-20 tokens from `msg.sender` without a prior `approve()`.
+    /// Returns `false` on non-Tempo networks.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
+
+    /// Skips a fuzz/invariant input unless `spender` is implicitly approved.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeImplicitApproval(address spender) external view;
 
     // -------- Call Manipulation --------
     // --- Mocks ---
@@ -750,13 +782,23 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
@@ -903,6 +945,16 @@ interface Vm {
         external
         returns (bytes memory data);
 
+    /// Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata method, string calldata params) external returns (string memory data);
+
+    /// Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params)
+        external
+        returns (string memory data);
+
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics)
@@ -974,9 +1026,14 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
+    /// DEPRECATED: use `lastFrameGas` instead.
     /// Gets the gas used in the last call from the callee perspective.
-    #[cheatcode(group = Evm, safety = Safe)]
+    #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
+
+    /// Gets the gas used in the last call or create from the callee perspective.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastFrameGas() external view returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 
@@ -1074,6 +1131,9 @@ interface Vm {
     /// Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).
     /// Call this function, then emit an event, then call a function. Internally after the call, we check if
     /// logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
+    /// Must be placed immediately before the call you want to assert on. If the next call reverts and the
+    /// revert is caught by the caller (low-level call or try/catch), the expectation remains active and may
+    /// be satisfied by a log emitted from a later call.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;
 
@@ -1085,6 +1145,9 @@ interface Vm {
     /// Prepare an expected log with all topic and data checks enabled.
     /// Call this function, then emit an event, then call a function. Internally after the call, we check if
     /// logs were emitted in the expected order with the expected topics and data.
+    /// Must be placed immediately before the call you want to assert on. If the next call reverts and the
+    /// revert is caught by the caller (low-level call or try/catch), the expectation remains active and may
+    /// be satisfied by a log emitted from a later call.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmit() external;
 
@@ -1138,6 +1201,25 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCreate2(bytes calldata bytecode, address deployer) external;
 
+    /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.
+    ///
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
+
+    /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
+
     /// Expects an error on next call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert() external;
@@ -1151,14 +1233,28 @@ interface Vm {
     function expectRevert(bytes calldata revertData) external;
 
     /// Expects an error with any revert data on next call to reverter address.
+    ///
+    /// The `reverter` argument is matched against the address associated with
+    /// the frame that produced the revert:
+    ///   - For a CALL: the address that was called.
+    ///   - For a CREATE / CREATE2: the would-be deployed address of the failed
+    ///     deployment (computed from the deployer + nonce, or salt + initcode).
+    ///
+    /// For a single expected revert, the innermost reverting frame wins in
+    /// nested CALL, CREATE, or mixed chains. With `count > 1`, nested
+    /// CREATE / CREATE2 chains apply the same rule independently to each
+    /// iteration; nested CALL chains keep their existing
+    /// outermost-call-per-iteration behavior.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(address reverter) external;
 
     /// Expects an error from reverter address on next call, with any revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes4 revertData, address reverter) external;
 
     /// Expects an error from reverter address on next call, that exactly matches the revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData, address reverter) external;
 
@@ -1175,14 +1271,17 @@ interface Vm {
     function expectRevert(bytes calldata revertData, uint64 count) external;
 
     /// Expects a `count` number of reverts from the upcoming calls from the reverter address.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(address reverter, uint64 count) external;
 
     /// Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes4 revertData, address reverter, uint64 count) external;
 
     /// Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;
 
@@ -1191,6 +1290,7 @@ interface Vm {
     function expectPartialRevert(bytes4 revertData) external;
 
     /// Expects an error on next call to reverter address, that starts with the revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectPartialRevert(bytes4 revertData, address reverter) external;
 
@@ -1235,7 +1335,7 @@ interface Vm {
 
     /// Asserts that the given condition is true and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertTrue(bool condition, string calldata error) external pure;
+    function assertTrue(bool condition, string calldata err) external pure;
 
     /// Asserts that the given condition is false.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1243,7 +1343,7 @@ interface Vm {
 
     /// Asserts that the given condition is false and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertFalse(bool condition, string calldata error) external pure;
+    function assertFalse(bool condition, string calldata err) external pure;
 
     /// Asserts that two `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1251,7 +1351,7 @@ interface Vm {
 
     /// Asserts that two `bool` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool left, bool right, string calldata error) external pure;
+    function assertEq(bool left, bool right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1259,7 +1359,7 @@ interface Vm {
 
     /// Asserts that two `uint256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256 left, uint256 right, string calldata error) external pure;
+    function assertEq(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Asserts that two `int256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1267,7 +1367,7 @@ interface Vm {
 
     /// Asserts that two `int256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256 left, int256 right, string calldata error) external pure;
+    function assertEq(int256 left, int256 right, string calldata err) external pure;
 
     /// Asserts that two `address` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1275,7 +1375,7 @@ interface Vm {
 
     /// Asserts that two `address` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address left, address right, string calldata error) external pure;
+    function assertEq(address left, address right, string calldata err) external pure;
 
     /// Asserts that two `bytes32` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1283,7 +1383,7 @@ interface Vm {
 
     /// Asserts that two `bytes32` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32 left, bytes32 right, string calldata error) external pure;
+    function assertEq(bytes32 left, bytes32 right, string calldata err) external pure;
 
     /// Asserts that two `string` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1291,7 +1391,7 @@ interface Vm {
 
     /// Asserts that two `string` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string calldata left, string calldata right, string calldata error) external pure;
+    function assertEq(string calldata left, string calldata right, string calldata err) external pure;
 
     /// Asserts that two `bytes` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1299,7 +1399,7 @@ interface Vm {
 
     /// Asserts that two `bytes` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes calldata left, bytes calldata right, string calldata error) external pure;
+    function assertEq(bytes calldata left, bytes calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1307,7 +1407,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bool` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
+    function assertEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `uint256 values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1315,7 +1415,7 @@ interface Vm {
 
     /// Asserts that two arrays of `uint256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;
+    function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `int256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1323,7 +1423,7 @@ interface Vm {
 
     /// Asserts that two arrays of `int256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;
+    function assertEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `address` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1331,7 +1431,7 @@ interface Vm {
 
     /// Asserts that two arrays of `address` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address[] calldata left, address[] calldata right, string calldata error) external pure;
+    function assertEq(address[] calldata left, address[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes32` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1339,7 +1439,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes32` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;
+    function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `string` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1347,7 +1447,7 @@ interface Vm {
 
     /// Asserts that two arrays of `string` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string[] calldata left, string[] calldata right, string calldata error) external pure;
+    function assertEq(string[] calldata left, string[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1355,7 +1455,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;
+    function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1364,7 +1464,7 @@ interface Vm {
     /// Asserts that two `uint256` values are equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `int256` values are equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1373,7 +1473,7 @@ interface Vm {
     /// Asserts that two `int256` values are equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `bool` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1381,7 +1481,7 @@ interface Vm {
 
     /// Asserts that two `bool` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool left, bool right, string calldata error) external pure;
+    function assertNotEq(bool left, bool right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1389,7 +1489,7 @@ interface Vm {
 
     /// Asserts that two `uint256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256 left, uint256 right, string calldata error) external pure;
+    function assertNotEq(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Asserts that two `int256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1397,7 +1497,7 @@ interface Vm {
 
     /// Asserts that two `int256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256 left, int256 right, string calldata error) external pure;
+    function assertNotEq(int256 left, int256 right, string calldata err) external pure;
 
     /// Asserts that two `address` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1405,7 +1505,7 @@ interface Vm {
 
     /// Asserts that two `address` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address left, address right, string calldata error) external pure;
+    function assertNotEq(address left, address right, string calldata err) external pure;
 
     /// Asserts that two `bytes32` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1413,7 +1513,7 @@ interface Vm {
 
     /// Asserts that two `bytes32` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32 left, bytes32 right, string calldata error) external pure;
+    function assertNotEq(bytes32 left, bytes32 right, string calldata err) external pure;
 
     /// Asserts that two `string` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1421,7 +1521,7 @@ interface Vm {
 
     /// Asserts that two `string` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string calldata left, string calldata right, string calldata error) external pure;
+    function assertNotEq(string calldata left, string calldata right, string calldata err) external pure;
 
     /// Asserts that two `bytes` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1429,7 +1529,7 @@ interface Vm {
 
     /// Asserts that two `bytes` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes calldata left, bytes calldata right, string calldata error) external pure;
+    function assertNotEq(bytes calldata left, bytes calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bool` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1437,7 +1537,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bool` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
+    function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `uint256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1445,7 +1545,7 @@ interface Vm {
 
     /// Asserts that two arrays of `uint256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;
+    function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `int256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1453,7 +1553,7 @@ interface Vm {
 
     /// Asserts that two arrays of `int256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;
+    function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `address` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1461,7 +1561,7 @@ interface Vm {
 
     /// Asserts that two arrays of `address` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address[] calldata left, address[] calldata right, string calldata error) external pure;
+    function assertNotEq(address[] calldata left, address[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes32` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1469,7 +1569,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes32` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;
+    function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `string` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1477,7 +1577,7 @@ interface Vm {
 
     /// Asserts that two arrays of `string` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string[] calldata left, string[] calldata right, string calldata error) external pure;
+    function assertNotEq(string[] calldata left, string[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1485,7 +1585,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;
+    function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1494,7 +1594,7 @@ interface Vm {
     /// Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `int256` values are not equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1503,7 +1603,7 @@ interface Vm {
     /// Asserts that two `int256` values are not equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1512,7 +1612,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(uint256 left, uint256 right, string calldata error) external pure;
+    function assertGt(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1521,7 +1621,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(int256 left, int256 right, string calldata error) external pure;
+    function assertGt(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message.
@@ -1531,7 +1631,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message.
@@ -1541,7 +1641,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1550,7 +1650,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(uint256 left, uint256 right, string calldata error) external pure;
+    function assertGe(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1559,7 +1659,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(int256 left, int256 right, string calldata error) external pure;
+    function assertGe(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1569,7 +1669,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1579,7 +1679,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1588,7 +1688,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(uint256 left, uint256 right, string calldata error) external pure;
+    function assertLt(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1597,7 +1697,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(int256 left, int256 right, string calldata error) external pure;
+    function assertLt(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message.
@@ -1607,7 +1707,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message.
@@ -1617,7 +1717,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1626,7 +1726,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(uint256 left, uint256 right, string calldata error) external pure;
+    function assertLe(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1635,7 +1735,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(int256 left, int256 right, string calldata error) external pure;
+    function assertLe(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1645,7 +1745,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1655,7 +1755,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1664,7 +1764,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1673,7 +1773,7 @@ interface Vm {
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Formats values with decimals in failure message.
@@ -1688,7 +1788,7 @@ interface Vm {
         uint256 right,
         uint256 maxDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
@@ -1704,7 +1804,7 @@ interface Vm {
         int256 right,
         uint256 maxDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
@@ -1716,7 +1816,7 @@ interface Vm {
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;
+    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
@@ -1727,7 +1827,7 @@ interface Vm {
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;
+    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
@@ -1749,7 +1849,7 @@ interface Vm {
         uint256 right,
         uint256 maxPercentDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
@@ -1772,7 +1872,7 @@ interface Vm {
         int256 right,
         uint256 maxPercentDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Returns true if the current Foundry version is greater than or equal to the given version.
@@ -1819,6 +1919,11 @@ interface Vm {
     /// Get the path of the current project root.
     #[cheatcode(group = Filesystem)]
     function projectRoot() external view returns (string memory path);
+
+    /// Get the source file path of the currently running test or script contract,
+    /// relative to the project root.
+    #[cheatcode(group = Filesystem)]
+    function currentFilePath() external view returns (string memory path);
 
     /// Returns the time since unix epoch in milliseconds.
     #[cheatcode(group = Filesystem)]
@@ -1923,18 +2028,22 @@ interface Vm {
     function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);
 
     /// Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional. Use <profile> to select artifacts compiled with a specific profile
+    /// from foundry.toml.
     #[cheatcode(group = Filesystem)]
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
@@ -1942,7 +2051,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
@@ -1950,7 +2060,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
@@ -1958,13 +2069,15 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
@@ -1972,7 +2085,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
@@ -1980,7 +2094,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
@@ -1988,7 +2103,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);
 
     /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     #[cheatcode(group = Filesystem)]
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
 
@@ -2727,6 +2843,20 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a secp256k1 access key.
+    ///
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychain`.
+    #[cheatcode(group = Crypto)]
+    function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.
+    ///
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    #[cheatcode(group = Crypto)]
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
     /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
@@ -2782,6 +2912,34 @@ interface Vm {
     /// Derives secp256r1 public key from the provided `privateKey`.
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
+
+    /// Generates an Ed25519 key pair from a deterministic salt.
+    /// Returns (publicKey, privateKey) as 32-byte values.
+    #[cheatcode(group = Crypto, safety = Safe)]
+    function createEd25519Key(bytes32 salt) external pure returns (bytes32 publicKey, bytes32 privateKey);
+
+    /// Derives the Ed25519 public key from a private key.
+    #[cheatcode(group = Crypto, safety = Safe)]
+    function publicKeyEd25519(bytes32 privateKey) external pure returns (bytes32 publicKey);
+
+    /// Signs a message with namespace using Ed25519.
+    /// The signature covers namespace || message for domain separation.
+    /// Returns a 64-byte Ed25519 signature.
+    #[cheatcode(group = Crypto, safety = Safe)]
+    function signEd25519(bytes calldata namespace, bytes calldata message, bytes32 privateKey)
+        external
+        pure
+        returns (bytes memory signature);
+
+    /// Verifies an Ed25519 signature over namespace || message.
+    /// Returns true if signature is valid, false otherwise.
+    #[cheatcode(group = Crypto, safety = Safe)]
+    function verifyEd25519(
+        bytes calldata signature,
+        bytes calldata namespace,
+        bytes calldata message,
+        bytes32 publicKey
+    ) external pure returns (bool valid);
 
     /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
@@ -2927,16 +3085,16 @@ interface Vm {
     function resumeTracing() external view;
 
     /// Utility cheatcode to copy storage of `from` contract to another `to` contract.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function copyStorage(address from, address to) external;
 
     /// Utility cheatcode to set arbitrary storage for given target address.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function setArbitraryStorage(address target) external;
 
     /// Utility cheatcode to set arbitrary storage for given target address and overwrite
     /// any storage slots that have been previously set.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function setArbitraryStorage(address target, bool overwrite) external;
 
     /// Sorts an array in ascending order.
@@ -2969,7 +3127,7 @@ interface Vm {
     ///     * bindings will be retrieved from the path configured in `foundry.toml`.
     ///
     ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
-    ///     * Note: the cheatcode will output the canonical type even if the input is malformated
+    ///     * Note: the cheatcode will output the canonical type even if the input is malformed
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
@@ -2991,7 +3149,7 @@ interface Vm {
     ///     * bindings will be retrieved from the path configured in `foundry.toml`.
     ///
     ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
-    ///     * Note: the cheatcode will use the canonical type even if the input is malformated
+    ///     * Note: the cheatcode will use the canonical type even if the input is malformed
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
     function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);

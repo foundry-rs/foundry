@@ -11,7 +11,7 @@ use solar::ast::{FunctionKind, Span, Visibility};
 /// - `0xbf58476d1ce4e5b9`: first finalizer multiplier
 /// - `0x94d049bb133111eb`: second finalizer multiplier
 /// - `>> 30` / `>> 27` / `>> 31`: avalanche shifts to propagate bits
-pub fn splitmix64(mut x: u64) -> u64 {
+pub const fn splitmix64(mut x: u64) -> u64 {
     x ^= x >> 30;
     x = x.wrapping_mul(0xbf58476d1ce4e5b9);
     x ^= x >> 27;
@@ -36,7 +36,10 @@ pub fn span_seed(span: Span) -> u64 {
 /// Only regular `external` functions qualify. Public functions are excluded
 /// because they can be called internally (JUMP), sharing the caller's memory.
 /// Constructors, fallbacks, receives, and modifiers are also excluded.
-pub fn is_eligible_function(visibility: Option<Visibility>, kind: Option<FunctionKind>) -> bool {
+pub const fn is_eligible_function(
+    visibility: Option<Visibility>,
+    kind: Option<FunctionKind>,
+) -> bool {
     if let Some(kind) = kind
         && !matches!(kind, FunctionKind::Function)
     {

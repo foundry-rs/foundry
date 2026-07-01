@@ -1,5 +1,5 @@
 use eyre::Result;
-use solar::ast::{ExprKind, LitKind, UnOpKind};
+use solar::ast::{ExprKind, Span, UnOpKind};
 
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType, UnaryOpMutated};
@@ -19,34 +19,15 @@ impl Mutator for UnaryOpMutator {
 
         let expr = context.expr.unwrap();
 
-        let target_kind;
-        let op;
-
-        match &expr.kind {
-            ExprKind::Unary(un_op, target) => {
-                target_kind = &target.kind;
-                op = un_op.kind;
-            }
+        let (op, target_span) = match &expr.kind {
+            ExprKind::Unary(un_op, target) => (un_op.kind, target.span),
             _ => unreachable!(),
         };
 
-        let target_content = match target_kind {
-            ExprKind::Lit(lit, _) => match &lit.kind {
-                LitKind::Bool(val) => val.to_string(),
-                LitKind::Number(val) => val.to_string(),
-                _ => String::new(),
-            },
-            ExprKind::Ident(inner) => inner.to_string(),
-            ExprKind::Member(expr, ident) => {
-                match expr.kind {
-                    ExprKind::Ident(inner) => {
-                        format!("{}{}", ident.as_str(), inner.to_string())
-                    } // @todo not supporting something like a.b[0]++
-                    _ => String::new(),
-                }
-            }
-            _ => String::new(),
-        };
+        let target_content = extract_span_text(context.source.unwrap_or(""), target_span);
+        if target_content.is_empty() {
+            return Ok(vec![]);
+        }
 
         let original = context.original_text();
         let source_line = context.source_line();
@@ -121,4 +102,10 @@ impl Mutator for UnaryOpMutator {
 
         false
     }
+}
+
+fn extract_span_text(source: &str, span: Span) -> String {
+    let lo = span.lo().0 as usize;
+    let hi = span.hi().0 as usize;
+    source.get(lo..hi).map(str::trim).unwrap_or_default().to_string()
 }

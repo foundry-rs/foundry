@@ -162,6 +162,7 @@ Encountered 1 failing test in test/inline.sol:Inline
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -195,11 +196,11 @@ Encountered 1 failing test in test/inline.sol:Inline
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(config_inline_isolate, |prj, cmd| {
     use serde::{Deserialize, Deserializer};
     use std::{fs, path::Path};
@@ -224,21 +225,23 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
                 dummy = new Dummy();
             }
 
-            /// forge-config: default.isolate = true
-            function test_isolate() public {
-                vm.startSnapshotGas("testIsolatedFunction");
+            /// forge-config: default.isolate = false
+            function test_non_isolate() public {
+                assertFalse(vm.isIsolateMode());
+                vm.startSnapshotGas("testNonIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
 
-            function test_non_isolate() public {
-                vm.startSnapshotGas("testNonIsolatedFunction");
-                dummy.setNumber(2);
+            function test_isolate() public {
+                assertTrue(vm.isIsolateMode());
+                vm.startSnapshotGas("testIsolatedFunction");
+                dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
         }
 
-        /// forge-config: default.isolate = true
+        /// forge-config: default.isolate = false
         contract ContractConfig is Test {
             Dummy dummy;
 
@@ -247,8 +250,9 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             }
 
             function test_non_isolate() public {
-                vm.startSnapshotGas("testIsolatedContract");
-                dummy.setNumber(3);
+                assertFalse(vm.isIsolateMode());
+                vm.startSnapshotGas("testNonIsolatedContract");
+                dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
         }
@@ -290,7 +294,7 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     #[serde(rename_all = "camelCase")]
     struct ContractConfig {
         #[serde(deserialize_with = "string_to_u64")]
-        test_isolated_contract: u64,
+        test_non_isolated_contract: u64,
     }
 
     fn string_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -315,17 +319,41 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     let contract_config: ContractConfig =
         read_snapshot(&prj.root().join("snapshots/ContractConfig.json"));
 
-    // FunctionConfig {
-    //     test_isolated_function: 48926,
-    //     test_non_isolated_function: 27722,
-    // }
+    assert!(
+        function_config.test_isolated_function > function_config.test_non_isolated_function,
+        "isolated gas ({}) should be greater than non-isolated gas ({})",
+        function_config.test_isolated_function,
+        function_config.test_non_isolated_function
+    );
+    assert_eq!(
+        function_config.test_non_isolated_function,
+        contract_config.test_non_isolated_contract
+    );
+});
 
-    // ContractConfig {
-    //     test_isolated_contract: 48926,
-    // }
+forgetest_init!(is_isolate_mode_uses_effective_isolation, |prj, cmd| {
+    prj.update_config(|config| config.isolate = false);
+    prj.add_test(
+        "effective_isolation.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
 
-    assert!(function_config.test_isolated_function > function_config.test_non_isolated_function);
-    assert_eq!(function_config.test_isolated_function, contract_config.test_isolated_contract);
+        contract EffectiveIsolationTest is Test {
+            function test_isolate_mode_disabled_by_config() public view {
+                assertFalse(vm.isIsolateMode());
+            }
+
+            function test_gas_report_enables_isolate_mode() public view {
+                assertTrue(vm.isIsolateMode());
+            }
+        }
+    "#,
+    );
+
+    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--gas-report", "--match-test", "test_gas_report_enables_isolate_mode"])
+        .assert_success();
 });
 
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
@@ -392,6 +420,140 @@ Ran 2 tests for test/inline.sol:FunctionConfig
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 2 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+});
+
+forgetest_init!(config_inline_hardfork_same_network_family, |prj, cmd| {
+    prj.write_config(foundry_config::Config {
+        hardfork: Some("tempo:T2".parse::<foundry_config::FoundryHardfork>().unwrap()),
+        ..foundry_config::Config::default()
+    });
+    prj.add_test(
+        "inline.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract InlineHardfork is Test {
+            /// forge-config: default.hardfork = "tempo:T3"
+            function test_inline_hardfork() public {
+                assertTrue(true);
+            }
+        }
+    "#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/inline.sol:InlineHardfork
+[PASS] test_inline_hardfork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// Checks that tests annotated with `forge-config: default.networks.network` run on the correct
+// EVM network, and that unannotated tests run on the globally configured network.
+//
+// Each test makes a real call to the Tempo `TipFeeManager` precompile at
+// `0xfeec000000000000000000000000000000000000` (a Tempo-only contract that exists on the
+// Moderato testnet and is auto-injected by the in-memory Tempo EVM):
+//
+// * The default-network test asserts the precompile has no code (it does not exist on Ethereum).
+// * The Tempo-network test asserts the precompile has code and `userTokens(address)` returns the
+//   unset zero-address sentinel, proving the Tempo network was actually selected for that test and
+//   the Tempo genesis state was loaded.
+forgetest!(per_test_network_routing, |prj, cmd| {
+    prj.add_test(
+        "inline.sol",
+        r#"
+        address constant TIP_FEE_MANAGER = 0xfeEC000000000000000000000000000000000000;
+
+        contract DefaultNetwork {
+            // No annotation -> runs on the globally selected network (Ethereum by default).
+            // The Tempo FeeManager precompile must NOT exist here.
+            function test_fee_manager_absent_on_ethereum() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length == 0,
+                    "TipFeeManager should not exist on Ethereum"
+                );
+            }
+        }
+
+        contract TempoNetwork {
+            /// forge-config: default.networks.network = "tempo"
+            function test_fee_manager_callable_on_tempo() public view {
+                // Sentinel bytecode (0xef) is injected at every Tempo precompile address.
+                require(
+                    TIP_FEE_MANAGER.code.length > 0,
+                    "TipFeeManager must be deployed on Tempo"
+                );
+
+                // Call a Tempo-only method: `userTokens(address)` returns the user's preferred
+                // fee token, or the zero address when none is set.
+                (bool ok, bytes memory ret) = TIP_FEE_MANAGER.staticcall(
+                    abi.encodeWithSignature("userTokens(address)", address(0))
+                );
+                require(ok, "userTokens call to TipFeeManager failed");
+                require(ret.length == 32, "unexpected return data length");
+                address token = abi.decode(ret, (address));
+                require(token == address(0), "expected unset user fee token");
+            }
+        }
+
+        // Mixed contract: one function annotated with Tempo, one unannotated (runs on Ethereum).
+        contract MixedNetwork {
+            // No annotation -> runs on Ethereum; precompile must be absent.
+            function test_fee_manager_absent_on_ethereum() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length == 0,
+                    "TipFeeManager should not exist on Ethereum"
+                );
+            }
+
+            /// forge-config: default.networks.network = "tempo"
+            function test_fee_manager_callable_on_tempo() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length > 0,
+                    "TipFeeManager must be deployed on Tempo"
+                );
+
+                (bool ok, bytes memory ret) = TIP_FEE_MANAGER.staticcall(
+                    abi.encodeWithSignature("userTokens(address)", address(0))
+                );
+                require(ok, "userTokens call to TipFeeManager failed");
+                require(ret.length == 32, "unexpected return data length");
+                address token = abi.decode(ret, (address));
+                require(token == address(0), "expected unset user fee token");
+            }
+        }
+        "#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_absent_on_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_absent_on_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_callable_on_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_callable_on_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
 });

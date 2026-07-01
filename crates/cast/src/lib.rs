@@ -7,25 +7,27 @@
 extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
-use alloy_consensus::Header;
+
+use alloy_consensus::{
+    BlockHeader,
+    transaction::{Recovered, SignerRecoverable},
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_network::{AnyNetwork, AnyRpcTransaction};
+use alloy_json_rpc::RpcError;
+use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
 use alloy_primitives::{
-    Address, B256, I256, Keccak256, LogData, Selector, TxHash, TxKind, U64, U256, hex,
+    Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
-use alloy_provider::{
-    PendingTransactionBuilder, Provider,
-    network::eip2718::{Decodable2718, Encodable2718},
-};
-use alloy_rlp::Decodable;
+use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
+use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, TransactionRequest,
-    state::StateOverride,
+    BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, state::StateOverride,
 };
-use alloy_serde::WithOtherFields;
+use alloy_transport::TransportErrorKind;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
@@ -40,13 +42,17 @@ use foundry_common::{
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
 use foundry_primitives::FoundryTxEnvelope;
-use futures::{FutureExt, StreamExt, future::Either};
+use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
+#[cfg(feature = "optimism")]
+use op_alloy_consensus as _;
 
 use rayon::prelude::*;
+use serde::Serialize;
 use std::{
     borrow::Cow,
     fmt::Write,
     io,
+    marker::PhantomData,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
@@ -58,8 +64,10 @@ pub use foundry_evm::*;
 pub mod args;
 pub mod cmd;
 pub mod opts;
+pub mod tempo;
 
 pub mod base;
+pub mod call_spec;
 pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
@@ -69,11 +77,12 @@ use rlp_converter::Item;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
-pub struct Cast<P> {
+pub struct Cast<P, N = AnyNetwork> {
     provider: P,
+    _phantom: PhantomData<N>,
 }
 
-impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
+impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// Creates a new Cast instance from the provided client
     ///
     /// # Example
@@ -89,8 +98,8 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(provider: P) -> Self {
-        Self { provider }
+    pub const fn new(provider: P) -> Self {
+        Self { provider, _phantom: PhantomData }
     }
 
     /// Makes a read-only call to the specified address
@@ -135,7 +144,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// ```
     pub async fn call(
         &self,
-        req: &WithOtherFields<TransactionRequest>,
+        req: &N::TransactionRequest,
         func: Option<&Function>,
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
@@ -151,17 +160,15 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         }
 
         let res = call.await?;
-        let mut decoded = vec![];
-
-        if let Some(func) = func {
+        let decoded = if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref()) {
+            match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
-                        if let Some(TxKind::Call(addr)) = req.to {
+                        if let Some(addr) = req.to() {
                             if let Ok(code) = self
                                 .provider
                                 .get_code_at(addr)
@@ -171,7 +178,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                             {
                                 eyre::bail!("contract {addr:?} does not have any code")
                             }
-                        } else if Some(TxKind::Create) == req.to {
+                        } else if req.to().is_none() {
                             eyre::bail!("tx req is a contract deployment");
                         } else {
                             eyre::bail!("recipient is None");
@@ -181,8 +188,10 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                         "could not decode output; did you specify the wrong function return data type?"
                     );
                 }
-            };
-        }
+            }
+        } else {
+            vec![]
+        };
 
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
@@ -190,7 +199,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         } else if shell::is_json() {
             let tokens = decoded
                 .into_iter()
-                .map(|value| serialize_value_as_json(value, None))
+                .map(|value| serialize_value_as_json(value, None, true))
                 .collect::<eyre::Result<Vec<_>>>()?;
             serde_json::to_string_pretty(&tokens).unwrap()
         } else {
@@ -231,7 +240,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// ```
     pub async fn access_list(
         &self,
-        req: &WithOtherFields<TransactionRequest>,
+        req: &N::TransactionRequest,
         block: Option<BlockId>,
     ) -> Result<String> {
         let access_list =
@@ -242,7 +251,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", &al.address.to_checksum(None)));
+                s.push(format!("- address: {}", al.address.to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
@@ -277,165 +286,11 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<AnyNetwork>> {
+    pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<N>> {
         let tx = hex::decode(strip_0x(&raw_tx))?;
         let res = self.provider.send_raw_transaction(&tx).await?;
 
         Ok(res)
-    }
-
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, vec![], false).await?;
-    /// println!("{}", block);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn block<B: Into<BlockId>>(
-        &self,
-        block: B,
-        full: bool,
-        fields: Vec<String>,
-        raw: bool,
-    ) -> Result<String> {
-        let block = block.into();
-        if fields.contains(&"transactions".into()) && !full {
-            eyre::bail!("use --full to view transactions")
-        }
-
-        let block = self
-            .provider
-            .get_block(block)
-            .kind(full.into())
-            .await?
-            .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
-
-        Ok(if raw {
-            let header: Header = block.into_inner().header.inner.try_into_header()?;
-            format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
-        } else if !fields.is_empty() {
-            let mut result = String::new();
-            for field in fields {
-                result.push_str(
-                    &get_pretty_block_attr(&block, &field)
-                        .unwrap_or_else(|| format!("{field} is not a valid block field")),
-                );
-
-                result.push('\n');
-            }
-            result.trim_end().to_string()
-        } else if shell::is_json() {
-            serde_json::to_value(&block).unwrap().to_string()
-        } else {
-            block.pretty()
-        })
-    }
-
-    async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
-        Self::block(
-            self,
-            block.into(),
-            false,
-            // Select only select field
-            vec![field],
-            false,
-        )
-        .await?
-        .parse()
-        .map_err(Into::into)
-    }
-
-    pub async fn base_fee<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        Self::block_field_as_num(self, block, String::from("baseFeePerGas")).await
-    }
-
-    pub async fn age<B: Into<BlockId>>(&self, block: B) -> Result<String> {
-        let timestamp_str =
-            Self::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
-        let datetime = DateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
-        Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
-    }
-
-    pub async fn timestamp<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        Self::block_field_as_num(self, block, "timestamp".to_string()).await
-    }
-
-    pub async fn chain(&self) -> Result<&str> {
-        let genesis_hash = Self::block(
-            self,
-            0,
-            false,
-            // Select only block hash
-            vec![String::from("hash")],
-            false,
-        )
-        .await?;
-
-        Ok(match &genesis_hash[..] {
-            "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, vec![String::from("hash")], false)
-                    .await?)[..]
-                {
-                    "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
-                        "etclive"
-                    }
-                    _ => "ethlive",
-                }
-            }
-            "0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9" => "kovan",
-            "0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d" => "ropsten",
-            "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b" => {
-                "optimism-mainnet"
-            }
-            "0xc1fc15cd51159b1f1e5cbc4b82e85c1447ddfa33c52cf1d98d14fba0d6354be1" => {
-                "optimism-goerli"
-            }
-            "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
-                "optimism-kovan"
-            }
-            "0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa" => "fraxtal",
-            "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489" => {
-                "fraxtal-testnet"
-            }
-            "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
-                "arbitrum-mainnet"
-            }
-            "0x0cd786a2425d16f152c658316c423e6ce1181e15c3295826d7c9904cba9ce303" => "morden",
-            "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
-            "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
-            "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
-            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon-pos",
-            "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697" => {
-                "polygon-pos-amoy-testnet"
-            }
-            "0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741" => "polygon-zkevm",
-            "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9" => {
-                "polygon-zkevm-cardona-testnet"
-            }
-            "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
-            "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
-            "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
-            "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
-            "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, vec![String::from("hash")], false).await?)[..] {
-                    "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
-                        "avalanche-fuji"
-                    }
-                    _ => "avalanche",
-                }
-            }
-            "0x23a2658170ba70d014ba0d0d2709f8fbfe2fa660cd868c5f282f991eecbe38ee" => "ink",
-            "0xe5fd5cf0be56af58ad5751b401410d6b7a09d830fa459789746a3d0dd1c79834" => "ink-sepolia",
-            _ => "unknown",
-        })
     }
 
     pub async fn chain_id(&self) -> Result<u64> {
@@ -700,76 +555,6 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         Ok(code.len().to_string())
     }
 
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
-    /// println!("{}", tx);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn transaction(
-        &self,
-        tx_hash: Option<String>,
-        from: Option<NameOrAddress>,
-        nonce: Option<u64>,
-        field: Option<String>,
-        raw: bool,
-        to_request: bool,
-    ) -> Result<String> {
-        let tx = if let Some(tx_hash) = tx_hash {
-            let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-            self.provider
-                .get_transaction_by_hash(tx_hash)
-                .await?
-                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
-        } else if let Some(from) = from {
-            // If nonce is not provided, uses 0.
-            let nonce = U64::from(nonce.unwrap_or_default());
-            let from = from.resolve(self.provider.root()).await?;
-
-            self.provider
-                .raw_request::<_, Option<AnyRpcTransaction>>(
-                    "eth_getTransactionBySenderAndNonce".into(),
-                    (from, nonce),
-                )
-                .await?
-                .ok_or_else(|| {
-                    eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
-                })?
-        } else {
-            eyre::bail!("tx hash or from address is required")
-        };
-
-        Ok(if raw {
-            // convert to FoundryTxEnvelope to support all foundry tx types (including opstack
-            // deposit transactions)
-            let foundry_tx = FoundryTxEnvelope::try_from(tx)?;
-            let encoded = foundry_tx.encoded_2718();
-            format!("0x{}", hex::encode(encoded))
-        } else if let Some(ref field) = field {
-            get_pretty_tx_attr(&tx.inner, field.as_str())
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
-        } else if shell::is_json() {
-            // to_value first to sort json object keys
-            serde_json::to_value(&tx)?.to_string()
-        } else if to_request {
-            serde_json::to_string_pretty(&TransactionRequest::from_recovered_transaction(
-                tx.into(),
-            ))?
-        } else {
-            tx.pretty()
-        })
-    }
-
     /// Perform a raw JSON-RPC request
     ///
     /// # Example
@@ -869,98 +654,145 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         Ok(res)
     }
 
-    fn extract_block_range(filter: &Filter) -> (Option<u64>, Option<u64>) {
+    /// Resolves the filter's block range to concrete block numbers.
+    ///
+    /// Returns `None` when the filter does not target a block-number range (e.g. it filters by
+    /// block hash), in which case chunking is not possible. Tags such as `latest` and `earliest`
+    /// are resolved against the provider so that the common case (`--to-block` defaulting to
+    /// `latest`) can still be chunked.
+    async fn resolve_block_range(&self, filter: &Filter) -> Result<Option<(u64, u64)>> {
         let FilterBlockOption::Range { from_block, to_block } = &filter.block_option else {
-            return (None, None);
+            return Ok(None);
         };
 
-        (from_block.and_then(|b| b.as_number()), to_block.and_then(|b| b.as_number()))
+        let from_tag = from_block.unwrap_or(BlockNumberOrTag::Earliest);
+        let to_tag = to_block.unwrap_or(BlockNumberOrTag::Latest);
+
+        // `pending` is not a concrete canonical range boundary; don't chunk it, so the single
+        // request preserves the provider's native `pending` semantics.
+        if from_tag.is_pending() || to_tag.is_pending() {
+            return Ok(None);
+        }
+
+        let from = self.resolve_block_tag(from_tag).await?;
+        // Resolve identical tags only once so a moving head (e.g. `latest`..`latest`) can't yield
+        // an inconsistent range.
+        let to = if from_tag == to_tag { from } else { self.resolve_block_tag(to_tag).await? };
+        Ok(Some((from, to)))
     }
 
-    /// Retrieves logs with automatic chunking fallback.
-    ///
-    /// First tries to fetch logs for the entire range. If that fails,
-    /// falls back to concurrent chunked requests with rate limiting.
+    /// Resolves a [`BlockNumberOrTag`] to a concrete block number, querying the provider for tags.
+    async fn resolve_block_tag(&self, tag: BlockNumberOrTag) -> Result<u64> {
+        match tag {
+            BlockNumberOrTag::Number(number) => Ok(number),
+            BlockNumberOrTag::Earliest => Ok(0),
+            tag => {
+                let block = self
+                    .provider
+                    .get_block(BlockId::Number(tag))
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("could not resolve block tag `{tag}`"))?;
+                Ok(block.header().number())
+            }
+        }
+    }
+
+    /// Retrieves logs, splitting the request into fixed-size block chunks when needed.
     async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
     {
-        // Try the full range first
-        if let Ok(logs) = self.provider.get_logs(filter).await {
-            return Ok(logs);
+        // Only chunk a finite block-number range larger than one chunk; `chunk_size == 0`
+        // disables chunking and falls back to a single request.
+        let Some((from, to)) = self.resolve_block_range(filter).await? else {
+            return self.provider.get_logs(filter).await.map_err(Into::into);
+        };
+        // Inverted range yields no logs; warn instead of returning empty silently.
+        if from > to {
+            sh_warn!(
+                "requested block range is inverted (from-block {from} > to-block {to}); no logs to return"
+            )?;
+            return Ok(vec![]);
+        }
+        if chunk_size == 0 || to - from < chunk_size {
+            return self.provider.get_logs(filter).await.map_err(Into::into);
         }
 
-        // Fallback: use concurrent chunked approach
-        self.get_logs_chunked_concurrent(filter, chunk_size).await
+        self.get_logs_chunked_concurrent(filter, from, to, chunk_size).await
     }
 
-    /// Retrieves logs using concurrent chunked requests with rate limiting.
-    ///
-    /// Divides the block range into chunks and processes them with a maximum of
-    /// 5 concurrent requests. Falls back to single-block queries if chunks fail.
+    /// Retrieves logs for the inclusive `[from, to]` range using concurrent chunked requests.
     async fn get_logs_chunked_concurrent(
         &self,
         filter: &Filter,
+        from: u64,
+        to: u64,
         chunk_size: u64,
     ) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
     {
-        let (from_block, to_block) = Self::extract_block_range(filter);
-        let (Some(from), Some(to)) = (from_block, to_block) else {
-            return self.provider.get_logs(filter).await.map_err(Into::into);
-        };
-
-        if from >= to {
-            return Ok(vec![]);
+        let mut chunk_ranges: Vec<(u64, u64)> = Vec::new();
+        let mut start = from;
+        loop {
+            let end = start.saturating_add(chunk_size - 1).min(to);
+            chunk_ranges.push((start, end));
+            if end >= to {
+                break;
+            }
+            start = end + 1;
         }
 
-        // Create chunk ranges using iterator
-        let chunk_ranges: Vec<(u64, u64)> = (from..to)
-            .step_by(chunk_size as usize)
-            .map(|chunk_start| (chunk_start, (chunk_start + chunk_size).min(to)))
-            .collect();
-
-        // Process chunks with controlled concurrency using buffered stream
-        let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(chunk_ranges)
-            .map(|(start_block, chunk_end)| {
-                let chunk_filter = filter.clone().from_block(start_block).to_block(chunk_end - 1);
-                let provider = self.provider.clone();
-
-                async move {
-                    // Try direct chunk request with simplified fallback
-                    match provider.get_logs(&chunk_filter).await {
-                        Ok(logs) => (start_block, logs),
-                        Err(_) => {
-                            // Simple fallback: try individual blocks in this chunk
-                            let mut fallback_logs = Vec::new();
-                            for single_block in start_block..chunk_end {
-                                let single_filter = chunk_filter
-                                    .clone()
-                                    .from_block(single_block)
-                                    .to_block(single_block);
-                                if let Ok(logs) = provider.get_logs(&single_filter).await {
-                                    fallback_logs.extend(logs);
-                                }
-                            }
-                            (start_block, fallback_logs)
-                        }
+        // `buffered` preserves input order, so results stay ordered by block. `try_collect` stops
+        // early and surfaces the error if any chunk ultimately fails.
+        let chunks: Vec<Vec<Log>> =
+            futures::stream::iter(chunk_ranges)
+                .map(|(start_block, end_block)| {
+                    let filter = filter.clone();
+                    let provider = self.provider.clone();
+                    async move {
+                        Self::get_logs_bisecting(&provider, &filter, start_block, end_block).await
                     }
+                })
+                .buffered(5)
+                .try_collect()
+                .await?;
+
+        Ok(chunks.into_iter().flatten().collect())
+    }
+
+    /// Fetches logs for the inclusive `[from, to]` range, recursively bisecting on failure.
+    fn get_logs_bisecting<'a>(
+        provider: &'a P,
+        filter: &'a Filter,
+        from: u64,
+        to: u64,
+    ) -> futures::future::BoxFuture<'a, Result<Vec<Log>>>
+    where
+        P: Clone + Unpin,
+    {
+        Box::pin(async move {
+            let range_filter = filter.clone().from_block(from).to_block(to);
+            match provider.get_logs(&range_filter).await {
+                Ok(logs) => Ok(logs),
+                Err(e) => {
+                    // Only bisect range-limit errors with room left to split; surface anything
+                    // else immediately.
+                    if from >= to || !is_range_limit_error(&e) {
+                        return Err(e.into());
+                    }
+
+                    // Bisect sequentially: this path is only reached after a provider failure, so
+                    // fanning out concurrently here would risk amplifying rate-limit errors and
+                    // would defeat the top-level concurrency cap.
+                    let mid = from + (to - from) / 2;
+                    let mut left = Self::get_logs_bisecting(provider, filter, from, mid).await?;
+                    let right = Self::get_logs_bisecting(provider, filter, mid + 1, to).await?;
+                    left.extend(right);
+                    Ok(left)
                 }
-            })
-            .buffered(5) // Limit to 5 concurrent requests to avoid rate limits
-            .collect()
-            .await;
-
-        // Sort once at the end by block number and flatten
-        all_results.sort_by_key(|(block_num, _)| *block_num);
-
-        let mut all_logs = Vec::new();
-        for (_, logs) in all_results {
-            all_logs.extend(logs);
-        }
-
-        Ok(all_logs)
+            }
+        })
     }
 
     /// Converts a block identifier into a block number.
@@ -1007,7 +839,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                 BlockId::Number(block_number) => Ok(Some(block_number)),
                 BlockId::Hash(hash) => {
                     let block = self.provider.get_block_by_hash(hash.block_hash).await?;
-                    Ok(block.map(|block| block.header.number).map(BlockNumberOrTag::from))
+                    Ok(block.map(|block| block.header().number()).map(BlockNumberOrTag::from))
                 }
             },
             None => Ok(None),
@@ -1068,7 +900,7 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
                     Either::Right(futures::future::pending())
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number)
-                        && block.number  > to_block {
+                        && block.number()  > to_block {
                             break;
                         }
                 },
@@ -1102,6 +934,316 @@ impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P> {
         }
 
         Ok(())
+    }
+}
+
+/// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
+/// range can fix. Network, auth, rate-limit, and malformed-response errors return `false`.
+fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
+    // Only HTTP 413 (payload too large) is fixable by a smaller range; other transport errors
+    // (network, auth 401/403, rate-limit 429) are not.
+    if let RpcError::Transport(kind) = err {
+        return kind.as_http_error().is_some_and(|http| http.status == 413);
+    }
+
+    // Range/result-size limits are reported as JSON-RPC server error responses; every other
+    // variant falls through to `false`.
+    let RpcError::ErrorResp(payload) = err else { return false };
+    let message = payload.message.to_ascii_lowercase();
+
+    // Phrases providers use for range/result-size limits, kept specific so rate-limit/quota
+    // wording (e.g. "no more than 10 requests per second") doesn't match.
+    const RANGE_LIMIT_HINTS: &[&str] = &[
+        "block range",
+        "blocks range",
+        "range is too",
+        "range too",
+        "returned more than",
+        "response size",
+        "result set",
+        "too many results",
+        "too many blocks",
+        "maximum block range",
+        "max block range",
+    ];
+    RANGE_LIMIT_HINTS.iter().any(|hint| message.contains(hint))
+}
+
+impl<P: Provider<N>, N: Network> Cast<P, N>
+where
+    N::HeaderResponse: UIfmtHeaderExt,
+    N::BlockResponse: UIfmt,
+{
+    /// # Example
+    ///
+    /// ```
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
+    /// use cast::Cast;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
+    /// let cast = Cast::new(provider);
+    /// let block = cast.block(5, true, vec![]).await?;
+    /// println!("{}", block);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn block<B: Into<BlockId>>(
+        &self,
+        block: B,
+        full: bool,
+        fields: Vec<String>,
+    ) -> Result<String> {
+        let block = block.into();
+        if fields.contains(&"transactions".into()) && !full {
+            eyre::bail!("use --full to view transactions")
+        }
+
+        let block = self
+            .provider
+            .get_block(block)
+            .kind(full.into())
+            .await?
+            .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
+
+        Ok(if !fields.is_empty() {
+            let mut result = String::new();
+            for field in fields {
+                result.push_str(
+                    &get_pretty_block_attr::<N>(&block, &field)
+                        .unwrap_or_else(|| format!("{field} is not a valid block field")),
+                );
+
+                result.push('\n');
+            }
+            result.trim_end().to_string()
+        } else if shell::is_json() {
+            serde_json::to_value(&block).unwrap().to_string()
+        } else {
+            block.pretty()
+        })
+    }
+
+    async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
+        Self::block(
+            self,
+            block.into(),
+            false,
+            // Select only select field
+            vec![field],
+        )
+        .await?
+        .parse()
+        .map_err(Into::into)
+    }
+
+    pub async fn base_fee<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
+        Self::block_field_as_num(self, block, String::from("baseFeePerGas")).await
+    }
+
+    pub async fn age<B: Into<BlockId>>(&self, block: B) -> Result<String> {
+        let timestamp_str =
+            Self::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
+        let datetime = DateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
+        Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
+    }
+
+    pub async fn timestamp<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
+        Self::block_field_as_num(self, block, "timestamp".to_string()).await
+    }
+
+    pub async fn chain(&self) -> Result<&str> {
+        let genesis_hash = Self::block(
+            self,
+            0,
+            false,
+            // Select only block hash
+            vec![String::from("hash")],
+        )
+        .await?;
+
+        Ok(match &genesis_hash[..] {
+            "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
+                match &(Self::block(self, 1920000, false, vec![String::from("hash")]).await?)[..] {
+                    "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
+                        "etclive"
+                    }
+                    _ => "ethlive",
+                }
+            }
+            "0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9" => "kovan",
+            "0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d" => "ropsten",
+            "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b" => {
+                "optimism-mainnet"
+            }
+            "0xc1fc15cd51159b1f1e5cbc4b82e85c1447ddfa33c52cf1d98d14fba0d6354be1" => {
+                "optimism-goerli"
+            }
+            "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
+                "optimism-kovan"
+            }
+            "0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa" => "fraxtal",
+            "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489" => {
+                "fraxtal-testnet"
+            }
+            "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
+                "arbitrum-mainnet"
+            }
+            "0x0cd786a2425d16f152c658316c423e6ce1181e15c3295826d7c9904cba9ce303" => "morden",
+            "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
+            "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
+            "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
+            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon-pos",
+            "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697" => {
+                "polygon-pos-amoy-testnet"
+            }
+            "0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741" => "polygon-zkevm",
+            "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9" => {
+                "polygon-zkevm-cardona-testnet"
+            }
+            "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
+            "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
+            "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
+            "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
+            "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
+                match &(Self::block(self, 1, false, vec![String::from("hash")]).await?)[..] {
+                    "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
+                        "avalanche-fuji"
+                    }
+                    _ => "avalanche",
+                }
+            }
+            "0x23a2658170ba70d014ba0d0d2709f8fbfe2fa660cd868c5f282f991eecbe38ee" => "ink",
+            "0xe5fd5cf0be56af58ad5751b401410d6b7a09d830fa459789746a3d0dd1c79834" => "ink-sepolia",
+            _ => "unknown",
+        })
+    }
+}
+
+impl<P: Provider<N>, N: Network> Cast<P, N>
+where
+    N::Header: Encodable,
+{
+    /// # Example
+    ///
+    /// ```
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::Ethereum};
+    /// use cast::Cast;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, Ethereum>::default().connect("http://localhost:8545").await?;
+    /// let cast = Cast::new(provider);
+    /// let block = cast.block_raw(5, true).await?;
+    /// println!("{}", block);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn block_raw<B: Into<BlockId>>(&self, block: B, full: bool) -> Result<String> {
+        let block_id = block.into();
+
+        let block = self
+            .provider
+            .get_block(block_id)
+            .kind(full.into())
+            .await?
+            .ok_or_else(|| eyre::eyre!("block {:?} not found", block_id))?;
+
+        let encoded = alloy_rlp::encode(block.header().as_ref());
+
+        Ok(format!("0x{}", hex::encode(encoded)))
+    }
+}
+
+impl<P: Provider<N>, N: Network> Cast<P, N>
+where
+    N::TxEnvelope: Serialize + UIfmtSignatureExt,
+    N::TransactionResponse: UIfmt,
+{
+    /// # Example
+    ///
+    /// ```
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
+    /// use cast::Cast;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider =
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
+    /// let cast = Cast::new(provider);
+    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
+    /// let tx =
+    ///     cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false, false).await?;
+    /// println!("{}", tx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    pub async fn transaction(
+        &self,
+        tx_hash: Option<String>,
+        from: Option<NameOrAddress>,
+        nonce: Option<u64>,
+        field: Option<String>,
+        raw: bool,
+        to_request: bool,
+        lane: bool,
+    ) -> Result<String> {
+        let tx = if let Some(tx_hash) = tx_hash {
+            let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+            self.provider
+                .get_transaction_by_hash(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
+        } else if let Some(from) = from {
+            // If nonce is not provided, uses 0.
+            let nonce = U64::from(nonce.unwrap_or_default());
+            let from = from.resolve(self.provider.root()).await?;
+
+            self.provider
+                .raw_request::<_, Option<N::TransactionResponse>>(
+                    "eth_getTransactionBySenderAndNonce".into(),
+                    (from, nonce),
+                )
+                .await?
+                .ok_or_else(|| {
+                    eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
+                })?
+        } else {
+            eyre::bail!("tx hash or from address is required")
+        };
+
+        Ok(if raw {
+            let encoded = tx.as_ref().encoded_2718();
+            format!("0x{}", hex::encode(encoded))
+        } else if lane {
+            let encoded = tx.as_ref().encoded_2718();
+            let mut data = encoded.as_slice();
+            let tx = FoundryTxEnvelope::decode_2718(&mut data)
+                .wrap_err("failed to decode transaction for lane classification")?;
+            crate::args::format_lane_classification(&tx.classify_t5_payment_lane())?
+        } else if let Some(ref field) = field {
+            if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
+                value
+            } else {
+                let tx_json = serde_json::to_value(&tx)?;
+                let value = tx_json
+                    .get(field)
+                    .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?;
+
+                match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                }
+            }
+        } else if shell::is_json() {
+            // to_value first to sort json object keys
+            serde_json::to_value(&tx)?.to_string()
+        } else if to_request {
+            serde_json::to_string_pretty(&Into::<N::TransactionRequest>::into(tx))?
+        } else {
+            tx.pretty()
+        })
     }
 }
 
@@ -1158,7 +1300,7 @@ impl SimpleCast {
             DynSolType::Uint(n) => {
                 if MAX {
                     let mut max = U256::MAX;
-                    if n < 255 {
+                    if n < 256 {
                         max &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
                     }
                     Ok(max.to_string())
@@ -1874,7 +2016,7 @@ impl SimpleCast {
         let mut topics = vec![event.selector()];
         let mut data_tokens: Vec<u8> = Vec::new();
 
-        for (input, token) in event.inputs.iter().zip(tokens.into_iter()) {
+        for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
                 let ty = DynSolType::parse(&input.ty)?;
                 if matches!(
@@ -2182,7 +2324,7 @@ impl SimpleCast {
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, flattened)?;
-            sh_println!("Flattened file written at {}", path.display())?
+            sh_status!("Flattened file written at {}", path.display())?
         } else {
             sh_println!("{flattened}")?
         }
@@ -2314,15 +2456,22 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_network::Ethereum;
     /// use cast::SimpleCast as Cast;
     ///
     /// let tx = "0x02f8f582a86a82058d8459682f008508351050808303fd84948e42f2f4101563bf679975178e880fd87d3efd4e80b884659ac74b00000000000000000000000080f0c1c49891dcfdd40b6e0f960f84e6042bcb6f000000000000000000000000b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e00000000000000000000000000000000000000000000000000000000007ff4e20000000000000000000000000000000000000000000000000000000000000064c001a05d429597befe2835396206781b199122f2e8297327ed4a05483339e7a8b2022aa04c23a7f70fb29dda1b4ee342fb10a625e9b8ddc6a603fb4e170d4f6f37700cb8";
-    /// let tx_envelope = Cast::decode_raw_transaction(&tx)?;
+    /// let tx_envelope = Cast::decode_raw_transaction::<Ethereum>(&tx)?;
     /// # Ok::<(), eyre::Report>(())
-    pub fn decode_raw_transaction(tx: &str) -> Result<FoundryTxEnvelope> {
+    pub fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>(
+        tx: &str,
+    ) -> Result<String> {
         let tx_hex = hex::decode(tx)?;
-        let tx = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
-        Ok(tx)
+        let tx: N::TxEnvelope = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
+        if let Ok(signer) = tx.recover_signer() {
+            Ok(serde_json::to_string_pretty(&Recovered::new_unchecked(tx, signer))?)
+        } else {
+            Ok(serde_json::to_string_pretty(&tx)?)
+        }
     }
 }
 
@@ -2355,6 +2504,130 @@ fn explorer_client(
     }
 
     builder.build().map_err(Into::into)
+}
+
+/// Tests for the `eth_getLogs` chunking/bisection helpers, kept in a separate module so they can
+/// use the provider-based [`Cast`] (the `tests` module aliases `Cast` to `SimpleCast`).
+#[cfg(test)]
+mod logs_bisecting {
+    use super::Cast;
+    use alloy_json_rpc::{RequestPacket, ResponsePacket, SerializedRequest};
+    use alloy_network::AnyNetwork;
+    use alloy_provider::ProviderBuilder;
+    use alloy_rpc_client::RpcClient;
+    use alloy_rpc_types::{Filter, Log};
+    use alloy_transport::{
+        TransportError, TransportFut,
+        mock::{Asserter, MockTransport},
+    };
+    use std::{
+        sync::{Arc, Mutex},
+        task::{Context, Poll},
+    };
+    use tower::Service;
+
+    fn log_at(block: u64) -> Log {
+        Log { block_number: Some(block), ..Default::default() }
+    }
+
+    /// Mock transport that records the `eth_getLogs` `[fromBlock, toBlock]` ranges it is asked for
+    /// while delegating the actual responses to a FIFO [`Asserter`].
+    #[derive(Clone)]
+    struct RecordingTransport {
+        inner: MockTransport,
+        ranges: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl RecordingTransport {
+        fn new(asserter: Asserter) -> Self {
+            Self { inner: MockTransport::new(asserter), ranges: Arc::new(Mutex::new(Vec::new())) }
+        }
+
+        fn record(&self, req: &SerializedRequest) {
+            if req.method() != "eth_getLogs" {
+                return;
+            }
+            let Some(params) = req.params() else { return };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(params.get()) else { return };
+            let Some(filter) = value.get(0) else { return };
+            let field =
+                |name| filter.get(name).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            self.ranges.lock().unwrap().push((field("fromBlock"), field("toBlock")));
+        }
+    }
+
+    impl Service<RequestPacket> for RecordingTransport {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            match &req {
+                RequestPacket::Single(req) => self.record(req),
+                RequestPacket::Batch(reqs) => reqs.iter().for_each(|req| self.record(req)),
+            }
+            self.inner.call(req)
+        }
+    }
+
+    // A range-limit failure splits depth-first into [0,1]/[2,3] and aggregates in range order.
+    #[tokio::test]
+    async fn bisects_failed_range_and_aggregates_in_order() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("query returned more than 10000 results");
+        asserter.push_success(&vec![log_at(0)]);
+        asserter.push_success(&vec![log_at(2)]);
+
+        let transport = RecordingTransport::new(asserter);
+        let ranges = transport.ranges.clone();
+        let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+            .connect_client(RpcClient::new(transport, true));
+
+        let logs = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap();
+        let blocks: Vec<_> = logs.iter().map(|l| l.block_number).collect();
+        assert_eq!(blocks, vec![Some(0), Some(2)]);
+
+        // The original range fails, then bisection requests exactly the two halves in order.
+        let ranges = ranges.lock().unwrap();
+        assert_eq!(
+            *ranges,
+            vec![
+                ("0x0".to_string(), "0x3".to_string()),
+                ("0x0".to_string(), "0x1".to_string()),
+                ("0x2".to_string(), "0x3".to_string()),
+            ]
+        );
+    }
+
+    // A single-block failure can't be split, so the error is surfaced.
+    #[tokio::test]
+    async fn surfaces_single_block_failure() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("query returned more than 10000 results");
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let err = Cast::get_logs_bisecting(&provider, &Filter::new(), 5, 5).await.unwrap_err();
+        assert!(err.to_string().contains("more than 10000 results"), "got: {err}");
+    }
+
+    // A non-range error fails after one request instead of bisecting.
+    #[tokio::test]
+    async fn does_not_bisect_non_range_errors() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("unauthorized: invalid api key");
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let err = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap_err();
+        assert!(err.to_string().contains("unauthorized"), "got: {err}");
+    }
 }
 
 #[cfg(test)]
@@ -2482,7 +2755,7 @@ mod tests {
         let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
         let sig = "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
         let decoded = Cast::calldata_decode(sig, calldata, true).unwrap();
-        let json_value = serialize_value_as_json(DynSolValue::Array(decoded), None).unwrap();
+        let json_value = serialize_value_as_json(DynSolValue::Array(decoded), None, true).unwrap();
         let expected = serde_json::json!([
             [
                 [
