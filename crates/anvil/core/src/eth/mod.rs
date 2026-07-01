@@ -424,6 +424,10 @@ pub enum EthRequest {
     #[serde(rename = "trace_filter", with = "sequence")]
     TraceFilter(TraceFilter),
 
+    /// Trace get endpoint for parity's `trace_get`.
+    #[serde(rename = "trace_get")]
+    TraceGet(B256, Vec<Index>),
+
     /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
     #[serde(rename = "trace_replayBlockTransactions")]
     TraceReplayBlockTransactions(
@@ -1834,6 +1838,13 @@ true}]}"#;
             EthRequest::DebugFreeOsMemory(()) => {}
             req => panic!("unexpected request: {req:?}"),
         }
+    }
+
+    #[test]
+    fn test_serde_trace_get() {
+        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", [0]]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
