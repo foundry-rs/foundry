@@ -629,6 +629,64 @@ Configure by account.
     );
 });
 
+// Test that @inheritdoc parameter descriptions are matched when an implementation
+// prefixes or suffixes interface parameter names with underscores.
+forgetest_init!(inheritdoc_matches_underscore_wrapped_param_names, |prj, cmd| {
+    prj.add_source(
+        "I.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface I {
+    /// @notice Mints tokens.
+    /// @param recipient The account receiving minted tokens.
+    /// @param amount The number of tokens to mint.
+    function mint(address recipient, uint256 amount) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function mint(address recipient_, uint256 _amount) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+### mint
+
+Mints tokens.
+
+```solidity
+function mint(address recipient_, uint256 _amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| recipient_ | `address` | The account receiving minted tokens. |
+| _amount | `uint256` | The number of tokens to mint. |
+...
+"#]],
+    );
+});
+
 // Test that overload matching uses canonical HIR/ABI parameter types so that
 // `Base.batch(uint[])` is correctly matched by `Child.batch(uint256[])`.
 forgetest_init!(inheritdoc_overload_matches_uint_array_alias, |prj, cmd| {

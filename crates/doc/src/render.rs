@@ -634,8 +634,9 @@ fn render_function_section(
             );
         }
         for (name, desc) in &inherited.params {
-            if !c.params.iter().any(|(n, _)| n == name) {
-                c.params.push((name.clone(), sanitize(desc)));
+            let name = inherited_param_name_for_current_function(name, &f.header.parameters);
+            if !c.params.iter().any(|(n, _)| n == &name) {
+                c.params.push((name, sanitize(desc)));
             }
         }
         for (name, desc) in &inherited.returns {
@@ -651,6 +652,34 @@ fn render_function_section(
     write_param_table(out, "Parameters", &f.header.parameters, &c, ctx);
     if let Some(returns) = &f.header.returns {
         write_param_table(out, "Returns", returns, &c, ctx);
+    }
+}
+
+fn inherited_param_name_for_current_function(
+    inherited_name: &str,
+    params: &ParameterList<'_>,
+) -> String {
+    if params
+        .iter()
+        .any(|param| param.name.map(|name| name.as_str() == inherited_name).unwrap_or(false))
+    {
+        return inherited_name.to_string();
+    }
+
+    let normalized_inherited = inherited_name.trim_matches('_');
+    if normalized_inherited.is_empty() {
+        return inherited_name.to_string();
+    }
+
+    let mut candidates = params.iter().filter_map(|param| {
+        let name = param.name?;
+        let name = name.as_str();
+        (name.trim_matches('_') == normalized_inherited).then(|| name.to_string())
+    });
+
+    match (candidates.next(), candidates.next()) {
+        (Some(name), None) => name,
+        _ => inherited_name.to_string(),
     }
 }
 
