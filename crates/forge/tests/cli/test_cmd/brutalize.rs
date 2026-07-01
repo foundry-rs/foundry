@@ -282,3 +282,46 @@ contract FilterTargetTest is Test {
     cmd.args(["test", "--brutalize", "--mt", "test_add"]);
     cmd.assert_success();
 });
+
+// Nested casts should not produce overlapping replacements.
+forgetest_init!(brutalize_nested_casts_compile, |prj, cmd| {
+    prj.add_source(
+        "NestedCasts.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract NestedCasts {
+    function nested(uint256 x) external pure returns (uint8) {
+        return uint8(uint16(x));
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "NestedCasts.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/NestedCasts.sol";
+
+contract NestedCastsTest is Test {
+    NestedCasts public c;
+
+    function setUp() public {
+        c = new NestedCasts();
+    }
+
+    function test_nested() public view {
+        assertEq(c.nested(0x1234), 0x34);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--brutalize", "--mc", "NestedCastsTest"]);
+    cmd.assert_success();
+});

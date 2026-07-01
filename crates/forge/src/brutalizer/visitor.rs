@@ -36,6 +36,7 @@ impl<'ast, 'src> Visit<'ast> for BrutalizerVisitor<'src> {
             let mask = deterministic_mask(expr.span);
             if let Some(replacement) = brutalize_cast(ty, arg_text, &mask) {
                 self.transforms.push(Transform::Replace { span: expr.span, replacement });
+                return ControlFlow::Continue(());
             }
         }
 
