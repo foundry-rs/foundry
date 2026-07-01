@@ -374,6 +374,7 @@ impl SymMemory {
             SymExpr::zero(cx)
         };
 
+        let mut read_offset_expr = None;
         for write in writes {
             if let Some(byte) = write.concrete_byte(cx, offset) {
                 result = byte;
@@ -384,8 +385,9 @@ impl SymMemory {
             }
             for idx in 0..write.bytes.len() {
                 let write_offset = SymExpr::add_const(cx, write.offset.clone(), U256::from(idx));
-                let offset = SymExpr::constant(cx, U256::from(offset));
-                let condition = SymBoolExpr::eq(cx, write_offset, offset);
+                let read_offset = read_offset_expr
+                    .get_or_insert_with(|| SymExpr::constant(cx, U256::from(offset)));
+                let condition = SymBoolExpr::eq(cx, write_offset, read_offset.clone());
                 let byte = write.bytes.byte(cx, idx);
                 result = SymExpr::ite(cx, condition, byte, result);
             }
