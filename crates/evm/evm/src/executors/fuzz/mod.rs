@@ -562,13 +562,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             return;
         }
 
-        let mut frontiers = Vec::with_capacity(limit.min(32));
-        for worker in workers {
-            if frontiers.len() == limit {
-                break;
-            }
-            frontiers.extend(worker.frontiers.drain(..).take(limit - frontiers.len()));
-        }
+        let frontiers = frontier::merge_frontiers(
+            limit,
+            workers.iter_mut().flat_map(|worker| worker.frontiers.drain(..)),
+        );
         if frontiers.is_empty() {
             return;
         }
