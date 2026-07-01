@@ -409,6 +409,14 @@ pub enum EthRequest {
     #[serde(rename = "debug_traceBlockByNumber")]
     DebugTraceBlockByNumber(BlockNumber, #[serde(default)] GethDebugTracingOptions),
 
+    /// Trace call endpoint for parity's `trace_call`.
+    #[serde(rename = "trace_call")]
+    TraceCall(
+        WithOtherFields<TransactionRequest>,
+        #[serde(default)] HashSet<TraceType>,
+        #[serde(default)] Option<BlockId>,
+    ),
+
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]
     TraceTransaction(B256),
@@ -1845,6 +1853,17 @@ true}]}"#;
             EthRequest::DebugFreeOsMemory(()) => {}
             req => panic!("unexpected request: {req:?}"),
         }
+    }
+
+    #[test]
+    fn test_serde_trace_call() {
+        let s = r#"{"method": "trace_call", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, ["trace", "stateDiff"], "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "trace_call", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]

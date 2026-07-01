@@ -26,7 +26,7 @@ use alloy_rpc_types::{
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, PreStateConfig,
             PreStateFrame,
         },
-        parity::{Action, ChangedType, LocalizedTransactionTrace, TraceType},
+        parity::{Action, ChangedType, LocalizedTransactionTrace, TraceResults, TraceType},
     },
 };
 use alloy_serde::WithOtherFields;
@@ -67,6 +67,54 @@ async fn test_get_transfer_parity_traces() {
     assert!(!block_traces.is_empty());
 
     assert_eq!(traces, block_traces);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+    let before = provider.get_balance(to).await.unwrap();
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+
+    let traces: TraceResults = provider
+        .client()
+        .request(
+            "trace_call",
+            (
+                tx,
+                vec![TraceType::Trace, TraceType::VmTrace, TraceType::StateDiff],
+                BlockId::latest(),
+            ),
+        )
+        .await
+        .unwrap();
+
+    assert!(!traces.trace.is_empty());
+    assert!(traces.vm_trace.is_some());
+    assert!(traces.state_diff.is_some());
+
+    match &traces.trace[0].action {
+        Action::Call(call) => {
+            assert_eq!(call.from, from);
+            assert_eq!(call.to, to);
+            assert_eq!(call.value, amount);
+        }
+        action => panic!("expected call action, got {action:?}"),
+    }
+
+    let ChangedType { from: before_diff, to: after_diff } =
+        traces.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
+    assert_eq!(*before_diff, before);
+    assert_eq!(after_diff.saturating_sub(*before_diff), amount);
+
+    let after = provider.get_balance(to).await.unwrap();
+    assert_eq!(after, before);
 }
 
 #[tokio::test(flavor = "multi_thread")]

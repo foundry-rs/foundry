@@ -23,7 +23,10 @@ use alloy_rpc_types::{
     state::StateOverride,
     trace::{
         geth::{GethDebugTracingOptions, GethTrace, TraceResult},
-        parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
+        parity::{
+            LocalizedTransactionTrace as Trace, TraceResults, TraceResultsWithTransactionHash,
+            TraceType,
+        },
     },
 };
 use alloy_rpc_types_eth::{Bundle, EthCallResponse, StateContext};
@@ -254,6 +257,16 @@ impl<N: Network> ClientFork<N> {
         storage.transaction_traces.insert(hash, traces.clone());
 
         Ok(traces)
+    }
+
+    /// Sends `trace_call`.
+    pub async fn trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        trace_types: HashSet<TraceType>,
+        block: BlockId,
+    ) -> Result<TraceResults, TransportError> {
+        self.provider().raw_request("trace_call".into(), (request, trace_types, block)).await
     }
 
     /// Sends `trace_get`.
