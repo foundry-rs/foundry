@@ -28,14 +28,15 @@ impl SymExpr {
 
 fn is_hard_arith_node(expr: &SymExpr) -> bool {
     match expr.kind() {
-        SymExprKind::Op(SymExprOp::Mul, left, right) => left.contains_var() && right.contains_var(),
-        SymExprKind::Op(
-            SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
+        SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+            left.contains_var() && right.contains_var()
+        }
+        SymExprKind::BinOp(
+            SymBinOp::UDiv | SymBinOp::URem | SymBinOp::SDiv | SymBinOp::SRem,
             left,
             right,
         ) => left.contains_var() || right.contains_var(),
-        SymExprKind::AddMod { left, right, modulus }
-        | SymExprKind::MulMod { left, right, modulus } => {
+        SymExprKind::TernOp(_, left, right, modulus) => {
             left.contains_var() || right.contains_var() || modulus.contains_var()
         }
         _ => false,
@@ -333,7 +334,9 @@ impl MaskHints {
                     self.apply_bool(var, value, false);
                 }
             }
-            SymBoolExprKind::Eq(left, right) => self.apply_equality(var, left, right, inverted),
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                self.apply_equality(var, left, right, inverted)
+            }
             SymBoolExprKind::Cmp(_, _, _) | SymBoolExprKind::And(_) => {}
         }
     }
@@ -356,7 +359,7 @@ fn zero_mask_equality(var: &str, masked: &SymExpr, zero: &SymExpr) -> Option<U25
         return None;
     }
     match masked.kind() {
-        SymExprKind::Op(SymExprOp::And, left, right) => match (left.kind(), right.kind()) {
+        SymExprKind::BinOp(SymBinOp::And, left, right) => match (left.kind(), right.kind()) {
             (SymExprKind::Var(name), SymExprKind::Const(mask))
             | (SymExprKind::Const(mask), SymExprKind::Var(name))
                 if name.as_str() == var =>

@@ -299,38 +299,34 @@ impl PathState {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => None,
             SymExprKind::Not(_) => None,
-            SymExprKind::AddMod { modulus, .. } | SymExprKind::MulMod { modulus, .. } => {
-                match modulus.eval() {
-                    Some(modulus) if modulus.is_zero() => Some(0),
-                    Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
-                    None => {
-                        self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1))
-                    }
-                }
-            }
+            SymExprKind::TernOp(_, _, _, modulus) => match modulus.eval() {
+                Some(modulus) if modulus.is_zero() => Some(0),
+                Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
+                None => self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1)),
+            },
             SymExprKind::Ite(_, left, right) => {
                 Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
             }
-            SymExprKind::Op(op, left, right) => match op {
-                SymExprOp::Add => self
+            SymExprKind::BinOp(op, left, right) => match op {
+                SymBinOp::Add => self
                     .expr_upper_bound_usize(left)?
                     .checked_add(self.expr_upper_bound_usize(right)?),
-                SymExprOp::Mul => self
+                SymBinOp::Mul => self
                     .expr_upper_bound_usize(left)?
                     .checked_mul(self.expr_upper_bound_usize(right)?),
-                SymExprOp::UDiv => {
+                SymBinOp::UDiv => {
                     let left = self.expr_upper_bound_usize(left)?;
                     match right.eval()? {
                         divisor if divisor.is_zero() => Some(0),
                         divisor => Some(left / usize::try_from(divisor).ok()?),
                     }
                 }
-                SymExprOp::URem => match right.eval() {
+                SymBinOp::URem => match right.eval() {
                     Some(divisor) if divisor.is_zero() => Some(0),
                     Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
                     None => self.expr_upper_bound_usize(left),
                 },
-                SymExprOp::And => right
+                SymBinOp::And => right
                     .eval()
                     .and_then(|value| usize::try_from(value).ok())
                     .or_else(|| left.eval().and_then(|value| usize::try_from(value).ok()))
@@ -339,18 +335,18 @@ impl PathState {
                             .or_else(|| self.expr_upper_bound_usize(right))
                             .map_or(mask, |bound| bound.min(mask))
                     }),
-                SymExprOp::Shr => {
+                SymBinOp::Shr => {
                     let left = self.expr_upper_bound_usize(left)?;
                     let shift = usize::try_from(right.eval()?).ok()?;
                     Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
                 }
-                SymExprOp::Sub
-                | SymExprOp::SDiv
-                | SymExprOp::SRem
-                | SymExprOp::Or
-                | SymExprOp::Xor
-                | SymExprOp::Shl
-                | SymExprOp::Sar => None,
+                SymBinOp::Sub
+                | SymBinOp::SDiv
+                | SymBinOp::SRem
+                | SymBinOp::Or
+                | SymBinOp::Xor
+                | SymBinOp::Shl
+                | SymBinOp::Sar => None,
             },
         };
 
@@ -392,24 +388,24 @@ impl PathState {
     pub(crate) fn bin_word(
         &mut self,
         cx: &mut SymCx,
-        op: SymExprOp,
+        op: SymBinOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        self.stack.push(SymExpr::op(cx, op, a, b))?;
+        self.stack.push(SymExpr::binop(cx, op, a, b))?;
         Ok(StepOutcome::Continue)
     }
 
     pub(crate) fn bin_word_div_zero_guard(
         &mut self,
         cx: &mut SymCx,
-        op: SymExprOp,
+        op: SymBinOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
         let zero = SymExpr::zero(cx);
         let condition = SymBoolExpr::eq(cx, b.clone(), zero.clone());
-        let expr = SymExpr::op(cx, op, a, b);
+        let expr = SymExpr::binop(cx, op, a, b);
         self.stack.push(SymExpr::ite(cx, condition, zero, expr))?;
         Ok(StepOutcome::Continue)
     }
@@ -417,7 +413,7 @@ impl PathState {
     pub(crate) fn cmp_word(
         &mut self,
         cx: &mut SymCx,
-        op: SymBoolExprOp,
+        op: SymCmpOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
@@ -452,9 +448,9 @@ impl PathState {
             SymExpr::constant(cx, result)
         } else {
             let expr = match kind {
-                ShiftKind::Shl => SymExpr::op(cx, SymExprOp::Shl, value, shift),
-                ShiftKind::Shr => SymExpr::op(cx, SymExprOp::Shr, value, shift),
-                ShiftKind::Sar => SymExpr::op(cx, SymExprOp::Sar, value, shift),
+                ShiftKind::Shl => SymExpr::binop(cx, SymBinOp::Shl, value, shift),
+                ShiftKind::Shr => SymExpr::binop(cx, SymBinOp::Shr, value, shift),
+                ShiftKind::Sar => SymExpr::binop(cx, SymBinOp::Sar, value, shift),
             };
             expr.known_word().map(|word| SymExpr::constant(cx, word)).unwrap_or(expr)
         };
@@ -583,12 +579,7 @@ impl PathState {
             } else {
                 U256::from(1) << usize::try_from(bits).expect("checked bit width")
             };
-            self.constraints.push(SymBoolExpr::cmp_word_const(
-                cx,
-                SymBoolExprOp::Ult,
-                &value,
-                upper,
-            ));
+            self.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, upper));
         }
         value
     }
@@ -607,13 +598,13 @@ impl PathState {
                 let byte = self.fresh_bounded_uint(cx, U256::from(8));
                 self.constraints.push(SymBoolExpr::cmp_word_const(
                     cx,
-                    SymBoolExprOp::Uge,
+                    SymCmpOp::Uge,
                     &byte,
                     U256::from(0x20),
                 ));
                 self.constraints.push(SymBoolExpr::cmp_word_const(
                     cx,
-                    SymBoolExprOp::Ule,
+                    SymCmpOp::Ule,
                     &byte,
                     U256::from(0x7e),
                 ));
@@ -629,10 +620,10 @@ impl PathState {
         } else if bits < U256::from(256) {
             let magnitude =
                 U256::from(1) << (usize::try_from(bits).expect("checked bit width") - 1);
-            let lt = SymBoolExpr::cmp_word_const(cx, SymBoolExprOp::Ult, &value, magnitude);
+            let lt = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, magnitude);
             let ge = SymBoolExpr::cmp_word_const(
                 cx,
-                SymBoolExprOp::Uge,
+                SymCmpOp::Uge,
                 &value,
                 U256::ZERO.wrapping_sub(magnitude),
             );
@@ -809,7 +800,7 @@ impl ExpectedRevert {
                 let prefix_len = SymExpr::constant(cx, U256::from(prefix.len()));
                 conditions.push(SymBoolExpr::cmp(
                     cx,
-                    SymBoolExprOp::Uge,
+                    SymCmpOp::Uge,
                     return_data.len_expr(),
                     prefix_len,
                 ));
@@ -1701,8 +1692,8 @@ impl SymbolicWorld {
         }
         let from_balance = self.balance_word_for_address(cx, executor, from);
         let to_balance = self.balance_word_for_address(cx, executor, to);
-        let from_balance = SymExpr::op(cx, SymExprOp::Sub, from_balance, value.clone());
-        let to_balance = SymExpr::op(cx, SymExprOp::Add, to_balance, value);
+        let from_balance = SymExpr::binop(cx, SymBinOp::Sub, from_balance, value.clone());
+        let to_balance = SymExpr::binop(cx, SymBinOp::Add, to_balance, value);
         self.set_balance_word(from, from_balance);
         self.set_balance_word(to, to_balance);
     }
@@ -1772,7 +1763,8 @@ impl SymbolicWorld {
         let balance = self.balance_word_for_address(cx, executor, address);
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
             let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
-            let beneficiary_balance = SymExpr::op(cx, SymExprOp::Add, beneficiary_balance, balance);
+            let beneficiary_balance =
+                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
         self.balances.insert(address, SymExpr::zero(cx));
@@ -1801,7 +1793,8 @@ impl SymbolicWorld {
             let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
-            let beneficiary_balance = SymExpr::op(cx, SymExprOp::Add, beneficiary_balance, balance);
+            let beneficiary_balance =
+                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
             self.balances.insert(address, SymExpr::zero(cx));
         }
