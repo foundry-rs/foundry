@@ -382,13 +382,17 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
         let cmp_values = call.evm_cmp_values.take().unwrap_or_default();
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+        // `new_coverage` is only meaningful when edge coverage is collected; otherwise
+        // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
+        let frontier_new_coverage =
+            self.config.corpus.collect_edge_coverage().then_some(new_coverage);
         frontier_recorder.capture_stateless_call(
             fuzz_run,
             self.sender,
             address,
             &calldata,
             &cmp_values,
-            new_coverage,
+            frontier_new_coverage,
         );
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
@@ -562,13 +566,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             return;
         }
 
-        let mut frontiers = Vec::with_capacity(limit.min(32));
-        for worker in workers {
-            if frontiers.len() == limit {
-                break;
-            }
-            frontiers.extend(worker.frontiers.drain(..).take(limit - frontiers.len()));
-        }
+        let frontiers = frontier::merge_frontiers(
+            limit,
+            workers.iter_mut().flat_map(|worker| worker.frontiers.drain(..)),
+        );
         if frontiers.is_empty() {
             return;
         }
