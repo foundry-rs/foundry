@@ -45,7 +45,7 @@ fn brutalize_int(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "int{actual_bits}(int256(uint256({arg_text}) | (uint256({mask}) << {actual_bits})))"
+        "int{actual_bits}(int256(int{actual_bits}({arg_text})) | int256(uint256({mask}) << {actual_bits}))"
     ))
 }
 
@@ -54,7 +54,10 @@ fn brutalize_fixed_bytes(size: TypeSize, arg_text: &str, mask: &str) -> Option<S
     if bytes >= 32 || bytes == 0 {
         return None;
     }
-    Some(format!("bytes{bytes}(bytes32(uint256(bytes32({arg_text})) | uint256({mask})))"))
+    let unused_bits = (32 - bytes) * 8;
+    Some(format!(
+        "bytes{bytes}(bytes32(bytes{bytes}({arg_text})) | bytes32(uint256({mask}) & ((uint256(1) << {unused_bits}) - 1)))"
+    ))
 }
 
 #[cfg(test)]
@@ -109,7 +112,7 @@ contract T {
 }
 "#;
         let result = brutalize(source);
-        assert!(result.contains("int16(int256(uint256(x) | (uint256(0x"));
+        assert!(result.contains("int16(int256(int16(x)) | int256(uint256(0x"));
         assert!(result.contains("<< 16)"));
     }
 
@@ -124,7 +127,8 @@ contract T {
 }
 "#;
         let result = brutalize(source);
-        assert!(result.contains("bytes4(bytes32(uint256(bytes32(x)) | uint256(0x"));
+        assert!(result.contains("bytes4(bytes32(bytes4(x)) | bytes32(uint256(0x"));
+        assert!(result.contains("<< 224"));
     }
 
     #[test]

@@ -29,7 +29,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
+    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, sh_status, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -991,17 +991,17 @@ impl TestArgs {
         let temp_path = temp_dir.path();
 
         if !silent {
-            sh_println!("Brutalizing source files...")?;
+            sh_status!("Brutalizing source files...")?;
         }
 
         workspace::copy_project(&config, temp_path)?;
         let count = brutalizer::brutalize_project(&config, temp_path)?;
 
         if !silent {
-            sh_println!("Brutalized {count} source files, compiling from temp workspace...")?;
+            sh_status!("Brutalized {count} source files, compiling from temp workspace...")?;
         }
 
-        let config = Config::load_with_root(temp_path)?.sanitized();
+        let config = workspace::rebase_config_paths(&config, temp_path).sanitized();
         let project = config.project()?;
         let project_root = project.paths.root.clone();
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;

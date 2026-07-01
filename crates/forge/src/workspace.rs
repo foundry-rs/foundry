@@ -32,6 +32,51 @@ pub fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).map(|p| p.to_path_buf()).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Build a config for a copied temp workspace from an already materialized config.
+///
+/// This preserves CLI/env overrides and runtime normalization while rebasing
+/// project-local paths from the original root to `temp_path`.
+pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
+    let mut temp_config = config.clone();
+    temp_config.root = temp_path.to_path_buf();
+    temp_config.src = rebase_project_path(&config.root, temp_path, &config.src);
+    temp_config.test = rebase_project_path(&config.root, temp_path, &config.test);
+    temp_config.script = rebase_project_path(&config.root, temp_path, &config.script);
+    temp_config.out = rebase_project_path(&config.root, temp_path, &config.out);
+    temp_config.cache_path = rebase_project_path(&config.root, temp_path, &config.cache_path);
+    temp_config.snapshots = rebase_project_path(&config.root, temp_path, &config.snapshots);
+    temp_config.broadcast = rebase_project_path(&config.root, temp_path, &config.broadcast);
+    temp_config.mutation_dir = rebase_project_path(&config.root, temp_path, &config.mutation_dir);
+    temp_config.libs =
+        config.libs.iter().map(|lib| rebase_project_path(&config.root, temp_path, lib)).collect();
+    temp_config.include_paths = config
+        .include_paths
+        .iter()
+        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .collect();
+    temp_config.allow_paths = config
+        .allow_paths
+        .iter()
+        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .collect();
+
+    if let Some(path) = &config.fuzz.failure_persist_dir {
+        temp_config.fuzz.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+    if let Some(path) = &config.invariant.failure_persist_dir {
+        temp_config.invariant.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+
+    temp_config
+}
+
+fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    let rel = relative_to_root(root, path);
+    if rel.is_absolute() { path.to_path_buf() } else { temp_path.join(rel) }
+}
+
 /// Verify that `candidate` resolves (after following symlinks) to a path that lives
 /// inside `allowed_root`. Protects against `src`/`test`/`lib`/etc. being symlinks
 /// that escape the project root.

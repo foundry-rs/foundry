@@ -1,6 +1,6 @@
 // CLI integration tests for `forge test --brutalize`
 
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 
 // Robust contract with casts + assembly passes under brutalization
 forgetest_init!(brutalize_robust_contract_passes, |prj, cmd| {
@@ -25,6 +25,18 @@ contract Robust {
 
     function addressToUint160(address x) external pure returns (uint160) {
         return uint160(x);
+    }
+
+    function negativeToInt16() external pure returns (int16) {
+        return int16(-1);
+    }
+
+    function uint32ToBytes4(uint32 x) external pure returns (bytes4) {
+        return bytes4(x);
+    }
+
+    function bytes32ToBytes31(bytes32 x) external pure returns (bytes31) {
+        return bytes31(x);
     }
 
     function asmAdd(uint256 a, uint256 b) external pure returns (uint256 result) {
@@ -99,6 +111,19 @@ contract RobustTest is Test {
         assertEq(robust.addressToUint160(address(1)), 1);
     }
 
+    function test_negativeToInt16() public view {
+        assertEq(robust.negativeToInt16(), -1);
+    }
+
+    function test_uint32ToBytes4() public view {
+        assertEq(robust.uint32ToBytes4(0x12345678), bytes4(uint32(0x12345678)));
+    }
+
+    function test_bytes32ToBytes31() public view {
+        bytes32 value = bytes32(uint256(type(uint256).max));
+        assertEq(robust.bytes32ToBytes31(value), bytes31(value));
+    }
+
     function test_asmAdd() public view {
         assertEq(robust.asmAdd(2, 3), 5);
     }
@@ -124,9 +149,6 @@ contract RobustTest is Test {
 
     cmd.args(["test", "--brutalize"]);
     cmd.assert_success().stdout_eq(str![[r#"
-...
-Brutalizing source files...
-Brutalized 1 source files, compiling from temp workspace...
 ...
 Suite result: ok. [..] passed; 0 failed; 0 skipped; [ELAPSED]
 ...
@@ -297,6 +319,94 @@ contract FilterTargetTest is Test {
 
     cmd.args(["test", "--brutalize", "--mt", "test_add"]);
     cmd.assert_success();
+});
+
+// --brutalize must preserve CLI/config overrides when compiling from the temp workspace.
+forgetest_init!(brutalize_preserves_fuzz_runs_override, |prj, cmd| {
+    prj.add_source(
+        "FuzzTarget.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract FuzzTarget {
+    function identity(uint256 x) external pure returns (uint256) {
+        return x;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "FuzzTarget.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/FuzzTarget.sol";
+
+contract FuzzTargetTest is Test {
+    FuzzTarget public c;
+
+    function setUp() public {
+        c = new FuzzTarget();
+    }
+
+    function test_fuzzIdentity(uint256 x) public view {
+        assertEq(c.identity(x), x);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--brutalize", "--fuzz-runs", "1", "--mt", "test_fuzzIdentity"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("test_fuzzIdentity(uint256) (runs: 1,"), "{stdout}");
+});
+
+// --brutalize status output must not corrupt JUnit XML on stdout.
+forgetest_init!(brutalize_junit_stdout_is_xml, |prj, cmd| {
+    prj.add_source(
+        "JUnitTarget.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract JUnitTarget {
+    function add(uint256 a, uint256 b) external pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "JUnitTarget.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/JUnitTarget.sol";
+
+contract JUnitTargetTest is Test {
+    function test_add() public {
+        assertEq(new JUnitTarget().add(1, 2), 3);
+    }
+}
+"#,
+    );
+
+    let stdout =
+        cmd.args(["test", "--brutalize", "--junit"]).assert_success().get_output().stdout_lossy();
+    assert!(stdout.trim_start().starts_with("<?xml"), "{stdout}");
+    assert!(!stdout.contains("Brutalizing source files"), "{stdout}");
+    assert!(!stdout.contains("Brutalized 1 source files"), "{stdout}");
 });
 
 // Nested casts should not produce overlapping replacements.
