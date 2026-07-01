@@ -1,8 +1,7 @@
 //! Storage access helpers for debugger TUI views and commands.
 
 use alloy_primitives::U256;
-use revm::bytecode::opcode;
-use revm::interpreter::InstructionResult;
+use revm::{bytecode::opcode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{CallTraceStep, StorageChangeReason};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
