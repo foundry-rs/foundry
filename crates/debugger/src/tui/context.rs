@@ -70,6 +70,8 @@ pub(crate) struct TUIContext<'a> {
     pub(crate) pc_input: Option<String>,
     /// Current active-buffer byte offset prompt contents, if the prompt is active.
     pub(crate) buffer_offset_input: Option<String>,
+    /// Current debugger command prompt contents, if the prompt is active.
+    pub(crate) command_input: Option<String>,
     /// Current opcode search prompt contents, if the prompt is active.
     pub(crate) opcode_search_input: Option<String>,
     /// Last opcode search term, used by repeat-search shortcuts.
@@ -99,6 +101,7 @@ impl<'a> TUIContext<'a> {
             key_buffer: String::with_capacity(64),
             pc_input: None,
             buffer_offset_input: None,
+            command_input: None,
             opcode_search_input: None,
             last_opcode_search: None,
             status: None,
@@ -168,7 +171,11 @@ impl<'a> TUIContext<'a> {
     }
 
     fn active_buffer(&self) -> &[u8] {
-        match self.active_buffer {
+        self.buffer(&self.active_buffer)
+    }
+
+    fn buffer(&self, buffer: &BufferKind) -> &[u8] {
+        match buffer {
             BufferKind::Memory => self.current_step().memory.as_ref().map_or(&[], |m| m.as_bytes()),
             BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
@@ -176,11 +183,7 @@ impl<'a> TUIContext<'a> {
     }
 
     pub(crate) const fn active_buffer_name(&self) -> &'static str {
-        match self.active_buffer {
-            BufferKind::Memory => "memory",
-            BufferKind::Calldata => "calldata",
-            BufferKind::Returndata => "returndata",
-        }
+        buffer_name(&self.active_buffer)
     }
 }
 
@@ -209,6 +212,11 @@ impl TUIContext<'_> {
 
         if self.buffer_offset_input.is_some() {
             self.handle_buffer_offset_input_key_event(event);
+            return ControlFlow::Continue(());
+        }
+
+        if self.command_input.is_some() {
+            self.handle_command_input_key_event(event);
             return ControlFlow::Continue(());
         }
 
@@ -364,6 +372,13 @@ impl TUIContext<'_> {
                 self.buffer_offset_input = Some(String::new());
             }
 
+            // Run debugger command
+            KeyCode::Char(':') => {
+                self.key_buffer.clear();
+                self.status = None;
+                self.command_input = Some(String::new());
+            }
+
             // Search opcodes in the current call
             KeyCode::Char('/') => {
                 self.key_buffer.clear();
@@ -420,6 +435,14 @@ impl TUIContext<'_> {
             is_buffer_offset_input_char,
         ) {
             self.goto_buffer_offset_from_input(&input);
+        }
+    }
+
+    fn handle_command_input_key_event(&mut self, event: KeyEvent) {
+        if let Some(input) =
+            handle_prompt_input_key_event(&mut self.command_input, event, |_, c| !c.is_control())
+        {
+            self.run_command_from_input(&input);
         }
     }
 
@@ -557,6 +580,10 @@ impl TUIContext<'_> {
     }
 
     fn goto_buffer_offset_from_input(&mut self, input: &str) {
+        self.goto_buffer_offset(self.active_buffer, input);
+    }
+
+    fn goto_buffer_offset(&mut self, buffer: BufferKind, input: &str) {
         let offset = match parse_buffer_offset(input) {
             Ok(offset) => offset,
             Err(err) => {
@@ -565,8 +592,8 @@ impl TUIContext<'_> {
             }
         };
 
-        let buffer_name = self.active_buffer_name();
-        let buffer_len = self.active_buffer().len();
+        let buffer_name = buffer_name(&buffer);
+        let buffer_len = self.buffer(&buffer).len();
         if buffer_len == 0 {
             self.set_error(format!("Current {buffer_name} buffer is empty"));
             return;
@@ -579,7 +606,54 @@ impl TUIContext<'_> {
             return;
         }
 
+        self.active_buffer = buffer;
         self.apply_buffer_offset(offset);
+    }
+
+    fn run_command_from_input(&mut self, input: &str) {
+        let input = input.trim();
+        let input = input.strip_prefix(':').unwrap_or(input).trim_start();
+        if input.is_empty() {
+            self.set_error("Enter a debugger command".to_string());
+            return;
+        }
+
+        let mut parts = input.split_whitespace();
+        let command = parts.next().unwrap();
+        if CONTINUE_COMMANDS.contains(&command) || PC_COMMANDS.contains(&command) {
+            let Some(pc) = parts.next() else {
+                return self.set_error(command_usage(command, "<pc>"));
+            };
+            if parts.next().is_some() {
+                return self.set_error(command_usage(command, "<pc>"));
+            }
+            self.goto_pc_from_input(pc);
+        } else if MEMORY_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Memory, parts);
+        } else if CALLDATA_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Calldata, parts);
+        } else if RETURNDATA_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Returndata, parts);
+        } else if HELP_COMMANDS.contains(&command) {
+            self.set_info(command_help());
+        } else {
+            self.set_error(format!("Unknown command `{command}`; try `help`"));
+        }
+    }
+
+    fn run_buffer_command<'a>(
+        &mut self,
+        command: &str,
+        buffer: BufferKind,
+        mut args: impl Iterator<Item = &'a str>,
+    ) {
+        let Some(offset) = args.next() else {
+            return self.set_error(command_usage(command, "<offset>"));
+        };
+        if args.next().is_some() {
+            return self.set_error(command_usage(command, "<offset>"));
+        }
+        self.goto_buffer_offset(buffer, offset);
     }
 
     fn apply_buffer_offset(&mut self, offset: usize) {
@@ -632,6 +706,7 @@ impl TUIContext<'_> {
     fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
         if self.pc_input.is_some()
             || self.buffer_offset_input.is_some()
+            || self.command_input.is_some()
             || self.opcode_search_input.is_some()
         {
             return ControlFlow::Continue(());
@@ -731,6 +806,40 @@ fn buffer_as_number(s: &str) -> usize {
 
 const fn toggle_state(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
+}
+
+const fn buffer_name(buffer: &BufferKind) -> &'static str {
+    match buffer {
+        BufferKind::Memory => "memory",
+        BufferKind::Calldata => "calldata",
+        BufferKind::Returndata => "returndata",
+    }
+}
+
+const CONTINUE_COMMANDS: &[&str] = &["continue", "cont", "c"];
+const PC_COMMANDS: &[&str] = &["pc", "p"];
+const MEMORY_COMMANDS: &[&str] = &["mem", "memory"];
+const CALLDATA_COMMANDS: &[&str] = &["calldata", "cd"];
+const RETURNDATA_COMMANDS: &[&str] = &["returndata", "ret", "rd"];
+const HELP_COMMANDS: &[&str] = &["help", "h"];
+
+fn command_usage(command: &str, arg: &str) -> String {
+    format!("Usage: :{command} {arg}")
+}
+
+fn command_help() -> String {
+    format!(
+        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>",
+        command_aliases(CONTINUE_COMMANDS),
+        command_aliases(PC_COMMANDS),
+        command_aliases(MEMORY_COMMANDS),
+        command_aliases(CALLDATA_COMMANDS),
+        command_aliases(RETURNDATA_COMMANDS)
+    )
+}
+
+fn command_aliases(commands: &[&str]) -> String {
+    commands.iter().map(|command| format!(":{command}")).collect::<Vec<_>>().join("/")
 }
 
 fn handle_prompt_input_key_event(
@@ -1477,6 +1586,93 @@ mod tests {
         assert_eq!(tui.pc_input, None);
         assert_eq!(tui.current_step, 0);
         assert_eq!(tui.status, None);
+    }
+
+    #[test]
+    fn command_input_mode_handles_keys_and_blocks_normal_commands() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert!(matches!(tui.handle_key_event(key(KeyCode::Char(':'))), ControlFlow::Continue(())));
+        assert_eq!(tui.command_input.as_deref(), Some(""));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('q')));
+        assert_eq!(tui.command_input.as_deref(), Some("q"));
+        assert_eq!(tui.current_step, 0);
+
+        let _ = tui.handle_key_event(key(KeyCode::Backspace));
+        for c in "continue 2a".chars() {
+            let _ = tui.handle_key_event(key(KeyCode::Char(c)));
+        }
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+
+        assert_eq!(tui.command_input, None);
+        assert_eq!(tui.current_step, 1);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Jumped to PC 0x2a (42) in current trace");
+    }
+
+    #[test]
+    fn command_prompt_jumps_to_named_buffer_offset() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1)],
+            Bytes::from(vec![0; 96]),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("calldata 40");
+
+        assert_eq!(tui.active_buffer, BufferKind::Calldata);
+        assert_eq!(tui.draw_memory.current_buf_startline, 2);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to calldata offset 0x40 (64)");
+    }
+
+    #[test]
+    fn command_prompt_accepts_optional_leading_colon() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input(":pc 2a");
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to PC 0x2a (42) in current trace");
+    }
+
+    #[test]
+    fn command_prompt_reports_help_and_usage_errors() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("help");
+        assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
+        let help = &tui.status.as_ref().unwrap().text;
+        for commands in [
+            CONTINUE_COMMANDS,
+            PC_COMMANDS,
+            MEMORY_COMMANDS,
+            CALLDATA_COMMANDS,
+            RETURNDATA_COMMANDS,
+        ] {
+            assert!(help.contains(&command_aliases(commands)));
+        }
+
+        tui.run_command_from_input("mem");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Usage: :mem <offset>");
     }
 
     #[test]

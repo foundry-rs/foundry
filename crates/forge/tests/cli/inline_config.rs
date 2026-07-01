@@ -227,12 +227,14 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
 
             /// forge-config: default.isolate = false
             function test_non_isolate() public {
+                assertFalse(vm.isIsolateMode());
                 vm.startSnapshotGas("testNonIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
 
             function test_isolate() public {
+                assertTrue(vm.isIsolateMode());
                 vm.startSnapshotGas("testIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
@@ -248,6 +250,7 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             }
 
             function test_non_isolate() public {
+                assertFalse(vm.isIsolateMode());
                 vm.startSnapshotGas("testNonIsolatedContract");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
@@ -327,6 +330,73 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         contract_config.test_non_isolated_contract
     );
 });
+
+forgetest_init!(is_isolate_mode_uses_effective_isolation, |prj, cmd| {
+    prj.update_config(|config| config.isolate = false);
+    prj.add_test(
+        "effective_isolation.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract EffectiveIsolationTest is Test {
+            function test_isolate_mode_disabled_by_config() public view {
+                assertFalse(vm.isIsolateMode());
+            }
+
+            function test_gas_report_enables_isolate_mode() public view {
+                assertTrue(vm.isIsolateMode());
+            }
+        }
+    "#,
+    );
+
+    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--gas-report", "--match-test", "test_gas_report_enables_isolate_mode"])
+        .assert_success();
+});
+
+forgetest_init!(
+    inline_isolate_inherits_default_fs_permissions_for_non_default_profile,
+    |prj, cmd| {
+        std::fs::write(
+            prj.root().join("foundry.toml"),
+            r#"
+        [profile.default]
+        src = "src"
+        out = "out"
+        libs = ["lib"]
+        fs_permissions = [{ access = "read-write", path = "./data" }]
+
+        [profile.test]
+        "#,
+        )
+        .unwrap();
+        prj.add_test(
+            "inline_isolate_fs_permissions.sol",
+            r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract InlineIsolateFsPermissionsTest is Test {
+            function setUp() public {
+                if (!vm.exists("./data")) {
+                    vm.createDir("./data", true);
+                }
+            }
+
+            /// forge-config: default.isolate = true
+            function testInlineIsolateCanCreateFile() public {
+                vm.writeFile("./data/new.txt", "hello");
+                vm.removeFile("./data/new.txt");
+            }
+        }
+    "#,
+        );
+
+        cmd.env("FOUNDRY_PROFILE", "test");
+        cmd.args(["test", "--match-test", "testInlineIsolateCanCreateFile"]).assert_success();
+    }
+);
 
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
     prj.add_test(

@@ -1050,6 +1050,110 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
     assert!(invariant_stdout.contains(&invariant_corpus_path), "{invariant_stdout}");
 });
 
+forgetest_init!(fuzz_branch_frontiers_capture_comparison_for_symbolic_followup, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzFrontier.t.sol",
+        r#"
+contract ForgeFuzzFrontierTest {
+    function testFuzz_frontier(uint64 amount, uint256 feeMultiplier) public pure {
+        uint256 credited;
+        unchecked {
+            credited = uint256(amount) + (feeMultiplier - 100);
+        }
+
+        if (feeMultiplier < 100) {
+            assert(credited <= amount);
+        }
+    }
+}
+   "#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_frontier",
+            "--fuzz-runs",
+            "8",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let assert_frontier_artifact = |frontier_dir: &str| {
+        let frontier_path = prj
+            .root()
+            .join(frontier_dir)
+            .join("ForgeFuzzFrontierTest")
+            .join("testFuzz_frontier")
+            .join("branch-frontiers.json");
+        let artifact: Value = serde_json::from_slice(
+            &std::fs::read(&frontier_path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+        )
+        .unwrap();
+        assert_eq!(artifact["schema"], "foundry:fuzz.branch-frontiers@v1");
+        assert_eq!(artifact["version"], 1);
+        assert_eq!(artifact["test"], "testFuzz_frontier(uint64,uint256)");
+        assert_eq!(artifact["limit"], 256);
+
+        let frontiers = artifact["frontiers"].as_array().unwrap();
+        let frontier = frontiers
+            .iter()
+            .find(|frontier| {
+                frontier["site"]["opcode_name"] == "LT"
+                    && frontier["operands"]["lhs"] == "0x64"
+                    && frontier["operands"]["rhs"] == "0x64"
+                    && frontier["operands"]["result"] == false
+            })
+            .unwrap_or_else(|| panic!("missing missed fee multiplier frontier in {artifact:#}"));
+        assert!(frontier["id"].as_u64().is_some(), "{frontier:#}");
+        assert_eq!(frontier["call_index"], 0);
+        assert_eq!(frontier["site"]["opcode_name"], "LT");
+        assert!(frontier["site"]["pc"].as_u64().is_some(), "{frontier:#}");
+        assert_eq!(frontier["operands"]["operand_delta"], "0x0");
+        assert_eq!(frontier["operands"]["result"], false);
+
+        let sequence = frontier["sequence"].as_array().unwrap();
+        assert_eq!(sequence.len(), 1);
+        assert!(
+            sequence[0]["target"].as_str().unwrap().eq_ignore_ascii_case(DEFAULT_TEST_TARGET),
+            "{frontier:#}"
+        );
+        let calldata = sequence[0]["calldata"].as_str().unwrap();
+        let expected_selector =
+            hex::encode(&alloy_primitives::keccak256(b"testFuzz_frontier(uint64,uint256)")[..4]);
+        assert!(calldata.starts_with(&format!("0x{expected_selector}")), "{calldata}");
+        assert!(calldata.ends_with(&format!("{:064x}{:064x}", 100u64, 100u64)), "{calldata}");
+    };
+    assert_frontier_artifact("fuzz_frontiers");
+
+    prj.update_config(|config| {
+        config.fuzz.corpus.sancov_edges = true;
+    });
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_frontier",
+            "--fuzz-runs",
+            "8",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "sancov_fuzz_frontiers",
+        ])
+        .assert_success();
+    assert_frontier_artifact("sancov_fuzz_frontiers");
+});
+
 forgetest_init!(forge_fuzz_replay_scopes_generated_corpus_root_to_target, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzGeneratedRootScope.t.sol",

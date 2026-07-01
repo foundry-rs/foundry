@@ -4,7 +4,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
+    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Bundle, Filter, Index, StateContext,
     anvil::{Forking, MineOptions},
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
@@ -218,6 +218,13 @@ pub enum EthRequest {
         #[serde(default)] Option<Box<BlockOverrides>>,
     ),
 
+    #[serde(rename = "eth_callMany")]
+    EthCallMany(
+        Vec<Bundle<WithOtherFields<TransactionRequest>>>,
+        #[serde(default)] Option<StateContext>,
+        #[serde(default)] Option<StateOverride>,
+    ),
+
     #[serde(rename = "eth_simulateV1")]
     EthSimulateV1(SimulatePayload, #[serde(default)] Option<BlockId>),
 
@@ -390,6 +397,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_freeOSMemory", with = "empty_params")]
     DebugFreeOsMemory(()),
 
+    /// geth's `debug_traceBlock` endpoint.
+    #[serde(rename = "debug_traceBlock")]
+    DebugTraceBlock(Bytes, #[serde(default)] GethDebugTracingOptions),
+
     /// geth's `debug_traceBlockByHash` endpoint
     #[serde(rename = "debug_traceBlockByHash")]
     DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
@@ -397,6 +408,14 @@ pub enum EthRequest {
     /// geth's `debug_traceBlockByNumber` endpoint
     #[serde(rename = "debug_traceBlockByNumber")]
     DebugTraceBlockByNumber(BlockNumber, #[serde(default)] GethDebugTracingOptions),
+
+    /// Trace call endpoint for parity's `trace_call`.
+    #[serde(rename = "trace_call")]
+    TraceCall(
+        WithOtherFields<TransactionRequest>,
+        #[serde(default)] HashSet<TraceType>,
+        #[serde(default)] Option<BlockId>,
+    ),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]
@@ -413,11 +432,38 @@ pub enum EthRequest {
     #[serde(rename = "trace_filter", with = "sequence")]
     TraceFilter(TraceFilter),
 
+    /// Trace get endpoint for parity's `trace_get`.
+    #[serde(rename = "trace_get")]
+    TraceGet(B256, Vec<Index>),
+
     /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
     #[serde(rename = "trace_replayBlockTransactions")]
     TraceReplayBlockTransactions(
         #[serde(deserialize_with = "lenient_block_number::lenient_block_number")] BlockNumber,
         HashSet<TraceType>,
+    ),
+
+    /// Trace transaction endpoint for parity's `trace_replayTransaction`.
+    #[serde(rename = "trace_replayTransaction")]
+    TraceReplayTransaction(B256, HashSet<TraceType>),
+
+    /// Opcode gas trace endpoint for reth's `trace_transactionOpcodeGas`.
+    #[serde(rename = "trace_transactionOpcodeGas", with = "sequence")]
+    TraceTransactionOpcodeGas(B256),
+
+    /// Opcode gas trace endpoint for reth's `trace_blockOpcodeGas`.
+    #[serde(rename = "trace_blockOpcodeGas", with = "sequence")]
+    TraceBlockOpcodeGas(BlockId),
+
+    /// Trace raw transaction endpoint for parity's `trace_rawTransaction`.
+    #[serde(rename = "trace_rawTransaction")]
+    TraceRawTransaction(Bytes, HashSet<TraceType>, #[serde(default)] Option<BlockId>),
+
+    /// Trace call list endpoint for parity's `trace_callMany`.
+    #[serde(rename = "trace_callMany")]
+    TraceCallMany(
+        Vec<(WithOtherFields<TransactionRequest>, HashSet<TraceType>)>,
+        #[serde(default)] Option<BlockId>,
     ),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
@@ -1783,6 +1829,42 @@ true}]}"#;
     }
 
     #[test]
+    fn test_serde_trace_transaction_opcode_gas() {
+        let s = r#"{"method": "trace_transactionOpcodeGas", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_replay_transaction() {
+        let s = r#"{"method":"trace_replayTransaction","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff",["trace","stateDiff"]]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_block_opcode_gas() {
+        let s = r#"{"method": "trace_blockOpcodeGas", "params": ["0x1"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "trace_blockOpcodeGas", "params": [{"blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_raw_transaction() {
+        let s = r#"{"method": "trace_rawTransaction", "params": ["0x02f866827a690a65648252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c001a0e4de88aefcf87ccb04466e60de66a83192e46aa26177d5ea35efbfd43fd0ecdca00e3148e0e8e0b9a6f9b329efd6e30c4a461920f3a27497be3dbefaba996601da", ["trace"]]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "trace_rawTransaction", "params": ["0x02f866827a690a65648252089470997970c51812dc3a010c7d01b50e0d17dc79c88203e980c001a0e4de88aefcf87ccb04466e60de66a83192e46aa26177d5ea35efbfd43fd0ecdca00e3148e0e8e0b9a6f9b329efd6e30c4a461920f3a27497be3dbefaba996601da", ["trace", "stateDiff", "vmTrace"], "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_serde_debug_trace_call() {
         let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
@@ -1803,6 +1885,14 @@ true}]}"#;
         let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }, {"disableStorage": true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x1" }, {"txIndex": "0x0"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::DebugTraceCall(_, _, opts) => assert_eq!(opts.tx_index, Some(0)),
+            _ => panic!("expected debug_traceCall"),
+        }
     }
 
     #[test]
@@ -1823,6 +1913,42 @@ true}]}"#;
             EthRequest::DebugFreeOsMemory(()) => {}
             req => panic!("unexpected request: {req:?}"),
         }
+    }
+
+    #[test]
+    fn test_serde_trace_call() {
+        let s = r#"{"method": "trace_call", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, ["trace", "stateDiff"], "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "trace_call", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_call_many() {
+        let s = r#"{"method": "trace_callMany", "params": [[[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","value":"0x1"}, ["trace"]], [{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","value":"0x2"}, ["trace", "stateDiff"]]]]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "trace_callMany", "params": [[[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, ["trace"]]], "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_get() {
+        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", [0]]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_trace_block() {
+        let s = r#"{"method":"debug_traceBlock","params":["0xc0",{"tracer":"callTracer"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
@@ -1851,6 +1977,12 @@ true}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
         let s = r#"{"method": "eth_call", "params":[{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash":"0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+    }
+
+    #[test]
+    fn test_eth_call_many() {
+        let s = r#"{"method":"eth_callMany","params":[[{"transactions":[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d","data":"0xcfae3217"}]}],{"blockNumber":"latest"},{"0x0000000000000000000000000000000000000001":{"balance":"0x1"}}]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
     }
 

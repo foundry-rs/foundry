@@ -15,8 +15,9 @@ use alloy_provider::{
     Provider,
     ext::{DebugApi, TraceApi},
 };
+use alloy_rlp::Encodable;
 use alloy_rpc_types::{
-    BlockNumberOrTag, TransactionRequest,
+    BlockNumberOrTag, Index, TransactionRequest,
     state::StateOverride,
     trace::{
         filter::{TraceFilter, TraceFilterMode},
@@ -25,11 +26,12 @@ use alloy_rpc_types::{
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, PreStateConfig,
             PreStateFrame,
         },
-        parity::{Action, ChangedType, LocalizedTransactionTrace, TraceType},
+        opcode::{BlockOpcodeGas, TransactionOpcodeGas},
+        parity::{Action, ChangedType, LocalizedTransactionTrace, TraceResults, TraceType},
     },
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 
@@ -66,6 +68,241 @@ async fn test_get_transfer_parity_traces() {
     assert!(!block_traces.is_empty());
 
     assert_eq!(traces, block_traces);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_opcode_gas_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let signer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let receipt =
+        storage.setValue("bar".to_string()).send().await.unwrap().get_receipt().await.unwrap();
+    let opcode_gas: Option<TransactionOpcodeGas> = handle
+        .http_provider()
+        .raw_request("trace_transactionOpcodeGas".into(), (receipt.transaction_hash,))
+        .await
+        .unwrap();
+    let opcode_gas = opcode_gas.unwrap();
+
+    assert_eq!(opcode_gas.transaction_hash, receipt.transaction_hash);
+    assert!(opcode_gas.contains("SSTORE"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_block_opcode_gas_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let signer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    for block_id in [BlockId::number(0), BlockId::hash(genesis.header.hash), BlockId::earliest()] {
+        let opcode_gas: Option<BlockOpcodeGas> = handle
+            .http_provider()
+            .raw_request("trace_blockOpcodeGas".into(), (block_id,))
+            .await
+            .unwrap();
+        let opcode_gas = opcode_gas.unwrap();
+
+        assert_eq!(opcode_gas.block_hash, genesis.header.hash);
+        assert_eq!(opcode_gas.block_number, genesis.header.number);
+        assert!(opcode_gas.transactions.is_empty());
+    }
+
+    let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let receipt =
+        storage.setValue("bar".to_string()).send().await.unwrap().get_receipt().await.unwrap();
+    let block_number = receipt.block_number.unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+
+    let by_number: Option<BlockOpcodeGas> = handle
+        .http_provider()
+        .raw_request("trace_blockOpcodeGas".into(), (BlockId::number(block_number),))
+        .await
+        .unwrap();
+    let by_hash: Option<BlockOpcodeGas> = handle
+        .http_provider()
+        .raw_request("trace_blockOpcodeGas".into(), (BlockId::Hash(block_hash.into()),))
+        .await
+        .unwrap();
+
+    let by_number = by_number.unwrap();
+    let by_hash = by_hash.unwrap();
+
+    assert_eq!(by_number.block_hash, block_hash);
+    assert_eq!(by_number.block_number, block_number);
+    assert_eq!(by_number.transactions.len(), 1);
+    assert_eq!(by_number.transactions[0].transaction_hash, receipt.transaction_hash);
+    assert!(by_number.contains("SSTORE"));
+
+    assert_eq!(by_hash.block_hash, block_hash);
+    assert_eq!(by_hash.block_number, block_number);
+    assert_eq!(by_hash.transactions.len(), 1);
+    assert_eq!(by_hash.transactions[0].transaction_hash, receipt.transaction_hash);
+    assert!(by_hash.contains("SSTORE"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_raw_transaction_local() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let value = U256::from(1_000_000_000u64);
+    let from_balance = provider.get_balance(from).await.unwrap();
+    let to_balance = provider.get_balance(to).await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .from(from)
+        .to(to)
+        .value(value)
+        .with_gas_limit(21_000)
+        .max_fee_per_gas(20_000_000_000)
+        .max_priority_fee_per_gas(1_000_000_000);
+    let signed_tx = api.sign_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let raw_tx = hex::decode(&signed_tx[2..]).unwrap();
+
+    let traces =
+        provider.trace_raw_transaction(&raw_tx).trace().state_diff().vm_trace().await.unwrap();
+
+    assert!(traces.state_diff.is_some());
+    assert!(traces.vm_trace.is_some());
+    assert!(!traces.trace.is_empty());
+    match traces.trace[0].action {
+        Action::Call(ref call) => {
+            assert_eq!(call.from, from);
+            assert_eq!(call.to, to);
+            assert_eq!(call.value, value);
+        }
+        _ => unreachable!("unexpected action"),
+    }
+
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 0);
+    assert_eq!(provider.get_balance(from).await.unwrap(), from_balance);
+    assert_eq!(provider.get_balance(to).await.unwrap(), to_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+    let before = provider.get_balance(to).await.unwrap();
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+
+    let traces: TraceResults = provider
+        .client()
+        .request(
+            "trace_call",
+            (
+                tx,
+                vec![TraceType::Trace, TraceType::VmTrace, TraceType::StateDiff],
+                BlockId::latest(),
+            ),
+        )
+        .await
+        .unwrap();
+
+    assert!(!traces.trace.is_empty());
+    assert!(traces.vm_trace.is_some());
+    assert!(traces.state_diff.is_some());
+
+    match &traces.trace[0].action {
+        Action::Call(call) => {
+            assert_eq!(call.from, from);
+            assert_eq!(call.to, to);
+            assert_eq!(call.value, amount);
+        }
+        action => panic!("expected call action, got {action:?}"),
+    }
+
+    let ChangedType { from: before_diff, to: after_diff } =
+        traces.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
+    assert_eq!(*before_diff, before);
+    assert_eq!(after_diff.saturating_sub(*before_diff), amount);
+
+    let after = provider.get_balance(to).await.unwrap();
+    assert_eq!(after, before);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_many_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let set_value = storage.setValue("bar".to_string());
+    let get_value = storage.getValue();
+
+    let set_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*storage.address())
+        .with_input(set_value.calldata().to_owned());
+    let get_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*storage.address())
+        .with_input(get_value.calldata().to_owned());
+    let trace_types = [TraceType::Trace];
+    let calls = [
+        (WithOtherFields::new(set_tx), trace_types.as_slice()),
+        (WithOtherFields::new(get_tx), trace_types.as_slice()),
+    ];
+
+    let traces = handle.http_provider().trace_call_many(&calls).await.unwrap();
+
+    assert_eq!(traces.len(), 2);
+    assert!(!traces[0].trace.is_empty());
+    assert!(!traces[1].trace.is_empty());
+
+    let traced_value = SimpleStorage::getValueCall::abi_decode_returns(&traces[1].output).unwrap();
+    assert_eq!(traced_value, "bar".to_string());
+    assert_eq!(storage.getValue().call().await.unwrap(), "init value".to_string());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_get_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let traces = provider.trace_transaction(receipt.transaction_hash).await.unwrap();
+    assert!(!traces.is_empty());
+
+    let trace = provider.trace_get(receipt.transaction_hash, 0).await.unwrap();
+    assert_eq!(trace, traces[0]);
+
+    let missing: Option<LocalizedTransactionTrace> = provider
+        .client()
+        .request("trace_get", (receipt.transaction_hash, vec![Index::from(999)]))
+        .await
+        .unwrap();
+    assert_eq!(missing, None);
+
+    let invalid_indices: Option<LocalizedTransactionTrace> = provider
+        .client()
+        .request("trace_get", (receipt.transaction_hash, vec![Index::from(0), Index::from(1)]))
+        .await
+        .unwrap();
+    assert_eq!(invalid_indices, None);
 }
 
 sol!(
@@ -372,6 +609,106 @@ async fn test_debug_trace_call_state_override() {
             unreachable!()
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_tx_index() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let from = wallets[0].address();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    for (offset, value) in ["first", "second", "third"].into_iter().enumerate() {
+        let set_value = simple_storage_contract.setValue(value.to_string());
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(*simple_storage_contract.address())
+            .with_input(set_value.calldata().to_owned())
+            .nonce(nonce + offset as u64);
+        let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    }
+
+    api.mine_one().await;
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let get_value = simple_storage_contract.getValue();
+    let call = TransactionRequest::default()
+        .from(from)
+        .to(*simple_storage_contract.address())
+        .with_input(get_value.calldata().to_owned());
+
+    for (tx_index, expected) in [(0, "init value"), (1, "first"), (2, "second")] {
+        let trace = provider
+            .debug_trace_call(
+                WithOtherFields::new(call.clone()),
+                BlockId::number(block_number),
+                GethDebugTracingCallOptions::default().with_tx_index(tx_index),
+            )
+            .await
+            .unwrap();
+        match trace {
+            GethTrace::Default(default_frame) => {
+                assert_eq!(
+                    default_frame.return_value,
+                    Bytes::from(String::from(expected).abi_encode())
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_tx_index_fork_lazy_state() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1));
+    let _ = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".parse().unwrap();
+    let total_supply = TransactionRequest::default()
+        .from(from)
+        .to(usdc)
+        .with_input(Bytes::from_hex("18160ddd").unwrap());
+
+    let tx_index_trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(total_supply.clone()),
+            BlockId::number(block_number),
+            GethDebugTracingCallOptions::default().with_tx_index(0),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(tx_index_frame) = tx_index_trace else { unreachable!() };
+
+    let latest_trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(total_supply),
+            BlockId::number(block_number),
+            GethDebugTracingCallOptions::default(),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(latest_frame) = latest_trace else { unreachable!() };
+
+    assert!(!tx_index_frame.return_value.is_empty());
+    assert_eq!(tx_index_frame.return_value, latest_frame.return_value);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2656>
@@ -1412,6 +1749,43 @@ async fn test_trace_replay_block_transactions_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_replay_transaction() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(12345);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let result: TraceResults = provider
+        .client()
+        .request(
+            "trace_replayTransaction",
+            (receipt.transaction_hash, vec![TraceType::Trace, TraceType::StateDiff]),
+        )
+        .await
+        .unwrap();
+
+    assert!(!result.trace.is_empty());
+    match &result.trace[0].action {
+        Action::Call(call) => {
+            assert_eq!(call.from, from);
+            assert_eq!(call.to, to);
+        }
+        _ => panic!("Expected Call action, got {:?}", result.trace[0].action),
+    }
+
+    let ChangedType::<U256> { from, to } =
+        result.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
+    assert_eq!(to.checked_sub(*from).unwrap(), amount);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_block_by_number() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -1472,6 +1846,51 @@ async fn test_debug_trace_block_by_hash() {
         .backend
         .debug_trace_block_by_hash(
             block_hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(traces.len(), 1);
+
+    match &traces[0] {
+        alloy_rpc_types::trace::geth::TraceResult::Success { result, .. } => match result {
+            GethTrace::CallTracer(call_frame) => {
+                assert_eq!(call_frame.from, from);
+                assert_eq!(call_frame.to.unwrap(), to);
+                assert_eq!(call_frame.value, Some(amount));
+            }
+            _ => unreachable!("expected CallTracer"),
+        },
+        alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
+            panic!("trace failed: {error}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(3000);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+    let block = api.backend.get_block(BlockId::Hash(block_hash.into())).unwrap();
+
+    let mut rlp_block = Vec::new();
+    block.encode(&mut rlp_block);
+
+    let traces = provider
+        .debug_trace_block(
+            &rlp_block,
             GethDebugTracingOptions::default()
                 .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
         )

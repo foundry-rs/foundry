@@ -72,39 +72,54 @@ mod tests {
             Ok(())
         }
 
-        fn is_sat(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
+        fn is_sat(
+            &mut self,
+            _cx: &mut SymCx,
+            constraints: &[SymBoolExpr],
+        ) -> Result<bool, SymbolicError> {
             assert_eq!(constraints.len(), 2);
             Ok(true)
         }
 
-        fn is_sat_branch(&mut self, _constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
+        fn is_sat_branch(
+            &mut self,
+            _cx: &mut SymCx,
+            _constraints: &[SymBoolExpr],
+        ) -> Result<bool, SymbolicError> {
             Err(SymbolicError::SolverUnknown)
         }
 
-        fn model(&mut self, _constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError> {
+        fn model(
+            &mut self,
+            _cx: &mut SymCx,
+            _constraints: &[SymBoolExpr],
+        ) -> Result<SymbolicModel, SymbolicError> {
             Err(SymbolicError::Solver("model not implemented".to_string()))
         }
     }
 
     #[test]
     fn constraints_with_condition_uses_definitive_solver_path() {
+        let mut cx = SymCx::default();
+        let calldata =
+            SymbolicCalldata::selector_only(&mut cx, &Function::parse("empty()").unwrap()).unwrap();
+        let mut state =
+            PathState::new(&mut cx, Address::ZERO, Address::ZERO, U256::ZERO, calldata, false);
+        let x = SymExpr::var(&mut cx, "x");
+        let divisor = SymExpr::constant(&mut cx, U256::from(3));
+        let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, x, divisor);
+        let expected = SymExpr::constant(&mut cx, U256::from(7));
+        state.constraints.push(SymBoolExpr::eq(&mut cx, quotient, expected));
+        let z = SymExpr::var(&mut cx, "z");
+        let five = SymExpr::constant(&mut cx, U256::from(5));
+        let condition = SymBoolExpr::eq(&mut cx, z, five);
+
         let mut executor = SymbolicExecutor {
             config: SymbolicConfig::default(),
+            cx,
             solver: Box::new(DefinitiveOnlySolver),
             deferred_incomplete: None,
         };
-        let mut state = PathState::new(
-            Address::ZERO,
-            Address::ZERO,
-            U256::ZERO,
-            SymbolicCalldata::selector_only(&Function::parse("empty()").unwrap()).unwrap(),
-            false,
-        );
-        state.constraints.push(SymBoolExpr::eq(
-            SymExpr::op(SymExprOp::UDiv, SymExpr::var("x"), SymExpr::constant(U256::from(3))),
-            SymExpr::constant(U256::from(7)),
-        ));
-        let condition = SymBoolExpr::eq(SymExpr::var("z"), SymExpr::constant(U256::from(5)));
 
         let (constraints, sat) =
             executor.constraints_with_condition(&state, condition.clone()).unwrap();

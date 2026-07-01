@@ -1138,13 +1138,20 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
     let _ = fs::create_dir(fuzz_cache_dir.clone());
     let invariant_cache_dir = prj.root().join("cache/invariant");
     let _ = fs::create_dir(invariant_cache_dir.clone());
+    let frontier_cache_dir = prj.root().join("cache/frontiers");
+    let _ = fs::create_dir(frontier_cache_dir.clone());
+    prj.update_config(|config| {
+        config.fuzz.corpus.frontier_dir = Some("cache/frontiers".into());
+    });
 
     assert!(fuzz_cache_dir.exists());
     assert!(invariant_cache_dir.exists());
+    assert!(frontier_cache_dir.exists());
 
     cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!fuzz_cache_dir.exists());
     assert!(!invariant_cache_dir.exists());
+    assert!(!frontier_cache_dir.exists());
 });
 
 // checks that extra output works
@@ -3097,7 +3104,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                     | Deployment Size |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-|                                              153531 |             494 |      |        |      |         |
+|                                              153519 |             494 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 |                                                     |                 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
@@ -3143,7 +3150,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:ProxiedContract",
     "deployment": {
-      "gas": 153531,
+      "gas": 153519,
       "size": 494
     },
     "functions": {
@@ -3332,7 +3339,7 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-|                                    328949 |            1163 |     |        |     |         |
+|                                    328961 |            1163 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
@@ -3387,7 +3394,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 328949,
+      "gas": 328961,
       "size": 1163
     },
     "functions": {

@@ -20,17 +20,21 @@ pub(crate) fn pow_mod(base: U256, exponent: U256) -> U256 {
     result
 }
 
-pub(crate) fn exp_expr_for_concrete_exponent(base: SymExpr, exponent: usize) -> SymExpr {
+pub(crate) fn exp_expr_for_concrete_exponent(
+    cx: &mut SymCx,
+    base: SymExpr,
+    exponent: usize,
+) -> SymExpr {
     if exponent == 0 {
-        return SymExpr::constant(U256::from(1));
+        return SymExpr::one(cx);
     }
     if let Some(base) = base.as_const() {
-        return SymExpr::constant(pow_mod(base, U256::from(exponent)));
+        return SymExpr::constant(cx, pow_mod(base, U256::from(exponent)));
     }
 
     let mut expr = base.clone();
     for _ in 1..exponent {
-        expr = SymExpr::op(SymExprOp::Mul, expr, base.clone());
+        expr = SymExpr::op(cx, SymExprOp::Mul, expr, base.clone());
     }
     expr
 }
@@ -78,88 +82,90 @@ pub(crate) fn signextend(byte_index: U256, value: U256) -> U256 {
     if value & sign_bit == U256::ZERO { value & mask } else { value | !mask }
 }
 
-pub(crate) fn signextend_word(byte_index: U256, value: SymExpr) -> SymExpr {
+pub(crate) fn signextend_word(cx: &mut SymCx, byte_index: U256, value: SymExpr) -> SymExpr {
     if byte_index >= U256::from(32) {
         return value;
     }
     if let Some(value) = value.as_const() {
-        return SymExpr::constant(signextend(byte_index, value));
+        return SymExpr::constant(cx, signextend(byte_index, value));
     }
     let bit_index = usize::try_from(byte_index).expect("checked byte index") * 8 + 7;
     let sign_bit = U256::from(1) << bit_index;
-    let mask = sign_bit - U256::from(1);
-    SymExpr::ite(
-        SymBoolExpr::eq(
-            SymExpr::op(SymExprOp::And, value.clone(), SymExpr::constant(sign_bit)),
-            SymExpr::constant(U256::ZERO),
-        ),
-        SymExpr::op(SymExprOp::And, value.clone(), SymExpr::constant(mask)),
-        SymExpr::op(SymExprOp::Or, value, SymExpr::constant(!mask)),
-    )
+    let mask_value = sign_bit - U256::from(1);
+    let sign_bit = SymExpr::constant(cx, sign_bit);
+    let masked_sign = SymExpr::op(cx, SymExprOp::And, value.clone(), sign_bit);
+    let zero = SymExpr::zero(cx);
+    let condition = SymBoolExpr::eq(cx, masked_sign, zero);
+    let inverse_mask = SymExpr::constant(cx, !mask_value);
+    let mask = SymExpr::constant(cx, mask_value);
+    let masked = SymExpr::op(cx, SymExprOp::And, value.clone(), mask);
+    let extended = SymExpr::op(cx, SymExprOp::Or, value, inverse_mask);
+    SymExpr::ite(cx, condition, masked, extended)
 }
 
-pub(crate) fn signextend_word_dynamic(byte_index: SymExpr, value: SymExpr) -> SymExpr {
+pub(crate) fn signextend_word_dynamic(
+    cx: &mut SymCx,
+    byte_index: SymExpr,
+    value: SymExpr,
+) -> SymExpr {
     if let Some(byte_index) = byte_index.as_const() {
-        return signextend_word(byte_index, value);
+        return signextend_word(cx, byte_index, value);
     }
 
     let mut result = value.clone();
     for idx in (0..31).rev() {
-        result = SymExpr::ite(
-            SymBoolExpr::eq(byte_index.clone(), SymExpr::constant(U256::from(idx))),
-            signextend_word(U256::from(idx), value.clone()),
-            result,
-        );
+        let idx_expr = SymExpr::constant(cx, U256::from(idx));
+        let condition = SymBoolExpr::eq(cx, byte_index.clone(), idx_expr);
+        let value = signextend_word(cx, U256::from(idx), value.clone());
+        result = SymExpr::ite(cx, condition, value, result);
     }
     result
 }
 
-pub(crate) fn byte_word(index: U256, word: SymExpr) -> SymExpr {
+pub(crate) fn byte_word(cx: &mut SymCx, index: U256, word: SymExpr) -> SymExpr {
     if index >= U256::from(32) {
-        return SymExpr::zero();
+        return SymExpr::zero(cx);
     }
     let index = usize::try_from(index).expect("checked byte index");
     if let Some(word) = word.as_const() {
-        SymExpr::constant(U256::from(word.to_be_bytes::<32>()[index]))
+        SymExpr::constant(cx, U256::from(word.to_be_bytes::<32>()[index]))
     } else {
-        byte_expr(index, &word)
+        byte_expr(cx, index, &word)
     }
 }
 
-pub(crate) fn byte_word_dynamic(index: SymExpr, word: SymExpr) -> SymExpr {
+pub(crate) fn byte_word_dynamic(cx: &mut SymCx, index: SymExpr, word: SymExpr) -> SymExpr {
     if let Some(index) = index.as_const() {
-        return byte_word(index, word);
+        return byte_word(cx, index, word);
     }
 
-    let mut result = SymExpr::constant(U256::ZERO);
+    let mut result = SymExpr::zero(cx);
     if let Some(word) = word.as_const() {
         let bytes = word.to_be_bytes::<32>();
         for idx in (0..32).rev() {
-            result = SymExpr::ite(
-                SymBoolExpr::eq(index.clone(), SymExpr::constant(U256::from(idx))),
-                SymExpr::constant(U256::from(bytes[idx])),
-                result,
-            );
+            let idx_expr = SymExpr::constant(cx, U256::from(idx));
+            let condition = SymBoolExpr::eq(cx, index.clone(), idx_expr);
+            let byte = SymExpr::constant(cx, U256::from(bytes[idx]));
+            result = SymExpr::ite(cx, condition, byte, result);
         }
     } else {
         for idx in (0..32).rev() {
-            result = SymExpr::ite(
-                SymBoolExpr::eq(index.clone(), SymExpr::constant(U256::from(idx))),
-                byte_expr(idx, &word),
-                result,
-            );
+            let idx_expr = SymExpr::constant(cx, U256::from(idx));
+            let condition = SymBoolExpr::eq(cx, index.clone(), idx_expr);
+            let byte = byte_expr(cx, idx, &word);
+            result = SymExpr::ite(cx, condition, byte, result);
         }
     }
     result
 }
 
 /// Returns the byte extraction expression for a symbolic word.
-pub(crate) fn byte_expr(index: usize, expr: &SymExpr) -> SymExpr {
+pub(crate) fn byte_expr(cx: &mut SymCx, index: usize, expr: &SymExpr) -> SymExpr {
     debug_assert!(index < 32);
     if let Some(byte) = expr.known_byte(index) {
-        return SymExpr::constant(U256::from(byte));
+        return SymExpr::constant(cx, U256::from(byte));
     }
-    expr.extracted_byte(index)
+    expr.extracted_byte(cx, index)
 }
 
 pub(crate) fn sar(value: U256, shift: usize) -> U256 {
@@ -174,11 +180,12 @@ pub(crate) fn sar(value: U256, shift: usize) -> U256 {
     }
 }
 
-pub(crate) fn shift_left(value: SymExpr, bits: usize) -> SymExpr {
+pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr {
     if let Some(value) = value.as_const() {
-        SymExpr::constant(value << bits)
+        SymExpr::constant(cx, value << bits)
     } else {
-        SymExpr::op(SymExprOp::Shl, value, SymExpr::constant(U256::from(bits)))
+        let bits = SymExpr::constant(cx, U256::from(bits));
+        SymExpr::op(cx, SymExprOp::Shl, value, bits)
     }
 }
 
