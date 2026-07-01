@@ -189,7 +189,7 @@ contract T {
 }
 "#;
         let result = brutalize(source);
-        assert!(result.contains("uint8(uint256(x) | (uint256(0x"));
+        assert!(result.contains("uint8(uint256(uint8(x)) | (uint256(0x"));
         assert!(result.contains("mstore(0x00,"));
         assert!(result.contains("mstore(0x40, add(mload(0x40),"));
     }
@@ -208,7 +208,7 @@ contract T {
 }
 "#;
         let result = brutalize(source);
-        let count = result.matches("uint8(uint256(x) | (uint256(0x").count();
+        let count = result.matches("uint8(uint256(uint8(x)) | (uint256(0x").count();
         assert_eq!(count, 2, "casts in internal/public should be brutalized");
         assert!(!result.contains("mstore(0x00,"), "no memory injection for non-external");
     }

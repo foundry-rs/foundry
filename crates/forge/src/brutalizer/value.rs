@@ -24,7 +24,7 @@ pub(super) fn brutalize_cast(ty: &Type<'_>, arg_text: &str, mask: &str) -> Optio
 }
 
 fn brutalize_address(arg_text: &str, mask: &str) -> String {
-    format!("address(uint160(uint256(uint160({arg_text})) | (uint256({mask}) << 160)))")
+    format!("address(uint160(uint256(uint160(address({arg_text}))) | (uint256({mask}) << 160)))")
 }
 
 fn brutalize_uint(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
@@ -33,7 +33,9 @@ fn brutalize_uint(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> 
     if actual_bits >= 256 {
         return None;
     }
-    Some(format!("uint{actual_bits}(uint256({arg_text}) | (uint256({mask}) << {actual_bits}))"))
+    Some(format!(
+        "uint{actual_bits}(uint256(uint{actual_bits}({arg_text})) | (uint256({mask}) << {actual_bits}))"
+    ))
 }
 
 fn brutalize_int(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
@@ -76,7 +78,7 @@ contract T {
 }
 "#;
         let result = brutalize(source);
-        assert!(result.contains("address(uint160(uint256(uint160(x))"));
+        assert!(result.contains("address(uint160(uint256(uint160(address(x)))"));
         assert!(result.contains("| (uint256(0x"));
         assert!(result.contains("<< 160)"));
     }
@@ -92,7 +94,7 @@ contract T {
 }
 "#;
         let result = brutalize(source);
-        assert!(result.contains("uint8(uint256(x) | (uint256(0x"));
+        assert!(result.contains("uint8(uint256(uint8(x)) | (uint256(0x"));
         assert!(result.contains("<< 8)"));
     }
 
@@ -164,7 +166,7 @@ contract T {
 }
 "#;
         let result = brutalize(source);
-        assert!(result.contains("uint8(uint256(a) | (uint256(0x"));
-        assert!(result.contains("uint16(uint256(b) | (uint256(0x"));
+        assert!(result.contains("uint8(uint256(uint8(a)) | (uint256(0x"));
+        assert!(result.contains("uint16(uint256(uint16(b)) | (uint256(0x"));
     }
 }

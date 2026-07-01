@@ -19,6 +19,14 @@ contract Robust {
         return address(x);
     }
 
+    function addressThis() external view returns (address) {
+        return address(this);
+    }
+
+    function addressToUint160(address x) external pure returns (uint160) {
+        return uint160(x);
+    }
+
     function asmAdd(uint256 a, uint256 b) external pure returns (uint256 result) {
         assembly { result := add(a, b) }
     }
@@ -81,6 +89,14 @@ contract RobustTest is Test {
 
     function test_toAddress() public view {
         assertEq(robust.toAddress(1), address(1));
+    }
+
+    function test_addressThis() public view {
+        assertEq(robust.addressThis(), address(robust));
+    }
+
+    function test_addressToUint160() public view {
+        assertEq(robust.addressToUint160(address(1)), 1);
     }
 
     function test_asmAdd() public view {
