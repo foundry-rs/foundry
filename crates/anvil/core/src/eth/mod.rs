@@ -451,6 +451,10 @@ pub enum EthRequest {
     #[serde(rename = "trace_transactionOpcodeGas", with = "sequence")]
     TraceTransactionOpcodeGas(B256),
 
+    /// Opcode gas trace endpoint for reth's `trace_blockOpcodeGas`.
+    #[serde(rename = "trace_blockOpcodeGas", with = "sequence")]
+    TraceBlockOpcodeGas(BlockId),
+
     /// Trace raw transaction endpoint for parity's `trace_rawTransaction`.
     #[serde(rename = "trace_rawTransaction")]
     TraceRawTransaction(Bytes, HashSet<TraceType>, #[serde(default)] Option<BlockId>),
@@ -1834,6 +1838,17 @@ true}]}"#;
     #[test]
     fn test_serde_trace_replay_transaction() {
         let s = r#"{"method":"trace_replayTransaction","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff",["trace","stateDiff"]]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_block_opcode_gas() {
+        let s = r#"{"method": "trace_blockOpcodeGas", "params": ["0x1"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "trace_blockOpcodeGas", "params": [{"blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

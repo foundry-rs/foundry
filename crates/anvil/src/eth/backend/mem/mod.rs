@@ -80,7 +80,7 @@ use alloy_rpc_types::{
             GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
             NoopFrame, TraceResult,
         },
-        opcode::TransactionOpcodeGas,
+        opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{
             LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
         },
@@ -3692,6 +3692,83 @@ where
             }
             Err(err) => Err(err),
         }
+    }
+
+    /// Returns opcode gas usage for all transactions in the given block.
+    pub async fn trace_block_opcode_gas(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlockOpcodeGas>, BlockchainError> {
+        if let Some((block, block_hash)) = self.get_block_with_hash(block_id) {
+            return self.mined_block_opcode_gas(&block, block_hash).map(Some);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            let number = self.ensure_block_number(Some(block_id)).await?;
+            if fork.predates_fork_inclusive(number) {
+                return Ok(fork.trace_block_opcode_gas(block_id).await?);
+            }
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    fn mined_block_opcode_gas(
+        &self,
+        block: &Block,
+        block_hash: B256,
+    ) -> Result<BlockOpcodeGas, BlockchainError> {
+        if block.body.transactions.is_empty() {
+            return Ok(BlockOpcodeGas {
+                block_hash,
+                block_number: block.header.number(),
+                transactions: Vec::new(),
+            });
+        }
+
+        let parent_hash = block.header.parent_hash;
+
+        let trace = |parent_state: &StateDb| -> Result<Vec<TransactionOpcodeGas>, BlockchainError> {
+            let mut cache_db = CacheDB::new(Box::new(parent_state));
+            let mut transactions = Vec::with_capacity(block.body.transactions.len());
+
+            let mut evm_env = self.evm_env.read().clone();
+            evm_env.block_env = block_env_from_header(&block.header);
+
+            for tx_envelope in &block.body.transactions {
+                let mut inspector = OpcodeGasInspector::default();
+                let pending_tx = PendingTransaction::from_maybe_impersonated(tx_envelope.clone())?;
+                let (result, _) = self.transact_envelope_with_inspector_ref(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    pending_tx.transaction.as_ref(),
+                    *pending_tx.sender(),
+                )?;
+
+                transactions.push(TransactionOpcodeGas {
+                    transaction_hash: tx_envelope.hash(),
+                    opcode_gas: inspector.opcode_gas_iter().collect(),
+                });
+
+                cache_db.commit(result.state);
+            }
+
+            Ok(transactions)
+        };
+
+        let read_guard = self.states.upgradable_read();
+        let transactions = if let Some(state) = read_guard.get_state(&parent_hash) {
+            trace(state)?
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)?
+        };
+
+        Ok(BlockOpcodeGas { block_hash, block_number: block.header.number(), transactions })
     }
 
     /// Rollback the chain to a common height.
