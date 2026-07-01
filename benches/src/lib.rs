@@ -8,6 +8,7 @@ use foundry_test_utils::util::clone_remote;
 use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::{
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
@@ -277,10 +278,11 @@ impl BenchmarkProject {
         let name = self.name.to_ascii_lowercase();
         if name == "solady" || name.ends_with("-solady") {
             return SymbolicBenchmarkSpec {
-                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
-                    .to_string(),
+                build_command:
+                    "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
+                        .to_string(),
                 test_command: format!(
-                    "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
+                    "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
                      --symbolic --json \
                      --match-test '{SOLADY_SYMBOLIC_MATCH_TEST}'"
                 ),
@@ -289,10 +291,10 @@ impl BenchmarkProject {
         if name == "angstrom" || name.ends_with("-angstrom") {
             return SymbolicBenchmarkSpec {
                 build_command:
-                    "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build --root contracts"
+                    "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build --root contracts"
                         .to_string(),
                 test_command: format!(
-                    "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
+                    "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
                      --root contracts --symbolic --json --symbolic-timeout 5 --match-path \
                      {ANGSTROM_SYMBOLIC_MATCH_PATH} --match-test {ANGSTROM_SYMBOLIC_MATCH_TEST}"
                 ),
@@ -300,10 +302,11 @@ impl BenchmarkProject {
         }
         if name == "farcasterxyz-contracts" || name == "farcaster-contracts" {
             return SymbolicBenchmarkSpec {
-                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
-                    .to_string(),
+                build_command:
+                    "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
+                        .to_string(),
                 test_command: format!(
-                    "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
+                    "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
                      --symbolic --json \
                      --symbolic-timeout 5 --match-path '{FARCASTER_SYMBOLIC_MATCH_PATH}' \
                      --match-test 'check_'"
@@ -311,10 +314,11 @@ impl BenchmarkProject {
             };
         }
         SymbolicBenchmarkSpec {
-            build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
-                .to_string(),
+            build_command:
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
+                    .to_string(),
             test_command:
-                "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test --symbolic --json"
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test --symbolic --json"
                     .to_string(),
         }
     }
@@ -456,9 +460,9 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_test",
             version,
-            &self.cmd("FOUNDRY_ISOLATE=false forge test"),
+            &self.cmd("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge test"),
             runs,
-            Some("FOUNDRY_ISOLATE=false forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge build"),
             None,
             None,
             verbose,
@@ -475,10 +479,12 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_with_cache",
             version,
-            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"),
+            &self.cmd(
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build",
+            ),
             runs,
             None,
-            Some("FOUNDRY_ISOLATE=false forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge build"),
             None,
             verbose,
         )
@@ -495,11 +501,13 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_no_cache",
             version,
-            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"),
+            &self.cmd(
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build",
+            ),
             runs,
-            Some("FOUNDRY_ISOLATE=false forge clean"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge clean"),
             None,
-            Some("FOUNDRY_ISOLATE=false forge clean"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge clean"),
             verbose,
         )
     }
@@ -515,9 +523,11 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_fuzz_test",
             version,
-            &self.cmd(r#"FOUNDRY_ISOLATE=false forge test --match-test "test[^(]*\([^)]+\)""#),
+            &self.cmd(
+                r#"FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge test --match-test "test[^(]*\([^)]+\)""#,
+            ),
             runs,
-            Some("FOUNDRY_ISOLATE=false forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge build"),
             None,
             None,
             verbose,
@@ -536,7 +546,9 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_coverage",
             version,
-            &self.cmd("FOUNDRY_ISOLATE=false forge coverage --ir-minimum"),
+            &self.cmd(
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge coverage --ir-minimum",
+            ),
             runs,
             None,
             None,
@@ -556,9 +568,11 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_isolate_test",
             version,
-            &self.cmd("FOUNDRY_ISOLATE=true forge test --isolate"),
+            &self.cmd(
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge test --isolate",
+            ),
             runs,
-            Some("FOUNDRY_ISOLATE=true forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge build"),
             None,
             None,
             verbose,
@@ -756,11 +770,12 @@ fn stddev(values: &[f64]) -> Option<f64> {
 /// The workspace root, embedded at compile time.
 /// `benches/` is one level below the workspace root.
 const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+const LOCAL_BUILD_PROFILE: &str = "dist";
+const FOUNDRY_BINS: [&str; 4] = ["forge", "cast", "anvil", "chisel"];
 
 /// Switch to a specific foundry version.
 ///
-/// The special keyword `local` builds and activates the current workspace via
-/// `foundryup --path <workspace>` instead of `foundryup --use`.
+/// The special keyword `local` builds and activates the current workspace.
 #[allow(unused_must_use)]
 pub fn switch_foundry_version(version: &str) -> Result<()> {
     if version == "local" {
@@ -789,25 +804,73 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build and activate the local workspace via `foundryup --path`.
+/// Build and activate the local workspace using the release distribution profile.
 /// Uses cargo's incremental compilation so re-runs are fast.
 #[allow(unused_must_use)]
 pub fn install_local_version() -> Result<()> {
     let workspace =
         std::fs::canonicalize(WORKSPACE_ROOT).wrap_err("Failed to resolve workspace root")?;
-    sh_println!("  Building local workspace at {}", workspace.display());
+    sh_println!(
+        "  Building local workspace at {} with {LOCAL_BUILD_PROFILE} profile",
+        workspace.display()
+    );
 
-    let status = Command::new("foundryup")
-        .args(["--path", workspace.to_str().unwrap()])
+    let status = Command::new("cargo")
+        .current_dir(&workspace)
+        .args(["build", "--locked", "--bins", "--profile", LOCAL_BUILD_PROFILE])
         .status()
-        .wrap_err("Failed to run foundryup --path")?;
+        .wrap_err("Failed to build local Foundry workspace")?;
 
     if !status.success() {
-        eyre::bail!("foundryup --path failed for local workspace");
+        eyre::bail!("local Foundry build failed");
     }
 
-    sh_println!("  Successfully activated local build");
+    activate_local_binaries(&workspace)?;
+    sh_println!("  Successfully activated local {LOCAL_BUILD_PROFILE} build");
     Ok(())
+}
+
+fn activate_local_binaries(workspace: &Path) -> Result<()> {
+    let bin_dir = foundry_bin_dir()?;
+    fs::create_dir_all(&bin_dir).wrap_err_with(|| {
+        format!("Failed to create Foundry bin directory at {}", bin_dir.display())
+    })?;
+
+    let local_bin_dir = workspace.join("target").join(LOCAL_BUILD_PROFILE);
+    for bin in FOUNDRY_BINS {
+        let bin_name = format!("{bin}{}", env::consts::EXE_SUFFIX);
+        let source = local_bin_dir.join(&bin_name);
+        let destination = bin_dir.join(&bin_name);
+
+        if !source.exists() {
+            eyre::bail!("local Foundry binary not found at {}", source.display());
+        }
+
+        if fs::symlink_metadata(&destination).is_ok() {
+            fs::remove_file(&destination).wrap_err_with(|| {
+                format!("Failed to remove existing binary at {}", destination.display())
+            })?;
+        }
+
+        fs::copy(&source, &destination).wrap_err_with(|| {
+            format!("Failed to activate local binary {}", destination.display())
+        })?;
+    }
+
+    Ok(())
+}
+
+fn foundry_bin_dir() -> Result<PathBuf> {
+    if let Some(foundry_dir) = env::var_os("FOUNDRY_DIR") {
+        return Ok(PathBuf::from(foundry_dir).join("bin"));
+    }
+
+    let base_dir = env::var_os("XDG_CONFIG_HOME")
+        .or_else(|| env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| eyre::eyre!("Neither FOUNDRY_DIR, XDG_CONFIG_HOME, nor HOME is set"))?;
+
+    Ok(base_dir.join(".foundry").join("bin"))
 }
 
 /// Get the current forge version
