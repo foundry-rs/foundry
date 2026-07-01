@@ -460,6 +460,35 @@ forgetest_init!(forge_fuzz_rejects_watch, |prj, cmd| {
     assert!(stderr.contains("`--watch` is not supported for `forge fuzz replay`"), "{stderr}");
 });
 
+forgetest_init!(forge_fuzz_list_only_shows_runnable_tests, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzList.t.sol",
+        r#"
+contract ForgeFuzzListTest {
+    function test_unit() public {}
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+    function invariant_ok() public pure {}
+    function table_row() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--list", "--mc", "ForgeFuzzListTest"]).assert_success().stdout_eq(
+        str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+test/ForgeFuzzList.t.sol
+  ForgeFuzzListTest
+    invariant_ok
+    testFuzz_value
+
+
+"#]],
+    );
+});
+
 forgetest_init!(forge_showmap_skips_symbolic_tests, |prj, cmd| {
     prj.add_test(
         "ForgeShowmapSymbolic.t.sol",
