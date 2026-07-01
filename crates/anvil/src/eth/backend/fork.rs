@@ -23,6 +23,7 @@ use alloy_rpc_types::{
     state::StateOverride,
     trace::{
         geth::{GethDebugTracingOptions, GethTrace, TraceResult},
+        opcode::TransactionOpcodeGas,
         parity::{
             LocalizedTransactionTrace as Trace, TraceResults, TraceResultsWithTransactionHash,
             TraceType,
@@ -257,6 +258,13 @@ impl<N: Network> ClientFork<N> {
         storage.transaction_traces.insert(hash, traces.clone());
 
         Ok(traces)
+    }
+
+    pub async fn trace_transaction_opcode_gas(
+        &self,
+        hash: B256,
+    ) -> Result<Option<TransactionOpcodeGas>, TransportError> {
+        self.provider().raw_request("trace_transactionOpcodeGas".into(), (hash,)).await
     }
 
     /// Sends `trace_call`.

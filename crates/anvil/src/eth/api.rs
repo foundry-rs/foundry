@@ -60,6 +60,7 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
+        opcode::TransactionOpcodeGas,
         parity::{
             LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
         },
@@ -1416,6 +1417,17 @@ impl EthApi<FoundryNetwork> {
         Ok(block_request)
     }
 
+    /// Returns opcode gas usage for a transaction.
+    ///
+    /// Handler for RPC call: `trace_transactionOpcodeGas`.
+    pub async fn trace_transaction_opcode_gas(
+        &self,
+        tx_hash: B256,
+    ) -> Result<Option<TransactionOpcodeGas>> {
+        node_info!("trace_transactionOpcodeGas");
+        self.backend.trace_transaction_opcode_gas(tx_hash).await
+    }
+
     /// Traces a raw signed transaction without importing it into the mempool.
     ///
     /// Handler for RPC call: `trace_rawTransaction`.
@@ -1877,6 +1889,9 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::TraceReplayTransaction(transaction, trace_types) => {
                 self.trace_replay_transaction(transaction, trace_types).await.to_rpc_result()
+            }
+            EthRequest::TraceTransactionOpcodeGas(tx_hash) => {
+                self.trace_transaction_opcode_gas(tx_hash).await.to_rpc_result()
             }
             EthRequest::TraceRawTransaction(tx, trace_types, block_number) => {
                 self.trace_raw_transaction(tx, trace_types, block_number).await.to_rpc_result()
@@ -3828,10 +3843,17 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `txpool_content`
     pub async fn txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         node_info!("txpool_content");
-        self.build_txpool_content()
+        self.build_txpool_content(None)
     }
 
-    fn build_txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
+    /// Builds the txpool content, optionally filtered to a single sender.
+    ///
+    /// When `filter` is `Some`, only transactions from that sender are converted, avoiding the
+    /// cost of building RPC transactions for unrelated senders.
+    fn build_txpool_content(
+        &self,
+        filter: Option<Address>,
+    ) -> Result<TxpoolContent<AnyRpcTransaction>> {
         let mut content = TxpoolContent::<AnyRpcTransaction>::default();
         fn convert(tx: Arc<PoolTransaction<FoundryTxEnvelope>>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
@@ -3855,12 +3877,20 @@ impl EthApi<FoundryNetwork> {
         }
 
         for pending in self.pool.ready_transactions() {
-            let entry = content.pending.entry(*pending.pending_transaction.sender()).or_default();
+            let sender = *pending.pending_transaction.sender();
+            if filter.is_some_and(|from| from != sender) {
+                continue;
+            }
+            let entry = content.pending.entry(sender).or_default();
             let key = txpool_transaction_key(&pending.pending_transaction);
             entry.insert(key, convert(pending)?);
         }
         for queued in self.pool.pending_transactions() {
-            let entry = content.queued.entry(*queued.pending_transaction.sender()).or_default();
+            let sender = *queued.pending_transaction.sender();
+            if filter.is_some_and(|from| from != sender) {
+                continue;
+            }
+            let entry = content.queued.entry(sender).or_default();
             let key = txpool_transaction_key(&queued.pending_transaction);
             entry.insert(key, convert(queued)?);
         }
@@ -3880,7 +3910,7 @@ impl EthApi<FoundryNetwork> {
         from: Address,
     ) -> Result<TxpoolContentFrom<AnyRpcTransaction>> {
         node_info!("txpool_contentFrom");
-        let mut content = self.build_txpool_content()?;
+        let mut content = self.build_txpool_content(Some(from))?;
         Ok(content.remove_from(&from))
     }
 }
