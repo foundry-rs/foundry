@@ -325,8 +325,7 @@ pub(in crate::runtime) enum SymExprKind {
     Hash { name: Symbol, algorithm: &'static str, bytes: Arc<[SymExpr]> },
     Not(SymExpr),
     BinOp(SymExprBinOp, SymExpr, SymExpr),
-    AddMod { left: SymExpr, right: SymExpr, modulus: SymExpr },
-    MulMod { left: SymExpr, right: SymExpr, modulus: SymExpr },
+    TernOp(SymExprTernOp, SymExpr, SymExpr, SymExpr),
     Ite(SymBoolExpr, SymExpr, SymExpr),
 }
 
@@ -563,36 +562,28 @@ impl SymExpr {
         }
     }
 
-    pub(crate) fn addmod(cx: &mut SymCx, left: Self, right: Self, modulus: Self) -> Self {
+    pub(crate) fn ternop(
+        cx: &mut SymCx,
+        ternop: SymExprTernOp,
+        left: Self,
+        right: Self,
+        modulus: Self,
+    ) -> Self {
         match (left.kind(), right.kind(), modulus.kind()) {
             (_, _, SymExprKind::Const(modulus))
                 if modulus.is_zero() || *modulus == U256::from(1) =>
             {
+                // `addmod/mulmod(a, b, 0) => 0`.
                 Self::zero(cx)
             }
             (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
-                Self::constant(cx, left.add_mod(*right, *modulus))
+                // `addmod/mulmod(const, const, const) => const`.
+                Self::constant(cx, ternop.eval(*left, *right, *modulus))
             }
             _ => {
+                // `addmod/mulmod(a, b, m) => addmod/mulmod(ordered(a, b), m)`.
                 let (left, right) = Self::ordered_commutative_operands(left, right);
-                Self::from_kind(cx, SymExprKind::AddMod { left, right, modulus })
-            }
-        }
-    }
-
-    pub(crate) fn mulmod(cx: &mut SymCx, left: Self, right: Self, modulus: Self) -> Self {
-        match (left.kind(), right.kind(), modulus.kind()) {
-            (_, _, SymExprKind::Const(modulus))
-                if modulus.is_zero() || *modulus == U256::from(1) =>
-            {
-                Self::zero(cx)
-            }
-            (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
-                Self::constant(cx, left.mul_mod(*right, *modulus))
-            }
-            _ => {
-                let (left, right) = Self::ordered_commutative_operands(left, right);
-                Self::from_kind(cx, SymExprKind::MulMod { left, right, modulus })
+                Self::from_kind(cx, SymExprKind::TernOp(ternop, left, right, modulus))
             }
         }
     }
@@ -999,12 +990,11 @@ impl SymExpr {
             SymExprKind::BinOp(op, left, right) => {
                 op.eval(left.eval_model(model)?, right.eval_model(model)?)
             }
-            SymExprKind::AddMod { left, right, modulus } => left
-                .eval_model(model)?
-                .add_mod(right.eval_model(model)?, modulus.eval_model(model)?),
-            SymExprKind::MulMod { left, right, modulus } => left
-                .eval_model(model)?
-                .mul_mod(right.eval_model(model)?, modulus.eval_model(model)?),
+            SymExprKind::TernOp(op, left, right, modulus) => op.eval(
+                left.eval_model(model)?,
+                right.eval_model(model)?,
+                modulus.eval_model(model)?,
+            ),
             SymExprKind::Ite(cond, then_expr, else_expr) => {
                 if cond.eval_model(model)? {
                     then_expr.eval_model(model)?
@@ -1199,7 +1189,7 @@ impl SymExpr {
                 | SymExprBinOp::SRem
                 | SymExprBinOp::Sar => None,
             },
-            SymExprKind::AddMod { .. } | SymExprKind::MulMod { .. } => None,
+            SymExprKind::TernOp(_, _, _, _) => None,
         }
     }
 
@@ -1246,9 +1236,7 @@ impl SymExpr {
                 }
             }
             SymExprKind::BinOp(SymExprBinOp::UDiv, left, _) => left.unsigned_bits(),
-            SymExprKind::AddMod { modulus, .. } | SymExprKind::MulMod { modulus, .. } => {
-                modulus.unsigned_bits()
-            }
+            SymExprKind::TernOp(_, _, _, modulus) => modulus.unsigned_bits(),
             SymExprKind::Ite(_, left, right) => left.unsigned_bits().max(right.unsigned_bits()),
             _ => 256,
         }
@@ -1377,7 +1365,7 @@ impl SymExpr {
                 | SymExprBinOp::SRem
                 | SymExprBinOp::Sar => None,
             },
-            SymExprKind::AddMod { .. } | SymExprKind::MulMod { .. } => None,
+            SymExprKind::TernOp(_, _, _, _) => None,
         }
     }
 
@@ -1474,7 +1462,7 @@ impl SymExpr {
             {
                 value.nonzero_forces_const(target, context)
             }
-            SymExprKind::AddMod { .. } | SymExprKind::MulMod { .. } => None,
+            SymExprKind::TernOp(_, _, _, _) => None,
             SymExprKind::BinOp(_, _, _) => None,
         }
     }
@@ -1520,8 +1508,7 @@ impl SymExpr {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
             }
-            SymExprKind::AddMod { left, right, modulus }
-            | SymExprKind::MulMod { left, right, modulus } => {
+            SymExprKind::TernOp(_, left, right, modulus) => {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
                 modulus.visit(visitor)?;
@@ -1573,17 +1560,11 @@ impl SymExpr {
                 let right = right.fold(cx, folder);
                 Self::binop(cx, op, left, right)
             }
-            SymExprKind::AddMod { left, right, modulus } => {
+            SymExprKind::TernOp(op, left, right, modulus) => {
                 let left = left.fold(cx, folder);
                 let right = right.fold(cx, folder);
                 let modulus = modulus.fold(cx, folder);
-                Self::addmod(cx, left, right, modulus)
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                let modulus = modulus.fold(cx, folder);
-                Self::mulmod(cx, left, right, modulus)
+                Self::ternop(cx, op, left, right, modulus)
             }
             SymExprKind::Ite(condition, then_expr, else_expr) => {
                 let condition = condition.fold_exprs(cx, folder);
@@ -1628,11 +1609,8 @@ impl SymExpr {
                 right.write_smt(out);
                 out.push(')');
             }
-            SymExprKind::AddMod { left, right, modulus } => {
-                write_smt_wide_modular_arithmetic(out, "bvadd", left, right, modulus);
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                write_smt_wide_modular_arithmetic(out, "bvmul", left, right, modulus);
+            SymExprKind::TernOp(op, left, right, modulus) => {
+                write_smt_wide_modular_arithmetic(out, op.smt(), left, right, modulus);
             }
             SymExprKind::Ite(cond, left, right) => {
                 out.push_str("(ite ");
@@ -1669,6 +1647,31 @@ fn write_smt_wide_modular_arithmetic(
     out.push_str(")) ((_ zero_extend 256) ");
     modulus.write_smt(out);
     out.push_str("))))");
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SymExprTernOp {
+    AddMod,
+    MulMod,
+}
+
+impl SymExprTernOp {
+    pub(crate) const fn smt(self) -> &'static str {
+        match self {
+            Self::AddMod => "bvadd",
+            Self::MulMod => "bvmul",
+        }
+    }
+
+    pub(crate) fn eval(self, left: U256, right: U256, modulus: U256) -> U256 {
+        if modulus.is_zero() {
+            return U256::ZERO;
+        }
+        match self {
+            Self::AddMod => left.add_mod(right, modulus),
+            Self::MulMod => left.mul_mod(right, modulus),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

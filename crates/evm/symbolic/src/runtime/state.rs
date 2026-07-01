@@ -299,15 +299,11 @@ impl PathState {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => None,
             SymExprKind::Not(_) => None,
-            SymExprKind::AddMod { modulus, .. } | SymExprKind::MulMod { modulus, .. } => {
-                match modulus.eval() {
-                    Some(modulus) if modulus.is_zero() => Some(0),
-                    Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
-                    None => {
-                        self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1))
-                    }
-                }
-            }
+            SymExprKind::TernOp(_, _, _, modulus) => match modulus.eval() {
+                Some(modulus) if modulus.is_zero() => Some(0),
+                Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
+                None => self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1)),
+            },
             SymExprKind::Ite(_, left, right) => {
                 Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
             }

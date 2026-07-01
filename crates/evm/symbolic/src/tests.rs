@@ -2576,12 +2576,12 @@ fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
     let a = SymExpr::var(&mut cx, "a");
     let two = SymExpr::constant(&mut cx, U256::from(2));
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let addmod = SymExpr::addmod(&mut cx, a, two, max);
+    let addmod = SymExpr::ternop(&mut cx, SymExprTernOp::AddMod, a, two, max);
     assert_eq!(addmod.eval_model(&model).unwrap(), U256::from(2));
     let a = SymExpr::var(&mut cx, "a");
     let a_again = SymExpr::var(&mut cx, "a");
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let mulmod = SymExpr::mulmod(&mut cx, a, a_again, max);
+    let mulmod = SymExpr::ternop(&mut cx, SymExprTernOp::MulMod, a, a_again, max);
     assert_eq!(mulmod.eval_model(&model).unwrap(), U256::ZERO);
 }
 
@@ -2591,11 +2591,11 @@ fn exact_modular_arithmetic_smt_widens_before_modulo() {
     let a = SymExpr::var(&mut cx, "a");
     let two = SymExpr::constant(&mut cx, U256::from(2));
     let m = SymExpr::var(&mut cx, "m");
-    let addmod = SymExpr::addmod(&mut cx, a, two, m).smt();
+    let addmod = SymExpr::ternop(&mut cx, SymExprTernOp::AddMod, a, two, m).smt();
     let a = SymExpr::var(&mut cx, "a");
     let b = SymExpr::var(&mut cx, "b");
     let m = SymExpr::var(&mut cx, "m");
-    let mulmod = SymExpr::mulmod(&mut cx, a, b, m).smt();
+    let mulmod = SymExpr::ternop(&mut cx, SymExprTernOp::MulMod, a, b, m).smt();
 
     assert!(addmod.contains("((_ zero_extend 256) a)"));
     assert!(addmod.contains("bvadd"));
@@ -2611,7 +2611,7 @@ fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
     let a = SymExpr::var(&mut cx, "a");
     let two = SymExpr::constant(&mut cx, U256::from(2));
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let addmod = SymExpr::addmod(&mut cx, a, two, max);
+    let addmod = SymExpr::ternop(&mut cx, SymExprTernOp::AddMod, a, two, max);
     let one = SymExpr::constant(&mut cx, U256::from(1));
     let constraints = vec![SymBoolExpr::eq(&mut cx, addmod, one)];
     let output = format!("sat\n((define-fun a () (_ BitVec 256) #x{}))\n", "f".repeat(64));
@@ -3171,7 +3171,7 @@ fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
     let zero = SymExpr::zero(&mut cx);
     let positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a.clone(), zero.clone());
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let product = SymExpr::mulmod(&mut cx, a.clone(), a, max);
+    let product = SymExpr::ternop(&mut cx, SymExprTernOp::MulMod, a.clone(), a, max);
     let exact = SymBoolExpr::eq(&mut cx, product, zero);
     let constraints = vec![positive, exact];
 

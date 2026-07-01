@@ -66,13 +66,13 @@ impl SymbolicExecutor {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                state.stack.push(SymExpr::addmod(&mut self.cx, a, b, n))?;
+                state.stack.push(SymExpr::ternop(&mut self.cx, SymExprTernOp::AddMod, a, b, n))?;
             }
             opcode::MULMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                state.stack.push(SymExpr::mulmod(&mut self.cx, a, b, n))?;
+                state.stack.push(SymExpr::ternop(&mut self.cx, SymExprTernOp::MulMod, a, b, n))?;
             }
             opcode::LT => {
                 state.cmp_word(&mut self.cx, SymBoolExprOp::Ult)?;

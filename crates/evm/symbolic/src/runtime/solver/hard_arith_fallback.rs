@@ -36,8 +36,7 @@ fn is_hard_arith_node(expr: &SymExpr) -> bool {
             left,
             right,
         ) => left.contains_var() || right.contains_var(),
-        SymExprKind::AddMod { left, right, modulus }
-        | SymExprKind::MulMod { left, right, modulus } => {
+        SymExprKind::TernOp(_, left, right, modulus) => {
             left.contains_var() || right.contains_var() || modulus.contains_var()
         }
         _ => false,

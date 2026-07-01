@@ -108,16 +108,8 @@ fn write_expr_structural_key(out: &mut String, expr: &SymExpr) {
             out.push(':');
             write_expr_structural_key(out, right);
         }
-        SymExprKind::AddMod { left, right, modulus } => {
-            out.push_str("7:");
-            write_expr_structural_key(out, left);
-            out.push(':');
-            write_expr_structural_key(out, right);
-            out.push(':');
-            write_expr_structural_key(out, modulus);
-        }
-        SymExprKind::MulMod { left, right, modulus } => {
-            out.push_str("8:");
+        SymExprKind::TernOp(op, left, right, modulus) => {
+            let _ = write!(out, "7:{}:", expr_ternop_key(*op));
             write_expr_structural_key(out, left);
             out.push(':');
             write_expr_structural_key(out, right);
@@ -169,6 +161,13 @@ const fn expr_binop_key(op: SymExprBinOp) -> u8 {
         SymExprBinOp::Shl => 10,
         SymExprBinOp::Shr => 11,
         SymExprBinOp::Sar => 12,
+    }
+}
+
+const fn expr_ternop_key(op: SymExprTernOp) -> u8 {
+    match op {
+        SymExprTernOp::AddMod => 0,
+        SymExprTernOp::MulMod => 1,
     }
 }
 
@@ -293,8 +292,7 @@ impl SmtCsePlan {
                 self.count_expr(left);
                 self.count_expr(right);
             }
-            SymExprKind::AddMod { left, right, modulus }
-            | SymExprKind::MulMod { left, right, modulus } => {
+            SymExprKind::TernOp(_, left, right, modulus) => {
                 self.count_expr(modulus);
                 self.count_expr(left);
                 self.count_expr(right);
@@ -337,8 +335,7 @@ impl SmtCsePlan {
                 self.collect_expr_binding(left);
                 self.collect_expr_binding(right);
             }
-            SymExprKind::AddMod { left, right, modulus }
-            | SymExprKind::MulMod { left, right, modulus } => {
+            SymExprKind::TernOp(_, left, right, modulus) => {
                 self.collect_expr_binding(modulus);
                 self.collect_expr_binding(left);
                 self.collect_expr_binding(right);
@@ -482,11 +479,8 @@ impl SmtCseWriter<'_> {
                 self.write_expr(out, right, skip_expr, skip_bool);
                 out.push(')');
             }
-            SymExprKind::AddMod { left, right, modulus } => {
-                self.write_wide_modular_arithmetic(out, "bvadd", left, right, modulus);
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                self.write_wide_modular_arithmetic(out, "bvmul", left, right, modulus);
+            SymExprKind::TernOp(op, left, right, modulus) => {
+                self.write_wide_modular_arithmetic(out, op.smt(), left, right, modulus);
             }
             SymExprKind::Ite(cond, left, right) => {
                 out.push_str("(ite ");
