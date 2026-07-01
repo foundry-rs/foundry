@@ -56,6 +56,10 @@ pub(super) fn storage_access_at(
     step_index: usize,
 ) -> Option<StorageAccess> {
     let step = steps.get(step_index)?;
+    if step.op.get() == opcode::SSTORE && !step.status.is_none_or(InstructionResult::is_ok) {
+        return None;
+    }
+
     if let Some(change) = step.storage_change.as_deref() {
         let kind = match change.reason {
             StorageChangeReason::SLOAD => StorageAccessKind::Sload,
@@ -82,7 +86,7 @@ pub(super) fn storage_access_at(
         });
     }
 
-    if step.op.get() == opcode::SSTORE && step.status.is_none_or(InstructionResult::is_ok) {
+    if step.op.get() == opcode::SSTORE {
         let mut stack = step.stack.as_deref()?.iter().rev();
         let slot = stack.next().copied()?;
         let value = stack.next().copied()?;

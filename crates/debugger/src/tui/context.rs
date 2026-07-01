@@ -2008,6 +2008,36 @@ mod tests {
     }
 
     #[test]
+    fn command_prompt_ignores_failed_sstore_storage_change() {
+        let address = Address::repeat_byte(1);
+        let mut store = step_with_stack(42, OpCode::SSTORE, &[42, 1]);
+        store.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: Some(U256::ZERO),
+            reason: StorageChangeReason::SSTORE,
+        }));
+        store.status = Some(InstructionResult::OutOfGas);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![store],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("slot 1");
+
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Storage slot 0x1 not accessed in current call");
+    }
+
+    #[test]
     fn command_prompt_accepts_optional_leading_colon() {
         let address = Address::repeat_byte(1);
         let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
