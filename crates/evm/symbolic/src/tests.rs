@@ -509,16 +509,6 @@ fn byte_concat_right_aligned_word_assembles_push_fragments() {
 }
 
 #[test]
-fn byte_concat_concrete_bytes_flattens_slices_with_padding() {
-    let mut cx = SymCx::new();
-    let left = SymBytes::concrete(&mut cx, vec![1, 2, 3]);
-    let right = SymBytes::concrete(&mut cx, vec![4, 5]);
-    let bytes = SymBytes::concat(&mut cx, [left, right]).slice_concrete(&mut cx, 2, 5);
-
-    assert_eq!(bytes.concrete_bytes(&mut cx, "test concrete bytes").unwrap(), vec![3, 4, 5, 0, 0]);
-}
-
-#[test]
 fn calldata_load_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let calldata_bytes =
@@ -1019,23 +1009,6 @@ fn memory_concrete_write_overrides_older_symbolic_write() {
 }
 
 #[test]
-fn memory_full_cover_read_returns_newest_concrete_slice() {
-    let mut cx = SymCx::new();
-    let mut memory = SymMemory::default();
-
-    let offset = SymExpr::var(&mut cx, "offset");
-    let word = SymExpr::var(&mut cx, "word");
-    memory.store_word_offset(&mut cx, offset, word);
-    let concrete = (0..64).collect::<Vec<_>>();
-    let concrete_bytes = SymBytes::concrete(&mut cx, concrete.clone());
-    memory.store_bytes(&mut cx, 0, concrete_bytes);
-
-    let loaded = memory.read_bytes(&mut cx, 16, 32);
-
-    assert_eq!(loaded.as_concrete_slice(), Some(&concrete[16..48]));
-}
-
-#[test]
 fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
@@ -1266,48 +1239,6 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
     assert_eq!(
         memory.read_bytes(&mut cx, 0x80, 4).eval_model(&mut cx, &model).unwrap(),
         vec![1, 2, 0xaa, 0xaa]
-    );
-}
-
-#[test]
-fn memory_call_output_accepts_symbolic_size_and_return_len() {
-    let mut cx = SymCx::new();
-    let bytes = vec![1, 2, 3, 4]
-        .into_iter()
-        .map(|byte| SymExpr::constant(&mut cx, U256::from(byte)))
-        .collect();
-    let bytes = SymBytes::exprs(&mut cx, bytes);
-    let len = SymExpr::var(&mut cx, "len");
-    let return_data = SymReturnData::from_bytes_with_len(bytes, len);
-    let mut memory = SymMemory::default();
-    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
-    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
-    memory.store_bytes(&mut cx, 0, tail);
-    let dest = SymExpr::zero(&mut cx);
-    let size = SymExpr::var(&mut cx, "size");
-    let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
-
-    memory.copy_call_output_offset(&mut cx, dest, &copy_size, &return_data).unwrap();
-
-    let return_len_limited =
-        BTreeMap::from([("size".to_string(), U256::from(4)), ("len".to_string(), U256::from(2))]);
-    assert_eq!(
-        memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &return_len_limited).unwrap(),
-        vec![1, 2, 0xaa, 0xaa]
-    );
-
-    let output_size_limited =
-        BTreeMap::from([("size".to_string(), U256::from(2)), ("len".to_string(), U256::from(4))]);
-    assert_eq!(
-        memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &output_size_limited).unwrap(),
-        vec![1, 2, 0xaa, 0xaa]
-    );
-
-    let fully_copied =
-        BTreeMap::from([("size".to_string(), U256::from(4)), ("len".to_string(), U256::from(4))]);
-    assert_eq!(
-        memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &fully_copied).unwrap(),
-        vec![1, 2, 3, 4]
     );
 }
 
@@ -3945,33 +3876,6 @@ fn direct_contradiction_is_sat_short_circuits_locally() {
     assert_eq!(stats.solver_queries, 1);
     assert_eq!(stats.smt_queries, 0);
     assert_eq!(stats.sat_queries, 1);
-}
-
-#[test]
-fn direct_contradiction_model_short_circuits_locally() {
-    let mut cx = SymCx::new();
-    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
-    let x = SymExpr::var(&mut cx, "x");
-    let one = SymExpr::constant(&mut cx, U256::from(1));
-    let constraint = SymBoolExpr::eq(&mut cx, x, one);
-    let constraints = vec![constraint.clone(), constraint.not(&mut cx)];
-
-    assert!(
-        matches!(solver.model(&mut cx, &constraints), Err(SymbolicError::Solver(message)) if message.contains("unsat"))
-    );
-
-    let stats = solver.stats();
-    assert_eq!(stats.solver_queries, 0);
-    assert_eq!(stats.smt_queries, 0);
-    assert_eq!(stats.model_queries, 1);
-    assert_eq!(stats.sat_queries, 0);
-
-    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
-    let stats = solver.stats();
-    assert_eq!(stats.solver_queries, 0);
-    assert_eq!(stats.smt_queries, 0);
-    assert_eq!(stats.sat_queries, 1);
-    assert_eq!(stats.sat_cache_hits, 1);
 }
 
 #[cfg(unix)]

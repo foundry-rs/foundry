@@ -37,140 +37,119 @@ fn normalize_constraint_batch(
 }
 
 fn sort_dedup_bool_exprs(exprs: &mut Vec<SymBoolExpr>) {
-    exprs.sort_by(bool_structural_cmp);
+    exprs.sort_by_cached_key(bool_structural_key);
     exprs.dedup();
 }
 
+fn bool_structural_key(expr: &SymBoolExpr) -> String {
+    let mut key = String::new();
+    write_bool_structural_key(&mut key, expr);
+    key
+}
+
+fn expr_structural_key(expr: &SymExpr) -> String {
+    let mut key = String::new();
+    write_expr_structural_key(&mut key, expr);
+    key
+}
+
 fn expr_should_swap(left: &SymExpr, right: &SymExpr) -> bool {
-    expr_structural_cmp(right, left).is_lt()
+    expr_structural_key(right) < expr_structural_key(left)
 }
 
-fn bool_structural_cmp(left: &SymBoolExpr, right: &SymBoolExpr) -> std::cmp::Ordering {
-    let order = bool_kind_key(left.kind()).cmp(&bool_kind_key(right.kind()));
-    if !order.is_eq() {
-        return order;
-    }
-
-    match (left.kind(), right.kind()) {
-        (SymBoolExprKind::Const(left), SymBoolExprKind::Const(right)) => left.cmp(right),
-        (SymBoolExprKind::Not(left), SymBoolExprKind::Not(right)) => {
-            bool_structural_cmp(left, right)
+fn write_bool_structural_key(out: &mut String, expr: &SymBoolExpr) {
+    match expr.kind() {
+        SymBoolExprKind::Const(value) => {
+            let _ = write!(out, "0:{value}");
         }
-        (SymBoolExprKind::And(left), SymBoolExprKind::And(right)) => {
-            bools_structural_cmp(left, right)
+        SymBoolExprKind::Not(value) => {
+            out.push_str("1:");
+            write_bool_structural_key(out, value);
         }
-        (
-            SymBoolExprKind::Eq(left_expr, left_expected),
-            SymBoolExprKind::Eq(right_expr, right_expected),
-        ) => expr_structural_cmp(left_expr, right_expr)
-            .then_with(|| expr_structural_cmp(left_expected, right_expected)),
-        (
-            SymBoolExprKind::Cmp(left_op, left_expr, left_expected),
-            SymBoolExprKind::Cmp(right_op, right_expr, right_expected),
-        ) => bool_op_key(*left_op)
-            .cmp(&bool_op_key(*right_op))
-            .then_with(|| expr_structural_cmp(left_expr, right_expr))
-            .then_with(|| expr_structural_cmp(left_expected, right_expected)),
-        _ => std::cmp::Ordering::Equal,
+        SymBoolExprKind::And(values) => {
+            let _ = write!(out, "2:{}:", values.len());
+            for value in values.iter() {
+                write_bool_structural_key(out, value);
+                out.push(';');
+            }
+        }
+        SymBoolExprKind::Eq(left, right) => {
+            out.push_str("3:");
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+        }
+        SymBoolExprKind::Cmp(op, left, right) => {
+            let _ = write!(out, "4:{}:", bool_op_key(*op));
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+        }
     }
 }
 
-fn bools_structural_cmp(left: &[SymBoolExpr], right: &[SymBoolExpr]) -> std::cmp::Ordering {
-    left.len().cmp(&right.len()).then_with(|| {
-        left.iter()
-            .zip(right)
-            .map(|(left, right)| bool_structural_cmp(left, right))
-            .find(|order| !order.is_eq())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    })
-}
-
-fn expr_structural_cmp(left: &SymExpr, right: &SymExpr) -> std::cmp::Ordering {
-    let order = expr_kind_key(left.kind()).cmp(&expr_kind_key(right.kind()));
-    if !order.is_eq() {
-        return order;
-    }
-
-    match (left.kind(), right.kind()) {
-        (SymExprKind::Const(left), SymExprKind::Const(right)) => left.cmp(right),
-        (SymExprKind::Var(left), SymExprKind::Var(right)) => left.as_str().cmp(right.as_str()),
-        (SymExprKind::GasLeft(left), SymExprKind::GasLeft(right)) => left.cmp(right),
-        (
-            SymExprKind::Keccak { name: left_name, len: left_len, bytes: left_bytes },
-            SymExprKind::Keccak { name: right_name, len: right_len, bytes: right_bytes },
-        ) => left_name
-            .as_str()
-            .cmp(right_name.as_str())
-            .then_with(|| expr_structural_cmp(left_len, right_len))
-            .then_with(|| exprs_structural_cmp(left_bytes, right_bytes)),
-        (
-            SymExprKind::Hash { name: left_name, algorithm: left_algorithm, bytes: left_bytes },
-            SymExprKind::Hash { name: right_name, algorithm: right_algorithm, bytes: right_bytes },
-        ) => left_name
-            .as_str()
-            .cmp(right_name.as_str())
-            .then_with(|| left_algorithm.cmp(right_algorithm))
-            .then_with(|| exprs_structural_cmp(left_bytes, right_bytes)),
-        (SymExprKind::Not(left), SymExprKind::Not(right)) => expr_structural_cmp(left, right),
-        (
-            SymExprKind::Op(left_op, left_expr, left_arg),
-            SymExprKind::Op(right_op, right_expr, right_arg),
-        ) => expr_op_key(*left_op)
-            .cmp(&expr_op_key(*right_op))
-            .then_with(|| expr_structural_cmp(left_expr, right_expr))
-            .then_with(|| expr_structural_cmp(left_arg, right_arg)),
-        (
-            SymExprKind::AddMod { left: left_expr, right: left_arg, modulus: left_modulus },
-            SymExprKind::AddMod { left: right_expr, right: right_arg, modulus: right_modulus },
-        )
-        | (
-            SymExprKind::MulMod { left: left_expr, right: left_arg, modulus: left_modulus },
-            SymExprKind::MulMod { left: right_expr, right: right_arg, modulus: right_modulus },
-        ) => expr_structural_cmp(left_expr, right_expr)
-            .then_with(|| expr_structural_cmp(left_arg, right_arg))
-            .then_with(|| expr_structural_cmp(left_modulus, right_modulus)),
-        (
-            SymExprKind::Ite(left_condition, left_then, left_else),
-            SymExprKind::Ite(right_condition, right_then, right_else),
-        ) => bool_structural_cmp(left_condition, right_condition)
-            .then_with(|| expr_structural_cmp(left_then, right_then))
-            .then_with(|| expr_structural_cmp(left_else, right_else)),
-        _ => std::cmp::Ordering::Equal,
+fn write_expr_structural_key(out: &mut String, expr: &SymExpr) {
+    match expr.kind() {
+        SymExprKind::Const(value) => {
+            let _ = write!(out, "0:{value:064x}");
+        }
+        SymExprKind::Var(name) => {
+            let _ = write!(out, "1:{}", name.as_str());
+        }
+        SymExprKind::GasLeft(id) => {
+            let _ = write!(out, "2:{id:020}");
+        }
+        SymExprKind::Keccak { name, len, bytes } => {
+            let _ = write!(out, "3:{}:", name.as_str());
+            write_expr_structural_key(out, len);
+            write_exprs_structural_key(out, bytes);
+        }
+        SymExprKind::Hash { name, algorithm, bytes } => {
+            let _ = write!(out, "4:{}:{algorithm}:", name.as_str());
+            write_exprs_structural_key(out, bytes);
+        }
+        SymExprKind::Not(value) => {
+            out.push_str("5:");
+            write_expr_structural_key(out, value);
+        }
+        SymExprKind::Op(op, left, right) => {
+            let _ = write!(out, "6:{}:", expr_op_key(*op));
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+        }
+        SymExprKind::AddMod { left, right, modulus } => {
+            out.push_str("7:");
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+            out.push(':');
+            write_expr_structural_key(out, modulus);
+        }
+        SymExprKind::MulMod { left, right, modulus } => {
+            out.push_str("8:");
+            write_expr_structural_key(out, left);
+            out.push(':');
+            write_expr_structural_key(out, right);
+            out.push(':');
+            write_expr_structural_key(out, modulus);
+        }
+        SymExprKind::Ite(condition, then_expr, else_expr) => {
+            out.push_str("9:");
+            write_bool_structural_key(out, condition);
+            out.push(':');
+            write_expr_structural_key(out, then_expr);
+            out.push(':');
+            write_expr_structural_key(out, else_expr);
+        }
     }
 }
 
-fn exprs_structural_cmp(left: &[SymExpr], right: &[SymExpr]) -> std::cmp::Ordering {
-    left.len().cmp(&right.len()).then_with(|| {
-        left.iter()
-            .zip(right)
-            .map(|(left, right)| expr_structural_cmp(left, right))
-            .find(|order| !order.is_eq())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    })
-}
-
-const fn bool_kind_key(expr: &SymBoolExprKind) -> u8 {
-    match expr {
-        SymBoolExprKind::Const(_) => 0,
-        SymBoolExprKind::Not(_) => 1,
-        SymBoolExprKind::And(_) => 2,
-        SymBoolExprKind::Eq(_, _) => 3,
-        SymBoolExprKind::Cmp(_, _, _) => 4,
-    }
-}
-
-const fn expr_kind_key(expr: &SymExprKind) -> u8 {
-    match expr {
-        SymExprKind::Const(_) => 0,
-        SymExprKind::Var(_) => 1,
-        SymExprKind::GasLeft(_) => 2,
-        SymExprKind::Keccak { .. } => 3,
-        SymExprKind::Hash { .. } => 4,
-        SymExprKind::Not(_) => 5,
-        SymExprKind::Op(_, _, _) => 6,
-        SymExprKind::AddMod { .. } => 7,
-        SymExprKind::MulMod { .. } => 8,
-        SymExprKind::Ite(_, _, _) => 9,
+fn write_exprs_structural_key(out: &mut String, exprs: &[SymExpr]) {
+    let _ = write!(out, "{}:", exprs.len());
+    for expr in exprs {
+        write_expr_structural_key(out, expr);
+        out.push(';');
     }
 }
 
@@ -217,63 +196,27 @@ pub(super) fn constraint_cache_key(
 }
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
-pub(super) fn constraints_are_directly_unsat(constraints: &[SymBoolExpr]) -> bool {
-    if constraints.len() <= 32 {
-        for (idx, constraint) in constraints.iter().enumerate() {
-            if constraint.as_const() == Some(false) {
-                return true;
-            }
-            if constraints[idx + 1..]
-                .iter()
-                .any(|other| bool_exprs_are_negations(constraint, other))
-            {
-                return true;
-            }
+pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
+    constraints.iter().any(|constraint| match constraint.kind() {
+        SymBoolExprKind::Const(false) => true,
+        SymBoolExprKind::Not(inner) => constraints.contains(inner),
+        _ => {
+            let negated = constraint.clone().not(cx);
+            constraints.contains(&negated)
         }
-        return false;
-    }
-
-    let mut positive = HashSet::<&SymBoolExpr>::default();
-    let mut negative = HashSet::<&SymBoolExpr>::default();
-
-    for constraint in constraints {
-        match constraint.kind() {
-            SymBoolExprKind::Const(false) => return true,
-            SymBoolExprKind::Not(inner) => {
-                if positive.contains(inner) {
-                    return true;
-                }
-                negative.insert(inner);
-            }
-            _ => {
-                if negative.contains(constraint) {
-                    return true;
-                }
-                positive.insert(constraint);
-            }
-        }
-    }
-
-    false
-}
-
-fn bool_exprs_are_negations(left: &SymBoolExpr, right: &SymBoolExpr) -> bool {
-    match (left.kind(), right.kind()) {
-        (SymBoolExprKind::Not(inner), _) => inner == right,
-        (_, SymBoolExprKind::Not(inner)) => left == inner,
-        _ => false,
-    }
+    })
 }
 
 /// Returns whether every expression in `subset` appears in `superset`.
-pub(super) fn bool_exprs_are_subset_of_set(
+pub(super) fn sorted_bool_exprs_are_subset(
     subset: &[SymBoolExpr],
-    superset: &HashSet<&SymBoolExpr>,
+    superset: &[SymBoolExpr],
 ) -> bool {
     if subset.len() > superset.len() {
         return false;
     }
 
+    let superset: HashSet<_> = superset.iter().collect();
     subset.iter().all(|expected| superset.contains(expected))
 }
 
@@ -431,23 +374,6 @@ pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn direct_contradiction_scan_finds_negated_pairs_in_either_order() {
-        let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let one = SymExpr::constant(&mut cx, U256::from(1));
-        let constraint = SymBoolExpr::eq(&mut cx, x, one);
-        let negated = constraint.clone().not(&mut cx);
-
-        assert!(constraints_are_directly_unsat(&[constraint.clone(), negated.clone()]));
-        assert!(constraints_are_directly_unsat(&[negated, constraint]));
-        assert!(constraints_are_directly_unsat(&[SymBoolExpr::constant(&mut cx, false)]));
-    }
-}
 #[derive(Default)]
 struct SmtCseVisit {
     count: usize,

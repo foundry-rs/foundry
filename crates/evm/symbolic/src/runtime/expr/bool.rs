@@ -174,18 +174,6 @@ impl SymBoolExpr {
         }
     }
 
-    pub(in crate::runtime) fn and_pair(cx: &mut SymCx, left: Self, right: Self) -> Self {
-        match (left.kind(), right.kind()) {
-            (SymBoolExprKind::Const(false), _) | (_, SymBoolExprKind::Const(false)) => {
-                Self::constant(cx, false)
-            }
-            (SymBoolExprKind::Const(true), _) => right,
-            (_, SymBoolExprKind::Const(true)) => left,
-            _ if left == right => left,
-            _ => Self::from_kind(cx, SymBoolExprKind::And(Arc::from([left, right]))),
-        }
-    }
-
     pub(crate) fn or(cx: &mut SymCx, values: Vec<Self>) -> Self {
         let mut out = Vec::new();
         for value in values {

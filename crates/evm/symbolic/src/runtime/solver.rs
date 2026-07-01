@@ -15,7 +15,7 @@ pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
 pub(crate) use opt::normalize_constraints_for_solver;
 use opt::{
-    bool_exprs_are_subset_of_set, constraint_cache_key, constraints_are_directly_unsat,
+    constraint_cache_key, constraints_are_directly_unsat, sorted_bool_exprs_are_subset,
     write_smt_assertions,
 };
 #[cfg(test)]
@@ -378,17 +378,6 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.sat_cache.remove(&cache_key);
         }
 
-        if constraints_are_directly_unsat(&smt_constraints) {
-            trace!("model: direct contradiction");
-            self.cache_sat_result(cache_key, false);
-            return Err(SymbolicError::Solver("counterexample path became unsat".to_string()));
-        }
-        if product_monotonic_unsat_normalized(&smt_constraints) {
-            trace!("model: monotonic product contradiction");
-            self.cache_sat_result(cache_key, false);
-            return Err(SymbolicError::Solver("counterexample path became unsat".to_string()));
-        }
-
         self.reserve_query()?;
         self.record_query();
         let _span = trace_span!(
@@ -510,7 +499,7 @@ impl SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
-        if constraints_are_directly_unsat(&smt_constraints) {
+        if constraints_are_directly_unsat(cx, &smt_constraints) {
             trace!("is_sat: direct contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(false);
@@ -629,14 +618,9 @@ impl SmtLibSubprocessSolver {
 
     /// Returns whether an already-proved unsat constraint set is a subset of `key`.
     fn has_cached_unsat_subset(&self, key: &[SymBoolExpr]) -> bool {
-        let mut key_set = None;
-        self.sat_cache.iter().any(|(cached_key, result)| {
-            if *result || cached_key.len() > key.len() {
-                return false;
-            }
-            let key_set = key_set.get_or_insert_with(|| key.iter().collect());
-            bool_exprs_are_subset_of_set(cached_key, key_set)
-        })
+        self.sat_cache
+            .iter()
+            .any(|(cached_key, result)| !*result && sorted_bool_exprs_are_subset(cached_key, key))
     }
 
     /// Sends already-normalized constraints to the configured solver portfolio.

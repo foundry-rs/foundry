@@ -262,22 +262,6 @@ impl SymMemory {
         }
         let end = offset.checked_add(size)?;
 
-        for write in self.symbolic_writes.iter().rev() {
-            let Some(write_offset) = write.concrete_offset() else {
-                break;
-            };
-            let Some(write_end) = write_offset.checked_add(write.bytes.len()) else {
-                break;
-            };
-            if write_end <= offset || end <= write_offset {
-                continue;
-            }
-            if write_offset <= offset && end <= write_end {
-                return Some(write.bytes.slice_concrete(cx, offset - write_offset, size));
-            }
-            break;
-        }
-
         let mut unresolved = vec![(offset, end)];
         let mut pieces = Vec::new();
 
@@ -374,7 +358,6 @@ impl SymMemory {
             SymExpr::zero(cx)
         };
 
-        let mut read_offset_expr = None;
         for write in writes {
             if let Some(byte) = write.concrete_byte(cx, offset) {
                 result = byte;
@@ -385,9 +368,8 @@ impl SymMemory {
             }
             for idx in 0..write.bytes.len() {
                 let write_offset = SymExpr::add_const(cx, write.offset.clone(), U256::from(idx));
-                let read_offset = read_offset_expr
-                    .get_or_insert_with(|| SymExpr::constant(cx, U256::from(offset)));
-                let condition = SymBoolExpr::eq(cx, write_offset, read_offset.clone());
+                let offset = SymExpr::constant(cx, U256::from(offset));
+                let condition = SymBoolExpr::eq(cx, write_offset, offset);
                 let byte = write.bytes.byte(cx, idx);
                 result = SymExpr::ite(cx, condition, byte, result);
             }
@@ -636,25 +618,16 @@ impl SymMemory {
         output_size: Option<&SymExpr>,
         return_data: &SymReturnData,
     ) -> SymExpr {
-        let guard = match (output_size, return_data.has_symbolic_len()) {
-            (Some(output_size), true) => {
-                let idx_expr = SymExpr::constant(cx, U256::from(idx));
-                let output_guard =
-                    SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx_expr.clone(), output_size.clone());
-                let len_guard =
-                    SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx_expr, return_data.len_expr());
-                SymBoolExpr::and_pair(cx, output_guard, len_guard)
-            }
-            (Some(output_size), false) => {
-                let idx_expr = SymExpr::constant(cx, U256::from(idx));
-                SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx_expr, output_size.clone())
-            }
-            (None, true) => {
-                let idx_expr = SymExpr::constant(cx, U256::from(idx));
-                SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx_expr, return_data.len_expr())
-            }
-            (None, false) => SymBoolExpr::constant(cx, true),
-        };
+        let mut guards = Vec::new();
+        if let Some(output_size) = output_size {
+            let idx_expr = SymExpr::constant(cx, U256::from(idx));
+            guards.push(SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx_expr, output_size.clone()));
+        }
+        if return_data.has_symbolic_len() {
+            let idx_expr = SymExpr::constant(cx, U256::from(idx));
+            guards.push(SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx_expr, return_data.len_expr()));
+        }
+        let guard = SymBoolExpr::and(cx, guards);
         match guard.as_const() {
             Some(true) => return_data.byte(cx, idx),
             Some(false) => self.call_output_existing_byte(cx, dest, idx),
