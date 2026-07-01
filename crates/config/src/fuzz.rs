@@ -119,6 +119,10 @@ pub struct FuzzCorpusConfig {
     // Path to corpus directory, enabled coverage guided fuzzing mode.
     // If not set then sequences producing new coverage are not persisted and mutated.
     pub corpus_dir: Option<PathBuf>,
+    // Path to fuzz branch frontier artifacts for symbolic follow-up.
+    pub frontier_dir: Option<PathBuf>,
+    // Maximum number of branch frontier records to write for one fuzz test.
+    pub frontier_limit: usize,
     // Whether corpus to use gzip file compression and decompression.
     pub corpus_gzip: bool,
     // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
@@ -154,10 +158,14 @@ pub struct FuzzCorpusConfig {
 impl FuzzCorpusConfig {
     pub const DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 10;
     pub const ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 50;
+    pub const DEFAULT_FRONTIER_LIMIT: usize = 256;
 
     pub fn with_test(&mut self, contract: &str, test: &str) {
         if let Some(corpus_dir) = &self.corpus_dir {
             self.corpus_dir = Some(canonicalized(corpus_dir.join(contract).join(test)));
+        }
+        if let Some(frontier_dir) = &self.frontier_dir {
+            self.frontier_dir = Some(canonicalized(frontier_dir.join(contract).join(test)));
         }
     }
 
@@ -183,8 +191,14 @@ impl FuzzCorpusConfig {
     /// bytecode coverage as the guidance signal.
     pub fn collect_evm_cmp_log(&self) -> bool {
         !self.sancov_edges
-            && self.corpus_dir.is_some()
-            && self.mutation_weights.effective().mutation_weight_cmp > 0
+            && ((self.corpus_dir.is_some()
+                && self.mutation_weights.effective().mutation_weight_cmp > 0)
+                || self.capture_branch_frontiers())
+    }
+
+    /// Whether fuzz branch frontier artifacts should be captured.
+    pub const fn capture_branch_frontiers(&self) -> bool {
+        self.frontier_dir.is_some() && self.frontier_limit > 0
     }
 
     /// Whether EVM edge coverage should use collision-free dense IDs.
@@ -222,6 +236,8 @@ impl Default for FuzzCorpusConfig {
     fn default() -> Self {
         Self {
             corpus_dir: None,
+            frontier_dir: None,
+            frontier_limit: Self::DEFAULT_FRONTIER_LIMIT,
             corpus_gzip: true,
             corpus_min_mutations: 5,
             corpus_min_size: 0,

@@ -211,6 +211,7 @@ max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
 gas_report_samples = 256
+frontier_limit = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
@@ -248,6 +249,7 @@ max_fuzz_dictionary_literals = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
+frontier_limit = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
@@ -1458,6 +1460,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_fuzz_dictionary_literals": 6553600,
     "gas_report_samples": 256,
     "corpus_dir": null,
+    "frontier_dir": null,
+    "frontier_limit": 256,
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
@@ -1497,6 +1501,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
     "corpus_dir": null,
+    "frontier_dir": null,
+    "frontier_limit": 256,
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
