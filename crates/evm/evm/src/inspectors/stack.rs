@@ -589,7 +589,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     pub fn collect_evm_cmp_log(&mut self, yes: bool) {
         if yes {
             self.edge_coverage
-                .get_or_insert_with(|| EdgeCovInspector::new().into())
+                .get_or_insert_with(|| EdgeCovInspector::with_cmp_log_only().into())
                 .enable_cmp_log(true);
         } else if let Some(edge_coverage) = &mut self.edge_coverage {
             edge_coverage.enable_cmp_log(false);
