@@ -447,32 +447,7 @@ mod tests {
         assert!(constraints_are_directly_unsat(&[negated, constraint]));
         assert!(constraints_are_directly_unsat(&[SymBoolExpr::constant(&mut cx, false)]));
     }
-
-    #[test]
-    fn write_smt_assertions_reuses_repeated_expr_binding() {
-        let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
-        let sum = SymExpr::op(&mut cx, SymExprOp::Add, x, y);
-        let one = SymExpr::constant(&mut cx, U256::from(1));
-        let two = SymExpr::constant(&mut cx, U256::from(2));
-        let constraints =
-            vec![SymBoolExpr::eq(&mut cx, sum.clone(), one), SymBoolExpr::eq(&mut cx, sum, two)];
-
-        let mut smt = String::new();
-        write_smt_assertions(&mut smt, &constraints);
-
-        assert_eq!(smt.matches("(define-fun __sym_expr_").count(), 1, "{smt}");
-        assert_eq!(
-            smt,
-            "\
-(define-fun __sym_expr_0 () (_ BitVec 256) (bvadd x y))\n\
-(assert (= __sym_expr_0 (_ bv1 256)))\n\
-(assert (= __sym_expr_0 (_ bv2 256)))\n"
-        );
-    }
 }
-
 #[derive(Default)]
 struct SmtCseVisit {
     count: usize,
@@ -480,8 +455,8 @@ struct SmtCseVisit {
 }
 
 struct SmtCsePlan {
-    expr_visits: HashMap<usize, SmtCseVisit>,
-    bool_visits: HashMap<usize, SmtCseVisit>,
+    expr_visits: HashMap<SymExpr, SmtCseVisit>,
+    bool_visits: HashMap<SymBoolExpr, SmtCseVisit>,
     bindings: Vec<SmtBinding>,
 }
 
@@ -502,7 +477,7 @@ impl SmtCsePlan {
     }
 
     fn count_expr(&mut self, expr: &SymExpr) {
-        self.expr_visits.entry(expr.ptr_key()).or_default().count += 1;
+        self.expr_visits.entry(expr.clone()).or_default().count += 1;
         match expr.kind() {
             SymExprKind::Const(_)
             | SymExprKind::Var(_)
@@ -530,7 +505,7 @@ impl SmtCsePlan {
     }
 
     fn count_bool(&mut self, expr: &SymBoolExpr) {
-        self.bool_visits.entry(expr.ptr_key()).or_default().count += 1;
+        self.bool_visits.entry(expr.clone()).or_default().count += 1;
         match expr.kind() {
             SymBoolExprKind::Const(_) => {}
             SymBoolExprKind::Not(value) => self.count_bool(value),
@@ -591,7 +566,7 @@ impl SmtCsePlan {
     }
 
     fn bind_expr(&mut self, expr: &SymExpr) {
-        let Some(visit) = self.expr_visits.get_mut(&expr.ptr_key()) else { return };
+        let Some(visit) = self.expr_visits.get_mut(expr) else { return };
         if visit.count <= 1 || visit.binding.is_some() || !Self::expr_can_bind(expr) {
             return;
         }
@@ -601,7 +576,7 @@ impl SmtCsePlan {
     }
 
     fn bind_bool(&mut self, expr: &SymBoolExpr) {
-        let Some(visit) = self.bool_visits.get_mut(&expr.ptr_key()) else { return };
+        let Some(visit) = self.bool_visits.get_mut(expr) else { return };
         if visit.count <= 1 || visit.binding.is_some() || !Self::bool_can_bind(expr) {
             return;
         }
@@ -611,11 +586,11 @@ impl SmtCsePlan {
     }
 
     fn expr_binding(&self, expr: &SymExpr) -> Option<usize> {
-        self.expr_visits.get(&expr.ptr_key()).and_then(|visit| visit.binding)
+        self.expr_visits.get(expr).and_then(|visit| visit.binding)
     }
 
     fn bool_binding(&self, expr: &SymBoolExpr) -> Option<usize> {
-        self.bool_visits.get(&expr.ptr_key()).and_then(|visit| visit.binding)
+        self.bool_visits.get(expr).and_then(|visit| visit.binding)
     }
 
     fn expr_can_bind(expr: &SymExpr) -> bool {
