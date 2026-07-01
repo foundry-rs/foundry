@@ -51,6 +51,9 @@ use missing_inheritance::MISSING_INHERITANCE;
 mod event_fields;
 use event_fields::EVENT_FIELDS;
 
+mod todo;
+use todo::TODO;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -70,4 +73,5 @@ register_lints!(
     (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
     (MissingInheritance, project, (MISSING_INHERITANCE)),
     (EventFields, early, (EVENT_FIELDS)),
+    (Todo, early, (TODO)),
 );
