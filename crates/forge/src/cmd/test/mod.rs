@@ -987,6 +987,7 @@ impl TestArgs {
             config = self.load_config()?;
         }
 
+        let rerun_failures = self.rerun.then(|| last_run_failures(&config));
         let silent = shell::is_json();
         let temp_dir = TempDir::with_prefix("forge_brutalize_")?;
         let temp_path = temp_dir.path();
@@ -1006,7 +1007,7 @@ impl TestArgs {
         let project = config.project()?;
         let project_root = project.paths.root.clone();
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
-        let filter = self.filter(&config)?;
+        let filter = self.filter_with_rerun_failures(&config, rerun_failures)?;
 
         let (files, inline_config) =
             self.get_sources_to_compile(&config, &filter, None, replay_symbolic_artifact.as_ref())?;
@@ -2320,9 +2321,17 @@ impl TestArgs {
     /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
     /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
+        self.filter_with_rerun_failures(config, None)
+    }
+
+    fn filter_with_rerun_failures(
+        &self,
+        config: &Config,
+        loaded_rerun_failures: Option<LastRunFailures>,
+    ) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
         let rerun_failures = if self.rerun {
-            let failures = last_run_failures(config);
+            let failures = loaded_rerun_failures.unwrap_or_else(|| last_run_failures(config));
             filter.test_pattern = failures.test_pattern;
             failures.failures
         } else {

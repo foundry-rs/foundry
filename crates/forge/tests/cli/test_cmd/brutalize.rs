@@ -324,6 +324,54 @@ contract FilterTargetTest is Test {
     cmd.assert_success();
 });
 
+// --brutalize --rerun must read the original project's persisted failure list.
+forgetest_init!(brutalize_rerun_uses_original_failure_cache, |prj, cmd| {
+    prj.add_source(
+        "RerunTarget.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract RerunTarget {
+    function ok() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "RerunTarget.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract RerunTargetTest {
+    function test_fail() public pure {
+        require(false, "record me");
+    }
+
+    function test_pass() public pure {
+        require(true, "do not rerun");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure();
+    assert!(prj.root().join("cache/test-failures").exists());
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--brutalize", "--rerun"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("[FAIL: record me] test_fail()"), "{stdout}");
+    assert!(!stdout.contains("[PASS] test_pass()"), "{stdout}");
+});
+
 // --brutalize must preserve CLI/config overrides when compiling from the temp workspace.
 forgetest_init!(brutalize_preserves_fuzz_runs_override, |prj, cmd| {
     prj.add_source(
