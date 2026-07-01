@@ -1741,6 +1741,52 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 }
 
 #[test]
+fn path_state_child_replaces_frame_and_resets_local_loop_state() {
+    let mut cx = SymCx::new();
+    let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+    state.call_depth = 2;
+    state.next_symbol = 7;
+    state.loop_jumps.insert(3, 4);
+
+    let parent_stack = SymExpr::constant(&mut cx, U256::from(0xab));
+    state.stack.push(parent_stack).unwrap();
+
+    let constrained = SymExpr::var(&mut cx, "constrained");
+    let seven = SymExpr::constant(&mut cx, U256::from(7));
+    let constraint = SymBoolExpr::eq(&mut cx, constrained, seven);
+    state.constraints.push(constraint.clone());
+
+    let cached = Address::from([0x22; 20]);
+    state.world.set_nonce(cached, 9);
+
+    let calldata_bytes = SymBytes::empty(&mut cx);
+    let calldata = SymCalldata::from_bytes(&mut cx, calldata_bytes);
+    let callvalue = SymExpr::zero(&mut cx);
+    let child_address = Address::from([0x11; 20]);
+    let frame = CallFrame::new(
+        &mut cx,
+        child_address,
+        child_address,
+        child_address,
+        Address::ZERO,
+        callvalue,
+        false,
+        calldata,
+    );
+
+    let child = state.child(frame);
+
+    assert_eq!(child.call_depth, 3);
+    assert_eq!(child.next_symbol, 7);
+    assert_eq!(child.constraints, vec![constraint]);
+    assert_eq!(child.world.cached_nonce(cached), Some(9));
+    assert_eq!(child.address, child_address);
+    assert!(child.loop_jumps.is_empty());
+    assert_eq!(state.loop_jumps.get(&3), Some(&4));
+    assert!(child.stack.peek(0).is_err());
+}
+
+#[test]
 fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
