@@ -509,6 +509,16 @@ fn byte_concat_right_aligned_word_assembles_push_fragments() {
 }
 
 #[test]
+fn byte_concat_concrete_bytes_flattens_slices_with_padding() {
+    let mut cx = SymCx::new();
+    let left = SymBytes::concrete(&mut cx, vec![1, 2, 3]);
+    let right = SymBytes::concrete(&mut cx, vec![4, 5]);
+    let bytes = SymBytes::concat(&mut cx, [left, right]).slice_concrete(&mut cx, 2, 5);
+
+    assert_eq!(bytes.concrete_bytes(&mut cx, "test concrete bytes").unwrap(), vec![3, 4, 5, 0, 0]);
+}
+
+#[test]
 fn calldata_load_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let calldata_bytes =
@@ -1006,6 +1016,23 @@ fn memory_concrete_write_overrides_older_symbolic_write() {
         ("word".to_string(), U256::from(0x1234)),
     ]);
     assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x55));
+}
+
+#[test]
+fn memory_full_cover_read_returns_newest_concrete_slice() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let offset = SymExpr::var(&mut cx, "offset");
+    let word = SymExpr::var(&mut cx, "word");
+    memory.store_word_offset(&mut cx, offset, word);
+    let concrete = (0..64).collect::<Vec<_>>();
+    let concrete_bytes = SymBytes::concrete(&mut cx, concrete.clone());
+    memory.store_bytes(&mut cx, 0, concrete_bytes);
+
+    let loaded = memory.read_bytes(&mut cx, 16, 32);
+
+    assert_eq!(loaded.as_concrete_slice(), Some(&concrete[16..48]));
 }
 
 #[test]

@@ -207,9 +207,13 @@ impl SymBytes {
         }
         match self.kind() {
             SymBytesKind::Concrete(bytes) => {
-                let out = (0..len)
-                    .map(|idx| bytes.get(offset + idx).copied().unwrap_or_default())
-                    .collect();
+                let out = if offset.checked_add(len).is_some_and(|end| end <= bytes.len()) {
+                    bytes[offset..offset + len].to_vec()
+                } else {
+                    (0..len)
+                        .map(|idx| bytes.get(offset + idx).copied().unwrap_or_default())
+                        .collect()
+                };
                 Self::concrete(cx, out)
             }
             SymBytesKind::Exprs(bytes) => {
@@ -472,26 +476,103 @@ impl SymBytes {
         cx: &mut SymCx,
         reason: &'static str,
     ) -> Result<Vec<u8>, SymbolicError> {
-        match self.kind() {
-            SymBytesKind::Concrete(bytes) => Ok(bytes.clone()),
-            SymBytesKind::Exprs(bytes) => concrete_expr_bytes(bytes, reason),
-            SymBytesKind::Concat(values) => {
-                let mut out = Vec::with_capacity(self.len());
-                for bytes in values {
-                    out.extend(bytes.concrete_bytes(cx, reason)?);
-                }
-                Ok(out)
-            }
-            SymBytesKind::Slice { bytes, offset, len } => {
-                if let Some(offset) = offset.eval()
-                    && let Ok(offset) = usize::try_from(offset)
-                {
-                    bytes.slice_concrete(cx, offset, *len).concrete_bytes(cx, reason)
-                } else {
-                    concrete_expr_bytes(&self.materialize(cx), reason)
-                }
-            }
-            _ => concrete_expr_bytes(&self.materialize(cx), reason),
+        let mut out = Vec::with_capacity(self.len());
+        self.append_concrete_range(cx, 0, self.len(), &mut out, reason)?;
+        Ok(out)
+    }
+
+    fn append_concrete_range(
+        &self,
+        cx: &mut SymCx,
+        mut offset: usize,
+        mut len: usize,
+        out: &mut Vec<u8>,
+        reason: &'static str,
+    ) -> Result<(), SymbolicError> {
+        if len == 0 {
+            return Ok(());
         }
+
+        match self.kind() {
+            SymBytesKind::Concrete(bytes) => {
+                append_padded_concrete_slice(out, bytes, offset, len);
+                Ok(())
+            }
+            SymBytesKind::Exprs(bytes) => {
+                for idx in 0..len {
+                    let Some(byte) = offset.checked_add(idx).and_then(|idx| bytes.get(idx)) else {
+                        out.push(0);
+                        continue;
+                    };
+                    let Some(byte) = byte.as_const() else {
+                        return Err(SymbolicError::Unsupported(reason));
+                    };
+                    out.push(byte.to::<u8>());
+                }
+                Ok(())
+            }
+            SymBytesKind::Concat(values) => {
+                for bytes in values {
+                    if len == 0 {
+                        break;
+                    }
+
+                    let bytes_len = bytes.len();
+                    if offset >= bytes_len {
+                        offset -= bytes_len;
+                        continue;
+                    }
+
+                    let take = (bytes_len - offset).min(len);
+                    bytes.append_concrete_range(cx, offset, take, out, reason)?;
+                    len -= take;
+                    offset = 0;
+                }
+
+                if len != 0 {
+                    out.resize(out.len() + len, 0);
+                }
+                Ok(())
+            }
+            SymBytesKind::Slice { bytes, offset: base_offset, len: slice_len } => {
+                if offset >= *slice_len {
+                    out.resize(out.len() + len, 0);
+                    return Ok(());
+                }
+
+                let take = (*slice_len - offset).min(len);
+                if let Some(base_offset) = base_offset.eval()
+                    && let Ok(base_offset) = usize::try_from(base_offset)
+                    && let Some(offset) = base_offset.checked_add(offset)
+                {
+                    bytes.append_concrete_range(cx, offset, take, out, reason)?;
+                    if len > take {
+                        out.resize(out.len() + len - take, 0);
+                    }
+                } else {
+                    let bytes = self.slice_concrete(cx, offset, len).materialize(cx);
+                    out.extend(concrete_expr_bytes(&bytes, reason)?);
+                }
+                Ok(())
+            }
+            _ => {
+                let bytes = self.slice_concrete(cx, offset, len).materialize(cx);
+                out.extend(concrete_expr_bytes(&bytes, reason)?);
+                Ok(())
+            }
+        }
+    }
+}
+
+fn append_padded_concrete_slice(out: &mut Vec<u8>, bytes: &[u8], offset: usize, len: usize) {
+    if offset >= bytes.len() {
+        out.resize(out.len() + len, 0);
+        return;
+    }
+
+    let take = (bytes.len() - offset).min(len);
+    out.extend_from_slice(&bytes[offset..offset + take]);
+    if len > take {
+        out.resize(out.len() + len - take, 0);
     }
 }

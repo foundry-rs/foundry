@@ -262,6 +262,22 @@ impl SymMemory {
         }
         let end = offset.checked_add(size)?;
 
+        for write in self.symbolic_writes.iter().rev() {
+            let Some(write_offset) = write.concrete_offset() else {
+                break;
+            };
+            let Some(write_end) = write_offset.checked_add(write.bytes.len()) else {
+                break;
+            };
+            if write_end <= offset || end <= write_offset {
+                continue;
+            }
+            if write_offset <= offset && end <= write_end {
+                return Some(write.bytes.slice_concrete(cx, offset - write_offset, size));
+            }
+            break;
+        }
+
         let mut unresolved = vec![(offset, end)];
         let mut pieces = Vec::new();
 
