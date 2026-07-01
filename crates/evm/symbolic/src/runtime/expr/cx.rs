@@ -107,8 +107,8 @@ mod tests {
         let x = SymExpr::var(&mut cx, "x");
         let y = SymExpr::var(&mut cx, "y");
 
-        let first = SymExpr::binop(&mut cx, SymExprBinOp::Add, x.clone(), y.clone());
-        let second = SymExpr::binop(&mut cx, SymExprBinOp::Add, x, y);
+        let first = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
+        let second = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
 
         assert!(first.ptr_eq(&second));
     }
@@ -131,9 +131,9 @@ mod tests {
         let x = SymExpr::var(&mut cx, "x").low_byte(&mut cx);
         let low = SymExpr::constant(&mut cx, U256::from(0xff));
         let shift = SymExpr::constant(&mut cx, U256::from(8));
-        let high = SymExpr::binop(&mut cx, SymExprBinOp::Shl, x.clone(), shift.clone());
-        let word = SymExpr::binop(&mut cx, SymExprBinOp::Or, high, low);
-        let shifted = SymExpr::binop(&mut cx, SymExprBinOp::Shr, word, shift);
+        let high = SymExpr::binop(&mut cx, SymBinOp::Shl, x.clone(), shift.clone());
+        let word = SymExpr::binop(&mut cx, SymBinOp::Or, high, low);
+        let shifted = SymExpr::binop(&mut cx, SymBinOp::Shr, word, shift);
 
         assert_eq!(shifted, x);
     }
@@ -144,10 +144,10 @@ mod tests {
         let x = SymExpr::var(&mut cx, "x").low_byte(&mut cx);
         let y = SymExpr::var(&mut cx, "y").low_byte(&mut cx);
         let shift = SymExpr::constant(&mut cx, U256::from(8));
-        let high = SymExpr::binop(&mut cx, SymExprBinOp::Shl, x, shift);
-        let word = SymExpr::binop(&mut cx, SymExprBinOp::Or, high, y.clone());
+        let high = SymExpr::binop(&mut cx, SymBinOp::Shl, x, shift);
+        let word = SymExpr::binop(&mut cx, SymBinOp::Or, high, y.clone());
         let mask = SymExpr::constant(&mut cx, U256::from(0xff));
-        let masked = SymExpr::binop(&mut cx, SymExprBinOp::And, word, mask);
+        let masked = SymExpr::binop(&mut cx, SymBinOp::And, word, mask);
 
         assert_eq!(masked, y);
     }

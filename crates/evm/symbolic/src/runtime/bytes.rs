@@ -386,7 +386,7 @@ impl SymBytes {
 
                     let take = (bytes_len - offset).min(remaining);
                     let fragment = bytes.word_fragment_at(cx, offset, take, out_offset)?;
-                    out = SymExpr::binop(cx, SymExprBinOp::Or, out, fragment);
+                    out = SymExpr::binop(cx, SymBinOp::Or, out, fragment);
                     out_offset += take;
                     remaining -= take;
                     offset = 0;
@@ -418,11 +418,11 @@ impl SymBytes {
         let mask = mask_bits(U256::MAX, len * 8);
 
         let src_trailing_bits = SymExpr::constant(cx, U256::from(src_trailing_bits));
-        let expr = SymExpr::binop(cx, SymExprBinOp::Shr, word, src_trailing_bits);
+        let expr = SymExpr::binop(cx, SymBinOp::Shr, word, src_trailing_bits);
         let mask = SymExpr::constant(cx, mask);
-        let expr = SymExpr::binop(cx, SymExprBinOp::And, expr, mask);
+        let expr = SymExpr::binop(cx, SymBinOp::And, expr, mask);
         let dst_trailing_bits = SymExpr::constant(cx, U256::from(dst_trailing_bits));
-        Some(SymExpr::binop(cx, SymExprBinOp::Shl, expr, dst_trailing_bits))
+        Some(SymExpr::binop(cx, SymBinOp::Shl, expr, dst_trailing_bits))
     }
 
     pub(crate) fn materialize(&self, cx: &mut SymCx) -> Vec<SymExpr> {

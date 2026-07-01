@@ -308,25 +308,25 @@ impl PathState {
                 Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
             }
             SymExprKind::BinOp(op, left, right) => match op {
-                SymExprBinOp::Add => self
+                SymBinOp::Add => self
                     .expr_upper_bound_usize(left)?
                     .checked_add(self.expr_upper_bound_usize(right)?),
-                SymExprBinOp::Mul => self
+                SymBinOp::Mul => self
                     .expr_upper_bound_usize(left)?
                     .checked_mul(self.expr_upper_bound_usize(right)?),
-                SymExprBinOp::UDiv => {
+                SymBinOp::UDiv => {
                     let left = self.expr_upper_bound_usize(left)?;
                     match right.eval()? {
                         divisor if divisor.is_zero() => Some(0),
                         divisor => Some(left / usize::try_from(divisor).ok()?),
                     }
                 }
-                SymExprBinOp::URem => match right.eval() {
+                SymBinOp::URem => match right.eval() {
                     Some(divisor) if divisor.is_zero() => Some(0),
                     Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
                     None => self.expr_upper_bound_usize(left),
                 },
-                SymExprBinOp::And => right
+                SymBinOp::And => right
                     .eval()
                     .and_then(|value| usize::try_from(value).ok())
                     .or_else(|| left.eval().and_then(|value| usize::try_from(value).ok()))
@@ -335,18 +335,18 @@ impl PathState {
                             .or_else(|| self.expr_upper_bound_usize(right))
                             .map_or(mask, |bound| bound.min(mask))
                     }),
-                SymExprBinOp::Shr => {
+                SymBinOp::Shr => {
                     let left = self.expr_upper_bound_usize(left)?;
                     let shift = usize::try_from(right.eval()?).ok()?;
                     Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
                 }
-                SymExprBinOp::Sub
-                | SymExprBinOp::SDiv
-                | SymExprBinOp::SRem
-                | SymExprBinOp::Or
-                | SymExprBinOp::Xor
-                | SymExprBinOp::Shl
-                | SymExprBinOp::Sar => None,
+                SymBinOp::Sub
+                | SymBinOp::SDiv
+                | SymBinOp::SRem
+                | SymBinOp::Or
+                | SymBinOp::Xor
+                | SymBinOp::Shl
+                | SymBinOp::Sar => None,
             },
         };
 
@@ -388,7 +388,7 @@ impl PathState {
     pub(crate) fn bin_word(
         &mut self,
         cx: &mut SymCx,
-        op: SymExprBinOp,
+        op: SymBinOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
@@ -399,7 +399,7 @@ impl PathState {
     pub(crate) fn bin_word_div_zero_guard(
         &mut self,
         cx: &mut SymCx,
-        op: SymExprBinOp,
+        op: SymBinOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
@@ -448,9 +448,9 @@ impl PathState {
             SymExpr::constant(cx, result)
         } else {
             let expr = match kind {
-                ShiftKind::Shl => SymExpr::binop(cx, SymExprBinOp::Shl, value, shift),
-                ShiftKind::Shr => SymExpr::binop(cx, SymExprBinOp::Shr, value, shift),
-                ShiftKind::Sar => SymExpr::binop(cx, SymExprBinOp::Sar, value, shift),
+                ShiftKind::Shl => SymExpr::binop(cx, SymBinOp::Shl, value, shift),
+                ShiftKind::Shr => SymExpr::binop(cx, SymBinOp::Shr, value, shift),
+                ShiftKind::Sar => SymExpr::binop(cx, SymBinOp::Sar, value, shift),
             };
             expr.known_word().map(|word| SymExpr::constant(cx, word)).unwrap_or(expr)
         };
@@ -1692,8 +1692,8 @@ impl SymbolicWorld {
         }
         let from_balance = self.balance_word_for_address(cx, executor, from);
         let to_balance = self.balance_word_for_address(cx, executor, to);
-        let from_balance = SymExpr::binop(cx, SymExprBinOp::Sub, from_balance, value.clone());
-        let to_balance = SymExpr::binop(cx, SymExprBinOp::Add, to_balance, value);
+        let from_balance = SymExpr::binop(cx, SymBinOp::Sub, from_balance, value.clone());
+        let to_balance = SymExpr::binop(cx, SymBinOp::Add, to_balance, value);
         self.set_balance_word(from, from_balance);
         self.set_balance_word(to, to_balance);
     }
@@ -1764,7 +1764,7 @@ impl SymbolicWorld {
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
             let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
             let beneficiary_balance =
-                SymExpr::binop(cx, SymExprBinOp::Add, beneficiary_balance, balance);
+                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
         self.balances.insert(address, SymExpr::zero(cx));
@@ -1794,7 +1794,7 @@ impl SymbolicWorld {
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
             let beneficiary_balance =
-                SymExpr::binop(cx, SymExprBinOp::Add, beneficiary_balance, balance);
+                SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
             self.balances.insert(address, SymExpr::zero(cx));
         }

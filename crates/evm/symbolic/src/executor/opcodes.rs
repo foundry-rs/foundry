@@ -39,40 +39,40 @@ impl SymbolicExecutor {
             }
             opcode::STOP => return Ok(StepOutcome::Halt),
             opcode::ADD => {
-                state.bin_word(&mut self.cx, SymExprBinOp::Add)?;
+                state.bin_word(&mut self.cx, SymBinOp::Add)?;
             }
             opcode::SUB => {
-                state.bin_word(&mut self.cx, SymExprBinOp::Sub)?;
+                state.bin_word(&mut self.cx, SymBinOp::Sub)?;
             }
             opcode::MUL => {
-                state.bin_word(&mut self.cx, SymExprBinOp::Mul)?;
+                state.bin_word(&mut self.cx, SymBinOp::Mul)?;
             }
             opcode::EXP => {
                 state.exp_word(&mut self.cx)?;
             }
             opcode::DIV => {
-                state.bin_word_div_zero_guard(&mut self.cx, SymExprBinOp::UDiv)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymBinOp::UDiv)?;
             }
             opcode::SDIV => {
-                state.bin_word_div_zero_guard(&mut self.cx, SymExprBinOp::SDiv)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymBinOp::SDiv)?;
             }
             opcode::MOD => {
-                state.bin_word_div_zero_guard(&mut self.cx, SymExprBinOp::URem)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymBinOp::URem)?;
             }
             opcode::SMOD => {
-                state.bin_word_div_zero_guard(&mut self.cx, SymExprBinOp::SRem)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymBinOp::SRem)?;
             }
             opcode::ADDMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                state.stack.push(SymExpr::ternop(&mut self.cx, SymExprTernOp::AddMod, a, b, n))?;
+                state.stack.push(SymExpr::ternop(&mut self.cx, SymTernOp::AddMod, a, b, n))?;
             }
             opcode::MULMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                state.stack.push(SymExpr::ternop(&mut self.cx, SymExprTernOp::MulMod, a, b, n))?;
+                state.stack.push(SymExpr::ternop(&mut self.cx, SymTernOp::MulMod, a, b, n))?;
             }
             opcode::LT => {
                 state.cmp_word(&mut self.cx, SymCmpOp::Ult)?;
@@ -99,13 +99,13 @@ impl SymbolicExecutor {
                 state.stack.push(SymExpr::bool_word(&mut self.cx, value))?;
             }
             opcode::AND => {
-                state.bin_word(&mut self.cx, SymExprBinOp::And)?;
+                state.bin_word(&mut self.cx, SymBinOp::And)?;
             }
             opcode::OR => {
-                state.bin_word(&mut self.cx, SymExprBinOp::Or)?;
+                state.bin_word(&mut self.cx, SymBinOp::Or)?;
             }
             opcode::XOR => {
-                state.bin_word(&mut self.cx, SymExprBinOp::Xor)?;
+                state.bin_word(&mut self.cx, SymBinOp::Xor)?;
             }
             opcode::NOT => {
                 let value = state.stack.pop()?;
@@ -779,7 +779,7 @@ impl SymbolicExecutor {
         if offset.contains_gasleft() || size.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let end = SymExpr::binop(&mut self.cx, SymExprBinOp::Add, offset, size);
+        let end = SymExpr::binop(&mut self.cx, SymBinOp::Add, offset, size);
         let in_bounds =
             SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, end, state.return_data.len_expr());
         match in_bounds.as_const() {

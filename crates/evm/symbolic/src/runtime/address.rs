@@ -82,13 +82,13 @@ impl SymExpr {
         }
 
         match this.kind() {
-            SymExprKind::BinOp(SymExprBinOp::And, left, right) => {
+            SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 (right.is_address_mask() && left.address_expr_equivalent(alias))
                     || (left.is_address_mask() && right.address_expr_equivalent(alias))
             }
-            SymExprKind::BinOp(SymExprBinOp::Shr, value, shift) if shift.is_shift_96() => {
+            SymExprKind::BinOp(SymBinOp::Shr, value, shift) if shift.is_shift_96() => {
                 match value.kind() {
-                    SymExprKind::BinOp(SymExprBinOp::Shl, inner, inner_shift)
+                    SymExprKind::BinOp(SymBinOp::Shl, inner, inner_shift)
                         if inner_shift.is_shift_96() =>
                     {
                         inner.address_expr_equivalent(alias)
@@ -102,15 +102,15 @@ impl SymExpr {
 
     fn symbolic_address_canonical(&self) -> &Self {
         match self.kind() {
-            SymExprKind::BinOp(SymExprBinOp::And, left, right) if right.is_address_mask() => {
+            SymExprKind::BinOp(SymBinOp::And, left, right) if right.is_address_mask() => {
                 left.symbolic_address_canonical()
             }
-            SymExprKind::BinOp(SymExprBinOp::And, left, right) if left.is_address_mask() => {
+            SymExprKind::BinOp(SymBinOp::And, left, right) if left.is_address_mask() => {
                 right.symbolic_address_canonical()
             }
-            SymExprKind::BinOp(SymExprBinOp::Shr, value, shift) if shift.is_shift_96() => {
+            SymExprKind::BinOp(SymBinOp::Shr, value, shift) if shift.is_shift_96() => {
                 match value.kind() {
-                    SymExprKind::BinOp(SymExprBinOp::Shl, inner, inner_shift)
+                    SymExprKind::BinOp(SymBinOp::Shl, inner, inner_shift)
                         if inner_shift.is_shift_96() =>
                     {
                         inner.symbolic_address_canonical()

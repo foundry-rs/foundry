@@ -141,28 +141,28 @@ const fn cmp_op_key(op: SymCmpOp) -> u8 {
     }
 }
 
-const fn expr_binop_key(op: SymExprBinOp) -> u8 {
+const fn expr_binop_key(op: SymBinOp) -> u8 {
     match op {
-        SymExprBinOp::Add => 0,
-        SymExprBinOp::Sub => 1,
-        SymExprBinOp::Mul => 2,
-        SymExprBinOp::UDiv => 3,
-        SymExprBinOp::URem => 4,
-        SymExprBinOp::SDiv => 5,
-        SymExprBinOp::SRem => 6,
-        SymExprBinOp::And => 7,
-        SymExprBinOp::Or => 8,
-        SymExprBinOp::Xor => 9,
-        SymExprBinOp::Shl => 10,
-        SymExprBinOp::Shr => 11,
-        SymExprBinOp::Sar => 12,
+        SymBinOp::Add => 0,
+        SymBinOp::Sub => 1,
+        SymBinOp::Mul => 2,
+        SymBinOp::UDiv => 3,
+        SymBinOp::URem => 4,
+        SymBinOp::SDiv => 5,
+        SymBinOp::SRem => 6,
+        SymBinOp::And => 7,
+        SymBinOp::Or => 8,
+        SymBinOp::Xor => 9,
+        SymBinOp::Shl => 10,
+        SymBinOp::Shr => 11,
+        SymBinOp::Sar => 12,
     }
 }
 
-const fn expr_ternop_key(op: SymExprTernOp) -> u8 {
+const fn expr_ternop_key(op: SymTernOp) -> u8 {
     match op {
-        SymExprTernOp::AddMod => 0,
-        SymExprTernOp::MulMod => 1,
+        SymTernOp::AddMod => 0,
+        SymTernOp::MulMod => 1,
     }
 }
 
@@ -916,7 +916,7 @@ impl SymExpr {
     }
 
     fn add_with_operand<'a>(&'a self, operand: &Self) -> Option<(&'a Self, &'a Self)> {
-        let SymExprKind::BinOp(SymExprBinOp::Add, left, right) = self.kind() else { return None };
+        let SymExprKind::BinOp(SymBinOp::Add, left, right) = self.kind() else { return None };
         if left == operand {
             Some((left, right))
         } else if right == operand {
@@ -1072,7 +1072,7 @@ impl ConstraintContext {
         if denominator != zero_operand {
             return false;
         }
-        let SymExprKind::BinOp(SymExprBinOp::Mul, left, right) = numerator.kind() else {
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
             return false;
         };
         let other = if left == zero_operand {
@@ -1097,7 +1097,7 @@ impl ConstraintContext {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. }
             | SymExprKind::Not(_) => expr.unsigned_bits(),
-            SymExprKind::BinOp(SymExprBinOp::And, left, right) => {
+            SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
                     self.unsigned_bits(left).min(mask.bit_len())
                 } else if let Some(mask) = left.as_const() {
@@ -1106,13 +1106,13 @@ impl ConstraintContext {
                     256
                 }
             }
-            SymExprKind::BinOp(SymExprBinOp::Add, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
                 self.unsigned_bits(left).max(self.unsigned_bits(right)).saturating_add(1).min(256)
             }
-            SymExprKind::BinOp(SymExprBinOp::Mul, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
                 self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)).min(256)
             }
-            SymExprKind::BinOp(SymExprBinOp::UDiv, left, _) => self.unsigned_bits(left),
+            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => self.unsigned_bits(left),
             SymExprKind::Ite(_, left, right) => {
                 self.unsigned_bits(left).max(self.unsigned_bits(right))
             }
