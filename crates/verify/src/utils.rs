@@ -11,11 +11,7 @@ use foundry_block_explorers::{
     utils::lookup_compiler_version,
 };
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{
-    abi::encode_args,
-    compile::{PathOrContractInfo, ProjectCompiler},
-    find_matching_contract_artifact, ignore_metadata_hash, shell,
-};
+use foundry_common::{abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, shell};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
@@ -94,15 +90,6 @@ pub fn build_project(
 ) -> Result<CompactContractBytecode> {
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet(true);
-
-    if args.contract.path.is_some() {
-        let contract = PathOrContractInfo::ContractInfo(args.contract.clone());
-        let target_path = project.root().join(contract.path().unwrap());
-        let mut output = compiler.files([target_path.canonicalize()?]).compile(&project)?;
-        let artifact =
-            find_matching_contract_artifact(&mut output, &target_path, Some(&args.contract.name))?;
-        return Ok(artifact.into_contract_bytecode());
-    }
 
     let mut output = compiler.compile(&project)?;
 

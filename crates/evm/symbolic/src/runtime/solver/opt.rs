@@ -90,8 +90,8 @@ impl SymBoolExpr {
     }
 
     fn cache_key_node(expr: Self) -> Self {
-        match expr.into_kind() {
-            SymBoolExprKind::Not(value) => value.not(),
+        match expr.kind() {
+            SymBoolExprKind::Not(value) => value.clone().not(),
             SymBoolExprKind::And(values) => {
                 let mut conjuncts = Vec::new();
                 for value in values.iter().cloned() {
@@ -101,14 +101,14 @@ impl SymBoolExpr {
                 Self::and(conjuncts)
             }
             SymBoolExprKind::Eq(left, right) => {
-                let left = left.cache_key();
-                let right = right.cache_key();
+                let left = left.clone().cache_key();
+                let right = right.clone().cache_key();
                 if left <= right { Self::eq(left, right) } else { Self::eq(right, left) }
             }
             SymBoolExprKind::Cmp(op, left, right) => {
-                Self::cache_key_cmp(op, left.cache_key(), right.cache_key())
+                Self::cache_key_cmp(*op, left.clone().cache_key(), right.clone().cache_key())
             }
-            SymBoolExprKind::Const(value) => Self::constant(value),
+            SymBoolExprKind::Const(value) => Self::constant(*value),
         }
     }
 
@@ -155,37 +155,17 @@ impl SymExpr {
 
     fn cache_key_node(expr: Self) -> Self {
         match expr.kind() {
-            SymExprKind::Op(op, left, right) => {
-                if op.is_commutative() && right < left {
-                    let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
-                    Self::op(op, right, left)
-                } else {
-                    expr
-                }
+            SymExprKind::Op(op, left, right) if op.is_commutative() && right < left => {
+                Self::op(*op, right.clone(), left.clone())
             }
-            SymExprKind::AddMod { left, right, .. } => {
-                if right < left {
-                    let SymExprKind::AddMod { left, right, modulus } = expr.into_kind() else {
-                        unreachable!()
-                    };
-                    Self::addmod(right, left, modulus)
-                } else {
-                    expr
-                }
+            SymExprKind::AddMod { left, right, modulus } if right < left => {
+                Self::addmod(right.clone(), left.clone(), modulus.clone())
             }
-            SymExprKind::MulMod { left, right, .. } => {
-                if right < left {
-                    let SymExprKind::MulMod { left, right, modulus } = expr.into_kind() else {
-                        unreachable!()
-                    };
-                    Self::mulmod(right, left, modulus)
-                } else {
-                    expr
-                }
+            SymExprKind::MulMod { left, right, modulus } if right < left => {
+                Self::mulmod(right.clone(), left.clone(), modulus.clone())
             }
-            SymExprKind::Ite(_, _, _) => {
-                let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
-                Self::ite(cond.cache_key(), left, right)
+            SymExprKind::Ite(cond, left, right) => {
+                Self::ite(cond.clone().cache_key(), left.clone(), right.clone())
             }
             _ => expr,
         }
@@ -559,23 +539,25 @@ fn normalize_bool_node_for_solver(expr: SymBoolExpr) -> SymBoolExpr {
         return normalized;
     }
 
-    match expr.into_kind() {
-        SymBoolExprKind::Not(value) => value.not(),
+    match expr.kind() {
+        SymBoolExprKind::Not(value) => value.clone().not(),
         SymBoolExprKind::And(values) => SymBoolExpr::and(values.iter().cloned().collect()),
         SymBoolExprKind::Eq(left, right) => {
-            let normalized =
-                SymBoolExpr::eq(normalize_expr_for_solver(left), normalize_expr_for_solver(right));
+            let normalized = SymBoolExpr::eq(
+                normalize_expr_for_solver(left.clone()),
+                normalize_expr_for_solver(right.clone()),
+            );
             normalized.normalize_udiv_for_solver().unwrap_or(normalized)
         }
         SymBoolExprKind::Cmp(op, left, right) => {
             let normalized = SymBoolExpr::cmp(
-                op,
-                normalize_expr_for_solver(left),
-                normalize_expr_for_solver(right),
+                *op,
+                normalize_expr_for_solver(left.clone()),
+                normalize_expr_for_solver(right.clone()),
             );
             normalized.normalize_udiv_for_solver().unwrap_or(normalized)
         }
-        SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
+        SymBoolExprKind::Const(value) => SymBoolExpr::constant(*value),
     }
 }
 
@@ -704,18 +686,14 @@ fn normalize_expr_node_for_solver(expr: SymExpr) -> SymExpr {
     }
 
     match expr.kind() {
-        SymExprKind::Op(op, left, right)
-            if matches!(
-                op,
-                SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor
-            ) && right < left =>
-        {
-            let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
-            SymExpr::op(op, right, left)
-        }
-        SymExprKind::Ite(_, _, _) => {
-            let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
-            normalize_ite_expr_for_solver(cond, left, right)
+        SymExprKind::Op(
+            op
+            @ (SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor),
+            left,
+            right,
+        ) if right < left => SymExpr::op(*op, right.clone(), left.clone()),
+        SymExprKind::Ite(cond, left, right) => {
+            normalize_ite_expr_for_solver(cond.clone(), left.clone(), right.clone())
         }
         _ => expr,
     }

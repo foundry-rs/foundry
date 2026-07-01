@@ -9,7 +9,10 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
-        let pre_call_state = state.clone();
+        let pre_call_state = (!state.function_mocks.is_empty()
+            || !state.expected_calls.is_empty()
+            || !state.call_mocks.is_empty())
+        .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
         let gas = state.stack.pop()?;
         if gas.contains_gasleft() && !gas.is_raw_gasleft() {
@@ -90,43 +93,59 @@ impl SymbolicExecutor {
         let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
 
         if let Some(to) = target_address {
-            if self.branch_symbolic_function_mock_if_needed(
-                state,
-                worklist,
-                &pre_call_state,
-                call_pc,
-                to,
-                &call_input,
-            )? {
-                return Ok(StepOutcome::Forked);
+            if !state.function_mocks.is_empty() {
+                let pre_call_state =
+                    pre_call_state.as_ref().expect("function mocks require pre-call state");
+                if self.branch_symbolic_function_mock_if_needed(
+                    state,
+                    worklist,
+                    pre_call_state,
+                    call_pc,
+                    to,
+                    &call_input,
+                )? {
+                    return Ok(StepOutcome::Forked);
+                }
             }
-            let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
-            if self.branch_symbolic_call_value_if_needed(
-                state,
-                worklist,
-                &pre_call_state,
-                call_pc,
-                to,
-                code_address,
-                &value,
-                &gas,
-                &call_input,
-            )? {
-                return Ok(StepOutcome::Forked);
+            let code_address = if state.function_mocks.is_empty() {
+                to
+            } else {
+                self.function_mock_target(state, to, &call_input)?.unwrap_or(to)
+            };
+            if !state.expected_calls.is_empty() || !state.call_mocks.is_empty() {
+                let pre_call_state =
+                    pre_call_state.as_ref().expect("call mocks require pre-call state");
+                if self.branch_symbolic_call_value_if_needed(
+                    state,
+                    worklist,
+                    pre_call_state,
+                    call_pc,
+                    to,
+                    code_address,
+                    &value,
+                    &gas,
+                    &call_input,
+                )? {
+                    return Ok(StepOutcome::Forked);
+                }
             }
             let concrete_value = state.constrained_word(&value);
-            if self.branch_symbolic_call_match_if_needed(
-                state,
-                worklist,
-                &pre_call_state,
-                call_pc,
-                to,
-                code_address,
-                concrete_value,
-                &gas,
-                &call_input,
-            )? {
-                return Ok(StepOutcome::Forked);
+            if !state.expected_calls.is_empty() || !state.call_mocks.is_empty() {
+                let pre_call_state =
+                    pre_call_state.as_ref().expect("call mocks require pre-call state");
+                if self.branch_symbolic_call_match_if_needed(
+                    state,
+                    worklist,
+                    pre_call_state,
+                    call_pc,
+                    to,
+                    code_address,
+                    concrete_value,
+                    &gas,
+                    &call_input,
+                )? {
+                    return Ok(StepOutcome::Forked);
+                }
             }
             return self.call_concrete_target(
                 executor,
@@ -714,7 +733,7 @@ impl SymbolicExecutor {
             if in_size < 4 {
                 return Err(SymbolicError::Unsupported("short cheatcode CALL"));
             }
-            let in_offset = in_offset.into_usize("symbolic cheatcode CALL input offset")?;
+            let in_offset = in_offset.as_usize_or("symbolic cheatcode CALL input offset")?;
             if !self.assume_expr_at_least(state, &in_size_word, 4)? {
                 return Ok(StepOutcome::AssumeRejected);
             }

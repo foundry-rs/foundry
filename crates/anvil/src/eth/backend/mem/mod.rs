@@ -63,6 +63,7 @@ use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
 };
+use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
@@ -84,6 +85,7 @@ use alloy_rpc_types::{
         },
     },
 };
+use alloy_rpc_types_eth::{Bundle, EthCallResponse};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
@@ -819,6 +821,12 @@ impl<N: Network> Backend<N> {
         rx
     }
 
+    /// Returns the number of new-block listeners. Closed listeners are pruned lazily on the next
+    /// new block notification.
+    pub fn new_block_listeners_count(&self) -> usize {
+        self.new_block_listeners.lock().len()
+    }
+
     /// Notifies all `new_block_listeners` about the new block
     fn notify_on_new_block(&self, header: Header, hash: B256) {
         // cleanup closed notification streams first, if the channel is closed we can remove the
@@ -1311,7 +1319,11 @@ impl<N: Network> Backend<N> {
         let hardfork = self.tempo_hardfork();
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
-            TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
+            TempoBlockEnv {
+                inner: evm_env.block_env.clone(),
+                timestamp_millis_part: 0,
+                ..Default::default()
+            },
         );
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
@@ -1388,7 +1400,11 @@ impl<N: Network> Backend<N> {
                     .cfg_env
                     .clone()
                     .with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
-                TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
+                TempoBlockEnv {
+                    inner: evm_env.block_env.clone(),
+                    timestamp_millis_part: 0,
+                    ..Default::default()
+                },
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
@@ -1764,6 +1780,28 @@ impl<N: Network> Backend<N> {
         Ok(vec![])
     }
 
+    /// Returns a transaction trace at a given index.
+    pub async fn trace_get(
+        &self,
+        hash: B256,
+        indices: Vec<Index>,
+    ) -> Result<Option<LocalizedTransactionTrace>, BlockchainError> {
+        if indices.len() != 1 {
+            return Ok(None);
+        }
+
+        let index: usize = indices[0].into();
+        if let Some(traces) = self.mined_parity_trace_transaction(hash) {
+            return Ok(traces.into_iter().nth(index));
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.trace_get(hash, indices).await?);
+        }
+
+        Ok(None)
+    }
+
     /// Returns the traces for the given block
     pub async fn trace_block(
         &self,
@@ -1781,6 +1819,47 @@ impl<N: Network> Backend<N> {
         }
 
         Ok(vec![])
+    }
+
+    /// Executes a transaction call and returns requested parity trace results.
+    pub async fn trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        fee_details: FeeDetails,
+        trace_types: HashSet<TraceType>,
+        block_request: BlockRequest<FoundryTxEnvelope>,
+        block_id: BlockId,
+    ) -> Result<TraceResults, BlockchainError>
+    where
+        Self: TransactionValidator<FoundryTxEnvelope>,
+        N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+    {
+        if let BlockRequest::Number(number) = &block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(*number)
+        {
+            return Ok(fork.trace_call(request, trace_types, block_id).await?);
+        }
+
+        self.with_database_at(Some(block_request), |state, block| {
+            let cache_db = CacheDB::new(state);
+            let mut inspector =
+                TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
+            let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block);
+            let result = self.transact_with_inspector_ref(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                tx_env,
+                op_deposit,
+            )?;
+
+            inspector
+                .into_parity_builder()
+                .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                .map_err(Into::into)
+        })
+        .await?
     }
 
     /// Replays all transactions in a block and returns the requested traces for each transaction
@@ -1838,6 +1917,57 @@ impl<N: Network> Backend<N> {
                 .into_parity_builder()
                 .into_trace_results_with_state(&result, &trace_types, &cache_db)
                 .map_err(BlockchainError::from)
+        })
+        .await?
+    }
+
+    /// Traces calls sequentially against a shared in-memory state.
+    pub async fn trace_call_many(
+        &self,
+        calls: Vec<(WithOtherFields<TransactionRequest>, HashSet<TraceType>)>,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Result<Vec<TraceResults>, BlockchainError>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+    {
+        self.with_database_at(block_request, |state, block_env| {
+            let mut cache_db = CacheDB::new(state);
+            let mut results = Vec::with_capacity(calls.len());
+            let mut calls = calls.into_iter().peekable();
+
+            while let Some((request, trace_types)) = calls.next() {
+                let fee_details = FeeDetails::new(
+                    request.gas_price,
+                    request.max_fee_per_gas,
+                    request.max_priority_fee_per_gas,
+                    request.max_fee_per_blob_gas,
+                )?
+                .or_zero_fees();
+                let (evm_env, tx_env, op_deposit) =
+                    self.build_call_env(request, fee_details, block_env.clone());
+
+                let trace_config = TracingInspectorConfig::from_parity_config(&trace_types);
+                let mut inspector = TracingInspector::new(trace_config);
+                let result = self.transact_with_inspector_ref(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    tx_env,
+                    op_deposit,
+                )?;
+
+                let trace_result = inspector
+                    .into_parity_builder()
+                    .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                    .map_err(BlockchainError::from)?;
+                results.push(trace_result);
+
+                if calls.peek().is_some() {
+                    cache_db.commit(result.state);
+                }
+            }
+
+            Ok(results)
         })
         .await?
     }
@@ -3610,6 +3740,27 @@ where
         Ok(GethTrace::Default(Default::default()))
     }
 
+    /// Returns geth-style traces for all transactions in an RLP-encoded block.
+    pub async fn debug_trace_block(
+        &self,
+        rlp_block: Bytes,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let mut rlp = rlp_block.as_ref();
+        let block = Block::<FoundryTxEnvelope>::decode(&mut rlp).map_err(|err| {
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "failed to decode block: {err}"
+            )))
+        })?;
+        if !rlp.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "failed to decode block: trailing bytes".to_string(),
+            )));
+        }
+
+        self.debug_trace_block_by_hash(block.header.hash_slow(), opts).await
+    }
+
     /// Returns geth-style traces for all transactions in a block by hash.
     pub async fn debug_trace_block_by_hash(
         &self,
@@ -3967,7 +4118,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
             let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
-            if let Some((number, hash)) = fork_num_and_hash {
+            let selected_best_number = if let Some((number, hash)) = fork_num_and_hash {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
@@ -3985,11 +4136,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                             )))
                         })?;
                     self.blockchain.storage.write().best_hash = best_hash;
+                    best_number
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
                     self.blockchain.storage.write().best_number = number;
                     self.blockchain.storage.write().best_hash = hash;
+                    number
                 }
             } else {
                 self.blockchain.storage.write().best_number = best_number;
@@ -4007,6 +4160,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     })?;
 
                 self.blockchain.storage.write().best_hash = best_hash;
+                best_number
+            };
+
+            // Keep NUMBER aligned with the canonical local head chosen above. Arbitrum state dumps
+            // can intentionally keep BlockEnv.number distinct from the best L2 block number.
+            if !is_arbitrum(self.chain_id().to()) {
+                self.set_block_number(selected_best_number);
             }
         }
 
@@ -4090,6 +4250,76 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 }
 
 impl Backend<FoundryNetwork> {
+    /// Executes bundles of call requests and returns each call output.
+    pub async fn call_many(
+        &self,
+        bundles: Vec<Bundle<WithOtherFields<TransactionRequest>>>,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        state_override: Option<alloy_rpc_types::state::StateOverride>,
+    ) -> Result<Vec<Vec<EthCallResponse>>, BlockchainError> {
+        if bundles.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundles are empty.".to_string(),
+            )));
+        }
+
+        self.with_database_at(block_request, |state, block_env| {
+            let mut cache_db = CacheDB::new(state);
+            if let Some(state_override) = state_override {
+                apply_state_overrides(state_override, &mut cache_db)?;
+            }
+
+            let mut results = Vec::with_capacity(bundles.len());
+            for bundle in bundles {
+                let Bundle { transactions, block_override } = bundle;
+                let mut bundle_block_env = block_env.clone();
+                if let Some(block_override) = block_override {
+                    cache_db.apply_block_overrides(block_override, &mut bundle_block_env);
+                }
+
+                let mut bundle_results = Vec::with_capacity(transactions.len());
+                for request in transactions {
+                    let fee_details = FeeDetails::new(
+                        request.gas_price,
+                        request.max_fee_per_gas,
+                        request.max_priority_fee_per_gas,
+                        request.max_fee_per_blob_gas,
+                    )?
+                    .or_zero_fees();
+                    let (evm_env, tx_env, op_deposit) =
+                        self.build_call_env(request, fee_details, bundle_block_env.clone());
+
+                    let mut inspector = self.build_inspector();
+                    let ResultAndState { result, state } = self.transact_with_inspector_ref(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        tx_env,
+                        op_deposit,
+                    )?;
+
+                    let output = result.output().cloned().unwrap_or_default();
+                    let response = if result.is_success() {
+                        EthCallResponse { value: Some(output), error: None }
+                    } else {
+                        let error = RevertDecoder::new()
+                            .maybe_decode(&output, None)
+                            .unwrap_or_else(|| "execution failed".to_string());
+                        EthCallResponse { value: None, error: Some(error) }
+                    };
+
+                    cache_db.commit(state);
+                    bundle_results.push(response);
+                }
+
+                results.push(bundle_results);
+            }
+
+            Ok(results)
+        })
+        .await?
+    }
+
     /// Simulates the payload by executing the calls in request.
     pub async fn simulate(
         &self,
