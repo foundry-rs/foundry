@@ -1,4 +1,6 @@
 use super::*;
+use std::process::{Child, Output};
+use wait_timeout::ChildExt;
 
 mod hard_arith_fallback;
 mod monotonic_product;
@@ -25,9 +27,9 @@ pub(crate) enum SolverConfigError {
     /// The command string parsed to an empty argv.
     #[error("symbolic solver command is empty")]
     EmptyCommand,
-    /// The command string contains an unterminated quote character.
-    #[error("unterminated {0} quote in symbolic solver command")]
-    UnterminatedQuote(char),
+    /// The command string contains invalid shell quoting.
+    #[error("invalid shell quoting in symbolic solver command")]
+    InvalidShellQuoting,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -96,6 +98,9 @@ pub(crate) trait SymbolicSolver {
     /// Takes any captured verbose diagnostics collected by this backend.
     fn take_diagnostics(&mut self) -> Option<String>;
 
+    /// Clears cached expression keys tied to a previous symbolic context.
+    fn clear_context_caches(&mut self) {}
+
     /// Returns the number of satisfiable witnesses produced by local hard-arithmetic search.
     fn heuristic_witnesses(&self) -> usize {
         0
@@ -112,18 +117,30 @@ pub(crate) trait SymbolicSolver {
     /// Implementations should count this as one solver query and map solver `unknown`
     /// or timeout responses into [`SymbolicError::SolverUnknown`] or
     /// [`SymbolicError::Solver`], as appropriate.
-    fn is_sat(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError>;
+    fn is_sat(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError>;
 
     /// Returns branch satisfiability, allowing branch-only hard-arithmetic shortcuts.
-    fn is_sat_branch(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
-        self.is_sat(constraints)
+    fn is_sat_branch(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        self.is_sat(cx, constraints)
     }
 
     /// Returns a concrete model for all symbolic variables constrained by the path.
     ///
     /// The executor uses the returned variable assignments to materialize ABI
     /// arguments, calldata, and invariant sequences for concrete replay.
-    fn model(&mut self, constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError>;
+    fn model(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<SymbolicModel, SymbolicError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,6 +294,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
     }
 
+    fn clear_context_caches(&mut self) {
+        self.sat_cache.clear();
+        self.model_cache.clear();
+    }
+
     /// Returns how many validated local hard-arithmetic witnesses this solver used.
     fn heuristic_witnesses(&self) -> usize {
         self.heuristic_witnesses
@@ -301,22 +323,34 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         Err(SymbolicError::Solver(errors.join("; ")))
     }
 
-    fn is_sat(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(constraints, false)
+    fn is_sat(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        self.is_sat_inner(cx, constraints, false)
     }
 
     /// Returns whether a branch is feasible.
-    fn is_sat_branch(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(constraints, true)
+    fn is_sat_branch(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        self.is_sat_inner(cx, constraints, true)
     }
 
-    fn model(&mut self, constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError> {
+    fn model(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<SymbolicModel, SymbolicError> {
         self.model_queries += 1;
         if constraints.iter().any(SymBoolExpr::contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let smt_constraints = normalize_constraints_for_solver(constraints);
-        let cache_key = constraint_cache_key(&smt_constraints);
+        let smt_constraints = normalize_constraints_for_solver(cx, constraints);
+        let cache_key = constraint_cache_key(cx, &smt_constraints);
 
         if self.sat_cache.get(&cache_key) == Some(&false) {
             self.model_cache.remove(&cache_key);
@@ -412,6 +446,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 impl SmtLibSubprocessSolver {
     fn is_sat_inner(
         &mut self,
+        cx: &mut SymCx,
         constraints: &[SymBoolExpr],
         defer_hard_arith_without_witness: bool,
     ) -> Result<bool, SymbolicError> {
@@ -419,8 +454,8 @@ impl SmtLibSubprocessSolver {
         if constraints.iter().any(SymBoolExpr::contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let smt_constraints = normalize_constraints_for_solver(constraints);
-        let cache_key = constraint_cache_key(&smt_constraints);
+        let smt_constraints = normalize_constraints_for_solver(cx, constraints);
+        let cache_key = constraint_cache_key(cx, &smt_constraints);
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
             trace!(result, "is_sat: normalized cache hit");
@@ -435,16 +470,16 @@ impl SmtLibSubprocessSolver {
         if defer_hard_arith_without_witness
             && let Some((condition, base)) = constraints.split_last()
             && {
-                let normalized_base = normalize_constraints_for_solver(base);
-                let base_key = constraint_cache_key(&normalized_base);
+                let normalized_base = normalize_constraints_for_solver(cx, base);
+                let base_key = constraint_cache_key(cx, &normalized_base);
                 self.sat_cache.get(&base_key) == Some(&true)
             }
             && {
                 let mut complement = Vec::with_capacity(constraints.len());
                 complement.extend(base.iter().cloned());
-                complement.push(condition.clone().not());
-                let normalized_complement = normalize_constraints_for_solver(&complement);
-                let complement_key = constraint_cache_key(&normalized_complement);
+                complement.push(condition.clone().not(cx));
+                let normalized_complement = normalize_constraints_for_solver(cx, &complement);
+                let complement_key = constraint_cache_key(cx, &normalized_complement);
                 self.has_cached_unsat_subset(&complement_key)
             }
         {
@@ -464,7 +499,7 @@ impl SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
-        if constraints_are_directly_unsat(&smt_constraints) {
+        if constraints_are_directly_unsat(cx, &smt_constraints) {
             trace!("is_sat: direct contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(false);
@@ -873,7 +908,7 @@ pub(crate) fn solver_command_for_portfolio_entry(
 
 /// Splits a shell-like solver command into argv parts.
 pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, SolverConfigError> {
-    let parts = split_quoted_args(command).map_err(SolverConfigError::UnterminatedQuote)?;
+    let parts = shlex::split(command).ok_or(SolverConfigError::InvalidShellQuoting)?;
     if parts.is_empty() {
         return Err(SolverConfigError::EmptyCommand);
     }
@@ -1418,7 +1453,7 @@ fn run_solver_process(
     timeout: Option<u32>,
     cancel: &AtomicBool,
 ) -> SolverProcessOutcome {
-    let mut child = match Command::new(&command.program)
+    let child = match Command::new(&command.program)
         .args(&command.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1433,89 +1468,89 @@ fn run_solver_process(
             ));
         }
     };
-    let stdout_reader = child.stdout.take().map(read_pipe_to_string);
-    let stderr_reader = child.stderr.take().map(read_pipe_to_string);
+    let mut child = SolverChild::new(child);
 
-    if let Some(mut stdin) = child.stdin.take()
+    if let Some(mut stdin) = child.child_mut().stdin.take()
         && let Err(err) = stdin.write_all(smt.as_bytes())
     {
-        kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
         return SolverProcessOutcome::Error(format!("failed to write solver query: {err}"));
     }
 
-    let deadline = timeout
-        .filter(|seconds| *seconds > 0)
-        .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
-    let mut backoff = INITIAL_SOLVER_POLL_BACKOFF;
-    let status = loop {
+    let started_at = Instant::now();
+    let timeout =
+        timeout.filter(|seconds| *seconds > 0).map(|seconds| Duration::from_secs(seconds.into()));
+    loop {
         if cancel.load(Ordering::SeqCst) {
-            kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
             return SolverProcessOutcome::Cancelled;
         }
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
-            return SolverProcessOutcome::Unknown;
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                thread::sleep(backoff);
-                backoff = (backoff * 2).min(MAX_SOLVER_POLL_BACKOFF);
-            }
-            Err(err) => {
-                kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
-                return SolverProcessOutcome::Error(format!("failed to read solver output: {err}"));
-            }
-        }
-    };
 
-    let stdout = match join_pipe_output(stdout_reader, "stdout") {
-        Ok(stdout) => stdout,
-        Err(err) => return SolverProcessOutcome::Error(err),
+        let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
+            return SolverProcessOutcome::Unknown;
+        };
+
+        match child.child_mut().wait_timeout(wait) {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(err) => {
+                return SolverProcessOutcome::Error(format!(
+                    "failed to wait for solver process: {err}"
+                ));
+            }
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(output) => output,
+        Err(err) => {
+            return SolverProcessOutcome::Error(format!("failed to read solver output: {err}"));
+        }
     };
-    let stderr = match join_pipe_output(stderr_reader, "stderr") {
-        Ok(stderr) => stderr,
-        Err(err) => return SolverProcessOutcome::Error(err),
-    };
-    if !status.success() {
-        return SolverProcessOutcome::Error(solver_exit_error(command, status, &stdout, &stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        return SolverProcessOutcome::Error(solver_exit_error(
+            command,
+            output.status,
+            &stdout,
+            &stderr,
+        ));
     }
     SolverProcessOutcome::Output(stdout)
 }
 
-fn read_pipe_to_string<R>(mut pipe: R) -> thread::JoinHandle<Result<String, String>>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let mut output = Vec::new();
-        pipe.read_to_end(&mut output)
-            .map_err(|err| format!("failed to read solver output: {err}"))?;
-        Ok(String::from_utf8_lossy(&output).to_string())
-    })
+fn solver_wait_duration(elapsed: Duration, timeout: Option<Duration>) -> Option<Duration> {
+    let Some(timeout) = timeout else {
+        return Some(SOLVER_CANCEL_CHECK_INTERVAL);
+    };
+    let remaining = timeout.checked_sub(elapsed)?;
+    if remaining.is_zero() { None } else { Some(remaining.min(SOLVER_CANCEL_CHECK_INTERVAL)) }
 }
 
-fn join_pipe_output(
-    reader: Option<thread::JoinHandle<Result<String, String>>>,
-    stream: &str,
-) -> Result<String, String> {
-    match reader {
-        Some(reader) => reader.join().map_err(|_| format!("solver {stream} reader panicked"))?,
-        None => Ok(String::new()),
+struct SolverChild {
+    child: Option<Child>,
+}
+
+impl SolverChild {
+    const fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    const fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("solver child exists")
+    }
+
+    fn wait_with_output(mut self) -> std::io::Result<Output> {
+        self.child.take().expect("solver child exists").wait_with_output()
     }
 }
 
-fn kill_and_reap_solver_process(
-    child: &mut std::process::Child,
-    stdout_reader: Option<thread::JoinHandle<Result<String, String>>>,
-    stderr_reader: Option<thread::JoinHandle<Result<String, String>>>,
-) {
-    // This only terminates the direct child. Wrapper commands should forward termination and close
-    // inherited pipes so descendant solver processes do not outlive cancelled queries.
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = join_pipe_output(stdout_reader, "stdout");
-    let _ = join_pipe_output(stderr_reader, "stderr");
+impl Drop for SolverChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 fn solver_exit_error(

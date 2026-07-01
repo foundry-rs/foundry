@@ -1,6 +1,6 @@
 use alloy_json_abi::Function;
 use clap::Parser;
-use foundry_common::{TestFilter, TestFunctionExt};
+use foundry_common::{TestFilter, TestFunctionKind};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{Config, filter::GlobMatcher};
 use serde::{Deserialize, Serialize};
@@ -249,9 +249,14 @@ impl TestFilter for ProjectPathsAwareFilter {
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
     }
 
-    fn matches_test_function_in_contract(&self, contract_id: &str, func: &Function) -> bool {
+    fn matches_test_function_kind_in_contract(
+        &self,
+        contract_id: &str,
+        func: &Function,
+        kind: TestFunctionKind,
+    ) -> bool {
         if let Some(failures) = &self.rerun_failures {
-            if !func.is_any_test() || !self.args_filter.matches_test(&func.signature()) {
+            if !kind.is_any_test() || !self.args_filter.matches_test(&func.signature()) {
                 return false;
             }
             let signature = func.signature();
@@ -264,7 +269,7 @@ impl TestFilter for ProjectPathsAwareFilter {
             // TODO(@mablr): let exact bare-name fuzz filters such as `^testFoo$`
             // match `testFoo(uint256)` when running `forge fuzz`, while preserving signature
             // matching for overloaded tests.
-            func.is_any_test() && self.args_filter.matches_test(&func.signature())
+            kind.is_any_test() && self.args_filter.matches_test(&func.signature())
         }
     }
 }

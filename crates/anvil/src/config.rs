@@ -60,9 +60,9 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tempo_chainspec::{
-    hardfork::TempoHardfork,
-    spec::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
+use tempo_hardfork::{
+    TempoHardfork,
+    constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
 };
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
