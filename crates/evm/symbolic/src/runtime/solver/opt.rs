@@ -647,35 +647,54 @@ impl ConstraintContext {
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
         match constraint.kind() {
-            SymBoolExprKind::Cmp(op, left, right) => {
-                match (*op, left.as_const(), right.as_const()) {
-                    (SymCmpOp::Eq, _, Some(value)) => Some((left, value)),
-                    (SymCmpOp::Eq, Some(value), _) => Some((right, value)),
-                    (SymCmpOp::Ult, _, Some(bound)) => {
-                        (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
-                    }
-                    (SymCmpOp::Ule, _, Some(bound)) => Some((left, bound)),
-                    (SymCmpOp::Ugt, Some(bound), _) => {
-                        (!bound.is_zero()).then(|| (right, bound - U256::from(1)))
-                    }
-                    (SymCmpOp::Uge, Some(bound), _) => Some((right, bound)),
+            SymBoolExprKind::Cmp(op, left, right) => match *op {
+                SymCmpOp::Eq => match (left.as_const(), right.as_const()) {
+                    (_, Some(value)) => Some((left, value)),
+                    (Some(value), _) => Some((right, value)),
                     _ => None,
-                }
-            }
+                },
+                SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
+                    (_, Some(bound)) => (!bound.is_zero()).then(|| (left, bound - U256::from(1))),
+                    _ => None,
+                },
+                SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
+                    (_, Some(bound)) => Some((left, bound)),
+                    _ => None,
+                },
+                SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
+                    (Some(bound), _) => (!bound.is_zero()).then(|| (right, bound - U256::from(1))),
+                    _ => None,
+                },
+                SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
+                    (Some(bound), _) => Some((right, bound)),
+                    _ => None,
+                },
+                SymCmpOp::Slt | SymCmpOp::Sgt => None,
+            },
             SymBoolExprKind::Not(value) => match value.kind() {
-                SymBoolExprKind::Cmp(op, left, right) => {
-                    match (*op, left.as_const(), right.as_const()) {
-                        (SymCmpOp::Ugt, _, Some(bound)) => Some((left, bound)),
-                        (SymCmpOp::Uge, _, Some(bound)) => {
+                SymBoolExprKind::Cmp(op, left, right) => match *op {
+                    SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
+                        (_, Some(bound)) => Some((left, bound)),
+                        _ => None,
+                    },
+                    SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
+                        (_, Some(bound)) => {
                             (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
                         }
-                        (SymCmpOp::Ult, Some(bound), _) => Some((right, bound)),
-                        (SymCmpOp::Ule, Some(bound), _) => {
+                        _ => None,
+                    },
+                    SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
+                        (Some(bound), _) => Some((right, bound)),
+                        _ => None,
+                    },
+                    SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
+                        (Some(bound), _) => {
                             (!bound.is_zero()).then(|| (right, bound - U256::from(1)))
                         }
                         _ => None,
-                    }
-                }
+                    },
+                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
+                },
                 _ => None,
             },
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => None,
@@ -865,40 +884,40 @@ impl SymBoolExpr {
         left: &SymExpr,
         right: &SymExpr,
     ) -> Option<Self> {
-        match (op, left.as_const(), right.as_const()) {
-            // `a > 0 => a != 0`.
-            (SymCmpOp::Ugt, _, Some(value)) if value.is_zero() => {
-                left.normalize_ne_zero_for_solver(cx)
-            }
-            // `a >= 1 => a != 0`.
-            (SymCmpOp::Uge, _, Some(value)) if value == U256::from(1) => {
-                left.normalize_ne_zero_for_solver(cx)
-            }
-            // `a <= 0 => a == 0`.
-            (SymCmpOp::Ule, _, Some(value)) if value.is_zero() => {
-                left.normalize_eq_zero_for_solver(cx)
-            }
-            // `a < 1 => a == 0`.
-            (SymCmpOp::Ult, _, Some(value)) if value == U256::from(1) => {
-                left.normalize_eq_zero_for_solver(cx)
-            }
-            // `0 < a => a != 0`.
-            (SymCmpOp::Ult, Some(value), _) if value.is_zero() => {
-                right.normalize_ne_zero_for_solver(cx)
-            }
-            // `1 <= a => a != 0`.
-            (SymCmpOp::Ule, Some(value), _) if value == U256::from(1) => {
-                right.normalize_ne_zero_for_solver(cx)
-            }
-            // `0 >= a => a == 0`.
-            (SymCmpOp::Uge, Some(value), _) if value.is_zero() => {
-                right.normalize_eq_zero_for_solver(cx)
-            }
-            // `1 > a => a == 0`.
-            (SymCmpOp::Ugt, Some(value), _) if value == U256::from(1) => {
-                right.normalize_eq_zero_for_solver(cx)
-            }
-            _ => None,
+        match op {
+            SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
+                // `a > 0 => a != 0`.
+                (_, Some(value)) if value.is_zero() => left.normalize_ne_zero_for_solver(cx),
+                // `1 > a => a == 0`.
+                (Some(value), _) if value == U256::from(1) => {
+                    right.normalize_eq_zero_for_solver(cx)
+                }
+                _ => None,
+            },
+            SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
+                // `a >= 1 => a != 0`.
+                (_, Some(value)) if value == U256::from(1) => left.normalize_ne_zero_for_solver(cx),
+                // `0 >= a => a == 0`.
+                (Some(value), _) if value.is_zero() => right.normalize_eq_zero_for_solver(cx),
+                _ => None,
+            },
+            SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
+                // `a <= 0 => a == 0`.
+                (_, Some(value)) if value.is_zero() => left.normalize_eq_zero_for_solver(cx),
+                // `1 <= a => a != 0`.
+                (Some(value), _) if value == U256::from(1) => {
+                    right.normalize_ne_zero_for_solver(cx)
+                }
+                _ => None,
+            },
+            SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
+                // `a < 1 => a == 0`.
+                (_, Some(value)) if value == U256::from(1) => left.normalize_eq_zero_for_solver(cx),
+                // `0 < a => a != 0`.
+                (Some(value), _) if value.is_zero() => right.normalize_ne_zero_for_solver(cx),
+                _ => None,
+            },
+            SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
         }
     }
 }
