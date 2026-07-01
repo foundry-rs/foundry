@@ -1,13 +1,14 @@
 //! Debugger context and event handler implementation.
 
+use super::storage::{find_storage_access, hex_u256};
 use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{Address, U256, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_tui::TuiApp;
 use ratatui::Frame;
-use revm::bytecode::opcode::{self, OpCode};
-use revm_inspectors::tracing::types::{CallKind, CallTraceStep, StorageChangeReason};
+use revm::bytecode::opcode::OpCode;
+use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -682,13 +683,13 @@ impl TUIContext<'_> {
             return;
         };
 
-        self.current_step = access.step_index;
+        self.current_step = access.step_index();
         self.scroll_memory_to_current_write();
         self.set_info(format!(
             "Jumped to {} at PC 0x{:x} ({})",
             access.describe(),
-            access.pc,
-            access.pc
+            access.pc(),
+            access.pc()
         ));
     }
 
@@ -979,41 +980,6 @@ struct PcTarget {
     scope: PcTargetScope,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StorageAccessKind {
-    Sload,
-    Sstore,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct StorageAccess {
-    step_index: usize,
-    pc: usize,
-    kind: StorageAccessKind,
-    slot: U256,
-    value: U256,
-    previous: Option<U256>,
-}
-
-impl StorageAccess {
-    fn describe(self) -> String {
-        let op = match self.kind {
-            StorageAccessKind::Sload => "SLOAD",
-            StorageAccessKind::Sstore => "SSTORE",
-        };
-
-        match (self.kind, self.previous) {
-            (StorageAccessKind::Sstore, Some(previous)) => format!(
-                "storage {op} slot {}: {} -> {}",
-                hex_u256(self.slot),
-                hex_u256(previous),
-                hex_u256(self.value)
-            ),
-            _ => format!("storage {op} slot {} = {}", hex_u256(self.slot), hex_u256(self.value)),
-        }
-    }
-}
-
 fn parse_pc_candidates(input: &str) -> Result<Vec<PcCandidate>, String> {
     let input = input.trim();
     if input.is_empty() {
@@ -1114,65 +1080,6 @@ fn parse_storage_slot(input: &str) -> Result<U256, String> {
 
 fn invalid_storage_slot(input: &str) -> String {
     format!("Invalid storage slot `{input}`; use hex 0x20/20 or decimal d:32")
-}
-
-fn find_storage_access(
-    steps: &[CallTraceStep],
-    current_step: usize,
-    slot: U256,
-) -> Option<StorageAccess> {
-    if steps.is_empty() {
-        return None;
-    }
-
-    let current = current_step.min(steps.len() - 1);
-    storage_access_at(steps, current).filter(|access| access.slot == slot).or_else(|| {
-        steps
-            .iter()
-            .enumerate()
-            .skip(current.saturating_add(1))
-            .find_map(|(i, _)| storage_access_at(steps, i).filter(|access| access.slot == slot))
-            .or_else(|| {
-                steps[..current].iter().enumerate().rev().find_map(|(i, _)| {
-                    storage_access_at(steps, i).filter(|access| access.slot == slot)
-                })
-            })
-    })
-}
-
-fn storage_access_at(steps: &[CallTraceStep], step_index: usize) -> Option<StorageAccess> {
-    let step = steps.get(step_index)?;
-    if let Some(change) = step.storage_change.as_deref() {
-        let kind = match change.reason {
-            StorageChangeReason::SLOAD => StorageAccessKind::Sload,
-            StorageChangeReason::SSTORE => StorageAccessKind::Sstore,
-        };
-        return Some(StorageAccess {
-            step_index,
-            pc: step.pc,
-            kind,
-            slot: change.key,
-            value: change.value,
-            previous: change.had_value,
-        });
-    }
-
-    if step.op.get() == opcode::SLOAD {
-        return Some(StorageAccess {
-            step_index,
-            pc: step.pc,
-            kind: StorageAccessKind::Sload,
-            slot: step.stack.as_deref()?.last().copied()?,
-            value: steps.get(step_index.checked_add(1)?)?.stack.as_deref()?.last().copied()?,
-            previous: None,
-        });
-    }
-
-    None
-}
-
-fn hex_u256(value: U256) -> String {
-    format!("{value:#x}")
 }
 
 fn find_pc_target(
@@ -1318,7 +1225,7 @@ mod tests {
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::ContractSources;
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::StorageChange;
+    use revm_inspectors::tracing::types::{StorageChange, StorageChangeReason};
 
     fn step(pc: usize) -> CallTraceStep {
         step_with_stack(pc, OpCode::STOP, &[])
