@@ -1112,11 +1112,11 @@ impl SymbolicExecutor {
             parents.push_back(parent);
         }
 
-        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
+        let Some(first) = self.pop_batch(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        spill_batch(parents, worklist, self.config.exploration_order);
+        self.spill_batch(parents, worklist);
         Ok(StepOutcome::Continue)
     }
 
@@ -1468,18 +1468,18 @@ impl SymbolicExecutor {
             )? {
                 StepOutcome::Continue => {
                     parents.push_back(branch);
-                    spill_batch(branch_worklist, &mut parents, self.config.exploration_order);
+                    self.spill_batch(branch_worklist, &mut parents);
                 }
                 StepOutcome::AssumeRejected => {}
                 outcome => return Ok(outcome),
             }
         }
 
-        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
+        let Some(first) = self.pop_batch(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        spill_batch(parents, worklist, self.config.exploration_order);
+        self.spill_batch(parents, worklist);
         Ok(StepOutcome::Continue)
     }
 }

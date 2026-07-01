@@ -6,6 +6,10 @@ fn empty_state(cx: &mut SymCx) -> PathState {
     PathState::new(cx, Address::ZERO, Address::ZERO, U256::ZERO, calldata, false)
 }
 
+fn executor_with_exploration_order(order: SymbolicExplorationOrder) -> SymbolicExecutor {
+    SymbolicExecutor::new(SymbolicConfig { exploration_order: order, ..Default::default() })
+}
+
 fn symbolic_calldata_variants(
     cx: &mut SymCx,
     function: &Function,
@@ -57,54 +61,34 @@ fn precompile_number_respects_active_spec() {
 
 #[test]
 fn pop_worklist_respects_exploration_order() {
+    let bfs = executor_with_exploration_order(SymbolicExplorationOrder::Bfs);
     let mut bfs_worklist = VecDeque::from([1, 2, 3]);
-    assert_eq!(
-        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
-        Some(1)
-    );
-    assert_eq!(
-        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
-        Some(2)
-    );
+    assert_eq!(bfs.pop_batch(&mut bfs_worklist), Some(1));
+    assert_eq!(bfs.pop_batch(&mut bfs_worklist), Some(2));
 
+    let dfs = executor_with_exploration_order(SymbolicExplorationOrder::Dfs);
     let mut dfs_worklist = VecDeque::from([1, 2, 3]);
-    assert_eq!(
-        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
-        Some(3)
-    );
-    assert_eq!(
-        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
-        Some(2)
-    );
+    assert_eq!(dfs.pop_batch(&mut dfs_worklist), Some(3));
+    assert_eq!(dfs.pop_batch(&mut dfs_worklist), Some(2));
 }
 
 #[test]
 fn local_batches_respect_exploration_order() {
+    let bfs = executor_with_exploration_order(SymbolicExplorationOrder::Bfs);
     let mut bfs_batch = VecDeque::from([1, 2, 3]);
     let mut bfs_worklist = VecDeque::from([10]);
-    assert_eq!(super::executor::pop_batch(&mut bfs_batch, SymbolicExplorationOrder::Bfs), Some(1));
-    super::executor::spill_batch(bfs_batch, &mut bfs_worklist, SymbolicExplorationOrder::Bfs);
-    assert_eq!(
-        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
-        Some(10)
-    );
-    assert_eq!(
-        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
-        Some(2)
-    );
+    assert_eq!(bfs.pop_batch(&mut bfs_batch), Some(1));
+    bfs.spill_batch(bfs_batch, &mut bfs_worklist);
+    assert_eq!(bfs.pop_batch(&mut bfs_worklist), Some(10));
+    assert_eq!(bfs.pop_batch(&mut bfs_worklist), Some(2));
 
+    let dfs = executor_with_exploration_order(SymbolicExplorationOrder::Dfs);
     let mut dfs_batch = VecDeque::from([1, 2, 3]);
     let mut dfs_worklist = VecDeque::from([10]);
-    assert_eq!(super::executor::pop_batch(&mut dfs_batch, SymbolicExplorationOrder::Dfs), Some(3));
-    super::executor::spill_batch(dfs_batch, &mut dfs_worklist, SymbolicExplorationOrder::Dfs);
-    assert_eq!(
-        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
-        Some(2)
-    );
-    assert_eq!(
-        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
-        Some(1)
-    );
+    assert_eq!(dfs.pop_batch(&mut dfs_batch), Some(3));
+    dfs.spill_batch(dfs_batch, &mut dfs_worklist);
+    assert_eq!(dfs.pop_batch(&mut dfs_worklist), Some(2));
+    assert_eq!(dfs.pop_batch(&mut dfs_worklist), Some(1));
 }
 
 #[test]
