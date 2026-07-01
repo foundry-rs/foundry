@@ -172,6 +172,8 @@ pub struct EdgeCovInspector {
     /// Comparison operand log for CmpLog-style guided fuzzing.
     cmp_log: Option<Vec<CmpOperands>>,
     cmp_site_counts: HashMap<CmpSiteKey, u8>,
+    last_cmp_site: Option<CmpSiteKey>,
+    last_cmp_site_count: u8,
 }
 
 impl fmt::Debug for EdgeCovInspector {
@@ -213,6 +215,8 @@ impl EdgeCovInspector {
             hash_builder: DefaultHashBuilder::default(),
             cmp_log: None,
             cmp_site_counts: HashMap::default(),
+            last_cmp_site: None,
+            last_cmp_site_count: 0,
         }
     }
 
@@ -223,6 +227,8 @@ impl EdgeCovInspector {
         } else {
             self.cmp_log = None;
             self.cmp_site_counts.clear();
+            self.last_cmp_site = None;
+            self.last_cmp_site_count = 0;
         }
     }
 
@@ -236,6 +242,8 @@ impl EdgeCovInspector {
             cmp_log.clear();
         }
         self.cmp_site_counts.clear();
+        self.last_cmp_site = None;
+        self.last_cmp_site_count = 0;
     }
 
     /// Get an immutable reference to the comparison operand log.
@@ -307,21 +315,55 @@ impl EdgeCovInspector {
 
     /// Store comparison operands for CmpLog-style guided fuzzing.
     fn store_cmp(&mut self, cmp: CmpOperands) {
+        if self.cmp_log.is_none() {
+            return;
+        }
+
+        let site = CmpSiteKey::new(&cmp);
+        if self.last_cmp_site == Some(site) {
+            if self.last_cmp_site_count >= MAX_CMP_OBSERVATIONS_PER_SITE {
+                return;
+            }
+            self.last_cmp_site_count += 1;
+            self.cmp_log.as_mut().expect("checked above").push(cmp);
+            return;
+        }
+
+        self.flush_last_cmp_site();
+
         let Some(cmp_log) = &mut self.cmp_log else {
             return;
         };
 
-        let site = CmpSiteKey::new(&cmp);
         if let Some(count) = self.cmp_site_counts.get_mut(&site) {
             if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
+                self.last_cmp_site = Some(site);
+                self.last_cmp_site_count = *count;
                 return;
             }
             *count += 1;
+            self.last_cmp_site = Some(site);
+            self.last_cmp_site_count = *count;
             cmp_log.push(cmp);
         } else if self.cmp_site_counts.len() < MAX_CMP_LOG_SITES {
             self.cmp_site_counts.insert(site, 1);
+            self.last_cmp_site = Some(site);
+            self.last_cmp_site_count = 1;
             cmp_log.push(cmp);
+        } else {
+            self.last_cmp_site = Some(site);
+            self.last_cmp_site_count = MAX_CMP_OBSERVATIONS_PER_SITE;
         }
+    }
+
+    fn flush_last_cmp_site(&mut self) {
+        let Some(site) = self.last_cmp_site.take() else {
+            return;
+        };
+        if let Some(count) = self.cmp_site_counts.get_mut(&site) {
+            *count = self.last_cmp_site_count;
+        }
+        self.last_cmp_site_count = 0;
     }
 
     #[cold]
@@ -650,6 +692,39 @@ mod tests {
             op1: U256::from(123),
             op2: U256::from(456),
             pc: 2,
+            address: Address::ZERO,
+            opcode: opcode::EQ,
+        });
+
+        assert_eq!(inspector.get_cmp_log().len(), usize::from(MAX_CMP_OBSERVATIONS_PER_SITE) + 1);
+        assert_eq!(inspector.get_cmp_log().last().unwrap().pc, 2);
+    }
+
+    #[test]
+    fn cmp_log_cached_site_keeps_cap_across_site_switches() {
+        let mut inspector = EdgeCovInspector::with_cmp_log();
+
+        for i in 0..usize::from(MAX_CMP_OBSERVATIONS_PER_SITE) + 1 {
+            inspector.store_cmp(CmpOperands {
+                op1: U256::from(i),
+                op2: U256::from(i + 1),
+                pc: 1,
+                address: Address::ZERO,
+                opcode: opcode::EQ,
+            });
+        }
+
+        inspector.store_cmp(CmpOperands {
+            op1: U256::from(123),
+            op2: U256::from(456),
+            pc: 2,
+            address: Address::ZERO,
+            opcode: opcode::EQ,
+        });
+        inspector.store_cmp(CmpOperands {
+            op1: U256::from(789),
+            op2: U256::from(790),
+            pc: 1,
             address: Address::ZERO,
             opcode: opcode::EQ,
         });
