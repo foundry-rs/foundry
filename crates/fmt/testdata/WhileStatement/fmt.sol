@@ -66,5 +66,10 @@ contract WhileStatement {
             someLongVariableName < 10 && someLongVariableName < 11
                 && someLongVariableName < 12
         ) doIt();
+
+        while (condition) {
+            doIt();
+            doIt();
+        }
     }
 }

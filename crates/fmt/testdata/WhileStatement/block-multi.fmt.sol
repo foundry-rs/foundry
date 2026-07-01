@@ -87,5 +87,10 @@ contract WhileStatement {
         ) {
             doIt();
         }
+
+        while (condition) {
+            doIt();
+            doIt();
+        }
     }
 }
