@@ -53,33 +53,35 @@ impl SymbolicExecutor {
         if expr.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let mut above_max = state.constraints.clone();
-        above_max.push(SymBoolExpr::cmp_word_const(
+        let base_len = state.constraints.len();
+        let mut constraints = state.constraints.clone();
+        constraints.push(SymBoolExpr::cmp_word_const(
             &mut self.cx,
             SymBoolExprOp::Ugt,
             expr,
             U256::from(max),
         ));
-        if self.solver.is_sat(&mut self.cx, &above_max)? {
+        if self.solver.is_sat(&mut self.cx, &constraints)? {
             return Err(SymbolicError::Unsupported(reason));
         }
+        constraints.truncate(base_len);
 
         let mut low = 0usize;
         let mut high = max;
         while low < high {
             let mid = low + (high - low) / 2;
-            let mut above_mid = state.constraints.clone();
-            above_mid.push(SymBoolExpr::cmp_word_const(
+            constraints.push(SymBoolExpr::cmp_word_const(
                 &mut self.cx,
                 SymBoolExprOp::Ugt,
                 expr,
                 U256::from(mid),
             ));
-            if self.solver.is_sat(&mut self.cx, &above_mid)? {
+            if self.solver.is_sat(&mut self.cx, &constraints)? {
                 low = mid + 1;
             } else {
                 high = mid;
             }
+            constraints.truncate(base_len);
         }
         Ok(low)
     }
