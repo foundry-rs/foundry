@@ -3699,12 +3699,12 @@ where
         &self,
         block_id: BlockId,
     ) -> Result<Option<BlockOpcodeGas>, BlockchainError> {
-        if let Some((block, block_hash)) = self.get_block_with_hash(block_id.clone()) {
+        if let Some((block, block_hash)) = self.get_block_with_hash(block_id) {
             return self.mined_block_opcode_gas(&block, block_hash).map(Some);
         }
 
         if let Some(fork) = self.get_fork() {
-            let number = self.ensure_block_number(Some(block_id.clone())).await?;
+            let number = self.ensure_block_number(Some(block_id)).await?;
             if fork.predates_fork_inclusive(number) {
                 return Ok(fork.trace_block_opcode_gas(block_id).await?);
             }
