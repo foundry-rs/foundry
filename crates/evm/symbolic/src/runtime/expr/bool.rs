@@ -68,77 +68,73 @@ impl SymBoolExpr {
         Self::cmp(cx, SymCmpOp::Eq, left, right)
     }
 
-    fn eq_cmp(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> Self {
-        match (left.kind(), right.kind()) {
-            // `a == a => true`.
-            _ if left == right => Self::constant(cx, true),
-            (SymExprKind::Const(left), SymExprKind::Const(right)) => {
-                // `const == const => const`.
-                Self::constant(cx, left == right)
-            }
-            (_, SymExprKind::Const(right_value)) => {
-                if let Some(condition) = Self::bool_word_eq_const(cx, &left, *right_value) {
-                    return condition;
+    pub(crate) fn cmp(cx: &mut SymCx, op: SymCmpOp, left: SymExpr, right: SymExpr) -> Self {
+        match op {
+            SymCmpOp::Eq => match (left.kind(), right.kind()) {
+                // `a == a => true`.
+                _ if left == right => Self::constant(cx, true),
+                (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                    // `const == const => const`.
+                    Self::constant(cx, left == right)
                 }
-                if let Some(left_value) = left.known_word() {
-                    // `known(a) == const => const`.
-                    return Self::constant(cx, left_value == *right_value);
+                (_, SymExprKind::Const(right_value)) => {
+                    if let Some(condition) = Self::bool_word_eq_const(cx, &left, *right_value) {
+                        return condition;
+                    }
+                    if let Some(left_value) = left.known_word() {
+                        // `known(a) == const => const`.
+                        return Self::constant(cx, left_value == *right_value);
+                    }
+                    // `a == b => ordered(a, b)`.
+                    let (left, right) = SymExpr::ordered_commutative_operands(left, right);
+                    Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
                 }
-                // `a == b => ordered(a, b)`.
-                let (left, right) = SymExpr::ordered_commutative_operands(left, right);
-                Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
-            }
-            (SymExprKind::Const(left_value), _) => {
-                if let Some(condition) = Self::bool_word_eq_const(cx, &right, *left_value) {
-                    return condition;
+                (SymExprKind::Const(left_value), _) => {
+                    if let Some(condition) = Self::bool_word_eq_const(cx, &right, *left_value) {
+                        return condition;
+                    }
+                    if let Some(right_value) = right.known_word() {
+                        // `const == known(a) => const`.
+                        return Self::constant(cx, *left_value == right_value);
+                    }
+                    // `a == b => ordered(a, b)`.
+                    let (left, right) = SymExpr::ordered_commutative_operands(left, right);
+                    Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
                 }
-                if let Some(right_value) = right.known_word() {
-                    // `const == known(a) => const`.
-                    return Self::constant(cx, *left_value == right_value);
+                (
+                    SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
+                    SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
+                ) if left_bytes.len() == right_bytes.len() => {
+                    // `keccak(a) == keccak(b) => len(a) == len(b) && bytes(a) == bytes(b)`.
+                    let mut conditions = vec![Self::eq(cx, left_len.clone(), right_len.clone())];
+                    conditions.extend(
+                        left_bytes
+                            .iter()
+                            .cloned()
+                            .zip(right_bytes.iter().cloned())
+                            .map(|(left, right)| Self::eq(cx, left, right)),
+                    );
+                    Self::and(cx, conditions)
                 }
-                // `a == b => ordered(a, b)`.
-                let (left, right) = SymExpr::ordered_commutative_operands(left, right);
-                Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
-            }
-            (
-                SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
-                SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
-            ) if left_bytes.len() == right_bytes.len() => {
-                // `keccak(a) == keccak(b) => len(a) == len(b) && bytes(a) == bytes(b)`.
-                let mut conditions = vec![Self::eq(cx, left_len.clone(), right_len.clone())];
-                conditions.extend(
-                    left_bytes
+                (
+                    SymExprKind::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
+                    SymExprKind::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
+                ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
+                    // `hash(a) == hash(b) => bytes(a) == bytes(b)`.
+                    let conditions = left_bytes
                         .iter()
                         .cloned()
                         .zip(right_bytes.iter().cloned())
-                        .map(|(left, right)| Self::eq(cx, left, right)),
-                );
-                Self::and(cx, conditions)
-            }
-            (
-                SymExprKind::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
-                SymExprKind::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
-            ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
-                // `hash(a) == hash(b) => bytes(a) == bytes(b)`.
-                let conditions = left_bytes
-                    .iter()
-                    .cloned()
-                    .zip(right_bytes.iter().cloned())
-                    .map(|(left, right)| Self::eq(cx, left, right))
-                    .collect();
-                Self::and(cx, conditions)
-            }
-            _ => {
-                // `a == b => ordered(a, b)`.
-                let (left, right) = SymExpr::ordered_commutative_operands(left, right);
-                Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
-            }
-        }
-    }
-
-    pub(crate) fn cmp(cx: &mut SymCx, op: SymCmpOp, left: SymExpr, right: SymExpr) -> Self {
-        match op {
-            SymCmpOp::Eq => Self::eq_cmp(cx, left, right),
+                        .map(|(left, right)| Self::eq(cx, left, right))
+                        .collect();
+                    Self::and(cx, conditions)
+                }
+                _ => {
+                    // `a == b => ordered(a, b)`.
+                    let (left, right) = SymExpr::ordered_commutative_operands(left, right);
+                    Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
+                }
+            },
             SymCmpOp::Ult => match (left.kind(), right.kind()) {
                 // `a < a => false`.
                 _ if left == right => Self::constant(cx, false),
