@@ -1404,6 +1404,34 @@ impl EthApi<FoundryNetwork> {
         Ok(block_request)
     }
 
+    /// Traces a raw signed transaction without importing it into the mempool.
+    ///
+    /// Handler for RPC call: `trace_rawTransaction`.
+    pub async fn trace_raw_transaction(
+        &self,
+        tx: Bytes,
+        trace_types: HashSet<TraceType>,
+        block_number: Option<BlockId>,
+    ) -> Result<TraceResults> {
+        node_info!("trace_rawTransaction");
+
+        let mut data = tx.as_ref();
+        if data.is_empty() {
+            return Err(BlockchainError::EmptyRawTransactionData);
+        }
+
+        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        self.ensure_typed_transaction_supported(&transaction)?;
+
+        let pending_transaction = PendingTransaction::new(transaction)?;
+        let block_request = self.block_request(block_number).await?;
+
+        self.backend
+            .trace_raw_transaction(pending_transaction, trace_types, Some(block_request))
+            .await
+    }
+
     /// Increases the balance of an account.
     ///
     /// Handler for RPC call: `anvil_addBalance`
@@ -1834,6 +1862,9 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::TraceReplayBlockTransactions(block, trace_types) => {
                 self.trace_replay_block_transactions(block, trace_types).await.to_rpc_result()
+            }
+            EthRequest::TraceRawTransaction(tx, trace_types, block_number) => {
+                self.trace_raw_transaction(tx, trace_types, block_number).await.to_rpc_result()
             }
             EthRequest::TraceCallMany(calls, block_number) => {
                 self.trace_call_many(calls, block_number).await.to_rpc_result()

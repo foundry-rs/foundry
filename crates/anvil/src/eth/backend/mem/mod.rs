@@ -1887,6 +1887,40 @@ impl<N: Network> Backend<N> {
         Ok(vec![])
     }
 
+    /// Traces a raw transaction without committing it to the chain state or mempool.
+    pub async fn trace_raw_transaction(
+        &self,
+        pending_transaction: PendingTransaction<FoundryTxEnvelope>,
+        trace_types: HashSet<TraceType>,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Result<TraceResults, BlockchainError>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+    {
+        let trace_config = TracingInspectorConfig::from_parity_config(&trace_types);
+
+        self.with_database_at(block_request, |state, block_env| {
+            let cache_db = CacheDB::new(state);
+            let mut evm_env = self.evm_env.read().clone();
+            evm_env.block_env = block_env;
+
+            let mut inspector = TracingInspector::new(trace_config);
+            let (result, _) = self.transact_envelope_with_inspector_ref(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                pending_transaction.transaction.as_ref(),
+                *pending_transaction.sender(),
+            )?;
+
+            inspector
+                .into_parity_builder()
+                .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                .map_err(BlockchainError::from)
+        })
+        .await?
+    }
+
     /// Traces calls sequentially against a shared in-memory state.
     pub async fn trace_call_many(
         &self,
