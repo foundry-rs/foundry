@@ -1,7 +1,4 @@
-use super::{
-    hashcons::{HashCons, HashConsed},
-    *,
-};
+use super::{hashcons::HashConsed, *};
 use std::hash::{Hash, Hasher};
 
 #[derive(Clone)]
@@ -11,7 +8,7 @@ pub(crate) struct SymBoolExpr {
 
 impl PartialEq for SymBoolExpr {
     fn eq(&self, other: &Self) -> bool {
-        self.kind.ptr_eq(&other.kind) || self.kind.value() == other.kind.value()
+        self.kind.ptr_eq(&other.kind)
     }
 }
 
@@ -31,7 +28,7 @@ impl PartialOrd for SymBoolExpr {
 
 impl Ord for SymBoolExpr {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.kind.value().cmp(other.kind.value())
+        self.kind.cmp(&other.kind)
     }
 }
 
@@ -51,15 +48,6 @@ pub(in crate::runtime) enum SymBoolExprKind {
 }
 
 impl SymBoolExpr {
-    fn from_kind(expr: SymBoolExprKind) -> Self {
-        let mut hashcons = HashCons::new();
-        Self { kind: hashcons.make(expr) }
-    }
-
-    pub(crate) fn constant(value: bool) -> Self {
-        Self::from_kind(SymBoolExprKind::Const(value))
-    }
-
     pub(in crate::runtime) fn kind(&self) -> &SymBoolExprKind {
         self.kind.value()
     }
@@ -237,217 +225,80 @@ impl SymBoolExpr {
         .is_break()
     }
 
-    pub(crate) fn fold(self, folder: &mut impl FnMut(Self) -> Self) -> Self {
+    pub(crate) fn fold(
+        self,
+        cx: &mut SymCx,
+        folder: &mut impl FnMut(&mut SymCx, Self) -> Self,
+    ) -> Self {
         if matches!(self.kind(), SymBoolExprKind::Const(_)) {
-            return folder(self);
+            return folder(cx, self);
         }
 
         let expr = match self.into_kind() {
-            SymBoolExprKind::Not(value) => value.fold(folder).not(),
-            SymBoolExprKind::And(values) => {
-                Self::and(values.iter().cloned().map(|value| value.fold(folder)).collect())
+            SymBoolExprKind::Not(value) => {
+                let value = value.fold(cx, folder);
+                cx.not_bool(value)
             }
-            SymBoolExprKind::Eq(left, right) => Self::eq(left, right),
-            SymBoolExprKind::Cmp(op, left, right) => Self::cmp(op, left, right),
+            SymBoolExprKind::And(values) => {
+                let values = values.iter().cloned().map(|value| value.fold(cx, folder)).collect();
+                cx.and(values)
+            }
+            SymBoolExprKind::Eq(left, right) => cx.eq(left, right),
+            SymBoolExprKind::Cmp(op, left, right) => cx.cmp(op, left, right),
             SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding"),
         };
-        folder(expr)
+        folder(cx, expr)
     }
 
-    pub(crate) fn fold_exprs(self, folder: &mut impl FnMut(SymExpr) -> SymExpr) -> Self {
+    pub(crate) fn fold_exprs(
+        self,
+        cx: &mut SymCx,
+        folder: &mut impl FnMut(&mut SymCx, SymExpr) -> SymExpr,
+    ) -> Self {
         if matches!(self.kind(), SymBoolExprKind::Const(_)) {
             return self;
         }
 
         match self.into_kind() {
-            SymBoolExprKind::Not(value) => value.fold_exprs(folder).not(),
-            SymBoolExprKind::And(values) => {
-                Self::and(values.iter().cloned().map(|value| value.fold_exprs(folder)).collect())
+            SymBoolExprKind::Not(value) => {
+                let value = value.fold_exprs(cx, folder);
+                cx.not_bool(value)
             }
-            SymBoolExprKind::Eq(left, right) => Self::eq(left.fold(folder), right.fold(folder)),
+            SymBoolExprKind::And(values) => {
+                let values =
+                    values.iter().cloned().map(|value| value.fold_exprs(cx, folder)).collect();
+                cx.and(values)
+            }
+            SymBoolExprKind::Eq(left, right) => {
+                let left = left.fold(cx, folder);
+                let right = right.fold(cx, folder);
+                cx.eq(left, right)
+            }
             SymBoolExprKind::Cmp(op, left, right) => {
-                Self::cmp(op, left.fold(folder), right.fold(folder))
+                let left = left.fold(cx, folder);
+                let right = right.fold(cx, folder);
+                cx.cmp(op, left, right)
             }
             SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding exprs"),
         }
     }
 
-    pub(crate) fn eq(left: SymExpr, right: SymExpr) -> Self {
-        match (left.kind(), right.kind()) {
-            _ if left == right => Self::constant(true),
-            (SymExprKind::Const(left), SymExprKind::Const(right)) => Self::constant(left == right),
-            (_, SymExprKind::Const(right_value)) => {
-                if let Some(condition) = Self::bool_word_eq_const(&left, *right_value) {
-                    return condition;
-                }
-                if let Some(left_value) = left.known_word() {
-                    return Self::constant(left_value == *right_value);
-                }
-                Self::from_kind(SymBoolExprKind::Eq(left, right))
-            }
-            (SymExprKind::Const(left_value), _) => {
-                if let Some(condition) = Self::bool_word_eq_const(&right, *left_value) {
-                    return condition;
-                }
-                if let Some(right_value) = right.known_word() {
-                    return Self::constant(*left_value == right_value);
-                }
-                Self::from_kind(SymBoolExprKind::Eq(left, right))
-            }
-            (
-                SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
-                SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
-            ) if left_bytes.len() == right_bytes.len() => {
-                let mut conditions = vec![Self::eq(left_len.clone(), right_len.clone())];
-                conditions.extend(
-                    left_bytes
-                        .iter()
-                        .cloned()
-                        .zip(right_bytes.iter().cloned())
-                        .map(|(left, right)| Self::eq(left, right)),
-                );
-                Self::and(conditions)
-            }
-            (
-                SymExprKind::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
-                SymExprKind::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
-            ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
-                Self::and(
-                    left_bytes
-                        .iter()
-                        .cloned()
-                        .zip(right_bytes.iter().cloned())
-                        .map(|(left, right)| Self::eq(left, right))
-                        .collect(),
-                )
-            }
-            _ => Self::from_kind(SymBoolExprKind::Eq(left, right)),
-        }
-    }
-
-    fn bool_word_eq_const(word: &SymExpr, value: U256) -> Option<Self> {
-        let condition = word.bool_word_condition()?;
-        Some(if value.is_zero() {
-            condition.not()
-        } else if value == U256::from(1) {
-            condition
-        } else {
-            Self::constant(false)
-        })
-    }
-
-    pub(crate) fn eq_word_const(word: &SymExpr, value: U256) -> Self {
-        if let Some(word) = word.as_const() {
-            Self::constant(word == value)
-        } else {
-            Self::eq(word.clone(), SymExpr::constant(value))
-        }
-    }
-
-    pub(crate) fn eq_word_expr(word: &SymExpr, expr: SymExpr) -> Self {
-        Self::eq(word.clone(), expr)
-    }
-
-    pub(crate) fn eq_words(left: &SymExpr, right: &SymExpr) -> Self {
-        Self::eq(left.clone(), right.clone())
-    }
-
-    pub(crate) fn and(values: Vec<Self>) -> Self {
-        let mut out = Vec::new();
-        for value in values {
-            match value.kind() {
-                SymBoolExprKind::Const(true) => {}
-                SymBoolExprKind::Const(false) => return Self::constant(false),
-                SymBoolExprKind::And(values) => out.extend(values.iter().cloned()),
-                _ => out.push(value),
-            }
-        }
-        if out.is_empty() {
-            Self::constant(true)
-        } else if out.len() == 1 {
-            out.pop().expect("single item exists")
-        } else {
-            Self::from_kind(SymBoolExprKind::And(out.into()))
-        }
-    }
-
     #[cfg(test)]
-    pub(crate) fn raw_and(values: Vec<Self>) -> Self {
-        Self::from_kind(SymBoolExprKind::And(values.into()))
+    pub(crate) fn raw_and(cx: &mut SymCx, values: Vec<Self>) -> Self {
+        cx.bool_from_kind(SymBoolExprKind::And(values.into()))
     }
 
-    pub(crate) fn or(values: Vec<Self>) -> Self {
-        let mut out = Vec::new();
-        for value in values {
-            match value.kind() {
-                SymBoolExprKind::Const(false) => {}
-                SymBoolExprKind::Const(true) => return Self::constant(true),
-                _ => out.push(value),
-            }
-        }
-        if out.is_empty() {
-            Self::constant(false)
-        } else if out.len() == 1 {
-            out.pop().expect("single item exists")
-        } else {
-            Self::and(out.into_iter().map(Self::not).collect()).not()
-        }
+    pub(crate) fn cmp_word_expr(
+        cx: &mut SymCx,
+        op: SymBoolExprOp,
+        word: &SymExpr,
+        expr: SymExpr,
+    ) -> Self {
+        cx.cmp(op, word.clone(), expr)
     }
 
-    pub(crate) fn cmp(op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> Self {
-        match (op, left.kind(), right.kind()) {
-            (op, _, _) if left == right => {
-                Self::constant(matches!(op, SymBoolExprOp::Ule | SymBoolExprOp::Uge))
-            }
-            (op, SymExprKind::Const(left), SymExprKind::Const(right)) => {
-                Self::constant(op.eval(*left, *right))
-            }
-            (SymBoolExprOp::Ugt, SymExprKind::Const(value), _) if value.is_zero() => {
-                Self::constant(false)
-            }
-            (SymBoolExprOp::Ule, SymExprKind::Const(value), _) if value.is_zero() => {
-                Self::constant(true)
-            }
-            (SymBoolExprOp::Ult, _, SymExprKind::Const(value)) if value.is_zero() => {
-                Self::constant(false)
-            }
-            (SymBoolExprOp::Uge, _, SymExprKind::Const(value)) if value.is_zero() => {
-                Self::constant(true)
-            }
-            (SymBoolExprOp::Ult, SymExprKind::Const(value), _) if *value == U256::MAX => {
-                Self::constant(false)
-            }
-            (SymBoolExprOp::Uge, SymExprKind::Const(value), _) if *value == U256::MAX => {
-                Self::constant(true)
-            }
-            (SymBoolExprOp::Ugt, _, SymExprKind::Const(value)) if *value == U256::MAX => {
-                Self::constant(false)
-            }
-            (SymBoolExprOp::Ule, _, SymExprKind::Const(value)) if *value == U256::MAX => {
-                Self::constant(true)
-            }
-            _ => Self::from_kind(SymBoolExprKind::Cmp(op, left, right)),
-        }
-    }
-
-    pub(crate) fn cmp_word_const(op: SymBoolExprOp, word: &SymExpr, value: U256) -> Self {
-        if let Some(word) = word.as_const() {
-            Self::constant(op.eval(word, value))
-        } else {
-            Self::cmp(op, word.clone(), SymExpr::constant(value))
-        }
-    }
-
-    pub(crate) fn cmp_word_expr(op: SymBoolExprOp, word: &SymExpr, expr: SymExpr) -> Self {
-        Self::cmp(op, word.clone(), expr)
-    }
-
-    pub(crate) fn not(self) -> Self {
-        match self.kind() {
-            SymBoolExprKind::Const(value) => Self::constant(!*value),
-            SymBoolExprKind::Not(value) => value.clone(),
-            _ => Self::from_kind(SymBoolExprKind::Not(self)),
-        }
+    pub(crate) fn not(self, cx: &mut SymCx) -> Self {
+        cx.not_bool(self)
     }
 
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {

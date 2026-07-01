@@ -47,7 +47,7 @@ impl SymbolicExecutor {
         &mut self,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
-        match self.solver.is_sat_branch(constraints) {
+        match self.solver.is_sat_branch(&mut self.cx, constraints) {
             Ok(feasible) => Ok(feasible),
             Err(SymbolicError::SolverUnknown) => {
                 self.defer_solver_unknown();
@@ -139,7 +139,7 @@ impl SymbolicExecutor {
         let mut modeled = vec![false; corpus_seeds.len()];
         for calldata in &variants {
             for (idx, seed) in corpus_seeds.iter().enumerate() {
-                if !modeled[idx] && calldata.seed_model(seed).is_some() {
+                if !modeled[idx] && calldata.seed_model(&mut cx, seed).is_some() {
                     modeled[idx] = true;
                 }
             }
@@ -202,9 +202,10 @@ impl SymbolicExecutor {
             let corpus_seed_models = input
                 .corpus_seeds
                 .iter()
-                .filter_map(|seed| calldata.seed_model(seed).map(Arc::new))
+                .filter_map(|seed| calldata.seed_model(&mut self.cx, seed).map(Arc::new))
                 .collect();
             let mut root = PathState::new(
+                &mut self.cx,
                 input.target,
                 input.sender,
                 input.value,
@@ -212,7 +213,7 @@ impl SymbolicExecutor {
                 input.ffi_enabled,
             );
             root.set_corpus_seed_models(corpus_seed_models);
-            root.apply_executor_env(input.executor);
+            root.apply_executor_env(&mut self.cx, input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();
             roots.push(root);
@@ -251,7 +252,7 @@ impl SymbolicExecutor {
                 }
                 state.depth += 1;
 
-                let Some(op) = code.opcode(state.pc)? else {
+                let Some(op) = code.opcode(&mut self.cx, state.pc)? else {
                     if !state.expectations_satisfied() {
                         let (args, calldata_bytes) = self.materialize_stateless_counterexample(
                             state.root_calldata.as_ref().ok_or_else(|| {
@@ -407,8 +408,8 @@ impl SymbolicExecutor {
         function: &Function,
         state: &PathState,
     ) -> Result<SymbolicConcreteInput, SymbolicError> {
-        let model = self.solver.model(&state.constraints)?;
-        let args = calldata.model_to_args(&model)?;
+        let model = self.solver.model(&mut self.cx, &state.constraints)?;
+        let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
         Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
     }
@@ -425,9 +426,13 @@ impl SymbolicExecutor {
         let senders =
             if input.senders.is_empty() { vec![input.sender] } else { input.senders.clone() };
         let mut completed_paths = 0usize;
-        let mut initial_state =
-            PathState::empty(input.invariant_address, input.sender, input.ffi_enabled);
-        initial_state.apply_executor_env(input.executor);
+        let mut initial_state = PathState::empty(
+            &mut self.cx,
+            input.invariant_address,
+            input.sender,
+            input.ffi_enabled,
+        );
+        initial_state.apply_executor_env(&mut self.cx, input.executor);
         initial_state.world.set_storage_layout(self.config.storage_layout);
         let initial = SequencePath { state: initial_state, steps: Vec::new() };
 
@@ -471,14 +476,16 @@ impl SymbolicExecutor {
                                 function: target.function.clone(),
                                 calldata,
                             };
+                            let calldata = step.calldata.call_data(&mut self.cx);
+                            let constraints = step.calldata.constraints().to_vec();
                             let outcomes = self.execute_sequence_call(
                                 input.executor,
                                 sequence.state.clone(),
                                 target.address,
                                 sender,
                                 &target.function,
-                                step.calldata.call_data(),
-                                step.calldata.constraints().to_vec(),
+                                calldata,
+                                constraints,
                                 &mut completed_paths,
                             )?;
 

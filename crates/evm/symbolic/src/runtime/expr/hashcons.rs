@@ -14,7 +14,7 @@ type HashBuilder = BuildHasherDefault<DefaultHasher>;
 /// Equality is pointer equality only. Hashing writes the cached structural hash
 /// instead of walking the value.
 #[derive(Clone)]
-pub(in crate::runtime::expr) struct HashConsed<T> {
+pub(super) struct HashConsed<T> {
     inner: Arc<HashConsedInner<T>>,
 }
 
@@ -28,15 +28,15 @@ impl<T> HashConsed<T> {
         self.inner.hash
     }
 
-    pub(in crate::runtime::expr) fn ptr_eq(&self, other: &Self) -> bool {
+    pub(super) fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
-    pub(in crate::runtime::expr) fn value(&self) -> &T {
+    pub(super) fn value(&self) -> &T {
         &self.inner.value
     }
 
-    pub(in crate::runtime::expr) fn into_value(self) -> T
+    pub(super) fn into_value(self) -> T
     where
         T: Clone,
     {
@@ -57,7 +57,7 @@ impl<T> Eq for HashConsed<T> {}
 
 impl<T> Hash for HashConsed<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(self.cached_hash());
+        self.cached_hash().hash(state);
     }
 }
 
@@ -92,7 +92,7 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
 /// The table stores weak references so interned values disappear when the rest of
 /// the symbolic state stops using them. `make` only looks up and inserts; dead
 /// weak entries are ignored and left in the table until the context is dropped.
-pub(in crate::runtime::expr) struct HashCons<T> {
+pub(super) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
     hash_builder: HashBuilder,
 }
@@ -109,7 +109,7 @@ impl<T> HashConsEntry<T> {
 }
 
 impl<T> HashCons<T> {
-    pub(in crate::runtime::expr) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self { table: HashTable::new(), hash_builder: HashBuilder::default() }
     }
 
@@ -119,7 +119,7 @@ impl<T> HashCons<T> {
 }
 
 impl<T: Eq + Hash> HashCons<T> {
-    pub(in crate::runtime::expr) fn make(&mut self, value: T) -> HashConsed<T> {
+    pub(super) fn make(&mut self, value: T) -> HashConsed<T> {
         let hash = self.hash(&value);
         let mut found = None;
         match self.table.entry(
@@ -127,7 +127,7 @@ impl<T: Eq + Hash> HashCons<T> {
             |entry| {
                 if entry.hash == hash
                     && let Some(existing) = entry.value.upgrade()
-                    && existing.value.eq(&value)
+                    && existing.value == value
                 {
                     found = Some(existing);
                     true

@@ -81,8 +81,8 @@ impl SymbolicCalldata {
         Ok(out)
     }
 
-    pub(super) fn call_data(&self) -> SymCalldata {
-        SymCalldata::from_bytes(self.bytes.clone())
+    pub(super) fn call_data(&self, cx: &mut SymCx) -> SymCalldata {
+        SymCalldata::from_bytes(cx, self.bytes.clone())
     }
 
     /// Returns symbolic calldata constraints.
@@ -97,19 +97,24 @@ impl SymbolicCalldata {
 
     pub(super) fn model_to_args(
         &self,
+        cx: &mut SymCx,
         model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<Vec<DynSolValue>, SymbolicError> {
-        self.inputs.iter().map(|input| input.value.model_value(model)).collect()
+        self.inputs.iter().map(|input| input.value.model_value(cx, model)).collect()
     }
 
-    pub(super) fn seed_model(&self, seed: &SymbolicConcreteInput) -> Option<SymbolicModel> {
+    pub(super) fn seed_model(
+        &self,
+        cx: &mut SymCx,
+        seed: &SymbolicConcreteInput,
+    ) -> Option<SymbolicModel> {
         if seed.args.len() != self.inputs.len() {
             return None;
         }
 
         let mut model = SymbolicModel::default();
         for (input, arg) in self.inputs.iter().zip(&seed.args) {
-            if !input.value.seed_model_value(&mut model, arg) {
+            if !input.value.seed_model_value(cx, &mut model, arg) {
                 return None;
             }
         }
@@ -120,7 +125,7 @@ impl SymbolicCalldata {
             }
         }
 
-        let calldata = self.bytes.eval_model(&model).ok()?;
+        let calldata = self.bytes.eval_model(cx, &model).ok()?;
         (calldata.as_slice() == seed.calldata.as_ref()).then_some(model)
     }
 }
@@ -557,9 +562,8 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
     ) {
         if bits < 256 {
             let byte_index = U256::from(bits / 8 - 1);
-            state
-                .constraints
-                .push(self.cx.eq(word.clone(), signextend_word(byte_index, word.clone())));
+            let signextended = signextend_word(self.cx, byte_index, word.clone());
+            state.constraints.push(self.cx.eq(word.clone(), signextended));
         }
     }
 
@@ -760,6 +764,7 @@ impl SymbolicAbiValue {
 
     pub(super) fn model_value(
         &self,
+        cx: &mut SymCx,
         model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<DynSolValue, SymbolicError> {
         Ok(match self {
@@ -773,7 +778,7 @@ impl SymbolicAbiValue {
             Self::FixedBytes { bytes, size } => {
                 let mut word = [0u8; 32];
                 for (idx, out) in word.iter_mut().enumerate().take(bytes.len()) {
-                    *out = bytes.byte(idx).eval_model(model)?.to::<u8>();
+                    *out = bytes.byte(cx, idx).eval_model(model)?.to::<u8>();
                 }
                 DynSolValue::FixedBytes(B256::from(word), *size)
             }
@@ -786,12 +791,12 @@ impl SymbolicAbiValue {
                     .ok()
                     .filter(|len| *len <= bytes.len())
                     .ok_or_else(|| SymbolicError::Solver("invalid symbolic bytes length".into()))?;
-                let mut bytes = bytes.eval_model(model)?;
+                let mut bytes = bytes.eval_model(cx, model)?;
                 bytes.truncate(len);
                 DynSolValue::Bytes(bytes)
             }
             Self::String { bytes } => {
-                let bytes = bytes.eval_model(model)?;
+                let bytes = bytes.eval_model(cx, model)?;
                 let value = String::from_utf8(bytes).map_err(|err| {
                     SymbolicError::Solver(format!("invalid symbolic string model: {err}"))
                 })?;
@@ -800,25 +805,30 @@ impl SymbolicAbiValue {
             Self::Array { elements } => DynSolValue::Array(
                 elements
                     .iter()
-                    .map(|value| value.model_value(model))
+                    .map(|value| value.model_value(cx, model))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
             Self::FixedArray { elements } => DynSolValue::FixedArray(
                 elements
                     .iter()
-                    .map(|value| value.model_value(model))
+                    .map(|value| value.model_value(cx, model))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
             Self::Tuple { elements } => DynSolValue::Tuple(
                 elements
                     .iter()
-                    .map(|value| value.model_value(model))
+                    .map(|value| value.model_value(cx, model))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
         })
     }
 
-    pub(super) fn seed_model_value(&self, model: &mut SymbolicModel, value: &DynSolValue) -> bool {
+    pub(super) fn seed_model_value(
+        &self,
+        cx: &mut SymCx,
+        model: &mut SymbolicModel,
+        value: &DynSolValue,
+    ) -> bool {
         match (self, value) {
             (Self::Bool { word }, DynSolValue::Bool(value)) => {
                 word.assign_model_value(model, U256::from(*value as u8))
@@ -836,25 +846,25 @@ impl SymbolicAbiValue {
             (Self::FixedBytes { bytes, size }, DynSolValue::FixedBytes(value, value_size))
                 if size == value_size =>
             {
-                seed_model_bytes(model, bytes, &value.as_slice()[..*size])
+                seed_model_bytes(cx, model, bytes, &value.as_slice()[..*size])
             }
             (Self::Address { word }, DynSolValue::Address(value)) => {
                 word.assign_model_value(model, address_word(*value))
             }
             (Self::Bytes { len, bytes }, DynSolValue::Bytes(value)) => {
                 len.assign_model_value(model, U256::from(value.len()))
-                    && seed_model_bytes(model, bytes, value)
+                    && seed_model_bytes(cx, model, bytes, value)
             }
             (Self::String { bytes }, DynSolValue::String(value)) => {
-                seed_model_bytes(model, bytes, value.as_bytes())
+                seed_model_bytes(cx, model, bytes, value.as_bytes())
             }
             (Self::Array { elements }, DynSolValue::Array(values))
             | (Self::FixedArray { elements }, DynSolValue::FixedArray(values))
             | (Self::Tuple { elements }, DynSolValue::Tuple(values)) => {
-                seed_model_elements(model, elements, values)
+                seed_model_elements(cx, model, elements, values)
             }
             (Self::Tuple { elements }, DynSolValue::CustomStruct { tuple, .. }) => {
-                seed_model_elements(model, elements, tuple)
+                seed_model_elements(cx, model, elements, tuple)
             }
             _ => false,
         }
@@ -862,6 +872,7 @@ impl SymbolicAbiValue {
 }
 
 fn seed_model_elements(
+    cx: &mut SymCx,
     model: &mut SymbolicModel,
     elements: &[SymbolicAbiValue],
     values: &[DynSolValue],
@@ -870,15 +881,20 @@ fn seed_model_elements(
         && elements
             .iter()
             .zip(values)
-            .all(|(element, value)| element.seed_model_value(model, value))
+            .all(|(element, value)| element.seed_model_value(cx, model, value))
 }
 
-fn seed_model_bytes(model: &mut SymbolicModel, bytes: &SymBytes, value: &[u8]) -> bool {
+fn seed_model_bytes(
+    cx: &mut SymCx,
+    model: &mut SymbolicModel,
+    bytes: &SymBytes,
+    value: &[u8],
+) -> bool {
     bytes.len() == value.len()
         && value
             .iter()
             .enumerate()
-            .all(|(idx, byte)| bytes.byte(idx).assign_model_value(model, U256::from(*byte)))
+            .all(|(idx, byte)| bytes.byte(cx, idx).assign_model_value(model, U256::from(*byte)))
 }
 
 pub(super) fn encode_sequence<'a>(

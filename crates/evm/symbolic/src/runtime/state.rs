@@ -33,6 +33,7 @@ pub(crate) struct PathState {
 
 impl PathState {
     pub(crate) fn new(
+        cx: &mut SymCx,
         address: Address,
         caller: Address,
         callvalue: U256,
@@ -40,24 +41,22 @@ impl PathState {
         ffi_enabled: bool,
     ) -> Self {
         let constraints = calldata.constraints().to_vec();
-        let call_data = calldata.call_data();
+        let call_data = calldata.call_data(cx);
+        let origin_word = cx.constant(address_word(caller));
+        let gas_price = cx.zero();
+        let block = SymbolicBlock::new(cx);
+        let callvalue = cx.constant(callvalue);
+        let frame =
+            CallFrame::new(cx, address, address, address, caller, callvalue, false, call_data);
         Self {
             depth: 0,
             call_depth: 0,
             origin: caller,
-            origin_word: SymExpr::constant(address_word(caller)),
-            gas_price: SymExpr::zero(),
+            origin_word,
+            gas_price,
             ffi_enabled,
-            block: SymbolicBlock::default(),
-            frame: CallFrame::new(
-                address,
-                address,
-                address,
-                caller,
-                SymExpr::constant(callvalue),
-                false,
-                call_data,
-            ),
+            block,
+            frame,
             world: SymbolicWorld::default(),
             prank: SymbolicPrank::default(),
             constraints,
@@ -80,24 +79,28 @@ impl PathState {
         }
     }
 
-    pub(crate) fn empty(address: Address, caller: Address, ffi_enabled: bool) -> Self {
+    pub(crate) fn empty(
+        cx: &mut SymCx,
+        address: Address,
+        caller: Address,
+        ffi_enabled: bool,
+    ) -> Self {
+        let origin_word = cx.constant(address_word(caller));
+        let gas_price = cx.zero();
+        let block = SymbolicBlock::new(cx);
+        let callvalue = cx.zero();
+        let calldata = SymCalldata::from_bytes(cx, SymBytes::default());
+        let frame =
+            CallFrame::new(cx, address, address, address, caller, callvalue, false, calldata);
         Self {
             depth: 0,
             call_depth: 0,
             origin: caller,
-            origin_word: SymExpr::constant(address_word(caller)),
-            gas_price: SymExpr::zero(),
+            origin_word,
+            gas_price,
             ffi_enabled,
-            block: SymbolicBlock::default(),
-            frame: CallFrame::new(
-                address,
-                address,
-                address,
-                caller,
-                SymExpr::zero(),
-                false,
-                SymCalldata::from_bytes(SymBytes::default()),
-            ),
+            block,
+            frame,
             world: SymbolicWorld::default(),
             prank: SymbolicPrank::default(),
             constraints: Vec::new(),
@@ -120,15 +123,19 @@ impl PathState {
         }
     }
 
-    pub(crate) fn apply_executor_env<FEN: FoundryEvmNetwork>(&mut self, executor: &Executor<FEN>) {
-        self.block = SymbolicBlock::from_executor(executor);
+    pub(crate) fn apply_executor_env<FEN: FoundryEvmNetwork>(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &Executor<FEN>,
+    ) {
+        self.block = SymbolicBlock::from_executor(cx, executor);
         let gas_price = executor
             .inspector()
             .cheatcodes
             .as_ref()
             .and_then(|cheats| cheats.gas_price)
             .unwrap_or_else(|| executor.tx_env().gas_price());
-        self.gas_price = SymExpr::constant(U256::from(gas_price));
+        self.gas_price = cx.constant(U256::from(gas_price));
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
@@ -141,83 +148,92 @@ impl PathState {
 
     pub(crate) fn copy_call_output_offset(
         &mut self,
+        cx: &mut SymCx,
         dest: SymExpr,
         size: &BoundedCopySize,
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, return_data, .. } = &mut self.frame;
-        memory.copy_call_output_offset(dest, size, return_data)
+        memory.copy_call_output_offset(cx, dest, size, return_data)
     }
 
     pub(crate) fn copy_calldata_to_offset(
         &mut self,
+        cx: &mut SymCx,
         dest: SymExpr,
         offset: SymExpr,
         size: usize,
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, calldata, .. } = &mut self.frame;
-        memory.copy_calldata_to_offset(dest, offset, size, calldata)
+        memory.copy_calldata_to_offset(cx, dest, offset, size, calldata)
     }
 
     pub(crate) fn copy_calldata_symbolic_size(
         &mut self,
+        cx: &mut SymCx,
         dest: SymExpr,
         offset: SymExpr,
         size: SymExpr,
         max_size: usize,
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, calldata, .. } = &mut self.frame;
-        memory.copy_calldata_symbolic_size(dest, offset, size, max_size, calldata)
+        memory.copy_calldata_symbolic_size(cx, dest, offset, size, max_size, calldata)
     }
 
     pub(crate) fn copy_return_data_to_offset(
         &mut self,
+        cx: &mut SymCx,
         dest: SymExpr,
         offset: SymExpr,
         size: usize,
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, return_data, .. } = &mut self.frame;
-        memory.copy_return_data_to_offset(dest, offset, size, return_data)
+        memory.copy_return_data_to_offset(cx, dest, offset, size, return_data)
     }
 
     pub(crate) fn copy_return_data_symbolic_size(
         &mut self,
+        cx: &mut SymCx,
         dest: SymExpr,
         offset: SymExpr,
         size: SymExpr,
         max_size: usize,
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, return_data, .. } = &mut self.frame;
-        memory.copy_return_data_symbolic_size(dest, offset, size, max_size, return_data)
+        memory.copy_return_data_symbolic_size(cx, dest, offset, size, max_size, return_data)
     }
 
-    pub(crate) fn constrained_usize(&self, expr: &SymExpr) -> Option<usize> {
-        self.constrained_usize_checked(expr).and_then(Result::ok)
+    pub(crate) fn constrained_usize(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<usize> {
+        self.constrained_usize_checked(cx, expr).and_then(Result::ok)
     }
 
-    pub(crate) fn constrained_usize_checked(&self, expr: &SymExpr) -> Option<Result<usize, U256>> {
-        self.constrained_word(expr).map(|value| usize::try_from(value).map_err(|_| value))
+    pub(crate) fn constrained_usize_checked(
+        &self,
+        cx: &mut SymCx,
+        expr: &SymExpr,
+    ) -> Option<Result<usize, U256>> {
+        self.constrained_word(cx, expr).map(|value| usize::try_from(value).map_err(|_| value))
     }
 
-    pub(crate) fn upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
-        self.constrained_usize(expr).or_else(|| {
+    pub(crate) fn upper_bound_usize(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<usize> {
+        self.constrained_usize(cx, expr).or_else(|| {
             expr.as_const()
                 .and_then(|value| usize::try_from(value).ok())
                 .or_else(|| self.expr_upper_bound_usize(expr))
         })
     }
 
-    pub(crate) fn constrained_word(&self, expr: &SymExpr) -> Option<U256> {
+    pub(crate) fn constrained_word(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<U256> {
         expr.as_const().or_else(|| {
             self.constraints
                 .iter()
                 .find_map(|constraint| {
                     constraint.forces_expr_const_with_context(expr, &self.constraints)
                 })
-                .or_else(|| self.constrained_expr_value(expr))
+                .or_else(|| self.constrained_expr_value(cx, expr))
         })
     }
 
-    pub(crate) fn constrained_expr_value(&self, expr: &SymExpr) -> Option<U256> {
+    pub(crate) fn constrained_expr_value(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<U256> {
         if let Some(value) = expr.eval() {
             return Some(value);
         }
@@ -229,7 +245,7 @@ impl PathState {
         expr.collect_eval_vars(&mut vars);
         let mut model = SymbolicModel::default();
         for var in vars {
-            let var_expr = SymExpr::var_symbol(var.clone());
+            let var_expr = cx.var_symbol(var.clone());
             let value = self.constraints.iter().find_map(|constraint| {
                 constraint.forces_expr_const_with_context(&var_expr, &self.constraints)
             })?;
@@ -356,18 +372,20 @@ impl PathState {
 
     pub(crate) fn expect_constrained_usize(
         &self,
+        cx: &mut SymCx,
         expr: SymExpr,
         reason: &'static str,
     ) -> Result<usize, SymbolicError> {
-        self.constrained_usize(&expr).ok_or(SymbolicError::Unsupported(reason))
+        self.constrained_usize(cx, &expr).ok_or(SymbolicError::Unsupported(reason))
     }
 
     pub(crate) fn expect_constrained_word(
         &self,
+        cx: &mut SymCx,
         expr: SymExpr,
         reason: &'static str,
     ) -> Result<U256, SymbolicError> {
-        self.constrained_word(&expr).ok_or(SymbolicError::Unsupported(reason))
+        self.constrained_word(cx, &expr).ok_or(SymbolicError::Unsupported(reason))
     }
 
     pub(crate) fn bin_word(
@@ -446,14 +464,15 @@ impl PathState {
     pub(crate) fn exp_word(&mut self, cx: &mut SymCx) -> Result<StepOutcome, SymbolicError> {
         let base = self.stack.pop()?;
         let exponent = self.stack.pop()?;
-        let result = if let Some(exponent) = self.constrained_word(&exponent) {
+        let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
             if let Some(base_value) = base.as_const() {
                 cx.constant(pow_mod(base_value, exponent))
             } else if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) {
-                cx.intern_expr(exp_expr_for_concrete_exponent(
+                exp_expr_for_concrete_exponent(
+                    cx,
                     base,
                     usize::try_from(exponent).expect("checked symbolic exponent"),
-                ))
+                )
             } else {
                 return Err(SymbolicError::Unsupported("symbolic EXP base"));
             }
@@ -464,14 +483,14 @@ impl PathState {
                 SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT
             };
             let max_exponent = self
-                .upper_bound_usize(&exponent)
+                .upper_bound_usize(cx, &exponent)
                 .filter(|exponent| *exponent <= exponent_limit as usize)
                 .ok_or(SymbolicError::Unsupported("symbolic EXP exponent"))?;
             let mut expr = cx.zero();
             for candidate in (0..=max_exponent).rev() {
                 let candidate_expr = cx.constant(U256::from(candidate));
                 let condition = cx.eq(exponent.clone(), candidate_expr);
-                let value = cx.intern_expr(exp_expr_for_concrete_exponent(base.clone(), candidate));
+                let value = exp_expr_for_concrete_exponent(cx, base.clone(), candidate);
                 expr = cx.ite(condition, value, expr);
             }
             expr
@@ -482,56 +501,62 @@ impl PathState {
 
     pub(crate) fn balance<FEN: FoundryEvmNetwork>(
         &self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
     ) -> SymExpr {
-        self.world.balance_word_for_address(executor, address)
+        self.world.balance_word_for_address(cx, executor, address)
     }
 
     pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        self.world.balance_word(executor, address_expr)
+        self.world.balance_word(cx, executor, address_expr)
     }
 
     pub(crate) fn extcode_size_word<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        self.world.extcode_size_word(executor, address_expr)
+        self.world.extcode_size_word(cx, executor, address_expr)
     }
 
     pub(crate) fn extcode_hash_word<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
-        self.world.extcode_hash_word(executor, address_expr)
+        self.world.extcode_hash_word(cx, executor, address_expr)
     }
 
     pub(crate) fn extcode_bytes_word<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address_expr: SymExpr,
         offset: SymExpr,
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
-        self.world.extcode_bytes_word(executor, address_expr, offset, size)
+        self.world.extcode_bytes_word(cx, executor, address_expr, offset, size)
     }
 
     pub(crate) fn pop_address_word_or_symbolic_slot(
         &mut self,
+        cx: &mut SymCx,
     ) -> Result<(SymExpr, Address), SymbolicError> {
         let expr = self.stack.pop()?;
-        let address = self.address_or_symbolic_slot(expr.clone());
+        let address = self.address_or_symbolic_slot(cx, expr.clone());
         Ok((expr, address))
     }
 
-    pub(crate) fn address_or_symbolic_slot(&mut self, expr: SymExpr) -> Address {
-        if let Some(value) = self.constrained_word(&expr) {
+    pub(crate) fn address_or_symbolic_slot(&mut self, cx: &mut SymCx, expr: SymExpr) -> Address {
+        if let Some(value) = self.constrained_word(cx, &expr) {
             return word_to_address(value);
         }
         self.world.resolve_address(&expr).unwrap_or_else(|| self.world.symbolic_address_slot(expr))
@@ -596,10 +621,11 @@ impl PathState {
         } else if bits < U256::from(256) {
             let magnitude =
                 U256::from(1) << (usize::try_from(bits).expect("checked bit width") - 1);
-            self.constraints.push(SymBoolExpr::or(vec![
-                cx.cmp_word_const(SymBoolExprOp::Ult, &value, magnitude),
-                cx.cmp_word_const(SymBoolExprOp::Uge, &value, U256::ZERO.wrapping_sub(magnitude)),
-            ]));
+            let lt = cx.cmp_word_const(SymBoolExprOp::Ult, &value, magnitude);
+            let ge =
+                cx.cmp_word_const(SymBoolExprOp::Uge, &value, U256::ZERO.wrapping_sub(magnitude));
+            let condition = cx.or(vec![lt, ge]);
+            self.constraints.push(condition);
         }
         value
     }
@@ -619,7 +645,7 @@ impl PathState {
         }
     }
 
-    pub(crate) fn read_callers_words(&self) -> Vec<SymExpr> {
+    pub(crate) fn read_callers_words(&self, cx: &mut SymCx) -> Vec<SymExpr> {
         let (mode, caller, origin) = if let Some((_, caller_word)) = self.prank.next_caller.as_ref()
         {
             (
@@ -644,7 +670,7 @@ impl PathState {
         } else {
             (U256::ZERO, self.caller_word.clone(), self.origin_word.clone())
         };
-        vec![SymExpr::constant(mode), caller, origin]
+        vec![cx.constant(mode), caller, origin]
     }
 
     pub(crate) fn record_log(&mut self, log: SymbolicLog) {
@@ -754,12 +780,13 @@ impl ExpectedRevert {
 
     pub(crate) fn match_condition(
         &self,
+        cx: &mut SymCx,
         reverter: Address,
         return_data: &SymReturnData,
     ) -> Option<SymBoolExpr> {
         let mut conditions = Vec::new();
         if let Some(expected_reverter) = &self.reverter {
-            conditions.push(expected_reverter.address_match_condition(reverter));
+            conditions.push(expected_reverter.address_match_condition(cx, reverter));
         }
         match &self.data {
             ExpectedRevertData::Any => {}
@@ -767,33 +794,28 @@ impl ExpectedRevert {
                 if return_data.len() < prefix.len() {
                     return None;
                 }
-                conditions.push(SymBoolExpr::cmp(
-                    SymBoolExprOp::Uge,
-                    return_data.len_expr(),
-                    SymExpr::constant(U256::from(prefix.len())),
-                ));
+                let prefix_len = cx.constant(U256::from(prefix.len()));
+                conditions.push(cx.cmp(SymBoolExprOp::Uge, return_data.len_expr(), prefix_len));
                 conditions.extend((0..prefix.len()).map(|offset| {
-                    let expected = prefix.byte(offset);
-                    let actual = return_data.byte(offset);
-                    SymBoolExpr::eq_words(&actual, &expected)
+                    let expected = prefix.byte(cx, offset);
+                    let actual = return_data.byte(cx, offset);
+                    cx.eq(actual, expected)
                 }));
             }
             ExpectedRevertData::Exact(data) => {
                 if return_data.len() < data.len() {
                     return None;
                 }
-                conditions.push(SymBoolExpr::eq(
-                    return_data.len_expr(),
-                    SymExpr::constant(U256::from(data.len())),
-                ));
+                let len = cx.constant(U256::from(data.len()));
+                conditions.push(cx.eq(return_data.len_expr(), len));
                 conditions.extend((0..data.len()).map(|offset| {
-                    let expected = data.byte(offset);
-                    let actual = return_data.byte(offset);
-                    SymBoolExpr::eq_words(&actual, &expected)
+                    let expected = data.byte(cx, offset);
+                    let actual = return_data.byte(cx, offset);
+                    cx.eq(actual, expected)
                 }));
             }
         }
-        Some(SymBoolExpr::and(conditions))
+        Some(cx.and(conditions))
     }
 }
 
@@ -846,12 +868,13 @@ impl ExpectedCreate {
 
     pub(crate) fn match_condition(
         &self,
+        cx: &mut SymCx,
         deployer: Address,
         kind: CreateKind,
         bytecode: &[u8],
     ) -> Option<SymBoolExpr> {
         (self.kind == kind && self.bytecode == bytecode)
-            .then(|| self.deployer.address_match_condition(deployer))
+            .then(|| self.deployer.address_match_condition(cx, deployer))
     }
 }
 
@@ -890,6 +913,7 @@ impl ExpectedCall {
 
     pub(crate) fn match_condition(
         &self,
+        cx: &mut SymCx,
         callee: Address,
         value: Option<U256>,
         gas: &SymExpr,
@@ -898,13 +922,11 @@ impl ExpectedCall {
         if !self.static_parts_match(value, gas)? {
             return Ok(None);
         }
-        let Some(data_condition) = calldata.prefix_condition(&self.data) else {
+        let Some(data_condition) = calldata.prefix_condition(cx, &self.data) else {
             return Ok(None);
         };
-        Ok(Some(SymBoolExpr::and(vec![
-            self.callee.address_match_condition(callee),
-            data_condition,
-        ])))
+        let callee_condition = self.callee.address_match_condition(cx, callee);
+        Ok(Some(cx.and(vec![callee_condition, data_condition])))
     }
 
     fn static_parts_match(
@@ -972,6 +994,7 @@ impl CallMock {
 
     pub(crate) fn match_condition(
         &self,
+        cx: &mut SymCx,
         callee: Address,
         value: Option<U256>,
         calldata: &SymBytes,
@@ -979,19 +1002,20 @@ impl CallMock {
         if !self.static_parts_match(value) {
             return None;
         }
-        let data_condition = calldata.prefix_condition(&self.data)?;
-        Some(SymBoolExpr::and(vec![self.callee.address_match_condition(callee), data_condition]))
+        let data_condition = calldata.prefix_condition(cx, &self.data)?;
+        let callee_condition = self.callee.address_match_condition(cx, callee);
+        Some(cx.and(vec![callee_condition, data_condition]))
     }
 
     fn static_parts_match(&self, value: Option<U256>) -> bool {
         self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
     }
 
-    pub(crate) fn next_outcome(&mut self) -> CallMockOutcome {
+    pub(crate) fn next_outcome(&mut self, cx: &mut SymCx) -> CallMockOutcome {
         let idx = self.calls.min(self.returns.len().saturating_sub(1));
         self.calls = self.calls.saturating_add(1);
         CallMockOutcome {
-            return_data: self.returns.get(idx).cloned().unwrap_or_default(),
+            return_data: self.returns.get(idx).cloned().unwrap_or_else(|| SymReturnData::empty(cx)),
             reverts: self.reverts,
         }
     }
@@ -1021,8 +1045,13 @@ impl FunctionMock {
         Self { callee, target, data }
     }
 
-    pub(crate) fn matches_definition(&self, callee: &SymExpr, data: &SymBytes) -> bool {
-        self.callee == *callee && self.data.same_bytes(data)
+    pub(crate) fn matches_definition(
+        &self,
+        cx: &mut SymCx,
+        callee: &SymExpr,
+        data: &SymBytes,
+    ) -> bool {
+        self.callee == *callee && self.data.same_bytes(cx, data)
     }
 
     pub(crate) const fn set_target(&mut self, target: Address) {
@@ -1039,11 +1068,13 @@ impl FunctionMock {
 
     pub(crate) fn match_condition(
         &self,
+        cx: &mut SymCx,
         callee: Address,
         calldata: &SymBytes,
     ) -> Option<SymBoolExpr> {
-        let data_condition = calldata.prefix_condition(&self.data)?;
-        Some(SymBoolExpr::and(vec![self.callee.address_match_condition(callee), data_condition]))
+        let data_condition = calldata.prefix_condition(cx, &self.data)?;
+        let callee_condition = self.callee.address_match_condition(cx, callee);
+        Some(cx.and(vec![callee_condition, data_condition]))
     }
 }
 
@@ -1088,12 +1119,13 @@ impl ExpectedEmit {
 
     pub(crate) fn match_condition(
         &self,
+        cx: &mut SymCx,
         template: &SymbolicLog,
         actual: &SymbolicLog,
     ) -> Option<SymBoolExpr> {
         let mut conditions = Vec::new();
         if let Some(expected_emitter) = &self.emitter {
-            conditions.push(expected_emitter.address_match_condition(actual.emitter));
+            conditions.push(expected_emitter.address_match_condition(cx, actual.emitter));
         }
         for idx in 0..self.checks.topics.len() {
             if !self.checks.topics[idx] {
@@ -1101,7 +1133,7 @@ impl ExpectedEmit {
             }
             match (template.topics.get(idx), actual.topics.get(idx)) {
                 (Some(left), Some(right)) => {
-                    conditions.push(SymBoolExpr::eq_words(left, right));
+                    conditions.push(cx.eq(left.clone(), right.clone()));
                 }
                 (None, None) => {}
                 _ => return None,
@@ -1109,16 +1141,18 @@ impl ExpectedEmit {
         }
 
         if self.checks.data {
-            conditions.push(SymBoolExpr::eq_words(&template.data_len, &actual.data_len));
+            conditions.push(cx.eq(template.data_len.clone(), actual.data_len.clone()));
             if template.data.len() != actual.data.len() {
                 return None;
             }
             conditions.extend((0..template.data.len()).map(|idx| {
-                SymBoolExpr::eq_words(&template.data.byte(idx), &actual.data.byte(idx))
+                let template = template.data.byte(cx, idx);
+                let actual = actual.data.byte(cx, idx);
+                cx.eq(template, actual)
             }));
         }
 
-        Some(SymBoolExpr::and(conditions))
+        Some(cx.and(conditions))
     }
 }
 
@@ -1138,32 +1172,34 @@ impl ExpectedEmitChecks {
     }
 
     pub(crate) fn from_non_anonymous_args(
+        cx: &mut SymCx,
         memory: &SymMemory,
         args_offset: usize,
     ) -> Result<Self, SymbolicError> {
         Ok(Self {
             topics: [
                 true,
-                read_abi_bool_arg(memory, args_offset, 0, "symbolic vm.expectEmit")?,
-                read_abi_bool_arg(memory, args_offset, 1, "symbolic vm.expectEmit")?,
-                read_abi_bool_arg(memory, args_offset, 2, "symbolic vm.expectEmit")?,
+                read_abi_bool_arg(cx, memory, args_offset, 0, "symbolic vm.expectEmit")?,
+                read_abi_bool_arg(cx, memory, args_offset, 1, "symbolic vm.expectEmit")?,
+                read_abi_bool_arg(cx, memory, args_offset, 2, "symbolic vm.expectEmit")?,
             ],
-            data: read_abi_bool_arg(memory, args_offset, 3, "symbolic vm.expectEmit")?,
+            data: read_abi_bool_arg(cx, memory, args_offset, 3, "symbolic vm.expectEmit")?,
         })
     }
 
     pub(crate) fn from_anonymous_args(
+        cx: &mut SymCx,
         memory: &SymMemory,
         args_offset: usize,
     ) -> Result<Self, SymbolicError> {
         Ok(Self {
             topics: [
-                read_abi_bool_arg(memory, args_offset, 0, "symbolic vm.expectEmitAnonymous")?,
-                read_abi_bool_arg(memory, args_offset, 1, "symbolic vm.expectEmitAnonymous")?,
-                read_abi_bool_arg(memory, args_offset, 2, "symbolic vm.expectEmitAnonymous")?,
-                read_abi_bool_arg(memory, args_offset, 3, "symbolic vm.expectEmitAnonymous")?,
+                read_abi_bool_arg(cx, memory, args_offset, 0, "symbolic vm.expectEmitAnonymous")?,
+                read_abi_bool_arg(cx, memory, args_offset, 1, "symbolic vm.expectEmitAnonymous")?,
+                read_abi_bool_arg(cx, memory, args_offset, 2, "symbolic vm.expectEmitAnonymous")?,
+                read_abi_bool_arg(cx, memory, args_offset, 3, "symbolic vm.expectEmitAnonymous")?,
             ],
-            data: read_abi_bool_arg(memory, args_offset, 4, "symbolic vm.expectEmitAnonymous")?,
+            data: read_abi_bool_arg(cx, memory, args_offset, 4, "symbolic vm.expectEmitAnonymous")?,
         })
     }
 }
@@ -1201,7 +1237,9 @@ pub(crate) struct CallFrame {
 }
 
 impl CallFrame {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        cx: &mut SymCx,
         address: Address,
         code_address: Address,
         storage_address: Address,
@@ -1213,17 +1251,17 @@ impl CallFrame {
         Self {
             pc: 0,
             address,
-            address_word: SymExpr::constant(address_word(address)),
+            address_word: cx.constant(address_word(address)),
             code_address,
             storage_address,
             caller,
-            caller_word: SymExpr::constant(address_word(caller)),
+            caller_word: cx.constant(address_word(caller)),
             callvalue,
             is_static,
             calldata,
             stack: SymStack::default(),
             memory: SymMemory::default(),
-            return_data: SymReturnData::default(),
+            return_data: SymReturnData::empty(cx),
         }
     }
 }
@@ -1318,6 +1356,7 @@ impl StorageWrite {
     }
 
     pub(crate) fn select_from(
+        cx: &mut SymCx,
         writes: &[Self],
         address: Address,
         key: SymExpr,
@@ -1325,7 +1364,7 @@ impl StorageWrite {
     ) -> SymExpr {
         let mut value = base;
         for write in writes.iter().filter(|write| write.address == address) {
-            value = write.select(key.clone(), value);
+            value = write.select(cx, key.clone(), value);
         }
         value
     }
@@ -1339,8 +1378,8 @@ impl StorageWrite {
         &self.value
     }
 
-    pub(crate) fn select(&self, read_key: SymExpr, base: SymExpr) -> SymExpr {
-        read_key.select_storage_write(self.key.clone(), self.value.clone(), base)
+    pub(crate) fn select(&self, cx: &mut SymCx, read_key: SymExpr, base: SymExpr) -> SymExpr {
+        read_key.select_storage_write(cx, self.key.clone(), self.value.clone(), base)
     }
 }
 
@@ -1431,22 +1470,24 @@ impl SymbolicWorld {
 
     pub(crate) fn sload<FEN: FoundryEvmNetwork>(
         &self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
         key: SymExpr,
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
-        let base = self.storage_base(executor, address, &key, concrete_key)?;
-        let read_key = concrete_key.map(SymExpr::constant).unwrap_or(key);
-        Ok(StorageWrite::select_from(&self.storage, address, read_key, base))
+        let base = self.storage_base(cx, executor, address, &key, concrete_key)?;
+        let read_key = concrete_key.map(|key| cx.constant(key)).unwrap_or(key);
+        Ok(StorageWrite::select_from(cx, &self.storage, address, read_key, base))
     }
 
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
         self.storage.push(StorageWrite::new(address, key, value));
     }
 
-    pub(crate) fn tload(&self, address: Address, key: SymExpr) -> SymExpr {
-        StorageWrite::select_from(&self.transient_storage, address, key, SymExpr::zero())
+    pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {
+        let base = cx.zero();
+        StorageWrite::select_from(cx, &self.transient_storage, address, key, base)
     }
 
     pub(crate) fn tstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
@@ -1533,6 +1574,7 @@ impl SymbolicWorld {
 
     pub(crate) fn storage_base<FEN: FoundryEvmNetwork>(
         &self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
         key: &SymExpr,
@@ -1540,26 +1582,26 @@ impl SymbolicWorld {
     ) -> Result<SymExpr, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
             let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
-            return Ok(SymExpr::var_symbol(name));
+            return Ok(cx.var_symbol(name));
         }
         if let Some(key) = concrete_key {
             return executor
                 .backend()
                 .storage_ref(address, key)
-                .map(SymExpr::constant)
+                .map(|value| cx.constant(value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()));
         }
         if let Some(key) = key.as_const() {
             executor
                 .backend()
                 .storage_ref(address, key)
-                .map(SymExpr::constant)
+                .map(|value| cx.constant(value))
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
         } else if self.zero_init_symbolic_storage {
-            Ok(SymExpr::zero())
+            Ok(cx.zero())
         } else {
             let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
-            Ok(SymExpr::var_symbol(name))
+            Ok(cx.var_symbol(name))
         }
     }
 
@@ -1579,39 +1621,39 @@ impl SymbolicWorld {
 
     pub(crate) fn balance_word_for_address<FEN: FoundryEvmNetwork>(
         &self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
     ) -> SymExpr {
         if self.destroyed_accounts.contains(&address) {
-            return SymExpr::zero();
+            return cx.zero();
         }
         self.balances
             .get(&address)
             .cloned()
-            .unwrap_or_else(|| SymExpr::constant(self.backend_balance(executor, address)))
+            .unwrap_or_else(|| cx.constant(self.backend_balance(executor, address)))
     }
 
     pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(address) = self.resolve_address(&address_expr) {
-            return Ok(self.balance_word_for_address(executor, address));
+            return Ok(self.balance_word_for_address(cx, executor, address));
         }
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
-        let mut result = self.balance_word_for_address(executor, representative);
+        let mut result = self.balance_word_for_address(cx, executor, representative);
         for (address, balance) in &self.balances {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            result = SymExpr::ite(
-                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
-                balance.clone(),
-                result,
-            );
+            let address = cx.constant(address_word(*address));
+            let condition = cx.eq(expr.clone(), address);
+            result = cx.ite(condition, balance.clone(), result);
         }
 
         Ok(result)
@@ -1627,6 +1669,7 @@ impl SymbolicWorld {
 
     pub(crate) fn transfer<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         from: Address,
         to: Address,
@@ -1635,10 +1678,12 @@ impl SymbolicWorld {
         if value.as_const().is_some_and(|value| value.is_zero()) {
             return;
         }
-        let from_balance = self.balance_word_for_address(executor, from);
-        let to_balance = self.balance_word_for_address(executor, to);
-        self.set_balance_word(from, SymExpr::op(SymExprOp::Sub, from_balance, value.clone()));
-        self.set_balance_word(to, SymExpr::op(SymExprOp::Add, to_balance, value));
+        let from_balance = self.balance_word_for_address(cx, executor, from);
+        let to_balance = self.balance_word_for_address(cx, executor, to);
+        let from_balance = cx.op(SymExprOp::Sub, from_balance, value.clone());
+        let to_balance = cx.op(SymExprOp::Add, to_balance, value);
+        self.set_balance_word(from, from_balance);
+        self.set_balance_word(to, to_balance);
     }
 
     pub(crate) fn nonce<FEN: FoundryEvmNetwork>(
@@ -1697,19 +1742,18 @@ impl SymbolicWorld {
     /// Implements legacy `SELFDESTRUCT` semantics.
     pub(crate) fn selfdestruct_legacy<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
         beneficiary: Address,
     ) -> Result<(), SymbolicError> {
-        let balance = self.balance_word_for_address(executor, address);
+        let balance = self.balance_word_for_address(cx, executor, address);
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
-            let beneficiary_balance = self.balance_word_for_address(executor, beneficiary);
-            self.set_balance_word(
-                beneficiary,
-                SymExpr::op(SymExprOp::Add, beneficiary_balance, balance),
-            );
+            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
+            let beneficiary_balance = cx.op(SymExprOp::Add, beneficiary_balance, balance);
+            self.set_balance_word(beneficiary, beneficiary_balance);
         }
-        self.balances.insert(address, SymExpr::zero());
+        self.balances.insert(address, cx.zero());
         self.code_cache.insert(address, SymCode::default());
         if !self.nonces.contains_key(&address) {
             let nonce = self.nonce(executor, address)?;
@@ -1725,20 +1769,19 @@ impl SymbolicWorld {
     /// Implements Cancun+ `SELFDESTRUCT` semantics for accounts not created in the current tx.
     pub(crate) fn selfdestruct_cancun_existing<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
         beneficiary: Address,
     ) {
-        let balance = self.balance_word_for_address(executor, address);
+        let balance = self.balance_word_for_address(cx, executor, address);
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
-            let beneficiary_balance = self.balance_word_for_address(executor, beneficiary);
+            let beneficiary_balance = self.balance_word_for_address(cx, executor, beneficiary);
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
-            self.set_balance_word(
-                beneficiary,
-                SymExpr::op(SymExprOp::Add, beneficiary_balance, balance),
-            );
-            self.balances.insert(address, SymExpr::zero());
+            let beneficiary_balance = cx.op(SymExprOp::Add, beneficiary_balance, balance);
+            self.set_balance_word(beneficiary, beneficiary_balance);
+            self.balances.insert(address, cx.zero());
         }
     }
 
@@ -1829,39 +1872,42 @@ impl SymbolicWorld {
 
     pub(crate) fn extcode_hash_for_address<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<SymExpr, SymbolicError> {
         if self.account_exists(executor, address)? {
             let code = self.extcode(executor, address)?;
-            Ok(keccak_word(code.read_byte_exprs(0, code.len())))
+            let bytes = code.read_byte_exprs(cx, 0, code.len());
+            Ok(keccak_word(cx, bytes))
         } else {
-            Ok(SymExpr::zero())
+            Ok(cx.zero())
         }
     }
 
     pub(crate) fn extcode_size_word<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(address) = self.resolve_address(&address_expr) {
-            return Ok(SymExpr::constant(U256::from(self.extcode(executor, address)?.len())));
+            let len = self.extcode(executor, address)?.len();
+            return Ok(cx.constant(U256::from(len)));
         }
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
-        let mut result =
-            SymExpr::constant(U256::from(self.extcode(executor, representative)?.len()));
+        let len = self.extcode(executor, representative)?.len();
+        let mut result = cx.constant(U256::from(len));
         for (address, code) in &self.code_cache {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            result = SymExpr::ite(
-                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
-                SymExpr::constant(U256::from(code.len())),
-                result,
-            );
+            let address = cx.constant(address_word(*address));
+            let condition = cx.eq(expr.clone(), address);
+            let len = cx.constant(U256::from(code.len()));
+            result = cx.ite(condition, len, result);
         }
 
         Ok(result)
@@ -1869,28 +1915,28 @@ impl SymbolicWorld {
 
     pub(crate) fn extcode_hash_word<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address_expr: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(address) = self.resolve_address(&address_expr) {
-            return self.extcode_hash_for_address(executor, address);
+            return self.extcode_hash_for_address(cx, executor, address);
         }
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
-        let mut result = self.extcode_hash_for_address(executor, representative)?;
+        let mut result = self.extcode_hash_for_address(cx, executor, representative)?;
         let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
             let hash = if self.destroyed_accounts.contains(address) {
-                SymExpr::zero()
+                cx.zero()
             } else {
-                keccak_word(code.read_byte_exprs(0, code.len()))
+                let bytes = code.read_byte_exprs(cx, 0, code.len());
+                keccak_word(cx, bytes)
             };
-            result = SymExpr::ite(
-                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
-                hash,
-                result,
-            );
+            let address = cx.constant(address_word(*address));
+            let condition = cx.eq(expr.clone(), address);
+            result = cx.ite(condition, hash, result);
         }
 
         Ok(result)
@@ -1898,30 +1944,34 @@ impl SymbolicWorld {
 
     pub(crate) fn extcode_bytes_word<FEN: FoundryEvmNetwork>(
         &mut self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         address_expr: SymExpr,
         offset: SymExpr,
         size: usize,
     ) -> Result<SymBytes, SymbolicError> {
         if let Some(address) = self.resolve_address(&address_expr) {
-            return Ok(self.extcode(executor, address)?.read_bytes_offset(offset, size));
+            return Ok(self.extcode(executor, address)?.read_bytes_offset(cx, offset, size));
         }
 
         let expr = address_expr;
         let representative = expr.representative_symbolic_address();
-        let mut result =
-            self.extcode(executor, representative)?.read_byte_exprs_offset(offset.clone(), size);
+        let mut result = self.extcode(executor, representative)?.read_byte_exprs_offset(
+            cx,
+            offset.clone(),
+            size,
+        );
         let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
             let bytes = if self.destroyed_accounts.contains(address) {
-                vec![SymExpr::zero(); size]
+                (0..size).map(|_| cx.zero()).collect::<Vec<_>>()
             } else {
-                code.read_byte_exprs_offset(offset.clone(), size)
+                code.read_byte_exprs_offset(cx, offset.clone(), size)
             };
-            let condition =
-                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address)));
+            let address = cx.constant(address_word(*address));
+            let condition = cx.eq(expr.clone(), address);
             for (idx, byte) in bytes.into_iter().enumerate() {
-                result[idx] = SymExpr::ite(condition.clone(), byte, result[idx].clone());
+                result[idx] = cx.ite(condition.clone(), byte, result[idx].clone());
             }
         }
 
@@ -1970,25 +2020,26 @@ pub(crate) struct SymbolicBlock {
     pub(crate) blob_hashes: Vec<B256>,
 }
 
-impl Default for SymbolicBlock {
-    fn default() -> Self {
+impl SymbolicBlock {
+    pub(crate) fn new(cx: &mut SymCx) -> Self {
         Self {
-            chain_id: SymExpr::constant(U256::from(1)),
+            chain_id: cx.constant(U256::from(1)),
             coinbase: Address::ZERO,
-            timestamp: SymExpr::zero(),
-            number: SymExpr::zero(),
-            difficulty: SymExpr::zero(),
-            gaslimit: SymExpr::zero(),
-            basefee: SymExpr::zero(),
-            blob_basefee: SymExpr::zero(),
+            timestamp: cx.zero(),
+            number: cx.zero(),
+            difficulty: cx.zero(),
+            gaslimit: cx.zero(),
+            basefee: cx.zero(),
+            blob_basefee: cx.zero(),
             block_hashes: HashMap::default(),
             blob_hashes: Vec::new(),
         }
     }
-}
 
-impl SymbolicBlock {
-    pub(crate) fn from_executor<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> Self {
+    pub(crate) fn from_executor<FEN: FoundryEvmNetwork>(
+        cx: &mut SymCx,
+        executor: &Executor<FEN>,
+    ) -> Self {
         let evm_env = executor.evm_env();
         let block = executor
             .inspector()
@@ -2002,14 +2053,14 @@ impl SymbolicBlock {
             .unwrap_or_else(|| block.difficulty());
 
         Self {
-            chain_id: SymExpr::constant(U256::from(evm_env.cfg_env.chain_id)),
+            chain_id: cx.constant(U256::from(evm_env.cfg_env.chain_id)),
             coinbase: block.beneficiary(),
-            timestamp: SymExpr::constant(block.timestamp()),
-            number: SymExpr::constant(block.number()),
-            difficulty: SymExpr::constant(difficulty),
-            gaslimit: SymExpr::constant(U256::from(block.gas_limit())),
-            basefee: SymExpr::constant(U256::from(block.basefee())),
-            blob_basefee: SymExpr::constant(U256::from(block.blob_gasprice().unwrap_or_default())),
+            timestamp: cx.constant(block.timestamp()),
+            number: cx.constant(block.number()),
+            difficulty: cx.constant(difficulty),
+            gaslimit: cx.constant(U256::from(block.gas_limit())),
+            basefee: cx.constant(U256::from(block.basefee())),
+            blob_basefee: cx.constant(U256::from(block.blob_gasprice().unwrap_or_default())),
             block_hashes: HashMap::default(),
             blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
         }
@@ -2029,53 +2080,53 @@ impl SymbolicBlock {
 
     pub(crate) fn block_hash<FEN: FoundryEvmNetwork>(
         &self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         block_number: U256,
     ) -> Result<SymExpr, SymbolicError> {
         let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
         if block_number >= current || current - block_number > U256::from(256) {
-            return Ok(SymExpr::zero());
+            return Ok(cx.zero());
         }
         if let Some(hash) = self.block_hashes.get(&block_number) {
             return Ok(hash.clone());
         }
         let Ok(block_number) = u64::try_from(block_number) else {
-            return Ok(SymExpr::zero());
+            return Ok(cx.zero());
         };
         let hash = executor
             .backend()
             .block_hash_ref(block_number)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
-        Ok(SymExpr::constant(U256::from_be_slice(hash.as_slice())))
+        Ok(cx.constant(U256::from_be_slice(hash.as_slice())))
     }
 
     pub(crate) fn block_hash_word<FEN: FoundryEvmNetwork>(
         &self,
+        cx: &mut SymCx,
         executor: &Executor<FEN>,
         block_number: SymExpr,
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(block_number) = block_number.as_const() {
-            return self.block_hash(executor, block_number);
+            return self.block_hash(cx, executor, block_number);
         }
         let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
         if current.is_zero() {
-            return Ok(SymExpr::zero());
+            return Ok(cx.zero());
         }
 
-        let mut result = SymExpr::constant(U256::ZERO);
+        let mut result = cx.zero();
         let max_distance =
             usize::try_from(current.min(U256::from(256))).expect("checked blockhash distance");
         for distance in (1..=max_distance).rev() {
             let candidate = current - U256::from(distance);
-            let hash = self.block_hash(executor, candidate)?;
+            let hash = self.block_hash(cx, executor, candidate)?;
             if hash.as_const().is_some_and(|hash| hash.is_zero()) {
                 continue;
             }
-            result = SymExpr::ite(
-                SymBoolExpr::eq(block_number.clone(), SymExpr::constant(candidate)),
-                hash,
-                result,
-            );
+            let candidate = cx.constant(candidate);
+            let condition = cx.eq(block_number.clone(), candidate);
+            result = cx.ite(condition, hash, result);
         }
 
         Ok(result)

@@ -10,24 +10,24 @@ impl SymbolicExecutor {
         kind: CreateKind,
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
-            state.return_data = SymReturnData::default();
+            state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::Revert);
         }
 
         let value = state.stack.pop()?;
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
-        let size = match state.constrained_usize_checked(&size) {
+        let size = match state.constrained_usize_checked(&mut self.cx, &size) {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
-                state.return_data = SymReturnData::default();
-                state.stack.push(SymExpr::zero())?;
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                state.stack.push(self.cx.zero())?;
                 return Ok(StepOutcome::Continue);
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
                 let max_size = state
-                    .upper_bound_usize(&size)
+                    .upper_bound_usize(&mut self.cx, &size)
                     .filter(|size| *size <= max_limit)
                     .map(Ok)
                     .unwrap_or_else(|| {
@@ -46,23 +46,29 @@ impl SymbolicExecutor {
 
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {
-                if let Some(offset) = state.constrained_usize(&offset) {
-                    SymCode::from_bytes(state.memory.read_bytes(offset, *size))
+                if let Some(offset) = state.constrained_usize(&mut self.cx, &offset) {
+                    let bytes = state.memory.read_bytes(&mut self.cx, offset, *size);
+                    SymCode::from_bytes(&mut self.cx, bytes)
                 } else {
-                    SymCode::from_memory_offset(&state.memory, offset, *size)
+                    SymCode::from_memory_offset(&mut self.cx, &state.memory, offset, *size)
                 }
             }
-            BoundedCopySize::Symbolic { size, max_size } => {
-                SymCode::from_memory_symbolic_size(&state.memory, offset, size.clone(), *max_size)
-            }
+            BoundedCopySize::Symbolic { size, max_size } => SymCode::from_memory_symbolic_size(
+                &mut self.cx,
+                &state.memory,
+                offset,
+                size.clone(),
+                *max_size,
+            ),
         };
         let (created_word, created) = match kind {
             CreateKind::Create => {
                 let nonce = state.world.nonce(executor, state.address)?;
                 let address = state.address.create(nonce);
-                (SymExpr::constant(address_word(address)), address)
+                (self.cx.constant(address_word(address)), address)
             }
             CreateKind::Create2 => create2_address_word(
+                &mut self.cx,
                 state,
                 state.address,
                 salt.expect("CREATE2 salt exists"),
@@ -79,19 +85,21 @@ impl SymbolicExecutor {
 
         if failure_world.has_code_or_nonce(executor, created)? {
             state.world = failure_world;
-            state.return_data = SymReturnData::default();
-            state.stack.push(SymExpr::zero())?;
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            state.stack.push(self.cx.zero())?;
             return Ok(StepOutcome::Continue);
         }
 
+        let calldata = SymCalldata::from_bytes(&mut self.cx, SymBytes::default());
         let mut frame = CallFrame::new(
+            &mut self.cx,
             created,
             created,
             created,
             state.address,
             value.clone(),
             false,
-            SymCalldata::from_bytes(SymBytes::default()),
+            calldata,
         );
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
@@ -100,7 +108,7 @@ impl SymbolicExecutor {
         child.world = failure_world.clone();
         child.world.mark_current_transaction_created(created);
         child.world.set_nonce(created, 1);
-        child.world.transfer(executor, state.address, created, value);
+        child.world.transfer(&mut self.cx, executor, state.address, created, value);
         child.expected_revert = None;
         child.assume_no_revert_next_call = None;
 
@@ -114,7 +122,7 @@ impl SymbolicExecutor {
             let mut parent = state.clone();
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
-            parent.return_data = SymReturnData::default();
+            parent.return_data = SymReturnData::empty(&mut self.cx);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
@@ -180,14 +188,16 @@ impl SymbolicExecutor {
                         &outcome.return_data,
                     )?;
                     if !parent.world.is_destroyed(created) {
-                        parent.world.install_code(created, outcome.return_data.to_code()?);
+                        parent
+                            .world
+                            .install_code(created, outcome.return_data.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
                     parent.stack.push(created_word.clone())?;
                 }
                 TopLevelCallStatus::Revert => {
                     parent.world = failure_world.clone();
-                    parent.stack.push(SymExpr::zero())?;
+                    parent.stack.push(self.cx.zero())?;
                 }
                 TopLevelCallStatus::Failure => {
                     *state = parent;
@@ -229,7 +239,7 @@ impl SymbolicExecutor {
                 }
                 state.depth += 1;
 
-                let op = match code.guarded_opcode(state.pc)? {
+                let op = match code.guarded_opcode(&mut self.cx, state.pc)? {
                     GuardedOpcode::End => {
                         *completed_paths += 1;
                         outcomes.push(ExternalCallOutcome {
@@ -247,11 +257,12 @@ impl SymbolicExecutor {
                     GuardedOpcode::SymbolicSize { condition, opcode } => {
                         let mut in_bounds_constraints = state.constraints.clone();
                         in_bounds_constraints.push(condition.clone());
-                        let in_bounds_sat = self.solver.is_sat(&in_bounds_constraints)?;
+                        let in_bounds_sat =
+                            self.solver.is_sat(&mut self.cx, &in_bounds_constraints)?;
 
                         let mut out_of_bounds_constraints = state.constraints.clone();
-                        out_of_bounds_constraints.push(condition.not());
-                        if self.solver.is_sat(&out_of_bounds_constraints)? {
+                        out_of_bounds_constraints.push(condition.not(&mut self.cx));
+                        if self.solver.is_sat(&mut self.cx, &out_of_bounds_constraints)? {
                             let mut halted = state.clone();
                             halted.constraints = out_of_bounds_constraints;
                             *completed_paths += 1;

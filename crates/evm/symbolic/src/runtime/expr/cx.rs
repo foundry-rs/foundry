@@ -4,14 +4,28 @@ pub(crate) struct SymCx {
     words: HashCons<SymExprKind>,
     bools: HashCons<SymBoolExprKind>,
     symbols: HashMap<Arc<str>, Symbol>,
+    cache: SymCxCache,
+}
+
+#[derive(Default)]
+struct SymCxCache {
+    zero: Option<SymExpr>,
+    one: Option<SymExpr>,
+    bool_true: Option<SymBoolExpr>,
+    bool_false: Option<SymBoolExpr>,
 }
 
 impl SymCx {
     pub(crate) fn new() -> Self {
-        Self { words: HashCons::new(), bools: HashCons::new(), symbols: HashMap::default() }
+        Self {
+            words: HashCons::new(),
+            bools: HashCons::new(),
+            symbols: HashMap::default(),
+            cache: SymCxCache::default(),
+        }
     }
 
-    fn make_expr(&mut self, expr: SymExprKind) -> SymExpr {
+    pub(in crate::runtime::expr) fn make_expr(&mut self, expr: SymExprKind) -> SymExpr {
         SymExpr { kind: self.words.make(expr) }
     }
 
@@ -50,7 +64,27 @@ impl SymCx {
         self.constant(U256::ZERO)
     }
 
+    pub(crate) fn one(&mut self) -> SymExpr {
+        self.constant(U256::from(1))
+    }
+
     pub(crate) fn constant(&mut self, value: U256) -> SymExpr {
+        if value.is_zero() {
+            if let Some(value) = &self.cache.zero {
+                return value.clone();
+            }
+            let value = self.make_expr(SymExprKind::Const(value));
+            self.cache.zero = Some(value.clone());
+            return value;
+        }
+        if value == U256::from(1) {
+            if let Some(value) = &self.cache.one {
+                return value.clone();
+            }
+            let value = self.make_expr(SymExprKind::Const(value));
+            self.cache.one = Some(value.clone());
+            return value;
+        }
         self.make_expr(SymExprKind::Const(value))
     }
 
@@ -78,7 +112,21 @@ impl SymCx {
     }
 
     pub(crate) fn bool_constant(&mut self, value: bool) -> SymBoolExpr {
-        self.bool_from_kind(SymBoolExprKind::Const(value))
+        if value {
+            if let Some(value) = &self.cache.bool_true {
+                return value.clone();
+            }
+            let value = self.bool_from_kind(SymBoolExprKind::Const(true));
+            self.cache.bool_true = Some(value.clone());
+            value
+        } else {
+            if let Some(value) = &self.cache.bool_false {
+                return value.clone();
+            }
+            let value = self.bool_from_kind(SymBoolExprKind::Const(false));
+            self.cache.bool_false = Some(value.clone());
+            value
+        }
     }
 
     pub(crate) fn not(&mut self, value: SymExpr) -> SymExpr {
@@ -233,9 +281,14 @@ impl SymCx {
     }
 
     pub(crate) fn bool_word(&mut self, value: SymBoolExpr) -> SymExpr {
-        let one = self.constant(U256::from(1));
+        let one = self.one();
         let zero = self.zero();
         self.ite(value, one, zero)
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) fn from_bytes(&mut self, bytes: impl IntoIterator<Item = SymExpr>) -> SymExpr {
+        SymExpr::from_bytes(self, bytes)
     }
 
     pub(crate) fn keccak_symbol(
@@ -396,6 +449,27 @@ impl SymCx {
         }
     }
 
+    pub(crate) fn or(&mut self, values: Vec<SymBoolExpr>) -> SymBoolExpr {
+        let mut out = Vec::new();
+        for value in values {
+            let value = self.intern_bool(value);
+            match value.kind() {
+                SymBoolExprKind::Const(false) => {}
+                SymBoolExprKind::Const(true) => return self.bool_constant(true),
+                _ => out.push(value),
+            }
+        }
+        if out.is_empty() {
+            self.bool_constant(false)
+        } else if out.len() == 1 {
+            out.pop().expect("single item exists")
+        } else {
+            let values = out.into_iter().map(|value| self.not_bool(value)).collect();
+            let and = self.and(values);
+            self.not_bool(and)
+        }
+    }
+
     pub(crate) fn not_bool(&mut self, value: SymBoolExpr) -> SymBoolExpr {
         let value = self.intern_bool(value);
         match value.kind() {
@@ -435,17 +509,38 @@ impl SymCx {
     }
 
     fn bool_word_eq_const(&mut self, word: &SymExpr, value: U256) -> Option<SymBoolExpr> {
-        let condition = word.bool_word_condition()?;
-        Some(if value.is_zero() {
-            self.not_bool(condition)
-        } else if value == U256::from(1) {
-            condition
-        } else {
-            self.bool_constant(false)
-        })
+        let SymExprKind::Ite(condition, then_expr, else_expr) = word.kind() else { return None };
+        match (then_expr.as_const(), else_expr.as_const()) {
+            (Some(then_value), Some(else_value))
+                if then_value == U256::from(1) && else_value.is_zero() =>
+            {
+                Some(if value.is_zero() {
+                    self.not_bool(condition.clone())
+                } else if value == U256::from(1) {
+                    condition.clone()
+                } else {
+                    self.bool_constant(false)
+                })
+            }
+            (Some(then_value), Some(else_value))
+                if then_value.is_zero() && else_value == U256::from(1) =>
+            {
+                Some(if value.is_zero() {
+                    condition.clone()
+                } else if value == U256::from(1) {
+                    self.not_bool(condition.clone())
+                } else {
+                    self.bool_constant(false)
+                })
+            }
+            _ => None,
+        }
     }
 
-    fn bool_from_kind(&mut self, expr: SymBoolExprKind) -> SymBoolExpr {
+    pub(in crate::runtime::expr) fn bool_from_kind(
+        &mut self,
+        expr: SymBoolExprKind,
+    ) -> SymBoolExpr {
         SymBoolExpr { kind: self.bools.make(expr) }
     }
 }
