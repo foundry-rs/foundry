@@ -30,7 +30,7 @@ use alloy_rpc_types::{
     },
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolCall, sol};
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 
@@ -67,6 +67,42 @@ async fn test_get_transfer_parity_traces() {
     assert!(!block_traces.is_empty());
 
     assert_eq!(traces, block_traces);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_many_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let set_value = storage.setValue("bar".to_string());
+    let get_value = storage.getValue();
+
+    let set_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*storage.address())
+        .with_input(set_value.calldata().to_owned());
+    let get_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*storage.address())
+        .with_input(get_value.calldata().to_owned());
+    let trace_types = [TraceType::Trace];
+    let calls = [
+        (WithOtherFields::new(set_tx), trace_types.as_slice()),
+        (WithOtherFields::new(get_tx), trace_types.as_slice()),
+    ];
+
+    let traces = handle.http_provider().trace_call_many(&calls).await.unwrap();
+
+    assert_eq!(traces.len(), 2);
+    assert!(!traces[0].trace.is_empty());
+    assert!(!traces[1].trace.is_empty());
+
+    let traced_value = SimpleStorage::getValueCall::abi_decode_returns(&traces[1].output).unwrap();
+    assert_eq!(traced_value, "bar".to_string());
+    assert_eq!(storage.getValue().call().await.unwrap(), "init value".to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]
