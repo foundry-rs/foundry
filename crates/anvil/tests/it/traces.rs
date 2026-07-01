@@ -17,7 +17,7 @@ use alloy_provider::{
 };
 use alloy_rlp::Encodable;
 use alloy_rpc_types::{
-    BlockNumberOrTag, TransactionRequest,
+    BlockNumberOrTag, Index, TransactionRequest,
     state::StateOverride,
     trace::{
         filter::{TraceFilter, TraceFilterMode},
@@ -103,6 +103,40 @@ async fn test_trace_call_many_local() {
     let traced_value = SimpleStorage::getValueCall::abi_decode_returns(&traces[1].output).unwrap();
     assert_eq!(traced_value, "bar".to_string());
     assert_eq!(storage.getValue().call().await.unwrap(), "init value".to_string());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_get_local() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let traces = provider.trace_transaction(receipt.transaction_hash).await.unwrap();
+    assert!(!traces.is_empty());
+
+    let trace = provider.trace_get(receipt.transaction_hash, 0).await.unwrap();
+    assert_eq!(trace, traces[0]);
+
+    let missing: Option<LocalizedTransactionTrace> = provider
+        .client()
+        .request("trace_get", (receipt.transaction_hash, vec![Index::from(999)]))
+        .await
+        .unwrap();
+    assert_eq!(missing, None);
+
+    let invalid_indices: Option<LocalizedTransactionTrace> = provider
+        .client()
+        .request("trace_get", (receipt.transaction_hash, vec![Index::from(0), Index::from(1)]))
+        .await
+        .unwrap();
+    assert_eq!(invalid_indices, None);
 }
 
 sol!(

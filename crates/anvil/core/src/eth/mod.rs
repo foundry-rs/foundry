@@ -424,6 +424,10 @@ pub enum EthRequest {
     #[serde(rename = "trace_filter", with = "sequence")]
     TraceFilter(TraceFilter),
 
+    /// Trace get endpoint for parity's `trace_get`.
+    #[serde(rename = "trace_get")]
+    TraceGet(B256, Vec<Index>),
+
     /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
     #[serde(rename = "trace_replayBlockTransactions")]
     TraceReplayBlockTransactions(
@@ -1850,6 +1854,13 @@ true}]}"#;
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "trace_callMany", "params": [[[{"from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, ["trace"]]], "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_trace_get() {
+        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", [0]]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

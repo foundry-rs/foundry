@@ -1772,6 +1772,28 @@ impl<N: Network> Backend<N> {
         Ok(vec![])
     }
 
+    /// Returns a transaction trace at a given index.
+    pub async fn trace_get(
+        &self,
+        hash: B256,
+        indices: Vec<Index>,
+    ) -> Result<Option<LocalizedTransactionTrace>, BlockchainError> {
+        if indices.len() != 1 {
+            return Ok(None);
+        }
+
+        let index: usize = indices[0].into();
+        if let Some(traces) = self.mined_parity_trace_transaction(hash) {
+            return Ok(traces.into_iter().nth(index));
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.trace_get(hash, indices).await?);
+        }
+
+        Ok(None)
+    }
+
     /// Returns the traces for the given block
     pub async fn trace_block(
         &self,
