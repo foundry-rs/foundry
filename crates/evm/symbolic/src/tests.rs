@@ -1279,6 +1279,48 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
 }
 
 #[test]
+fn memory_call_output_accepts_symbolic_size_and_return_len() {
+    let mut cx = SymCx::new();
+    let bytes = vec![1, 2, 3, 4]
+        .into_iter()
+        .map(|byte| SymExpr::constant(&mut cx, U256::from(byte)))
+        .collect();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    let len = SymExpr::var(&mut cx, "len");
+    let return_data = SymReturnData::from_bytes_with_len(bytes, len);
+    let mut memory = SymMemory::default();
+    let tail = SymExpr::constant(&mut cx, U256::from(0xaa));
+    let tail = SymBytes::exprs(&mut cx, vec![tail; 4]);
+    memory.store_bytes(&mut cx, 0, tail);
+    let dest = SymExpr::zero(&mut cx);
+    let size = SymExpr::var(&mut cx, "size");
+    let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
+
+    memory.copy_call_output_offset(&mut cx, dest, &copy_size, &return_data).unwrap();
+
+    let return_len_limited =
+        BTreeMap::from([("size".to_string(), U256::from(4)), ("len".to_string(), U256::from(2))]);
+    assert_eq!(
+        memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &return_len_limited).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
+
+    let output_size_limited =
+        BTreeMap::from([("size".to_string(), U256::from(2)), ("len".to_string(), U256::from(4))]);
+    assert_eq!(
+        memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &output_size_limited).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
+
+    let fully_copied =
+        BTreeMap::from([("size".to_string(), U256::from(4)), ("len".to_string(), U256::from(4))]);
+    assert_eq!(
+        memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &fully_copied).unwrap(),
+        vec![1, 2, 3, 4]
+    );
+}
+
+#[test]
 fn memory_call_output_accepts_symbolic_destination_and_return_len() {
     let mut cx = SymCx::new();
     let bytes = vec![1, 2, 3, 4]
