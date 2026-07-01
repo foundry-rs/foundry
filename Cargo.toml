@@ -510,7 +510,10 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "6540a5ac3c6f3848684eb
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false }
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false, features = [
+    "serde",
+    "std",
+] }
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false, features = [
     "serde",
 ] }

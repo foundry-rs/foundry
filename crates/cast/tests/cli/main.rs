@@ -242,7 +242,7 @@ casttest!(block_raw_tempo, |_prj, cmd| {
 });
 
 casttest!(channel_id_defaults, async |_prj, cmd| {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     let (_api, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
@@ -6028,8 +6028,8 @@ mod vaddr_e2e {
         process::Stdio,
         time::{Duration, Instant},
     };
-    use tempo_chainspec::hardfork::TempoHardfork;
     use tempo_contracts::precompiles::DEFAULT_FEE_TOKEN;
+    use tempo_hardfork::TempoHardfork;
 
     /// `cast vaddr` exercises TIP-1022, which is enabled after `TempoHardfork::T3`.
     fn tempo_t3_config() -> anvil::NodeConfig {

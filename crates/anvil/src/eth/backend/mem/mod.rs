@@ -186,8 +186,8 @@ use std::{
     time::Duration,
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
-use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
     storage::{StorageActions, StorageCtx},
