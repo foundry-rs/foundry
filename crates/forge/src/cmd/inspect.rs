@@ -24,8 +24,8 @@ use regex::Regex;
 use serde_json::{Map, Value};
 use solar::sema::{
     Gcx,
-    eval::ConstantEvaluator,
     ast::Visibility,
+    eval::ConstantEvaluator,
     hir::{ElementaryType, ItemId, NatSpecKind, TypeKind, VariableId},
     interface::source_map::FileName,
 };
