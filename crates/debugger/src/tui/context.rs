@@ -1087,7 +1087,12 @@ fn parse_storage_slot(input: &str) -> Result<U256, String> {
             (input, 16)
         };
 
-    if digits.is_empty() {
+    let valid_digits = match radix {
+        10 => digits.bytes().all(|b| b.is_ascii_digit()),
+        16 => digits.bytes().all(|b| b.is_ascii_hexdigit()),
+        _ => unreachable!(),
+    };
+    if digits.is_empty() || !valid_digits {
         return Err(invalid_storage_slot(input));
     }
 
@@ -1617,6 +1622,22 @@ mod tests {
             parse_storage_slot("2x3").unwrap_err(),
             "Invalid storage slot `2x3`; use hex 0x20/20 or decimal d:32"
         );
+        assert_eq!(
+            parse_storage_slot("1_0").unwrap_err(),
+            "Invalid storage slot `1_0`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("_").unwrap_err(),
+            "Invalid storage slot `_`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("0x_").unwrap_err(),
+            "Invalid storage slot `0x_`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("d:_").unwrap_err(),
+            "Invalid storage slot `d:_`; use hex 0x20/20 or decimal d:32"
+        );
     }
 
     #[test]
@@ -1960,6 +1981,30 @@ mod tests {
             tui.status.as_ref().unwrap().text,
             "Jumped to storage SSTORE slot 0x1 = 0x2a at PC 0x2a (42)"
         );
+    }
+
+    #[test]
+    fn command_prompt_ignores_failed_sstore_stack_snapshot() {
+        let address = Address::repeat_byte(1);
+        let mut store = step_with_stack(42, OpCode::SSTORE, &[42, 1]);
+        store.status = Some(InstructionResult::StateChangeDuringStaticCall);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![store],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("slot 1");
+
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Storage slot 0x1 not accessed in current call");
     }
 
     #[test]

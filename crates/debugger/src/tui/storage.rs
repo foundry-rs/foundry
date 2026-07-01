@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use revm::bytecode::opcode;
+use revm::interpreter::InstructionResult;
 use revm_inspectors::tracing::types::{CallTraceStep, StorageChangeReason};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +83,7 @@ pub(super) fn storage_access_at(
         });
     }
 
-    if step.op.get() == opcode::SSTORE {
+    if step.op.get() == opcode::SSTORE && step.status.is_none_or(InstructionResult::is_ok) {
         let mut stack = step.stack.as_deref()?.iter().rev();
         let slot = stack.next().copied()?;
         let value = stack.next().copied()?;
