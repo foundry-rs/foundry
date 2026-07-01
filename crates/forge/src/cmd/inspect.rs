@@ -690,7 +690,7 @@ fn register_type_recursive<'hir>(
                 );
             }
             let mut members: Vec<Value> = Vec::new();
-            pack_fields(gcx, s.fields, |var_id, field_type, fs, fo| {
+            pack_fields(gcx, s.fields, |var_id, field_type, field_slot, field_offset| {
                 let var = hir.variable(var_id);
                 let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
                 register_type_recursive(gcx, &var.ty.kind, types);
@@ -698,8 +698,8 @@ fn register_type_recursive<'hir>(
                     "astId": 0,
                     "contract": label,
                     "label": field_name,
-                    "offset": fo,
-                    "slot": fs.to_string(),
+                    "offset": field_offset,
+                    "slot": field_slot.to_string(),
                     "type": field_type,
                 }));
             });
