@@ -15,7 +15,9 @@ fn deterministic_fmp_offset(span: Span) -> u8 {
 mod tests {
     use std::path::Path;
 
+    use super::deterministic_fmp_offset;
     use crate::brutalizer::brutalize_source;
+    use solar::{ast::Span, interface::BytePos};
 
     fn brutalize(source: &str) -> String {
         brutalize_source(Path::new("test.sol"), source).unwrap()
@@ -51,9 +53,6 @@ contract T {
 
     #[test]
     fn offset_is_odd_and_bounded() {
-        use super::deterministic_fmp_offset;
-        use solar::{ast::Span, interface::BytePos};
-
         for i in 0..100u32 {
             let span = Span::new(BytePos(i), BytePos(i + 10));
             let offset = deterministic_fmp_offset(span);

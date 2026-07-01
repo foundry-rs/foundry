@@ -1,4 +1,4 @@
-use solar::ast::{ElementaryType, Span, TypeKind, TypeSize};
+use solar::ast::{ElementaryType, Span, Type, TypeKind, TypeSize};
 
 use super::utils::span_seed;
 
@@ -8,11 +8,7 @@ pub(super) fn deterministic_mask(span: Span) -> String {
     format!("0x{mask:016x}")
 }
 
-pub(super) fn brutalize_by_type(
-    ty: &solar::ast::Type<'_>,
-    arg_text: &str,
-    mask: &str,
-) -> Option<String> {
+pub(super) fn brutalize_by_type(ty: &Type<'_>, arg_text: &str, mask: &str) -> Option<String> {
     match &ty.kind {
         TypeKind::Elementary(elem_ty) => match elem_ty {
             ElementaryType::Address(_) => Some(brutalize_address(arg_text, mask)),

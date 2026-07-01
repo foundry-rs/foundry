@@ -1,6 +1,6 @@
 use super::{install, watch::WatchArgs};
 use crate::{
-    MultiContractRunner, MultiContractRunnerBuilder,
+    MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{
@@ -18,6 +18,7 @@ use crate::{
         identifier::SignaturesIdentifier,
         speedscope,
     },
+    workspace,
 };
 use alloy_primitives::U256;
 use chrono::Utc;
@@ -46,6 +47,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
     },
     filter::GlobMatcher,
+    fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
 #[cfg(feature = "optimism")]
@@ -70,6 +72,7 @@ use std::{
     sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
+use tempfile::TempDir;
 use yansi::Paint;
 
 mod evm_profile_server;
@@ -976,9 +979,6 @@ impl TestArgs {
 
     /// Compile and run tests with brutalization applied to source files.
     async fn compile_and_run_brutalized(&mut self) -> Result<TestOutcome> {
-        use crate::{brutalizer, workspace};
-        use tempfile::TempDir;
-
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
@@ -1556,7 +1556,6 @@ impl TestArgs {
             // `vm.writeFile` (broad `fs_permissions`) or arbitrary `ffi` calls.
             // Detect both up front so users aren't surprised by races or
             // corruption of their real dependency tree.
-            use foundry_config::fs_permissions::FsAccessPermission;
             if config_for_mutation.ffi {
                 eyre::bail!(
                     "Mutation testing is unsafe with `ffi = true`: per-mutant workspaces share \
