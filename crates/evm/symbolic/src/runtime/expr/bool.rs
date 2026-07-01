@@ -11,7 +11,7 @@ pub(crate) struct SymBoolExpr {
 
 impl PartialEq for SymBoolExpr {
     fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
+        self.kind.ptr_eq(&other.kind) || self.kind.value() == other.kind.value()
     }
 }
 
@@ -31,7 +31,7 @@ impl PartialOrd for SymBoolExpr {
 
 impl Ord for SymBoolExpr {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.kind.cmp(&other.kind)
+        self.kind.value().cmp(other.kind.value())
     }
 }
 
@@ -52,7 +52,8 @@ pub(in crate::runtime) enum SymBoolExprKind {
 
 impl SymBoolExpr {
     fn from_kind(expr: SymBoolExprKind) -> Self {
-        Self { kind: HashCons::uninterned(expr) }
+        let mut hashcons = HashCons::new();
+        Self { kind: hashcons.make(expr) }
     }
 
     pub(crate) fn constant(value: bool) -> Self {

@@ -11,11 +11,10 @@ type HashBuilder = BuildHasherDefault<DefaultHasher>;
 
 /// Shared handle for a hash-consed value.
 ///
-/// Equality first checks whether both handles point at the same allocation,
-/// falling back to structural equality for values built by different contexts.
-/// Hashing writes the cached structural hash instead of walking the value.
+/// Equality is pointer equality only. Hashing writes the cached structural hash
+/// instead of walking the value.
 #[derive(Clone)]
-pub(crate) struct HashConsed<T> {
+pub(in crate::runtime::expr) struct HashConsed<T> {
     inner: Arc<HashConsedInner<T>>,
 }
 
@@ -25,27 +24,19 @@ struct HashConsedInner<T> {
 }
 
 impl<T> HashConsed<T> {
-    const fn from_inner(inner: Arc<HashConsedInner<T>>) -> Self {
-        Self { inner }
-    }
-
-    fn from_value(hash: u64, value: T) -> Self {
-        Self::from_inner(Arc::new(HashConsedInner { hash, value }))
-    }
-
     fn cached_hash(&self) -> u64 {
         self.inner.hash
     }
 
-    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
+    pub(in crate::runtime::expr) fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
-    pub(crate) fn value(&self) -> &T {
+    pub(in crate::runtime::expr) fn value(&self) -> &T {
         &self.inner.value
     }
 
-    pub(crate) fn into_value(self) -> T
+    pub(in crate::runtime::expr) fn into_value(self) -> T
     where
         T: Clone,
     {
@@ -56,13 +47,13 @@ impl<T> HashConsed<T> {
     }
 }
 
-impl<T: PartialEq> PartialEq for HashConsed<T> {
+impl<T> PartialEq for HashConsed<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.ptr_eq(other) || self.value() == other.value()
+        self.ptr_eq(other)
     }
 }
 
-impl<T: Eq> Eq for HashConsed<T> {}
+impl<T> Eq for HashConsed<T> {}
 
 impl<T> Hash for HashConsed<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -70,15 +61,23 @@ impl<T> Hash for HashConsed<T> {
     }
 }
 
-impl<T: PartialOrd> PartialOrd for HashConsed<T> {
+impl<T> PartialOrd for HashConsed<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.value().partial_cmp(other.value())
+        Some(self.cmp(other))
     }
 }
 
-impl<T: Ord> Ord for HashConsed<T> {
+impl<T> Ord for HashConsed<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.value().cmp(other.value())
+        self.cached_hash()
+            .cmp(&other.cached_hash())
+            .then_with(|| self.ptr_addr().cmp(&other.ptr_addr()))
+    }
+}
+
+impl<T> HashConsed<T> {
+    fn ptr_addr(&self) -> usize {
+        Arc::as_ptr(&self.inner).cast::<()>() as usize
     }
 }
 
@@ -93,7 +92,7 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
 /// The table stores weak references so interned values disappear when the rest of
 /// the symbolic state stops using them. `make` only looks up and inserts; dead
 /// weak entries are ignored and left in the table until the context is dropped.
-pub(crate) struct HashCons<T> {
+pub(in crate::runtime::expr) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
     hash_builder: HashBuilder,
 }
@@ -110,7 +109,7 @@ impl<T> HashConsEntry<T> {
 }
 
 impl<T> HashCons<T> {
-    pub(crate) fn new() -> Self {
+    pub(in crate::runtime::expr) fn new() -> Self {
         Self { table: HashTable::new(), hash_builder: HashBuilder::default() }
     }
 
@@ -120,13 +119,7 @@ impl<T> HashCons<T> {
 }
 
 impl<T: Eq + Hash> HashCons<T> {
-    pub(crate) fn uninterned(value: T) -> HashConsed<T> {
-        let hashcons = Self::new();
-        let hash = hashcons.hash(&value);
-        HashConsed::from_value(hash, value)
-    }
-
-    pub(crate) fn make(&mut self, value: T) -> HashConsed<T> {
+    pub(in crate::runtime::expr) fn make(&mut self, value: T) -> HashConsed<T> {
         let hash = self.hash(&value);
         let mut found = None;
         match self.table.entry(
@@ -144,12 +137,12 @@ impl<T: Eq + Hash> HashCons<T> {
             },
             HashConsEntry::hash,
         ) {
-            Entry::Occupied(_) => HashConsed::from_inner(found.expect("matched live value")),
+            Entry::Occupied(_) => HashConsed { inner: found.expect("matched live value") },
             Entry::Vacant(entry) => {
                 let inner = HashConsedInner { hash, value };
                 let inner = Arc::new(inner);
                 entry.insert(HashConsEntry { hash, value: Arc::downgrade(&inner) });
-                HashConsed::from_inner(inner)
+                HashConsed { inner }
             }
         }
     }
@@ -197,13 +190,15 @@ mod tests {
     }
 
     #[test]
-    fn uninterned_and_interned_values_hash_the_same() {
-        let mut table = HashCons::<String>::new();
+    fn equality_is_pointer_only() {
+        let mut first_table = HashCons::<String>::new();
+        let mut second_table = HashCons::<String>::new();
 
-        let interned = table.make("same".to_string());
-        let raw = HashCons::<String>::uninterned("same".to_string());
+        let first = first_table.make("same".to_string());
+        let second = second_table.make("same".to_string());
 
-        assert_eq!(interned, raw);
-        assert_eq!(interned.cached_hash(), raw.cached_hash());
+        assert_ne!(first, second);
+        assert_eq!(first.value(), second.value());
+        assert_eq!(first.cached_hash(), second.cached_hash());
     }
 }

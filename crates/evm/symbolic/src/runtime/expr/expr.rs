@@ -298,7 +298,7 @@ pub(crate) struct SymExpr {
 
 impl PartialEq for SymExpr {
     fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
+        self.kind.ptr_eq(&other.kind) || self.kind.value() == other.kind.value()
     }
 }
 
@@ -318,7 +318,7 @@ impl PartialOrd for SymExpr {
 
 impl Ord for SymExpr {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.kind.cmp(&other.kind)
+        self.kind.value().cmp(other.kind.value())
     }
 }
 
@@ -344,7 +344,8 @@ pub(in crate::runtime) enum SymExprKind {
 
 impl SymExpr {
     fn from_kind(expr: SymExprKind) -> Self {
-        Self { kind: HashCons::uninterned(expr) }
+        let mut hashcons = HashCons::new();
+        Self { kind: hashcons.make(expr) }
     }
 
     pub(crate) fn zero() -> Self {
