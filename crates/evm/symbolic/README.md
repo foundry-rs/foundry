@@ -115,6 +115,33 @@ guide branch order; they do not prune feasible symbolic paths. JSON output
 records the per-test corpus directory, import counts, and seed files that
 matched a symbolic calldata variant under `symbolic.corpus_seeds.used`.
 
+Fuzzing can also record branch frontier artifacts for later targeted symbolic
+follow-up:
+
+```sh
+forge test --match-test test_hard_branch --fuzz-frontier-dir fuzz_frontiers
+```
+
+For example, a fuzz run may pass after reaching `feeMultiplier == 100` at a
+`feeMultiplier < 100` guard; the frontier gives symbolic execution the replay
+calldata and comparison site needed to solve the adjacent missed branch.
+
+Forge writes one bounded artifact per fuzz test at
+`<fuzz_frontier_dir>/<contract>/<test>/branch-frontiers.json`. The artifact
+uses schema `foundry:fuzz.branch-frontiers@v1` and records the test signature,
+configured record limit, and a `frontiers` array. Each frontier contains:
+
+- a stable record index (`id`) within the artifact
+- fuzz replay metadata (`seed`, `run`, `worker`) when available
+- the concrete one-call sequence that reached the site
+- the EVM comparison site (`address`, `pc`, `opcode`, `opcode_name`)
+- concrete operands (`lhs`, `rhs`), the comparison result, and an
+  `operand_delta` priority score interpreted according to opcode signedness
+- whether the call also expanded the worker's coverage map
+
+Frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default 256).
+It reuses the fuzzer's comparison-operand inspector and does not store traces.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
