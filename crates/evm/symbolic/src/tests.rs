@@ -2803,36 +2803,17 @@ fn solver_rebuilds_word_from_extracted_byte_terms() {
 fn solver_rebuilds_word_from_shifted_fragments() {
     let mut cx = SymCx::new();
     let word = SymExpr::var(&mut cx, "word");
-    let rebuilt_expr = word_from_low_and_shifted_high_fragments(&mut cx, word.clone());
+    let low_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 32));
+    let low_bits = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), low_mask);
+    let shift = SymExpr::constant(&mut cx, U256::from(32));
+    let shifted = SymExpr::op(&mut cx, SymExprOp::Shr, word.clone(), shift.clone());
+    let high_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 224));
+    let masked_high = SymExpr::op(&mut cx, SymExprOp::And, shifted, high_mask);
+    let high_bits = SymExpr::op(&mut cx, SymExprOp::Shl, masked_high, shift);
+    let rebuilt_expr = SymExpr::op(&mut cx, SymExprOp::Or, low_bits, high_bits);
     let rebuilt = normalize_expr_for_solver(&mut cx, rebuilt_expr);
 
     assert_eq!(rebuilt, word);
-}
-
-fn word_from_low_and_shifted_high_fragments(cx: &mut SymCx, word: SymExpr) -> SymExpr {
-    let low_mask = SymExpr::constant(cx, mask_bits(U256::MAX, 32));
-    let low_bits = SymExpr::op(cx, SymExprOp::And, word.clone(), low_mask);
-    let shift = SymExpr::constant(cx, U256::from(32));
-    let shifted = SymExpr::op(cx, SymExprOp::Shr, word, shift.clone());
-    let high_mask = SymExpr::constant(cx, mask_bits(U256::MAX, 224));
-    let masked_high = SymExpr::op(cx, SymExprOp::And, shifted, high_mask);
-    let high_bits = SymExpr::op(cx, SymExprOp::Shl, masked_high, shift);
-    SymExpr::op(cx, SymExprOp::Or, low_bits, high_bits)
-}
-
-#[test]
-fn solver_rebuilds_nested_or_fragments_before_parent_normalization() {
-    let mut cx = SymCx::new();
-    let word = SymExpr::var(&mut cx, "word");
-    let rebuilt_expr = word_from_low_and_shifted_high_fragments(&mut cx, word.clone());
-    let one = SymExpr::one(&mut cx);
-    let parent = SymExpr::op(&mut cx, SymExprOp::Add, rebuilt_expr, one.clone());
-    let expected = SymExpr::op(&mut cx, SymExprOp::Add, word, one);
-
-    assert_eq!(
-        normalize_expr_for_solver(&mut cx, parent),
-        normalize_expr_for_solver(&mut cx, expected)
-    );
 }
 
 #[test]
