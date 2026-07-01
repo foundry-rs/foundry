@@ -99,7 +99,7 @@ fn product_less_than_known_ordered<'a>(
 
 fn mul_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
     match expr.kind() {
-        SymExprKind::Op(SymExprOp::Mul, left, right) => Some((left, right)),
+        SymExprKind::BinOp(SymExprBinOp::Mul, left, right) => Some((left, right)),
         _ => None,
     }
 }

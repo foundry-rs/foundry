@@ -102,8 +102,8 @@ fn write_expr_structural_key(out: &mut String, expr: &SymExpr) {
             out.push_str("5:");
             write_expr_structural_key(out, value);
         }
-        SymExprKind::Op(op, left, right) => {
-            let _ = write!(out, "6:{}:", expr_op_key(*op));
+        SymExprKind::BinOp(op, left, right) => {
+            let _ = write!(out, "6:{}:", expr_binop_key(*op));
             write_expr_structural_key(out, left);
             out.push(':');
             write_expr_structural_key(out, right);
@@ -154,21 +154,21 @@ const fn bool_op_key(op: SymBoolExprOp) -> u8 {
     }
 }
 
-const fn expr_op_key(op: SymExprOp) -> u8 {
+const fn expr_binop_key(op: SymExprBinOp) -> u8 {
     match op {
-        SymExprOp::Add => 0,
-        SymExprOp::Sub => 1,
-        SymExprOp::Mul => 2,
-        SymExprOp::UDiv => 3,
-        SymExprOp::URem => 4,
-        SymExprOp::SDiv => 5,
-        SymExprOp::SRem => 6,
-        SymExprOp::And => 7,
-        SymExprOp::Or => 8,
-        SymExprOp::Xor => 9,
-        SymExprOp::Shl => 10,
-        SymExprOp::Shr => 11,
-        SymExprOp::Sar => 12,
+        SymExprBinOp::Add => 0,
+        SymExprBinOp::Sub => 1,
+        SymExprBinOp::Mul => 2,
+        SymExprBinOp::UDiv => 3,
+        SymExprBinOp::URem => 4,
+        SymExprBinOp::SDiv => 5,
+        SymExprBinOp::SRem => 6,
+        SymExprBinOp::And => 7,
+        SymExprBinOp::Or => 8,
+        SymExprBinOp::Xor => 9,
+        SymExprBinOp::Shl => 10,
+        SymExprBinOp::Shr => 11,
+        SymExprBinOp::Sar => 12,
     }
 }
 
@@ -289,7 +289,7 @@ impl SmtCsePlan {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => {}
             SymExprKind::Not(value) => self.count_expr(value),
-            SymExprKind::Op(_, left, right) => {
+            SymExprKind::BinOp(_, left, right) => {
                 self.count_expr(left);
                 self.count_expr(right);
             }
@@ -333,7 +333,7 @@ impl SmtCsePlan {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => {}
             SymExprKind::Not(value) => self.collect_expr_binding(value),
-            SymExprKind::Op(_, left, right) => {
+            SymExprKind::BinOp(_, left, right) => {
                 self.collect_expr_binding(left);
                 self.collect_expr_binding(right);
             }
@@ -475,7 +475,7 @@ impl SmtCseWriter<'_> {
                 self.write_expr(out, value, skip_expr, skip_bool);
                 out.push(')');
             }
-            SymExprKind::Op(op, left, right) => {
+            SymExprKind::BinOp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 self.write_expr(out, left, skip_expr, skip_bool);
                 out.push(' ');
@@ -914,7 +914,7 @@ impl SymExpr {
     }
 
     fn add_with_operand<'a>(&'a self, operand: &Self) -> Option<(&'a Self, &'a Self)> {
-        let SymExprKind::Op(SymExprOp::Add, left, right) = self.kind() else { return None };
+        let SymExprKind::BinOp(SymExprBinOp::Add, left, right) = self.kind() else { return None };
         if left == operand {
             Some((left, right))
         } else if right == operand {
@@ -1062,7 +1062,7 @@ impl ConstraintContext {
         if denominator != zero_operand {
             return false;
         }
-        let SymExprKind::Op(SymExprOp::Mul, left, right) = numerator.kind() else {
+        let SymExprKind::BinOp(SymExprBinOp::Mul, left, right) = numerator.kind() else {
             return false;
         };
         let other = if left == zero_operand {
@@ -1087,7 +1087,7 @@ impl ConstraintContext {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. }
             | SymExprKind::Not(_) => expr.unsigned_bits(),
-            SymExprKind::Op(SymExprOp::And, left, right) => {
+            SymExprKind::BinOp(SymExprBinOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
                     self.unsigned_bits(left).min(mask.bit_len())
                 } else if let Some(mask) = left.as_const() {
@@ -1096,13 +1096,13 @@ impl ConstraintContext {
                     256
                 }
             }
-            SymExprKind::Op(SymExprOp::Add, left, right) => {
+            SymExprKind::BinOp(SymExprBinOp::Add, left, right) => {
                 self.unsigned_bits(left).max(self.unsigned_bits(right)).saturating_add(1).min(256)
             }
-            SymExprKind::Op(SymExprOp::Mul, left, right) => {
+            SymExprKind::BinOp(SymExprBinOp::Mul, left, right) => {
                 self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)).min(256)
             }
-            SymExprKind::Op(SymExprOp::UDiv, left, _) => self.unsigned_bits(left),
+            SymExprKind::BinOp(SymExprBinOp::UDiv, left, _) => self.unsigned_bits(left),
             SymExprKind::Ite(_, left, right) => {
                 self.unsigned_bits(left).max(self.unsigned_bits(right))
             }

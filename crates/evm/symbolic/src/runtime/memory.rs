@@ -56,11 +56,11 @@ struct SymbolicMemoryWrite {
 impl SymbolicMemoryWrite {
     fn size_after_access(&self, cx: &mut SymCx) -> SymExpr {
         let len = SymExpr::constant(cx, U256::from(self.bytes.len()));
-        let end = SymExpr::op(cx, SymExprOp::Add, self.offset.clone(), len);
+        let end = SymExpr::binop(cx, SymExprBinOp::Add, self.offset.clone(), len);
         let round = SymExpr::constant(cx, U256::from(31));
-        let rounded = SymExpr::op(cx, SymExprOp::Add, end, round);
+        let rounded = SymExpr::binop(cx, SymExprBinOp::Add, end, round);
         let mask = SymExpr::constant(cx, !U256::from(31));
-        SymExpr::op(cx, SymExprOp::And, rounded, mask)
+        SymExpr::binop(cx, SymExprBinOp::And, rounded, mask)
     }
 
     fn concrete_offset(&self) -> Option<usize> {

@@ -34,7 +34,7 @@ pub(crate) fn exp_expr_for_concrete_exponent(
 
     let mut expr = base.clone();
     for _ in 1..exponent {
-        expr = SymExpr::op(cx, SymExprOp::Mul, expr, base.clone());
+        expr = SymExpr::binop(cx, SymExprBinOp::Mul, expr, base.clone());
     }
     expr
 }
@@ -93,13 +93,13 @@ pub(crate) fn signextend_word(cx: &mut SymCx, byte_index: U256, value: SymExpr) 
     let sign_bit = U256::from(1) << bit_index;
     let mask_value = sign_bit - U256::from(1);
     let sign_bit = SymExpr::constant(cx, sign_bit);
-    let masked_sign = SymExpr::op(cx, SymExprOp::And, value.clone(), sign_bit);
+    let masked_sign = SymExpr::binop(cx, SymExprBinOp::And, value.clone(), sign_bit);
     let zero = SymExpr::zero(cx);
     let condition = SymBoolExpr::eq(cx, masked_sign, zero);
     let inverse_mask = SymExpr::constant(cx, !mask_value);
     let mask = SymExpr::constant(cx, mask_value);
-    let masked = SymExpr::op(cx, SymExprOp::And, value.clone(), mask);
-    let extended = SymExpr::op(cx, SymExprOp::Or, value, inverse_mask);
+    let masked = SymExpr::binop(cx, SymExprBinOp::And, value.clone(), mask);
+    let extended = SymExpr::binop(cx, SymExprBinOp::Or, value, inverse_mask);
     SymExpr::ite(cx, condition, masked, extended)
 }
 
@@ -185,7 +185,7 @@ pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr
         SymExpr::constant(cx, value << bits)
     } else {
         let bits = SymExpr::constant(cx, U256::from(bits));
-        SymExpr::op(cx, SymExprOp::Shl, value, bits)
+        SymExpr::binop(cx, SymExprBinOp::Shl, value, bits)
     }
 }
 

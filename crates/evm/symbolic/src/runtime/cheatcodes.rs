@@ -434,8 +434,8 @@ pub(crate) fn push_hex_byte(cx: &mut SymCx, out: &mut Vec<SymExpr>, byte: SymExp
         let shift = SymExpr::constant(cx, U256::from(4));
         let mask = SymExpr::constant(cx, U256::from(0x0f));
         (
-            SymExpr::op(cx, SymExprOp::Shr, expr.clone(), shift),
-            SymExpr::op(cx, SymExprOp::And, expr, mask),
+            SymExpr::binop(cx, SymExprBinOp::Shr, expr.clone(), shift),
+            SymExpr::binop(cx, SymExprBinOp::And, expr, mask),
         )
     };
     out.push(hex_nibble_ascii(cx, high));
@@ -452,9 +452,9 @@ pub(crate) fn hex_nibble_ascii(cx: &mut SymCx, nibble: SymExpr) -> SymExpr {
         let ten = SymExpr::constant(cx, U256::from(10));
         let condition = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, nibble.clone(), ten);
         let zero = SymExpr::constant(cx, U256::from(b'0'));
-        let digit = SymExpr::op(cx, SymExprOp::Add, nibble.clone(), zero);
+        let digit = SymExpr::binop(cx, SymExprBinOp::Add, nibble.clone(), zero);
         let alpha_base = SymExpr::constant(cx, U256::from(b'a' - 10));
-        let alpha = SymExpr::op(cx, SymExprOp::Add, nibble, alpha_base);
+        let alpha = SymExpr::binop(cx, SymExprBinOp::Add, nibble, alpha_base);
         SymExpr::ite(cx, condition, digit, alpha)
     }
 }

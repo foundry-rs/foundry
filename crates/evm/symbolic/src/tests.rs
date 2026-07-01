@@ -15,7 +15,7 @@ fn symbolic_calldata_variants(
 }
 
 fn add_words(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
-    SymExpr::op(cx, SymExprOp::Add, left, right)
+    SymExpr::binop(cx, SymExprBinOp::Add, left, right)
 }
 
 macro_rules! sym_from_bytes {
@@ -114,7 +114,7 @@ fn binary_helpers_use_evm_operand_order() {
     state.stack.push(SymExpr::constant(&mut cx, U256::from(2))).unwrap();
     state.stack.push(SymExpr::constant(&mut cx, U256::from(10))).unwrap();
 
-    state.bin_word(&mut cx, SymExprOp::Sub).unwrap();
+    state.bin_word(&mut cx, SymExprBinOp::Sub).unwrap();
 
     assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(&mut cx, U256::from(8)));
 }
@@ -231,13 +231,13 @@ fn symbolic_division_guards_zero_divisor() {
     state.stack.push(SymExpr::var(&mut cx, "den")).unwrap();
     state.stack.push(SymExpr::var(&mut cx, "num")).unwrap();
 
-    state.bin_word_div_zero_guard(&mut cx, SymExprOp::UDiv).unwrap();
+    state.bin_word_div_zero_guard(&mut cx, SymExprBinOp::UDiv).unwrap();
 
     let den = SymExpr::var(&mut cx, "den");
     let zero = SymExpr::zero(&mut cx);
     let den_is_zero = SymBoolExpr::eq(&mut cx, den.clone(), zero.clone());
     let num = SymExpr::var(&mut cx, "num");
-    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, num, den);
+    let quotient = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, num, den);
     let expected = SymExpr::ite(&mut cx, den_is_zero, zero, quotient);
     assert_eq!(state.stack.pop().unwrap(), expected);
 }
@@ -248,9 +248,9 @@ fn symbolic_byte_extracts_with_concrete_index() {
     let word = SymExpr::var(&mut cx, "word");
     let actual = byte_word(&mut cx, U256::from(0), word.clone());
     let shift = SymExpr::constant(&mut cx, U256::from(248));
-    let shifted = SymExpr::op(&mut cx, SymExprOp::Shr, word, shift);
+    let shifted = SymExpr::binop(&mut cx, SymExprBinOp::Shr, word, shift);
     let mask = SymExpr::constant(&mut cx, U256::from(0xff));
-    let expected = SymExpr::op(&mut cx, SymExprOp::And, shifted, mask);
+    let expected = SymExpr::binop(&mut cx, SymExprBinOp::And, shifted, mask);
     assert_eq!(actual, expected);
 }
 
@@ -289,11 +289,11 @@ fn symbolic_byte_preserves_concrete_packed_selector_bytes() {
     let selector = U256::from(0x12345678);
     let selector = SymExpr::constant(&mut cx, selector);
     let shift_224 = SymExpr::constant(&mut cx, U256::from(224));
-    let selector = SymExpr::op(&mut cx, SymExprOp::Shl, selector, shift_224);
+    let selector = SymExpr::binop(&mut cx, SymExprBinOp::Shl, selector, shift_224);
     let arg = SymExpr::var(&mut cx, "arg");
     let shift_32 = SymExpr::constant(&mut cx, U256::from(32));
-    let shifted_arg = SymExpr::op(&mut cx, SymExprOp::Shr, arg, shift_32);
-    let packed = SymExpr::op(&mut cx, SymExprOp::Or, selector, shifted_arg);
+    let shifted_arg = SymExpr::binop(&mut cx, SymExprBinOp::Shr, arg, shift_32);
+    let packed = SymExpr::binop(&mut cx, SymExprBinOp::Or, selector, shifted_arg);
 
     assert_eq!(
         byte_word(&mut cx, U256::from(0), packed.clone()),
@@ -318,7 +318,7 @@ fn word_reassembly_preserves_split_symbolic_word() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "value");
     let one = SymExpr::one(&mut cx);
-    let original = SymExpr::op(&mut cx, SymExprOp::Add, value, one);
+    let original = SymExpr::binop(&mut cx, SymExprBinOp::Add, value, one);
     let bytes = original.clone().into_byte_exprs(&mut cx);
 
     assert_eq!(SymExpr::from_bytes(&mut cx, bytes), original);
@@ -329,7 +329,7 @@ fn symbolic_address_aliases_match_abi_encoded_address_words() {
     let mut cx = SymCx::new();
     let source = SymExpr::var(&mut cx, "beneficiary");
     let address_mask = SymExpr::constant(&mut cx, (U256::from(1) << 160) - U256::from(1));
-    let masked = SymExpr::op(&mut cx, SymExprOp::And, source.clone(), address_mask);
+    let masked = SymExpr::binop(&mut cx, SymExprBinOp::And, source.clone(), address_mask);
     let mut encoded = vec![SymExpr::zero(&mut cx); 12];
     encoded.extend((12..32).map(|idx| byte_word(&mut cx, U256::from(idx), masked.clone())));
     let reassembled = SymExpr::from_bytes(&mut cx, encoded);
@@ -344,12 +344,13 @@ fn selector_shift_simplifies_to_concrete_word() {
     let selector = U256::from(0x12345678);
     let selector_word = SymExpr::constant(&mut cx, selector);
     let shift_224 = SymExpr::constant(&mut cx, U256::from(224));
-    let shifted_selector = SymExpr::op(&mut cx, SymExprOp::Shl, selector_word, shift_224.clone());
+    let shifted_selector =
+        SymExpr::binop(&mut cx, SymExprBinOp::Shl, selector_word, shift_224.clone());
     let arg = SymExpr::var(&mut cx, "arg");
     let shift_32 = SymExpr::constant(&mut cx, U256::from(32));
-    let shifted_arg = SymExpr::op(&mut cx, SymExprOp::Shr, arg, shift_32);
-    let call_word = SymExpr::op(&mut cx, SymExprOp::Or, shifted_selector, shifted_arg);
-    let selector_expr = SymExpr::op(&mut cx, SymExprOp::Shr, call_word, shift_224);
+    let shifted_arg = SymExpr::binop(&mut cx, SymExprBinOp::Shr, arg, shift_32);
+    let call_word = SymExpr::binop(&mut cx, SymExprBinOp::Or, shifted_selector, shifted_arg);
+    let selector_expr = SymExpr::binop(&mut cx, SymExprBinOp::Shr, call_word, shift_224);
 
     assert_eq!(selector_expr.known_word(), Some(selector));
 }
@@ -361,12 +362,13 @@ fn selector_equality_folds_known_word_expressions() {
     let other = U256::from(0x9a8325a0u32);
     let selector_word = SymExpr::constant(&mut cx, selector);
     let shift_224 = SymExpr::constant(&mut cx, U256::from(224));
-    let shifted_selector = SymExpr::op(&mut cx, SymExprOp::Shl, selector_word, shift_224.clone());
+    let shifted_selector =
+        SymExpr::binop(&mut cx, SymExprBinOp::Shl, selector_word, shift_224.clone());
     let arg = SymExpr::var(&mut cx, "arg");
     let shift_32 = SymExpr::constant(&mut cx, U256::from(32));
-    let shifted_arg = SymExpr::op(&mut cx, SymExprOp::Shr, arg, shift_32);
-    let call_word = SymExpr::op(&mut cx, SymExprOp::Or, shifted_selector, shifted_arg);
-    let selector_expr = SymExpr::op(&mut cx, SymExprOp::Shr, call_word, shift_224);
+    let shifted_arg = SymExpr::binop(&mut cx, SymExprBinOp::Shr, arg, shift_32);
+    let call_word = SymExpr::binop(&mut cx, SymExprBinOp::Or, shifted_selector, shifted_arg);
+    let selector_expr = SymExpr::binop(&mut cx, SymExprBinOp::Shr, call_word, shift_224);
 
     let selector_word = SymExpr::constant(&mut cx, selector);
     let actual = SymBoolExpr::eq(&mut cx, selector_expr.clone(), selector_word);
@@ -390,7 +392,7 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
     let offset = SymExpr::zero(&mut cx);
     let loaded = call_data.load_word(&mut cx, offset).unwrap();
     let shift = SymExpr::constant(&mut cx, U256::from(224));
-    let selector_expr = SymExpr::op(&mut cx, SymExprOp::Shr, loaded, shift);
+    let selector_expr = SymExpr::binop(&mut cx, SymExprBinOp::Shr, loaded, shift);
 
     assert_eq!(selector_expr.known_word(), Some(selector));
     let selector_word = SymExpr::constant(&mut cx, selector);
@@ -1536,7 +1538,7 @@ fn symbolic_world_resolves_symbolic_create2_address_aliases() {
     let word = SymExpr::var(&mut cx, "create2_address");
     let address = world.symbolic_address_slot(word.clone());
     let address_mask = SymExpr::constant(&mut cx, (U256::from(1) << 160) - U256::from(1));
-    let masked = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), address_mask);
+    let masked = SymExpr::binop(&mut cx, SymExprBinOp::And, word.clone(), address_mask);
 
     assert_eq!(world.resolve_address(&word), Some(address));
     assert_eq!(world.resolve_address(&masked), Some(address));
@@ -1722,19 +1724,21 @@ fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
     let offset_expr = offset.clone();
     let mask = SymExpr::constant(&mut cx, U256::from(0xffff));
 
-    let masked_offset = SymExpr::op(&mut cx, SymExprOp::And, offset_expr.clone(), mask.clone());
+    let masked_offset =
+        SymExpr::binop(&mut cx, SymExprBinOp::And, offset_expr.clone(), mask.clone());
     let offset_constraint = SymBoolExpr::eq(&mut cx, masked_offset, offset_expr.clone());
     state.constraints.push(offset_constraint);
     let expected_offset = SymExpr::constant(&mut cx, U256::from(0x80));
-    let masked_offset = SymExpr::op(&mut cx, SymExprOp::And, mask, offset_expr);
+    let masked_offset = SymExpr::binop(&mut cx, SymExprBinOp::And, mask, offset_expr);
     let condition = SymBoolExpr::eq(&mut cx, expected_offset, masked_offset);
     let one = SymExpr::one(&mut cx);
     let zero = SymExpr::zero(&mut cx);
     let condition_word = SymExpr::ite(&mut cx, condition, one, zero.clone());
-    let shifted_condition = SymExpr::op(&mut cx, SymExprOp::Shr, condition_word, zero.clone());
+    let shifted_condition =
+        SymExpr::binop(&mut cx, SymExprBinOp::Shr, condition_word, zero.clone());
     let byte_mask = SymExpr::constant(&mut cx, U256::from(0xff));
-    let bool_byte = SymExpr::op(&mut cx, SymExprOp::And, shifted_condition, byte_mask);
-    let bool_word = SymExpr::op(&mut cx, SymExprOp::Or, zero.clone(), bool_byte);
+    let bool_byte = SymExpr::binop(&mut cx, SymExprBinOp::And, shifted_condition, byte_mask);
+    let bool_word = SymExpr::binop(&mut cx, SymExprBinOp::Or, zero.clone(), bool_byte);
     let bool_word_zero = SymBoolExpr::eq(&mut cx, bool_word, zero);
     state.constraints.push(bool_word_zero.not(&mut cx));
 
@@ -1752,8 +1756,8 @@ fn path_state_evaluates_compound_constrained_symbolic_word() {
 
     let zero = SymExpr::zero(&mut cx);
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let masked_value = SymExpr::op(&mut cx, SymExprOp::And, value, u64_max);
-    let encoded_word = SymExpr::op(&mut cx, SymExprOp::Or, zero, masked_value);
+    let masked_value = SymExpr::binop(&mut cx, SymExprBinOp::And, value, u64_max);
+    let encoded_word = SymExpr::binop(&mut cx, SymExprBinOp::Or, zero, masked_value);
 
     assert_eq!(state.constrained_word(&mut cx, &encoded_word), Some(U256::from(0xbeef)));
 }
@@ -2311,13 +2315,13 @@ fn symbolic_signextend_uses_sign_bit_ite() {
     let word = SymExpr::var(&mut cx, "word");
     let actual = signextend_word(&mut cx, U256::ZERO, word.clone());
     let sign_mask = SymExpr::constant(&mut cx, U256::from(0x80));
-    let sign_bit = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), sign_mask);
+    let sign_bit = SymExpr::binop(&mut cx, SymExprBinOp::And, word.clone(), sign_mask);
     let zero = SymExpr::zero(&mut cx);
     let sign_bit_zero = SymBoolExpr::eq(&mut cx, sign_bit, zero);
     let positive_mask = SymExpr::constant(&mut cx, U256::from(0x7f));
-    let positive = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), positive_mask);
+    let positive = SymExpr::binop(&mut cx, SymExprBinOp::And, word.clone(), positive_mask);
     let negative_mask = SymExpr::constant(&mut cx, !U256::from(0x7f));
-    let negative = SymExpr::op(&mut cx, SymExprOp::Or, word, negative_mask);
+    let negative = SymExpr::binop(&mut cx, SymExprBinOp::Or, word, negative_mask);
     let expected = SymExpr::ite(&mut cx, sign_bit_zero, positive, negative);
     assert_eq!(actual, expected);
 }
@@ -2386,17 +2390,17 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
     let mut cx = SymCx::new();
     let var = SymExpr::var(&mut cx, "calldata_0");
     let msg_sender = U256::from_str_radix("1804c8ab1f12e6bbf3894d4083f33e07309d1f38", 16).unwrap();
-    let product = SymExpr::op(&mut cx, SymExprOp::Mul, var.clone(), var.clone());
+    let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, var.clone(), var.clone());
     let sender_word = SymExpr::constant(&mut cx, msg_sender);
     let product_below_sender =
         SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, product, sender_word.clone());
     let above_sender = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, var.clone(), sender_word);
     let mask_800 = SymExpr::constant(&mut cx, U256::from(0x800));
-    let masked_800 = SymExpr::op(&mut cx, SymExprOp::And, var.clone(), mask_800);
+    let masked_800 = SymExpr::binop(&mut cx, SymExprBinOp::And, var.clone(), mask_800);
     let zero = SymExpr::zero(&mut cx);
     let has_800 = SymBoolExpr::eq(&mut cx, masked_800, zero.clone()).not(&mut cx);
     let mask_10000 = SymExpr::constant(&mut cx, U256::from(0x10000));
-    let masked_10000 = SymExpr::op(&mut cx, SymExprOp::And, var, mask_10000);
+    let masked_10000 = SymExpr::binop(&mut cx, SymExprBinOp::And, var, mask_10000);
     let lacks_10000 = SymBoolExpr::eq(&mut cx, masked_10000, zero);
     let constraints = vec![product_below_sender, above_sender, has_800, lacks_10000];
 
@@ -2411,40 +2415,40 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
     let x = SymExpr::var(&mut cx, "x");
 
     let zero = SymExpr::zero(&mut cx);
-    let actual = SymExpr::op(&mut cx, SymExprOp::Mul, x.clone(), zero.clone());
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::Mul, x.clone(), zero.clone());
     assert_eq!(actual, zero);
     let one = SymExpr::one(&mut cx);
-    let actual = SymExpr::op(&mut cx, SymExprOp::Mul, one, x.clone());
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::Mul, one, x.clone());
     assert_eq!(actual, x);
     let x = SymExpr::var(&mut cx, "x");
     let one = SymExpr::one(&mut cx);
-    let actual = SymExpr::op(&mut cx, SymExprOp::UDiv, x.clone(), one);
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, x.clone(), one);
     assert_eq!(actual, x);
     let x = SymExpr::var(&mut cx, "x");
     let one = SymExpr::one(&mut cx);
-    let actual = SymExpr::op(&mut cx, SymExprOp::URem, x, one);
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::URem, x, one);
     let zero = SymExpr::zero(&mut cx);
     assert_eq!(actual, zero);
     let x = SymExpr::var(&mut cx, "x");
     let x_again = SymExpr::var(&mut cx, "x");
-    let actual = SymExpr::op(&mut cx, SymExprOp::Sub, x, x_again);
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::Sub, x, x_again);
     let zero = SymExpr::zero(&mut cx);
     assert_eq!(actual, zero);
     let x = SymExpr::var(&mut cx, "x");
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let actual = SymExpr::op(&mut cx, SymExprOp::And, x.clone(), max);
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::And, x.clone(), max);
     assert_eq!(actual, x);
     let x = SymExpr::var(&mut cx, "x");
-    let actual = SymExpr::op(&mut cx, SymExprOp::And, x.clone(), x.clone());
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::And, x.clone(), x.clone());
     assert_eq!(actual, x);
     let mask = SymExpr::constant(&mut cx, (U256::from(1) << 160) - U256::from(1));
     let x = SymExpr::var(&mut cx, "x");
-    let masked = SymExpr::op(&mut cx, SymExprOp::And, x, mask.clone());
-    let actual = SymExpr::op(&mut cx, SymExprOp::And, masked.clone(), mask);
+    let masked = SymExpr::binop(&mut cx, SymExprBinOp::And, x, mask.clone());
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::And, masked.clone(), mask);
     assert_eq!(actual, masked);
     let six = SymExpr::constant(&mut cx, U256::from(6));
     let seven = SymExpr::constant(&mut cx, U256::from(7));
-    let actual = SymExpr::op(&mut cx, SymExprOp::Mul, six, seven);
+    let actual = SymExpr::binop(&mut cx, SymExprBinOp::Mul, six, seven);
     let forty_two = SymExpr::constant(&mut cx, U256::from(42));
     assert_eq!(actual, forty_two);
 }
@@ -2622,7 +2626,7 @@ fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
     let mut cx = SymCx::new();
     let numerator = SymExpr::var(&mut cx, "numerator");
     let denominator = SymExpr::var(&mut cx, "denominator");
-    let div = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, denominator);
+    let div = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, numerator, denominator);
     let zero = SymExpr::zero(&mut cx);
     let original = SymBoolExpr::eq(&mut cx, div, zero);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
@@ -2652,7 +2656,7 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
     let mut cx = SymCx::new();
     let numerator = SymExpr::var(&mut cx, "numerator");
     let denominator = SymExpr::var(&mut cx, "denominator");
-    let div = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, denominator);
+    let div = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, numerator, denominator);
     let zero = SymExpr::zero(&mut cx);
     let original = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, div, zero);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
@@ -2712,8 +2716,8 @@ fn solver_normalizes_erc4626_style_share_zero_predicate() {
     let assets = SymExpr::var(&mut cx, "assets");
     let supply = SymExpr::var(&mut cx, "supply");
     let total_assets = SymExpr::var(&mut cx, "total_assets");
-    let numerator = SymExpr::op(&mut cx, SymExprOp::Mul, assets, supply);
-    let shares = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, total_assets);
+    let numerator = SymExpr::binop(&mut cx, SymExprBinOp::Mul, assets, supply);
+    let shares = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, numerator, total_assets);
     let zero = SymExpr::zero(&mut cx);
     let constraints = vec![SymBoolExpr::eq(&mut cx, shares, zero)];
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
@@ -2728,7 +2732,7 @@ fn expression_rebuilds_word_from_extracted_byte_terms() {
     let mut cx = SymCx::new();
     let word = SymExpr::var(&mut cx, "word");
     let mask = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let masked = SymExpr::op(&mut cx, SymExprOp::And, word, mask);
+    let masked = SymExpr::binop(&mut cx, SymExprBinOp::And, word, mask);
     let bytes = masked.clone().into_byte_exprs(&mut cx);
     let rebuilt_word = SymExpr::from_bytes(&mut cx, bytes);
 
@@ -2740,13 +2744,13 @@ fn expression_rebuilds_word_from_shifted_fragments() {
     let mut cx = SymCx::new();
     let word = SymExpr::var(&mut cx, "word");
     let low_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 32));
-    let low_bits = SymExpr::op(&mut cx, SymExprOp::And, word.clone(), low_mask);
+    let low_bits = SymExpr::binop(&mut cx, SymExprBinOp::And, word.clone(), low_mask);
     let shift = SymExpr::constant(&mut cx, U256::from(32));
-    let shifted = SymExpr::op(&mut cx, SymExprOp::Shr, word.clone(), shift.clone());
+    let shifted = SymExpr::binop(&mut cx, SymExprBinOp::Shr, word.clone(), shift.clone());
     let high_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 224));
-    let masked_high = SymExpr::op(&mut cx, SymExprOp::And, shifted, high_mask);
-    let high_bits = SymExpr::op(&mut cx, SymExprOp::Shl, masked_high, shift);
-    let rebuilt_expr = SymExpr::op(&mut cx, SymExprOp::Or, low_bits, high_bits);
+    let masked_high = SymExpr::binop(&mut cx, SymExprBinOp::And, shifted, high_mask);
+    let high_bits = SymExpr::binop(&mut cx, SymExprBinOp::Shl, masked_high, shift);
+    let rebuilt_expr = SymExpr::binop(&mut cx, SymExprBinOp::Or, low_bits, high_bits);
 
     assert_eq!(rebuilt_expr, word);
 }
@@ -2761,29 +2765,31 @@ fn expression_simplifies_selector_prefixed_word_fragment() {
     let selector = SymExpr::constant(&mut cx, U256::from(0x771602f7u64) << 224);
 
     let shift_32 = SymExpr::constant(&mut cx, U256::from(32));
-    let shifted_x = SymExpr::op(&mut cx, SymExprOp::Shr, x.clone(), shift_32.clone());
-    let x_high = SymExpr::op(&mut cx, SymExprOp::And, shifted_x, low_224.clone());
-    let first_word = SymExpr::op(&mut cx, SymExprOp::Or, selector, x_high);
-    let shifted_y = SymExpr::op(&mut cx, SymExprOp::Shr, y.clone(), shift_32.clone());
-    let y_high = SymExpr::op(&mut cx, SymExprOp::And, shifted_y, low_224.clone());
-    let x_low = SymExpr::op(&mut cx, SymExprOp::And, x.clone(), low_32.clone());
+    let shifted_x = SymExpr::binop(&mut cx, SymExprBinOp::Shr, x.clone(), shift_32.clone());
+    let x_high = SymExpr::binop(&mut cx, SymExprBinOp::And, shifted_x, low_224.clone());
+    let first_word = SymExpr::binop(&mut cx, SymExprBinOp::Or, selector, x_high);
+    let shifted_y = SymExpr::binop(&mut cx, SymExprBinOp::Shr, y.clone(), shift_32.clone());
+    let y_high = SymExpr::binop(&mut cx, SymExprBinOp::And, shifted_y, low_224.clone());
+    let x_low = SymExpr::binop(&mut cx, SymExprBinOp::And, x.clone(), low_32.clone());
     let shift_224 = SymExpr::constant(&mut cx, U256::from(224));
-    let x_low_shifted = SymExpr::op(&mut cx, SymExprOp::Shl, x_low, shift_224.clone());
-    let second_word = SymExpr::op(&mut cx, SymExprOp::Or, y_high, x_low_shifted);
-    let second_word_shifted = SymExpr::op(&mut cx, SymExprOp::Shr, second_word.clone(), shift_224);
-    let rebuilt_low = SymExpr::op(&mut cx, SymExprOp::And, second_word_shifted, low_32);
-    let first_word_masked = SymExpr::op(&mut cx, SymExprOp::And, first_word, low_224);
-    let rebuilt_high = SymExpr::op(&mut cx, SymExprOp::Shl, first_word_masked, shift_32.clone());
-    let rebuilt = SymExpr::op(&mut cx, SymExprOp::Or, rebuilt_low, rebuilt_high);
+    let x_low_shifted = SymExpr::binop(&mut cx, SymExprBinOp::Shl, x_low, shift_224.clone());
+    let second_word = SymExpr::binop(&mut cx, SymExprBinOp::Or, y_high, x_low_shifted);
+    let second_word_shifted =
+        SymExpr::binop(&mut cx, SymExprBinOp::Shr, second_word.clone(), shift_224);
+    let rebuilt_low = SymExpr::binop(&mut cx, SymExprBinOp::And, second_word_shifted, low_32);
+    let first_word_masked = SymExpr::binop(&mut cx, SymExprBinOp::And, first_word, low_224);
+    let rebuilt_high =
+        SymExpr::binop(&mut cx, SymExprBinOp::Shl, first_word_masked, shift_32.clone());
+    let rebuilt = SymExpr::binop(&mut cx, SymExprBinOp::Or, rebuilt_low, rebuilt_high);
 
     assert_eq!(rebuilt, x);
 
     let next_low_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 32));
-    let next_low = SymExpr::op(&mut cx, SymExprOp::And, y.clone(), next_low_mask);
+    let next_low = SymExpr::binop(&mut cx, SymExprBinOp::And, y.clone(), next_low_mask);
     let next_high_mask = SymExpr::constant(&mut cx, mask_bits(U256::MAX, 224));
-    let next_high = SymExpr::op(&mut cx, SymExprOp::And, second_word, next_high_mask);
-    let next_high_shifted = SymExpr::op(&mut cx, SymExprOp::Shl, next_high, shift_32);
-    let rebuilt_next = SymExpr::op(&mut cx, SymExprOp::Or, next_low, next_high_shifted);
+    let next_high = SymExpr::binop(&mut cx, SymExprBinOp::And, second_word, next_high_mask);
+    let next_high_shifted = SymExpr::binop(&mut cx, SymExprBinOp::Shl, next_high, shift_32);
+    let rebuilt_next = SymExpr::binop(&mut cx, SymExprBinOp::Or, next_low, next_high_shifted);
 
     assert_eq!(rebuilt_next, y);
 }
@@ -2791,14 +2797,14 @@ fn expression_simplifies_selector_prefixed_word_fragment() {
 fn checked_mul_guard_word(cx: &mut SymCx, zero_operand: &SymExpr, expected: &SymExpr) -> SymExpr {
     let zero = SymExpr::zero(cx);
     let operand_is_zero = SymBoolExpr::eq(cx, zero_operand.clone(), zero.clone());
-    let product = SymExpr::op(cx, SymExprOp::Mul, zero_operand.clone(), expected.clone());
-    let quotient = SymExpr::op(cx, SymExprOp::UDiv, product, zero_operand.clone());
+    let product = SymExpr::binop(cx, SymExprBinOp::Mul, zero_operand.clone(), expected.clone());
+    let quotient = SymExpr::binop(cx, SymExprBinOp::UDiv, product, zero_operand.clone());
     let checked_product = SymExpr::ite(cx, operand_is_zero.clone(), zero, quotient);
     let operand_is_zero_word = SymExpr::bool_word(cx, operand_is_zero);
     let product_matches_expected = SymBoolExpr::eq(cx, checked_product, expected.clone());
     let product_matches_expected_word = SymExpr::bool_word(cx, product_matches_expected);
 
-    SymExpr::op(cx, SymExprOp::Or, operand_is_zero_word, product_matches_expected_word)
+    SymExpr::binop(cx, SymExprBinOp::Or, operand_is_zero_word, product_matches_expected_word)
 }
 
 #[test]
@@ -2806,10 +2812,10 @@ fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
     let mut cx = SymCx::new();
     let a_word = SymExpr::var(&mut cx, "a");
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let a = SymExpr::op(&mut cx, SymExprOp::And, a_word, u64_max);
+    let a = SymExpr::binop(&mut cx, SymExprBinOp::And, a_word, u64_max);
     let b_word = SymExpr::var(&mut cx, "b");
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let b = SymExpr::op(&mut cx, SymExprOp::And, b_word, u64_max);
+    let b = SymExpr::binop(&mut cx, SymExprBinOp::And, b_word, u64_max);
     let guard = checked_mul_guard_word(&mut cx, &a, &b);
     let zero = SymExpr::zero(&mut cx);
     let guard_is_zero = SymBoolExpr::eq(&mut cx, guard, zero);
@@ -2847,13 +2853,13 @@ fn solver_normalizes_guarded_self_division_guard() {
     let a = SymExpr::var(&mut cx, "a");
     let zero = SymExpr::zero(&mut cx);
     let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
-    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
+    let quotient = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, a.clone(), a);
     let checked_quotient = SymExpr::ite(&mut cx, a_is_zero.clone(), zero.clone(), quotient);
     let a_is_zero_word = SymExpr::bool_word(&mut cx, a_is_zero);
     let one = SymExpr::one(&mut cx);
     let quotient_is_one = SymBoolExpr::eq(&mut cx, checked_quotient, one);
     let quotient_is_one_word = SymExpr::bool_word(&mut cx, quotient_is_one);
-    let guard = SymExpr::op(&mut cx, SymExprOp::Or, a_is_zero_word, quotient_is_one_word);
+    let guard = SymExpr::binop(&mut cx, SymExprBinOp::Or, a_is_zero_word, quotient_is_one_word);
     let original = SymBoolExpr::eq(&mut cx, guard, zero);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
@@ -2871,7 +2877,7 @@ fn expression_normalizes_guarded_self_division_word() {
     let a = SymExpr::var(&mut cx, "a");
     let zero = SymExpr::zero(&mut cx);
     let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
-    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
+    let quotient = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, a.clone(), a);
     let checked_quotient = SymExpr::ite(&mut cx, a_is_zero.clone(), zero, quotient);
     let a_is_nonzero = a_is_zero.not(&mut cx);
     let one = SymExpr::one(&mut cx);
@@ -2894,7 +2900,7 @@ fn solver_does_not_invert_guarded_zero_self_division() {
     let a = SymExpr::var(&mut cx, "a");
     let zero = SymExpr::zero(&mut cx);
     let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
-    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
+    let quotient = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, a.clone(), a);
     let mirrored = SymExpr::ite(&mut cx, a_is_zero, quotient, zero);
     let normalized = normalize_expr_for_solver(&mut cx, mirrored.clone());
 
@@ -2910,10 +2916,10 @@ fn solver_normalizes_guarded_self_division_add_overflow_guard() {
     let a = SymExpr::var(&mut cx, "a");
     let zero = SymExpr::zero(&mut cx);
     let a_is_zero = SymBoolExpr::eq(&mut cx, a.clone(), zero.clone());
-    let quotient = SymExpr::op(&mut cx, SymExprOp::UDiv, a.clone(), a);
+    let quotient = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, a.clone(), a);
     let checked_quotient = SymExpr::ite(&mut cx, a_is_zero, zero, quotient);
     let one = SymExpr::one(&mut cx);
-    let sum = SymExpr::op(&mut cx, SymExprOp::Add, one, checked_quotient.clone());
+    let sum = SymExpr::binop(&mut cx, SymExprBinOp::Add, one, checked_quotient.clone());
     let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, checked_quotient, sum);
 
     assert_eq!(
@@ -3006,16 +3012,16 @@ fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
     let mut cx = SymCx::new();
     let a_raw = SymExpr::var(&mut cx, "a");
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let a = SymExpr::op(&mut cx, SymExprOp::And, a_raw, u64_max);
+    let a = SymExpr::binop(&mut cx, SymExprBinOp::And, a_raw, u64_max);
     let b_raw = SymExpr::var(&mut cx, "b");
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let b_masked = SymExpr::op(&mut cx, SymExprOp::And, b_raw, u64_max);
-    let numerator = SymExpr::op(&mut cx, SymExprOp::Mul, b_masked, a.clone());
+    let b_masked = SymExpr::binop(&mut cx, SymExprBinOp::And, b_raw, u64_max);
+    let numerator = SymExpr::binop(&mut cx, SymExprBinOp::Mul, b_masked, a.clone());
     let denominator_raw = SymExpr::var(&mut cx, "denominator");
     let high_mask = SymExpr::constant(&mut cx, U256::MAX >> 64);
-    let denominator = SymExpr::op(&mut cx, SymExprOp::And, denominator_raw, high_mask);
-    let b = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, denominator);
-    let sum = SymExpr::op(&mut cx, SymExprOp::Add, a.clone(), b);
+    let denominator = SymExpr::binop(&mut cx, SymExprBinOp::And, denominator_raw, high_mask);
+    let b = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, numerator, denominator);
+    let sum = SymExpr::binop(&mut cx, SymExprBinOp::Add, a.clone(), b);
     let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a, sum);
 
     assert_eq!(
@@ -3029,7 +3035,7 @@ fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
     let b = SymExpr::var(&mut cx, "b");
-    let sum = SymExpr::op(&mut cx, SymExprOp::Add, a.clone(), b);
+    let sum = SymExpr::binop(&mut cx, SymExprBinOp::Add, a.clone(), b);
     let original = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a, sum);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
@@ -3045,23 +3051,23 @@ fn solver_detects_monotonic_product_contradiction() {
     let mut cx = SymCx::new();
     let ink_word = SymExpr::var(&mut cx, "ink");
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let ink = SymExpr::op(&mut cx, SymExprOp::And, ink_word, u64_max);
+    let ink = SymExpr::binop(&mut cx, SymExprBinOp::And, ink_word, u64_max);
     let art_word = SymExpr::var(&mut cx, "art");
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let art = SymExpr::op(&mut cx, SymExprOp::And, art_word, u64_max);
+    let art = SymExpr::binop(&mut cx, SymExprBinOp::And, art_word, u64_max);
     let spot_word = SymExpr::var(&mut cx, "spot");
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let spot = SymExpr::op(&mut cx, SymExprOp::And, spot_word, u64_max);
+    let spot = SymExpr::binop(&mut cx, SymExprBinOp::And, spot_word, u64_max);
     let rate_word = SymExpr::var(&mut cx, "rate");
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
-    let rate = SymExpr::op(&mut cx, SymExprOp::And, rate_word, u64_max);
+    let rate = SymExpr::binop(&mut cx, SymExprBinOp::And, rate_word, u64_max);
     let zero = SymExpr::zero(&mut cx);
     let ink_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, ink.clone(), zero.clone());
     let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
     let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
     let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
-    let left_product = SymExpr::op(&mut cx, SymExprOp::Mul, ink, spot);
-    let right_product = SymExpr::op(&mut cx, SymExprOp::Mul, art, rate);
+    let left_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, ink, spot);
+    let right_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, art, rate);
     let wrapping =
         SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
@@ -3081,8 +3087,8 @@ fn solver_does_not_prune_wrapping_product_inequality() {
     let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
     let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
     let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
-    let left_product = SymExpr::op(&mut cx, SymExprOp::Mul, ink, spot);
-    let right_product = SymExpr::op(&mut cx, SymExprOp::Mul, art, rate);
+    let left_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, ink, spot);
+    let right_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, art, rate);
     let wrapping =
         SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
@@ -3104,11 +3110,13 @@ fn hard_arithmetic_detection_flags_symbolic_mul_div_and_mod() {
     let x = SymExpr::var(&mut cx, "x");
     let y = SymExpr::var(&mut cx, "y");
 
-    assert!(SymExpr::op(&mut cx, SymExprOp::Mul, x.clone(), y.clone()).contains_hard_arith());
-    assert!(SymExpr::op(&mut cx, SymExprOp::UDiv, x.clone(), y.clone()).contains_hard_arith());
-    assert!(SymExpr::op(&mut cx, SymExprOp::URem, x.clone(), y).contains_hard_arith());
+    assert!(SymExpr::binop(&mut cx, SymExprBinOp::Mul, x.clone(), y.clone()).contains_hard_arith());
+    assert!(
+        SymExpr::binop(&mut cx, SymExprBinOp::UDiv, x.clone(), y.clone()).contains_hard_arith()
+    );
+    assert!(SymExpr::binop(&mut cx, SymExprBinOp::URem, x.clone(), y).contains_hard_arith());
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let mul = SymExpr::op(&mut cx, SymExprOp::Mul, x, one);
+    let mul = SymExpr::binop(&mut cx, SymExprBinOp::Mul, x, one);
     assert!(!mul.contains_hard_arith());
 }
 
@@ -3118,9 +3126,9 @@ fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
     let first = SymExpr::var(&mut cx, "first");
     let donation = SymExpr::var(&mut cx, "donation");
     let second = SymExpr::var(&mut cx, "second");
-    let denominator = SymExpr::op(&mut cx, SymExprOp::Add, first.clone(), donation.clone());
-    let numerator = SymExpr::op(&mut cx, SymExprOp::Mul, second.clone(), first.clone());
-    let shares = SymExpr::op(&mut cx, SymExprOp::UDiv, numerator, denominator);
+    let denominator = SymExpr::binop(&mut cx, SymExprBinOp::Add, first.clone(), donation.clone());
+    let numerator = SymExpr::binop(&mut cx, SymExprBinOp::Mul, second.clone(), first.clone());
+    let shares = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, numerator, denominator);
     let zero = SymExpr::zero(&mut cx);
     let first_nonzero = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, first, zero.clone());
     let donation_nonzero = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, donation, zero.clone());
@@ -3145,8 +3153,8 @@ fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
     let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
     let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
     let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
-    let left_product = SymExpr::op(&mut cx, SymExprOp::Mul, ink, spot);
-    let right_product = SymExpr::op(&mut cx, SymExprOp::Mul, art, rate);
+    let left_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, ink, spot);
+    let right_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, art, rate);
     let wrapping =
         SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
@@ -3182,7 +3190,7 @@ fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
     let d = SymExpr::var(&mut cx, "d");
     let e = SymExpr::var(&mut cx, "e");
     let f = SymExpr::var(&mut cx, "f");
-    let product = SymExpr::op(&mut cx, SymExprOp::Mul, a, b);
+    let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, a, b);
     let one = SymExpr::constant(&mut cx, U256::from(1));
     let product_eq_one = SymBoolExpr::eq(&mut cx, product, one);
     let three = SymExpr::constant(&mut cx, U256::from(3));
@@ -3205,7 +3213,7 @@ fn hard_arithmetic_fallback_skips_symbolic_hashes() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
     let hash = SymExpr::hash_symbol(&mut cx, Symbol::intern("hash"), "sha256", vec![x.clone()]);
-    let product = SymExpr::op(&mut cx, SymExprOp::Mul, x, hash);
+    let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, x, hash);
     let one = SymExpr::constant(&mut cx, U256::from(1));
     let constraints = vec![SymBoolExpr::eq(&mut cx, product, one)];
 
@@ -3455,7 +3463,7 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let zero = SymExpr::zero(&mut cx);
     let x_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), zero.clone());
     let y_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, y.clone(), zero);
-    let product = SymExpr::op(&mut cx, SymExprOp::Mul, x, y);
+    let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, x, y);
     let four = SymExpr::constant(&mut cx, U256::from(4));
     let product_eq_four = SymBoolExpr::eq(&mut cx, product, four);
     let constraints = vec![x_positive, y_positive, product_eq_four];
@@ -3488,7 +3496,7 @@ fn model_uses_validated_hard_arithmetic_fallback_cache() {
     let zero = SymExpr::zero(&mut cx);
     let x_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), zero.clone());
     let y_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, y.clone(), zero);
-    let product = SymExpr::op(&mut cx, SymExprOp::Mul, x, y);
+    let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, x, y);
     let four = SymExpr::constant(&mut cx, U256::from(4));
     let product_eq_four = SymBoolExpr::eq(&mut cx, product, four);
     let constraints = vec![x_positive, y_positive, product_eq_four];
@@ -3521,7 +3529,7 @@ fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
     let y = SymExpr::var(&mut cx, "y");
     let zero = SymExpr::zero(&mut cx);
     let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
-    let product = SymExpr::op(&mut cx, SymExprOp::Mul, x, y);
+    let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, x, y);
     let one = SymExpr::one(&mut cx);
     let product_eq_one = SymBoolExpr::eq(&mut cx, product, one);
     let constraints = vec![x_is_zero, product_eq_one];
@@ -3582,13 +3590,13 @@ fn sat_cache_reuses_nested_commutative_results() {
     let y = SymExpr::var(&mut cx, "y");
     let three = SymExpr::constant(&mut cx, U256::from(3));
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let sum = SymExpr::op(&mut cx, SymExprOp::Add, x.clone(), y.clone());
+    let sum = SymExpr::binop(&mut cx, SymExprBinOp::Add, x.clone(), y.clone());
     let sum_eq_three = SymBoolExpr::eq(&mut cx, sum, three.clone());
     let x_eq_one = SymBoolExpr::eq(&mut cx, x.clone(), one.clone());
     let constraints = vec![SymBoolExpr::and(&mut cx, vec![sum_eq_three, x_eq_one])];
     let one_eq_x = SymBoolExpr::eq(&mut cx, one, x);
     let x_again = SymExpr::var(&mut cx, "x");
-    let reordered_sum = SymExpr::op(&mut cx, SymExprOp::Add, y, x_again);
+    let reordered_sum = SymExpr::binop(&mut cx, SymExprBinOp::Add, y, x_again);
     let three_eq_sum = SymBoolExpr::eq(&mut cx, three, reordered_sum);
     let reordered_constraints = vec![SymBoolExpr::and(&mut cx, vec![one_eq_x, three_eq_sum])];
 
@@ -4276,7 +4284,7 @@ fn solver_smt_dump_shares_repeated_subterms() {
     let calldata = SymExpr::var(&mut cx, "calldata_0");
     let byte = calldata.extracted_byte(&mut cx, 0);
     let shift = SymExpr::constant(&mut cx, U256::from(248));
-    let shifted = SymExpr::op(&mut cx, SymExprOp::Shl, byte, shift);
+    let shifted = SymExpr::binop(&mut cx, SymExprBinOp::Shl, byte, shift);
     let zero = SymExpr::zero(&mut cx);
     let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero.clone());
     let shifted_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, shifted, zero);

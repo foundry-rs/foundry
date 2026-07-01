@@ -28,9 +28,11 @@ impl SymExpr {
 
 fn is_hard_arith_node(expr: &SymExpr) -> bool {
     match expr.kind() {
-        SymExprKind::Op(SymExprOp::Mul, left, right) => left.contains_var() && right.contains_var(),
-        SymExprKind::Op(
-            SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
+        SymExprKind::BinOp(SymExprBinOp::Mul, left, right) => {
+            left.contains_var() && right.contains_var()
+        }
+        SymExprKind::BinOp(
+            SymExprBinOp::UDiv | SymExprBinOp::URem | SymExprBinOp::SDiv | SymExprBinOp::SRem,
             left,
             right,
         ) => left.contains_var() || right.contains_var(),
@@ -356,7 +358,7 @@ fn zero_mask_equality(var: &str, masked: &SymExpr, zero: &SymExpr) -> Option<U25
         return None;
     }
     match masked.kind() {
-        SymExprKind::Op(SymExprOp::And, left, right) => match (left.kind(), right.kind()) {
+        SymExprKind::BinOp(SymExprBinOp::And, left, right) => match (left.kind(), right.kind()) {
             (SymExprKind::Var(name), SymExprKind::Const(mask))
             | (SymExprKind::Const(mask), SymExprKind::Var(name))
                 if name.as_str() == var =>
