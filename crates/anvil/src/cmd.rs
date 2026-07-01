@@ -31,7 +31,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]

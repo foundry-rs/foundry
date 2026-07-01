@@ -25,32 +25,20 @@ impl SymbolicModelLookup for BTreeMap<String, U256> {
     }
 }
 
-type SymbolInterner = inturn::Interner<Symbol, DefaultHashBuilder>;
-
-static SYMBOL_INTERNER: LazyLock<SymbolInterner> =
-    LazyLock::new(|| SymbolInterner::with_capacity_and_hasher(1024, DefaultHashBuilder::default()));
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct Symbol(NonZeroU32);
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct Symbol(Arc<str>);
 
 impl Symbol {
+    pub(crate) const fn new(name: Arc<str>) -> Self {
+        Self(name)
+    }
+
     pub(crate) fn intern(name: &str) -> Self {
-        SYMBOL_INTERNER.intern(name)
+        Self(Arc::from(name))
     }
 
-    pub(crate) fn as_str(self) -> &'static str {
-        SYMBOL_INTERNER.resolve(self)
-    }
-}
-
-impl inturn::InternerSymbol for Symbol {
-    fn try_from_usize(id: usize) -> Option<Self> {
-        let id = u32::try_from(id).ok()?.checked_add(1)?;
-        NonZeroU32::new(id).map(Self)
-    }
-
-    fn to_usize(self) -> usize {
-        self.0.get() as usize - 1
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

@@ -7,7 +7,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.9.0"
+FOUNDRYUP_INSTALLER_VERSION="1.9.1"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -721,11 +721,8 @@ resolve_version_and_tag() {
     FOUNDRYUP_VERSION="$FOUNDRYUP_TAG"
   elif [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
     # Nightlies are published as immutable `nightly-<sha>` releases. Resolve the
-    # most recent one from GitHub's public releases Atom feed, which lists
-    # releases newest-first, works unauthenticated, and is not subject to the
-    # `api.github.com` REST rate limit (60 req/hr per IP). Shared CI IPs exhaust
-    # that limit and fail with HTTP 403. Falls back to the API only when the
-    # feed cannot be parsed.
+    # most recent one from GitHub's public releases Atom feed, which works
+    # unauthenticated and is not subject to the `api.github.com` REST rate limit.
     say "fetching latest nightly release tag from ${FOUNDRYUP_REPO}..."
     FOUNDRYUP_NIGHTLY_CANDIDATES=()
     while IFS= read -r nightly_candidate; do
@@ -733,19 +730,7 @@ resolve_version_and_tag() {
     done < <(resolve_nightly_tags_via_feed "$FOUNDRYUP_REPO")
     FOUNDRYUP_TAG="${FOUNDRYUP_NIGHTLY_CANDIDATES[0]:-}"
     if [ -z "$FOUNDRYUP_TAG" ]; then
-      # The GitHub API does not guarantee that releases are returned in
-      # chronological order, so we collect all matching nightlies along with
-      # their `published_at` timestamps and sort them ourselves.
-      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases" | awk '
-        /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
-        /"published_at"[[:space:]]*:[[:space:]]*"/ {
-          pub=$0
-          gsub(/.*"published_at"[[:space:]]*:[[:space:]]*"/, "", pub)
-          gsub(/".*/, "", pub)
-          if (tag ~ /^nightly-/) print pub "\t" tag
-          tag=""
-        }
-      ' | sort -r | awk -F '\t' 'NR==1 { print $2 }') || err "failed to fetch release tags from GitHub API"
+      FOUNDRYUP_TAG=$(resolve_nightly_tag_via_api "$FOUNDRYUP_REPO") || err "failed to fetch release tags from GitHub API"
     fi
     if [ -z "$FOUNDRYUP_TAG" ]; then
       err "could not find a nightly release tag for ${FOUNDRYUP_REPO}"
@@ -763,6 +748,23 @@ resolve_version_and_tag() {
   else
     FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
   fi
+}
+
+resolve_nightly_tag_via_api() {
+  local _repo="$1"
+  # The GitHub API does not guarantee that releases are returned in
+  # chronological order, so collect matching nightlies with their published_at
+  # timestamps and sort them explicitly.
+  fetch "https://api.github.com/repos/${_repo}/releases" | awk '
+    /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
+    /"published_at"[[:space:]]*:[[:space:]]*"/ {
+      pub=$0
+      gsub(/.*"published_at"[[:space:]]*:[[:space:]]*"/, "", pub)
+      gsub(/".*/, "", pub)
+      if (tag ~ /^nightly-/) print pub "\t" tag
+      tag=""
+    }
+  ' | sort -r | awk -F '\t' 'NR==1 { print $2 }'
 }
 
 # Resolves the latest release tag for repo $1 by following the `releases/latest`
@@ -796,11 +798,11 @@ resolve_latest_tag_via_redirect() {
 }
 
 # Resolves recent nightly tags for repo $1 from GitHub's public releases
-# Atom feed (`releases.atom`), which lists releases newest-first, works
-# unauthenticated, and is not subject to the api.github.com REST rate limit.
+# Atom feed (`releases.atom`), which works unauthenticated and is not subject to
+# the api.github.com REST rate limit.
 # Prints up to `FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT` unique `nightly-<sha>` tags,
-# newest-first, or nothing if the feed cannot be resolved so the caller can fall
-# back to the API.
+# newest-first by entry `<updated>` timestamp, or nothing if the feed cannot be
+# resolved.
 resolve_nightly_tags_via_feed() {
   local _repo="$1"
   local _url="https://github.com/${_repo}/releases.atom"
@@ -818,12 +820,29 @@ resolve_nightly_tags_via_feed() {
       --retry-on-http-error=403,408,429,500,502,503,504 \
       -qO- "$_url" 2>/dev/null) || return 0
   fi
-  # The feed is newest-first. Return a small unique candidate set so callers can
-  # skip draft or still-uploading immutable nightly releases without hitting the
-  # GitHub REST API on the happy path.
+  # Return a small unique candidate set so callers can skip draft or
+  # still-uploading immutable nightly releases. Restrict matching to each Atom
+  # entry's release link; changelog compare links in the content can also contain
+  # nightly tags and are not release candidates.
   printf '%s\n' "$_feed" \
-    | grep -oE 'nightly-[0-9a-f]{40}' \
-    | awk '!seen[$0]++ { print; count++ } count >= limit { exit }' limit="$FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT"
+    | awk '
+      /<entry>/ { updated=""; tag="" }
+      /<updated>/ {
+        updated=$0
+        gsub(/.*<updated>/, "", updated)
+        gsub(/<\/updated>.*/, "", updated)
+      }
+      /href="[^"]*\/releases\/tag\/nightly-[0-9a-f]{40}"/ {
+        tag=$0
+        gsub(/.*\/releases\/tag\//, "", tag)
+        gsub(/".*/, "", tag)
+      }
+      /<\/entry>/ && updated != "" && tag ~ /^nightly-[0-9a-f]{40}$/ {
+        print updated "\t" tag
+      }
+    ' \
+    | sort -r \
+    | awk -F '\t' '!seen[$2]++ { print $2; count++ } count >= limit { exit }' limit="$FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT"
 }
 
 # Backwards-compatible helper for tests/callers that only need the newest

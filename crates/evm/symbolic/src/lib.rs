@@ -6,7 +6,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, I256, U256, hex, keccak256,
-    map::{DefaultHashBuilder, HashMap, HashSet, IndexSet},
+    map::{HashMap, HashSet, IndexSet},
 };
 use alloy_signer::SignerSync;
 use alloy_signer_local::{
@@ -16,9 +16,7 @@ use alloy_signer_local::{
 use alloy_sol_types::SolCall;
 use base64::prelude::*;
 use foundry_cheatcodes_spec::{SymbolicVm, Vm};
-use foundry_config::{
-    SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout, split_quoted_args,
-};
+use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
@@ -37,13 +35,12 @@ use std::collections::BTreeMap;
 use std::{
     collections::VecDeque,
     fmt::{self, Write as _},
-    io::{Read, Write},
-    num::NonZeroU32,
+    io::Write,
     ops::{ControlFlow, Deref, DerefMut},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc, LazyLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -273,7 +270,12 @@ fn symbolic_create_bytes_selectors() -> &'static [(usize, [u8; 4]); 32] {
 #[derive(Clone, Debug)]
 pub enum SymbolicRunResult {
     /// All explored paths completed without a feasible failure.
-    Safe(SymbolicStats),
+    Safe {
+        /// Execution counters collected during the run.
+        stats: SymbolicStats,
+        /// One concrete successful input, when requested by the caller.
+        success_input: Option<SymbolicConcreteInput>,
+    },
     /// A feasible failure was found.
     Counterexample {
         /// ABI-typed argument values extracted from the solver model.
@@ -292,6 +294,15 @@ pub enum SymbolicRunResult {
         /// Execution counters collected before execution stopped.
         stats: SymbolicStats,
     },
+}
+
+/// One concrete symbolic input materialized from a solver model.
+#[derive(Clone, Debug)]
+pub struct SymbolicConcreteInput {
+    /// ABI-typed argument values extracted from the solver model.
+    pub args: Vec<DynSolValue>,
+    /// ABI-encoded calldata for replay.
+    pub calldata: Bytes,
 }
 
 /// A concrete invariant target selected from Foundry's invariant discovery.
@@ -434,6 +445,7 @@ pub struct SymbolicStats {
 /// or an incomplete result.
 pub struct SymbolicExecutor {
     config: SymbolicConfig,
+    cx: runtime::SymCx,
     solver: Box<dyn runtime::SymbolicSolver>,
     deferred_incomplete: Option<DeferredIncomplete>,
 }

@@ -20,7 +20,7 @@ use std::{
 use eyre::Result;
 use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
-use foundry_config::Config;
+use foundry_config::{Config, InlineConfig};
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -677,6 +677,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
         .files(files);
 
     let compile_output = compiler.compile(&config.project()?)?;
+    let inline_config = Arc::new(InlineConfig::new_parsed(&compile_output, config)?);
 
     // Rebuild the per-mutant test filter so `--match-test`, `--match-contract`,
     // `--match-path`, ... are honored against the temp workspace's paths
@@ -701,7 +702,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
         // isolation flag, same fail-fast semantics for mutation, and same
         // filter so kept/skipped tests stay consistent across baseline and
         // mutant runs.
-        let mut runner = MultiContractRunnerBuilder::new(config.clone())
+        let mut runner = MultiContractRunnerBuilder::new(config.clone(), inline_config)
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)

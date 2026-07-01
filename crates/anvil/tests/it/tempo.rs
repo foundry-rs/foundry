@@ -35,7 +35,7 @@ use foundry_evm::core::tempo::{
     active_tempo_precompile_addresses,
 };
 use tempo_alloy::primitives::TempoTxEnvelope;
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN,
     RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
@@ -86,7 +86,7 @@ fn anvil_binary() -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     let fork_timestamp = TempoHardfork::T3.mainnet_activation_timestamp().unwrap();
     let (_source_api, source_handle) = spawn(
@@ -389,7 +389,7 @@ sol! {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_precompiles_have_code() {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     let (api, _handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
@@ -3648,7 +3648,7 @@ async fn test_gas_estimation_tempo_aa_expiring_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_t1_nonce_costs() {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     let (_api, handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()))).await;
