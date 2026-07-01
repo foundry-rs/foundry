@@ -356,6 +356,48 @@ forgetest_init!(is_isolate_mode_uses_effective_isolation, |prj, cmd| {
         .assert_success();
 });
 
+forgetest_init!(
+    inline_isolate_inherits_default_fs_permissions_for_non_default_profile,
+    |prj, cmd| {
+        std::fs::write(
+            prj.root().join("foundry.toml"),
+            r#"
+        [profile.default]
+        src = "src"
+        out = "out"
+        libs = ["lib"]
+        fs_permissions = [{ access = "read-write", path = "./data" }]
+
+        [profile.test]
+        "#,
+        )
+        .unwrap();
+        prj.add_test(
+            "inline_isolate_fs_permissions.sol",
+            r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract InlineIsolateFsPermissionsTest is Test {
+            function setUp() public {
+                if (!vm.exists("./data")) {
+                    vm.createDir("./data", true);
+                }
+            }
+
+            /// forge-config: default.isolate = true
+            function testInlineIsolateCanCreateFile() public {
+                vm.writeFile("./data/new.txt", "hello");
+                vm.removeFile("./data/new.txt");
+            }
+        }
+    "#,
+        );
+
+        cmd.env("FOUNDRY_PROFILE", "test");
+        cmd.args(["test", "--match-test", "testInlineIsolateCanCreateFile"]).assert_success();
+    }
+);
+
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
     prj.add_test(
         "inline.sol",

@@ -613,8 +613,8 @@ mod tests {
     use alloy_sol_types::SolCall;
     use k256::elliptic_curve::Curve;
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
-    use tempo_chainspec::hardfork::TempoHardfork;
     use tempo_contracts::precompiles::{IAccountKeychain, ISignatureVerifier};
+    use tempo_hardfork::TempoHardfork;
     use tempo_precompiles::{
         Precompile,
         account_keychain::{AccountKeychain, KeyRestrictions, SignatureType},

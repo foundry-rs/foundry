@@ -23,6 +23,7 @@ use alloy_rpc_types::{
     state::StateOverride,
     trace::{
         geth::{GethDebugTracingOptions, GethTrace, TraceResult},
+        opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{
             LocalizedTransactionTrace as Trace, TraceResults, TraceResultsWithTransactionHash,
             TraceType,
@@ -259,6 +260,13 @@ impl<N: Network> ClientFork<N> {
         Ok(traces)
     }
 
+    pub async fn trace_transaction_opcode_gas(
+        &self,
+        hash: B256,
+    ) -> Result<Option<TransactionOpcodeGas>, TransportError> {
+        self.provider().raw_request("trace_transactionOpcodeGas".into(), (hash,)).await
+    }
+
     /// Sends `trace_call`.
     pub async fn trace_call(
         &self,
@@ -355,6 +363,21 @@ impl<N: Network> ClientFork<N> {
         // Forward to upstream provider for historical blocks
         let params = (number, trace_types.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>());
         self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
+    }
+
+    pub async fn trace_replay_transaction(
+        &self,
+        hash: B256,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<TraceResults, TransportError> {
+        self.provider().raw_request("trace_replayTransaction".into(), (hash, trace_types)).await
+    }
+
+    pub async fn trace_block_opcode_gas(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlockOpcodeGas>, TransportError> {
+        self.provider().raw_request("trace_blockOpcodeGas".into(), (block_id,)).await
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config

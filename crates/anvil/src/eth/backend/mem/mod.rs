@@ -80,6 +80,7 @@ use alloy_rpc_types::{
             GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
             NoopFrame, TraceResult,
         },
+        opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{
             LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
         },
@@ -174,6 +175,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
+use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
@@ -184,8 +186,8 @@ use std::{
     time::Duration,
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
-use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
     storage::{StorageActions, StorageCtx},
@@ -1885,6 +1887,43 @@ impl<N: Network> Backend<N> {
         }
 
         Ok(vec![])
+    }
+
+    /// Replays a mined transaction and returns the requested traces.
+    pub async fn trace_replay_transaction(
+        &self,
+        hash: B256,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<TraceResults, BlockchainError> {
+        let block_number =
+            self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.block_number);
+
+        // If the transaction was mined locally, replay it locally. Do not fall
+        // through to the fork when the local replay fails; that would misreport
+        // a local data problem as an upstream transaction lookup.
+        if let Some(block_number) = block_number {
+            let results = self
+                .mined_parity_trace_replay_block_transactions(block_number, &trace_types)
+                .ok_or(BlockchainError::BlockNotFound)?;
+
+            return results
+                .into_iter()
+                .find(|result| result.transaction_hash == hash)
+                .map(|result| result.full_trace)
+                .ok_or_else(|| {
+                    BlockchainError::Internal(format!(
+                        "replayed block {block_number} for local transaction {hash:?}, \
+                         but its trace was missing"
+                    ))
+                });
+        }
+
+        // Not known locally: forward to the fork if present.
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.trace_replay_transaction(hash, trace_types).await?);
+        }
+
+        Err(BlockchainError::TransactionNotFound)
     }
 
     /// Traces a raw transaction without committing it to the chain state or mempool.
@@ -3630,6 +3669,108 @@ impl<N: Network> Backend<N>
 where
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
+    /// Returns opcode gas usage for the given transaction.
+    pub async fn trace_transaction_opcode_gas(
+        &self,
+        hash: B256,
+    ) -> Result<Option<TransactionOpcodeGas>, BlockchainError> {
+        match self.replay_tx_with_inspector(
+            hash,
+            OpcodeGasInspector::default(),
+            move |_, _, inspector, _, _| TransactionOpcodeGas {
+                transaction_hash: hash,
+                opcode_gas: inspector.opcode_gas_iter().collect(),
+            },
+        ) {
+            Ok(trace) => Ok(Some(trace)),
+            Err(BlockchainError::TransactionNotFound) => {
+                if let Some(fork) = self.get_fork() {
+                    return Ok(fork.trace_transaction_opcode_gas(hash).await?);
+                }
+
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Returns opcode gas usage for all transactions in the given block.
+    pub async fn trace_block_opcode_gas(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlockOpcodeGas>, BlockchainError> {
+        if let Some((block, block_hash)) = self.get_block_with_hash(block_id) {
+            return self.mined_block_opcode_gas(&block, block_hash).map(Some);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            let number = self.ensure_block_number(Some(block_id)).await?;
+            if fork.predates_fork_inclusive(number) {
+                return Ok(fork.trace_block_opcode_gas(block_id).await?);
+            }
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    fn mined_block_opcode_gas(
+        &self,
+        block: &Block,
+        block_hash: B256,
+    ) -> Result<BlockOpcodeGas, BlockchainError> {
+        if block.body.transactions.is_empty() {
+            return Ok(BlockOpcodeGas {
+                block_hash,
+                block_number: block.header.number(),
+                transactions: Vec::new(),
+            });
+        }
+
+        let parent_hash = block.header.parent_hash;
+
+        let trace = |parent_state: &StateDb| -> Result<Vec<TransactionOpcodeGas>, BlockchainError> {
+            let mut cache_db = CacheDB::new(Box::new(parent_state));
+            let mut transactions = Vec::with_capacity(block.body.transactions.len());
+
+            let mut evm_env = self.evm_env.read().clone();
+            evm_env.block_env = block_env_from_header(&block.header);
+
+            for tx_envelope in &block.body.transactions {
+                let mut inspector = OpcodeGasInspector::default();
+                let pending_tx = PendingTransaction::from_maybe_impersonated(tx_envelope.clone())?;
+                let (result, _) = self.transact_envelope_with_inspector_ref(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    pending_tx.transaction.as_ref(),
+                    *pending_tx.sender(),
+                )?;
+
+                transactions.push(TransactionOpcodeGas {
+                    transaction_hash: tx_envelope.hash(),
+                    opcode_gas: inspector.opcode_gas_iter().collect(),
+                });
+
+                cache_db.commit(result.state);
+            }
+
+            Ok(transactions)
+        };
+
+        let read_guard = self.states.upgradable_read();
+        let transactions = if let Some(state) = read_guard.get_state(&parent_hash) {
+            trace(state)?
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)?
+        };
+
+        Ok(BlockOpcodeGas { block_hash, block_number: block.header.number(), transactions })
+    }
+
     /// Rollback the chain to a common height.
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
