@@ -155,11 +155,15 @@ impl Fuzzer {
     }
 
     /// Collects `stack` and `memory` values into the fuzz dictionary.
-    #[cold]
+    #[inline]
     fn collect_data(&mut self, interpreter: &Interpreter) {
         let remaining = self.max_collected_values.saturating_sub(self.collected_values.len());
-        self.collected_values
-            .extend(interpreter.stack.data().iter().take(remaining).copied().map(B256::from));
+        if remaining != 0 {
+            let stack = interpreter.stack.data();
+            let values_to_collect = remaining.min(stack.len());
+            self.collected_values
+                .extend(stack[..values_to_collect].iter().copied().map(B256::from));
+        }
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {
