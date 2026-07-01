@@ -7,7 +7,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.9.1"
+FOUNDRYUP_INSTALLER_VERSION="1.10.0"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -23,13 +23,12 @@ FOUNDRYUP_IGNORE_VERIFICATION=false
 # Rust foundryup migration shim
 #
 # The bash foundryup is being replaced by the Rust rewrite
-# (https://github.com/foundry-rs/foundryup). When opted in, this script
-# bootstraps the Rust `foundryup` binary into a sidecar location and execs it,
-# migrating the caller (including GitHub Actions that re-fetch this script).
+# (https://github.com/foundry-rs/foundryup). By default this script bootstraps
+# the Rust `foundryup` binary into a sidecar location and execs it, migrating
+# the caller (including GitHub Actions that re-fetch this script).
 #
-# Migration is OPT-IN for now: set FOUNDRYUP_MIGRATE=1 to use the Rust
-# foundryup. The default path remains the legacy bash implementation until the
-# migration is proven, after which the default will flip.
+# Set FOUNDRYUP_NO_MIGRATE=1 to fall back to the legacy bash implementation
+# during the deprecation window.
 # ----------------------------------------------------------------------------
 
 # Pinned Rust foundryup installer version to bootstrap from.
@@ -480,16 +479,51 @@ update() {
   exit 0
 }
 
+# Prints the platform binary name for $1 (adds `.exe` on Windows).
+foundry_bin_name() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s.exe\n' "$1" ;;
+    *)                    printf '%s\n' "$1" ;;
+  esac
+}
+
+# Prints the path to binary $2 inside version dir $1, accepting both the platform
+# name (`forge.exe`) and the bare name. Fails if neither exists.
+find_foundry_bin() {
+  local _name
+  _name="$(foundry_bin_name "$2")"
+  if [ -e "$1/$_name" ]; then printf '%s\n' "$1/$_name"; return 0; fi
+  if [ -e "$1/$2" ]; then printf '%s\n' "$1/$2"; return 0; fi
+  return 1
+}
+
+# True if $1 directly contains the Foundry binaries (i.e. it is a version dir).
+is_version_dir() {
+  local bin
+  for bin in "${BINS[@]}"; do
+    find_foundry_bin "$1" "$bin" >/dev/null && return 0
+  done
+  return 1
+}
+
+# Lists versions under $1, checking the flat layout (versions/<version>) and the
+# nested layout (versions/<owner>/<repo>/<version>). Bounded depth, no recursion.
+list_versions_dir() {
+  local entry bin
+  for entry in "$1"/* "$1"/*/*/*; do
+    [ -d "$entry" ] || continue
+    is_version_dir "$entry" || continue
+    say "${entry##*/}"
+    for bin in "${BINS[@]}"; do
+      say "- $(ensure "$(find_foundry_bin "$entry" "$bin")" -V)"
+    done
+    printf "\n"
+  done
+}
+
 list() {
   if [ -d "$FOUNDRY_VERSIONS_DIR" ]; then
-    for VERSION in "$FOUNDRY_VERSIONS_DIR"/*; do
-      say "${VERSION##*/}"
-      for bin in "${BINS[@]}"; do
-        bin_path="$VERSION/$bin"
-        say "- $(ensure "$bin_path" -V)"
-      done
-      printf "\n"
-    done
+    list_versions_dir "$FOUNDRY_VERSIONS_DIR"
   else
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
@@ -497,6 +531,16 @@ list() {
     done
   fi
   exit 0
+}
+
+# Prints the install dir for version $1, trying the flat layout then the nested
+# foundry-rs/foundry layout. Prints nothing if it is not installed.
+resolve_version_dir() {
+  local _flat _nested
+  _flat="$FOUNDRY_VERSIONS_DIR/$1"
+  if [ -d "$_flat" ]; then printf '%s\n' "$_flat"; return 0; fi
+  _nested="$FOUNDRY_VERSIONS_DIR/foundry-rs/foundry/$1"
+  if [ -d "$_nested" ]; then printf '%s\n' "$_nested"; return 0; fi
 }
 
 use() {
@@ -513,22 +557,23 @@ use() {
       ;;
   esac
 
-  FOUNDRY_VERSION_DIR="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
-  if [ -d "$FOUNDRY_VERSION_DIR" ]; then
+  FOUNDRY_VERSION_DIR="$(resolve_version_dir "$FOUNDRYUP_VERSION")"
+  if [ -n "$FOUNDRY_VERSION_DIR" ] && [ -d "$FOUNDRY_VERSION_DIR" ]; then
 
     check_bins_in_use
     ensure mkdir -p "$FOUNDRY_BIN_DIR"
 
     for bin in "${BINS[@]}"; do
-      bin_path="$FOUNDRY_BIN_DIR/$bin"
+      bin_path="$FOUNDRY_BIN_DIR/$(foundry_bin_name "$bin")"
       # Remove first: `$bin_path` may be a symlink created by a previous
       # `foundryup --path` invocation, pointing at e.g.
       # `<repo>/target/release/$bin`. A plain `cp src symlink` follows the
       # symlink and overwrites the local build artifact, which corrupts the
       # workspace and silently makes the next `--path` activation use the
-      # downloaded release binary instead of a fresh local build.
-      ensure rm -f "$bin_path"
-      ensure cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
+      # downloaded release binary instead of a fresh local build. Clear both the
+      # bare and `.exe` names so a stale variant can't shadow the new one.
+      ensure rm -f "$FOUNDRY_BIN_DIR/$bin" "$bin_path"
+      ensure cp "$(find_foundry_bin "$FOUNDRY_VERSION_DIR" "$bin")" "$bin_path"
       # Print usage msg
       say "use - $(ensure "$bin_path" -V)"
 
@@ -947,24 +992,41 @@ rust_foundryup_bin() {
 }
 
 # Prints the version of the sidecar Rust foundryup at $1 (e.g. `0.0.5`), or
-# nothing if it is not installed or the version cannot be determined. The
-# trailing `|| true` keeps a failing/unparsable `--version` from aborting under
+# nothing if it is not installed or the version cannot be determined. A
+# `--version` that exits nonzero yields nothing even if it printed a version-
+# looking line, so a corrupt sidecar is treated as absent rather than trusted.
+# The trailing `|| true` keeps an unparsable `--version` from aborting under
 # `set -eo pipefail`, so the caller falls through to a reinstall instead.
 sidecar_version() {
   [ -x "$1" ] || return 0
-  "$1" --version 2>/dev/null \
+  local _out
+  _out="$("$1" --version 2>/dev/null)" || return 0
+  printf '%s\n' "$_out" \
     | sed -nE 's/^foundryup[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
     | head -1 || true
 }
 
 # Downloads `foundryup-init.sh` and installs the Rust foundryup into the
-# sidecar home, leaving the executable at $1.
+# sidecar home, leaving the executable at $1. Returns nonzero on failure so
+# callers can fall back to the legacy bash path.
 install_rust_foundryup() {
   local _bin="$1"
 
   local _init
   _init="$(mktemp)"
-  ensure download "$FOUNDRYUP_INIT_URL" "$_init"
+  if ! download "$FOUNDRYUP_INIT_URL" "$_init"; then
+    rm -f "$_init"
+    warn "could not download the Rust foundryup installer from $FOUNDRYUP_INIT_URL"
+    return 1
+  fi
+
+  # A missing tag returns a `404: Not Found` body with a success status; reject
+  # anything that isn't a script before handing it to `sh`.
+  if ! head -n 1 "$_init" | grep -q '^#!'; then
+    rm -f "$_init"
+    warn "the downloaded Rust foundryup installer is not a valid script (unexpected response from $FOUNDRYUP_INIT_URL)"
+    return 1
+  fi
 
   # Run the installer with:
   #  - FOUNDRY_DIR pointed at the sidecar home, so it installs to
@@ -972,8 +1034,14 @@ install_rust_foundryup() {
   #  - FOUNDRYUP_VERSION scoped to the installer invocation only (it means the
   #    installer version here, but the Foundry tool version to the Rust binary),
   #    so it never leaks into the user's environment.
-  ensure env FOUNDRY_DIR="$FOUNDRYUP_RUST_HOME" FOUNDRYUP_VERSION="$FOUNDRYUP_BOOTSTRAP_VERSION" \
-    sh "$_init" -y
+  # Send installer chatter (incl. PATH instructions) to stderr so a migrated
+  # `foundryup --version` keeps stdout clean.
+  if ! env FOUNDRY_DIR="$FOUNDRYUP_RUST_HOME" FOUNDRYUP_VERSION="$FOUNDRYUP_BOOTSTRAP_VERSION" \
+    sh "$_init" -y 1>&2; then
+    rm -f "$_init"
+    warn "the Rust foundryup installer failed"
+    return 1
+  fi
   rm -f "$_init"
 
   # The v0.0.5 installer writes the Windows binary without a `.exe` extension;
@@ -986,7 +1054,10 @@ install_rust_foundryup() {
       ;;
   esac
 
-  [ -x "$_bin" ] || err "failed to bootstrap the Rust foundryup binary"
+  if [ ! -x "$_bin" ]; then
+    warn "the Rust foundryup binary was not found after installation"
+    return 1
+  fi
 }
 
 # Ensures a Rust foundryup of at least $FOUNDRYUP_BOOTSTRAP_VERSION is present
@@ -1002,19 +1073,132 @@ ensure_rust_foundryup() {
     return 0
   fi
 
-  say "migrating to the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..."
+  say "migrating to the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..." >&2
   install_rust_foundryup "$_bin"
+}
+
+# Classifies the requested command for the migration shim, scanning args
+# left-to-right for the first terminal flag exactly as main's parser does (where
+# -U/-h/-v/-l/-u execute and exit immediately, so the first one wins). Prints:
+#   - "update"  for -U/--update,
+#   - "help"    for -h/--help,
+#   - "version" for -v/--version,
+#   - "local"   for -l/--list, -u/--use (served by the sidecar if installed, else
+#               the legacy bash path; never bootstraps the Rust sidecar),
+#   - "normal"  otherwise.
+# Skips the values of options that take an argument (so `--branch --list` is not
+# a match), treats `-f/--force` as a no-arg flag, and returns "normal" for any
+# unknown option so the real parser (the sidecar or the legacy `main`) rejects
+# it, exactly as `main` errors on the first unknown option. Stops at the `--`
+# sentinel.
+shim_action() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --) break ;;
+      -U|--update)  printf 'update\n';  return ;;
+      -h|--help)    printf 'help\n';    return ;;
+      -v|--version) printf 'version\n'; return ;;
+      -l|--list|-u|--use) printf 'local\n'; return ;;
+      -f|--force) ;;
+      -r|--repo|-b|--branch|-i|--install|-p|--path|-P|--pr|\
+      -C|--commit|-j|--jobs|-n|--network|--arch|--platform)
+        shift
+        [ "$#" -gt 0 ] || break
+        ;;
+      *) printf 'normal\n'; return ;;
+    esac
+    shift
+  done
+  printf 'normal\n'
+}
+
+# Updates this launcher in place from HEAD if a newer version exists, then
+# re-execs it (FOUNDRYUP_SHIM_UPDATED guards against a loop). Returns when there
+# is nothing to do so the caller can still refresh the sidecar.
+update_shim() {
+  [ "${FOUNDRYUP_SHIM_UPDATED:-0}" = "1" ] && return 0
+
+  ensure mkdir -p "$FOUNDRY_BIN_DIR"
+  # Stage in the target directory so the final replace is an atomic rename.
+  local _tmp _new
+  _tmp="$(mktemp "$FOUNDRY_BIN_DIR/.foundryup.XXXXXX")"
+  if ! download "$FOUNDRY_BIN_URL" "$_tmp"; then
+    rm -f "$_tmp"
+    warn "could not fetch the latest foundryup launcher; keeping the current version"
+    return 0
+  fi
+  _new=$(grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$_tmp" | head -1 | cut -d'"' -f2 || true)
+  if [ -z "$_new" ]; then
+    rm -f "$_tmp"
+    warn "downloaded foundryup launcher did not contain a version; keeping the current version"
+    return 0
+  fi
+
+  if version_gt "$_new" "$FOUNDRYUP_INSTALLER_VERSION"; then
+    say "updating foundryup launcher: $FOUNDRYUP_INSTALLER_VERSION → $_new" >&2
+    ensure chmod +x "$_tmp"
+    ensure mv -f "$_tmp" "$FOUNDRY_BIN_PATH"
+    exec env FOUNDRYUP_SHIM_UPDATED=1 "$FOUNDRY_BIN_PATH" "$@"
+  fi
+
+  rm -f "$_tmp"
+}
+
+# Bootstraps the Rust foundryup sidecar and execs it. `--update` is handled here
+# (update this launcher, then the sidecar), never by the Rust binary itself.
+migrate_and_exec() {
+  case "$(shim_action "$@")" in
+    update)
+      update_shim "$@"
+      if ensure_rust_foundryup; then
+        say "foundryup is up to date" >&2
+      else
+        warn "could not refresh the Rust foundryup; it will be retried on the next run"
+      fi
+      exit 0
+      ;;
+    help)
+      # Help and version are basic, always-available commands: serve them from
+      # the shim directly so they never depend on the sidecar or the network.
+      usage
+      exit 0
+      ;;
+    version)
+      version
+      ;;
+    local)
+      # --list/--use must not bootstrap the Rust sidecar. If a working sidecar is
+      # already installed, exec it (the Rust binary owns these); otherwise serve
+      # them from the legacy bash path without attempting to download the
+      # sidecar. Probe `sidecar_version` rather than the executable bit alone so
+      # a corrupt sidecar (where `exec` would fail and kill the process) falls
+      # back to `main` instead.
+      local _local_bin
+      _local_bin="$(rust_foundryup_bin)"
+      if [ -n "$(sidecar_version "$_local_bin")" ]; then
+        exec "$_local_bin" "$@"
+      fi
+      main "$@"
+      return
+      ;;
+  esac
+
+  # Best-effort: if bootstrap fails (offline, missing asset), fall back to the
+  # legacy bash path so the user still has a working foundryup.
+  if ensure_rust_foundryup; then
+    exec "$(rust_foundryup_bin)" "$@"
+  fi
+
+  warn "falling back to the legacy bash foundryup; set FOUNDRYUP_NO_MIGRATE=1 to use it directly"
+  main "$@"
 }
 
 # Skip execution when sourced by tests.
 if [ "${FOUNDRYUP_TEST:-0}" != "1" ]; then
-  # Opt-in migration to the Rust foundryup. When enabled, the user's
-  # environment (including FOUNDRY_DIR and any FOUNDRYUP_VERSION) is preserved
-  # for the exec, so the Rust binary installs Foundry into the usual location.
-  if [ "${FOUNDRYUP_MIGRATE:-0}" = "1" ]; then
-    ensure_rust_foundryup
-    exec "$(rust_foundryup_bin)" "$@"
-  else
+  # Default to the Rust foundryup; FOUNDRYUP_NO_MIGRATE=1 keeps the legacy path.
+  if [ "${FOUNDRYUP_NO_MIGRATE:-0}" = "1" ]; then
     main "$@"
+  else
+    migrate_and_exec "$@"
   fi
 fi
