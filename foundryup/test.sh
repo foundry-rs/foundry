@@ -214,6 +214,11 @@ install_rust_foundryup() { echo called >> "$install_marker"; }
 check_eq "sidecar_version reads installed version" \
   "0.0.5" "$(make_fake_bin 0.0.5; sidecar_version "$fake_bin")"
 
+# A --version that exits nonzero yields nothing even if it printed a version-
+# looking line, so a corrupt sidecar is not trusted.
+check_eq "sidecar_version ignores version output on nonzero exit" \
+  "" "$(printf '#!/usr/bin/env sh\necho "foundryup 0.0.5 (abc 2020)"\nexit 3\n' > "$fake_bin"; chmod +x "$fake_bin"; sidecar_version "$fake_bin")"
+
 : > "$install_marker"; make_fake_bin "0.0.5"; ensure_rust_foundryup
 check_eq "up-to-date sidecar skips reinstall" "0" "$(wc -l < "$install_marker" | tr -d ' ')"
 
@@ -259,6 +264,15 @@ check_eq "shim_action version wins before update" "version" "$(shim_action --ver
 check_eq "shim_action update wins before version" "update" "$(shim_action --update --version)"
 check_eq "shim_action list wins before update" "local" "$(shim_action --list --update)"
 check_eq "shim_action use wins before update" "local" "$(shim_action --use v1.0.0 --update)"
+# Unknown options are not swallowed: classify as normal so the real parser
+# (sidecar or legacy main) rejects them, exactly as main errors on the first
+# unknown option instead of honoring a later terminal flag.
+check_eq "shim_action normal for lone unknown" "normal" "$(shim_action --bogus)"
+check_eq "shim_action normal for unknown before version" "normal" "$(shim_action --bogus --version)"
+check_eq "shim_action normal for unknown before update" "normal" "$(shim_action --bogus --update)"
+# -f/--force is a known no-arg flag: keep scanning like main.
+check_eq "shim_action skips --force to later terminal flag" "version" "$(shim_action --force --version)"
+check_eq "shim_action normal for lone --force" "normal" "$(shim_action --force)"
 
 # --- platform binary names ------------------------------------------------
 
@@ -387,12 +401,21 @@ check_eq "--version handled in shim, no bootstrap" "version" "$(cat "$mae_marker
 check_eq "list without sidecar uses legacy main, no bootstrap" \
   "main --list" "$(cat "$mae_marker")"
 
-# Sidecar installed: --list/--use exec it directly, no bootstrap.
+# Working sidecar installed: --list/--use exec it directly, no bootstrap.
 : > "$mae_marker"
-printf '#!/usr/bin/env sh\n:\n' > "$sidecar_bin"; chmod +x "$sidecar_bin"
+printf '#!/usr/bin/env sh\necho "foundryup 0.0.5 (abc 2020)"\n' > "$sidecar_bin"; chmod +x "$sidecar_bin"
 ( migrate_and_exec --list )
 check_eq "list with sidecar execs it, no bootstrap" \
   "exec $sidecar_bin --list" "$(cat "$mae_marker")"
+
+# Corrupt sidecar (executable bit set but no parsable --version): fall back to
+# the legacy bash path instead of execing a binary that would fail and kill the
+# process. No exec, no bootstrap.
+: > "$mae_marker"
+printf '#!/usr/bin/env sh\necho "not a version"\n' > "$sidecar_bin"; chmod +x "$sidecar_bin"
+( migrate_and_exec --list )
+check_eq "list with corrupt sidecar falls back to legacy main, no exec" \
+  "main --list" "$(cat "$mae_marker")"
 
 rm -rf "$FOUNDRYUP_RUST_HOME"
 

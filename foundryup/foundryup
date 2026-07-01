@@ -992,12 +992,16 @@ rust_foundryup_bin() {
 }
 
 # Prints the version of the sidecar Rust foundryup at $1 (e.g. `0.0.5`), or
-# nothing if it is not installed or the version cannot be determined. The
-# trailing `|| true` keeps a failing/unparsable `--version` from aborting under
+# nothing if it is not installed or the version cannot be determined. A
+# `--version` that exits nonzero yields nothing even if it printed a version-
+# looking line, so a corrupt sidecar is treated as absent rather than trusted.
+# The trailing `|| true` keeps an unparsable `--version` from aborting under
 # `set -eo pipefail`, so the caller falls through to a reinstall instead.
 sidecar_version() {
   [ -x "$1" ] || return 0
-  "$1" --version 2>/dev/null \
+  local _out
+  _out="$("$1" --version 2>/dev/null)" || return 0
+  printf '%s\n' "$_out" \
     | sed -nE 's/^foundryup[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
     | head -1 || true
 }
@@ -1083,7 +1087,10 @@ ensure_rust_foundryup() {
 #               the legacy bash path; never bootstraps the Rust sidecar),
 #   - "normal"  otherwise.
 # Skips the values of options that take an argument (so `--branch --list` is not
-# a match) and stops at the `--` sentinel.
+# a match), treats `-f/--force` as a no-arg flag, and returns "normal" for any
+# unknown option so the real parser (the sidecar or the legacy `main`) rejects
+# it, exactly as `main` errors on the first unknown option. Stops at the `--`
+# sentinel.
 shim_action() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1092,11 +1099,13 @@ shim_action() {
       -h|--help)    printf 'help\n';    return ;;
       -v|--version) printf 'version\n'; return ;;
       -l|--list|-u|--use) printf 'local\n'; return ;;
+      -f|--force) ;;
       -r|--repo|-b|--branch|-i|--install|-p|--path|-P|--pr|\
       -C|--commit|-j|--jobs|-n|--network|--arch|--platform)
         shift
         [ "$#" -gt 0 ] || break
         ;;
+      *) printf 'normal\n'; return ;;
     esac
     shift
   done
@@ -1158,12 +1167,15 @@ migrate_and_exec() {
       version
       ;;
     local)
-      # --list/--use must not bootstrap the Rust sidecar. If it is already
-      # installed, exec it (the Rust binary owns these); otherwise serve them
-      # from the legacy bash path without attempting to download the sidecar.
+      # --list/--use must not bootstrap the Rust sidecar. If a working sidecar is
+      # already installed, exec it (the Rust binary owns these); otherwise serve
+      # them from the legacy bash path without attempting to download the
+      # sidecar. Probe `sidecar_version` rather than the executable bit alone so
+      # a corrupt sidecar (where `exec` would fail and kill the process) falls
+      # back to `main` instead.
       local _local_bin
       _local_bin="$(rust_foundryup_bin)"
-      if [ -x "$_local_bin" ]; then
+      if [ -n "$(sidecar_version "$_local_bin")" ]; then
         exec "$_local_bin" "$@"
       fi
       main "$@"
