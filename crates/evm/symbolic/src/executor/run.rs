@@ -1,4 +1,23 @@
 use super::*;
+use std::cmp::Reverse;
+
+fn order_roots_by_corpus_seed_count(roots: &mut [PathState], order: SymbolicExplorationOrder) {
+    let Some((first, rest)) = roots.split_first() else {
+        return;
+    };
+    if rest.iter().all(|root| root.corpus_seed_model_count() == first.corpus_seed_model_count()) {
+        return;
+    }
+
+    match order {
+        SymbolicExplorationOrder::Bfs => {
+            roots.sort_by_key(|root| Reverse(root.corpus_seed_model_count()));
+        }
+        SymbolicExplorationOrder::Dfs => {
+            roots.sort_by_key(PathState::corpus_seed_model_count);
+        }
+    }
+}
 
 impl SymbolicExecutor {
     /// Creates a symbolic executor from Foundry's symbolic configuration.
@@ -108,6 +127,28 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Returns corpus seed indexes that can be modeled by at least one symbolic calldata variant.
+    pub fn modeled_corpus_seed_indexes(
+        config: &SymbolicConfig,
+        function: &Function,
+        corpus_seeds: &[SymbolicConcreteInput],
+    ) -> Result<Vec<usize>, SymbolicError> {
+        let variants = SymbolicCalldata::variants(function, config)?;
+        let mut modeled = vec![false; corpus_seeds.len()];
+        for calldata in &variants {
+            for (idx, seed) in corpus_seeds.iter().enumerate() {
+                if !modeled[idx] && calldata.seed_model(seed).is_some() {
+                    modeled[idx] = true;
+                }
+            }
+        }
+        Ok(modeled
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, modeled)| modeled.then_some(idx))
+            .collect())
+    }
+
     /// Executes a bounded symbolic invariant call sequence.
     ///
     /// Each sequence step chooses from the concrete target functions and senders supplied by
@@ -153,8 +194,13 @@ impl SymbolicExecutor {
             .ok_or(SymbolicError::MissingAccount(input.target))?;
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
         let code = SymCode::from_bytecode(&bytecode);
-        let mut worklist = VecDeque::new();
+        let mut roots = Vec::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config)? {
+            let corpus_seed_models = input
+                .corpus_seeds
+                .iter()
+                .filter_map(|seed| calldata.seed_model(seed).map(Arc::new))
+                .collect();
             let mut root = PathState::new(
                 input.target,
                 input.sender,
@@ -162,14 +208,18 @@ impl SymbolicExecutor {
                 calldata,
                 input.ffi_enabled,
             );
+            root.set_corpus_seed_models(corpus_seed_models);
             root.apply_executor_env(input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();
-            worklist.push_back(root);
+            roots.push(root);
         }
+        order_roots_by_corpus_seed_count(&mut roots, self.config.exploration_order);
+        let mut worklist = roots.into_iter().collect::<VecDeque<_>>();
         let mut completed_paths = 0usize;
         let mut reverted_paths = 0usize;
         let mut normal_paths = 0usize;
+        let mut success_input = None;
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
@@ -213,6 +263,20 @@ impl SymbolicExecutor {
                             stats: self.stats_with_paths(completed_paths + 1),
                         });
                     }
+                    if input.collect_success_input
+                        && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
+                    {
+                        success_input = Some((
+                            state.depth,
+                            self.materialize_stateless_input(
+                                state.root_calldata.as_ref().ok_or_else(|| {
+                                    SymbolicError::Unsupported("missing root symbolic calldata")
+                                })?,
+                                input.function,
+                                &state,
+                            )?,
+                        ));
+                    }
                     completed_paths += 1;
                     break;
                 };
@@ -243,6 +307,20 @@ impl SymbolicExecutor {
                                 calldata: calldata_bytes,
                                 stats: self.stats_with_paths(completed_paths + 1),
                             });
+                        }
+                        if input.collect_success_input
+                            && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
+                        {
+                            success_input = Some((
+                                state.depth,
+                                self.materialize_stateless_input(
+                                    state.root_calldata.as_ref().ok_or_else(|| {
+                                        SymbolicError::Unsupported("missing root symbolic calldata")
+                                    })?,
+                                    input.function,
+                                    &state,
+                                )?,
+                            ));
                         }
                         completed_paths += 1;
                         normal_paths += 1;
@@ -299,7 +377,10 @@ impl SymbolicExecutor {
         }
 
         debug!(completed_paths, "symbolic execution safe");
-        Ok(SymbolicRunResult::Safe(self.stats_with_paths(completed_paths)))
+        Ok(SymbolicRunResult::Safe {
+            stats: self.stats_with_paths(completed_paths),
+            success_input: success_input.map(|(_, input)| input),
+        })
     }
 
     pub(super) fn materialize_stateless_counterexample(
@@ -312,10 +393,21 @@ impl SymbolicExecutor {
             constraint_count = state.constraints.len(),
             "materializing counterexample from solver model"
         );
+        self.materialize_stateless_input(calldata, function, state)
+            .map(|input| (input.args, input.calldata))
+    }
+
+    /// Runs the `materialize_stateless_input` symbolic executor helper.
+    pub(super) fn materialize_stateless_input(
+        &mut self,
+        calldata: &SymbolicCalldata,
+        function: &Function,
+        state: &PathState,
+    ) -> Result<SymbolicConcreteInput, SymbolicError> {
         let model = self.solver.model(&state.constraints)?;
         let args = calldata.model_to_args(&model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
-        Ok((args, calldata_bytes))
+        Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
     }
 
     pub(super) fn run_invariant_inner<FEN: FoundryEvmNetwork>(

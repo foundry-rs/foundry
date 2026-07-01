@@ -197,14 +197,23 @@ impl CorpusEntry {
         }
     }
 
-    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<()> {
+    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<PathBuf> {
         let file_name = self.file_name(can_gzip);
-        let path = dir.join(file_name);
+        let path = dir.join(&file_name);
+        let temp_path = dir.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+
         if self.should_gzip(can_gzip) {
-            foundry_common::fs::write_json_gzip_file(&path, &self.tx_seq)
+            foundry_common::fs::write_json_gzip_file(&temp_path, &self.tx_seq)?;
         } else {
-            foundry_common::fs::write_json_file(&path, &self.tx_seq)
+            foundry_common::fs::write_json_file(&temp_path, &self.tx_seq)?;
         }
+
+        if let Err(err) = std::fs::rename(&temp_path, &path) {
+            let _ = foundry_common::fs::remove_file(&temp_path);
+            return Err(foundry_common::errors::FsPathError::write(err, &path));
+        }
+
+        Ok(path)
     }
 
     fn file_name(&self, can_gzip: bool) -> String {
@@ -226,6 +235,42 @@ impl CorpusEntry {
 pub(crate) struct CampaignCorpusEntry {
     tx_seq: Vec<BasicTxDetails>,
     dedupe_by_coverage: bool,
+}
+
+/// Persists one call sequence as a corpus seed in the canonical worker0 corpus directory.
+pub fn persist_corpus_seed(
+    config: &FuzzCorpusConfig,
+    tx_seq: Vec<BasicTxDetails>,
+) -> foundry_common::fs::Result<Option<PathBuf>> {
+    let Some(root) = &config.corpus_dir else {
+        return Ok(None);
+    };
+    for dir in canonical_replay_dirs(root) {
+        for entry in read_corpus_dir(&dir) {
+            match entry.read_tx_seq() {
+                Ok(existing) if same_tx_sequence(&existing, &tx_seq) => {
+                    return Ok(Some(entry.path));
+                }
+                Ok(_) => {}
+                Err(err) => debug!(%err, path = ?entry.path, "failed to read corpus seed"),
+            }
+        }
+    }
+    let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
+    foundry_common::fs::create_dir_all(&corpus_dir)?;
+    CorpusEntry::new(tx_seq).write_to_disk_in(&corpus_dir, config.corpus_gzip).map(Some)
+}
+
+fn same_tx_sequence(left: &[BasicTxDetails], right: &[BasicTxDetails]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.warp == right.warp
+                && left.roll == right.roll
+                && left.sender == right.sender
+                && left.call_details.target == right.call_details.target
+                && left.call_details.calldata == right.call_details.calldata
+                && left.call_details.value == right.call_details.value
+        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -337,6 +382,22 @@ impl WorkerCorpusSeed {
         }
     }
 
+    pub(crate) fn retain_replayable(&mut self, targeted_contracts: &TargetedContracts) {
+        let is_replayable =
+            |tx_seq: &[BasicTxDetails]| tx_seq.iter().all(|tx| targeted_contracts.can_replay(tx));
+        self.in_memory_corpus.retain(|entry| is_replayable(&entry.tx_seq));
+        self.metrics.corpus_count = self.in_memory_corpus.len();
+        self.metrics.favored_items =
+            self.in_memory_corpus.iter().filter(|entry| entry.is_favored).count();
+
+        if !self.optimization_best_sequence.is_empty()
+            && !is_replayable(&self.optimization_best_sequence)
+        {
+            self.optimization_best_value = None;
+            self.optimization_best_sequence.clear();
+        }
+    }
+
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
         config: &FuzzCorpusConfig,
         executor: Option<&Executor<FEN>>,
@@ -370,7 +431,17 @@ impl WorkerCorpusSeed {
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
         let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
         for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
-            let tx_seq = entry.read_tx_seq()?;
+            // A corrupt or truncated corpus file (e.g. a process killed mid-write, since entries
+            // are persisted non-atomically) must not abort the whole campaign startup: skip it
+            // and keep loading the rest of the corpus.
+            let tx_seq = match entry.read_tx_seq() {
+                Ok(tx_seq) => tx_seq,
+                Err(err) => {
+                    let _ =
+                        sh_warn!("Skipping unreadable corpus file {}: {err}", entry.path.display());
+                    continue;
+                }
+            };
             if tx_seq.is_empty() {
                 continue;
             }
@@ -884,7 +955,6 @@ impl WorkerCorpus {
                 );
             }
         }
-
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -1085,14 +1155,17 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
                     let start = rng.random_range(0..corpus.tx_seq.len());
                     let end = rng.random_range(start..corpus.tx_seq.len());
                     let item_idx = rng.random_range(0..corpus.tx_seq.len());
-                    let repeated = new_seq[item_idx].clone();
-                    for tx in &mut new_seq[start..end] {
-                        *tx = repeated.clone();
+                    let repeated = corpus.tx_seq[item_idx].clone();
+
+                    new_seq.reserve(corpus.tx_seq.len());
+                    new_seq.extend_from_slice(&corpus.tx_seq[..start]);
+                    for _ in start..end {
+                        new_seq.push(repeated.clone());
                     }
+                    new_seq.extend_from_slice(&corpus.tx_seq[end..]);
                 }
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
@@ -1116,10 +1189,12 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
-                    for i in 0..rng.random_range(0..=new_seq.len()) {
-                        new_seq[i] = self.new_tx(test_runner)?;
+                    let prefix_len = rng.random_range(0..=corpus.tx_seq.len());
+                    new_seq.reserve(corpus.tx_seq.len());
+                    for _ in 0..prefix_len {
+                        new_seq.push(self.new_tx(test_runner)?);
                     }
+                    new_seq.extend_from_slice(&corpus.tx_seq[prefix_len..]);
                 }
                 MutationType::Suffix => {
                     let (corpus_index, corpus) = if rng.random::<bool>() {
@@ -1131,10 +1206,12 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
-                    for i in new_seq.len() - rng.random_range(0..new_seq.len())..corpus.tx_seq.len()
-                    {
-                        new_seq[i] = self.new_tx(test_runner)?;
+                    let suffix_len = rng.random_range(0..corpus.tx_seq.len());
+                    let retained_len = corpus.tx_seq.len() - suffix_len;
+                    new_seq.reserve(corpus.tx_seq.len());
+                    new_seq.extend_from_slice(&corpus.tx_seq[..retained_len]);
+                    for _ in retained_len..corpus.tx_seq.len() {
+                        new_seq.push(self.new_tx(test_runner)?);
                     }
                 }
                 MutationType::Abi => {
@@ -1625,7 +1702,14 @@ impl WorkerCorpus {
             if entry.timestamp <= self.last_sync_timestamp {
                 continue;
             }
-            let tx_seq = entry.read_tx_seq()?;
+            // A corrupt or truncated sync file must not abort the whole sync pass: skip it.
+            let tx_seq = match entry.read_tx_seq() {
+                Ok(tx_seq) => tx_seq,
+                Err(err) => {
+                    warn!(target: "corpus", "skipping unreadable corpus file {}: {err}", entry.path.display());
+                    continue;
+                }
+            };
             if tx_seq.is_empty() {
                 warn!(target: "corpus", "skipping empty corpus entry: {}", entry.path.display());
                 continue;
@@ -2295,6 +2379,38 @@ mod tests {
         FuzzRunIdentifiedContracts::new(targets, false)
     }
 
+    // A corrupt/truncated corpus file (valid name, unparsable content — e.g. a process killed
+    // mid-write, since entries are persisted non-atomically) must surface as a per-entry read
+    // error rather than break directory scanning, so the load/sync loops can skip it instead of
+    // aborting the whole campaign.
+    #[test]
+    fn corrupt_corpus_file_surfaces_as_error_for_load_to_skip() {
+        let dir = temp_corpus_dir();
+
+        // A valid entry round-trips through the on-disk format.
+        let valid = CorpusEntry::new(vec![basic_tx()]);
+        valid.write_to_disk_in(&dir, false).unwrap();
+
+        // A file with a valid corpus name but garbage content.
+        let corrupt_path = dir.join(format!("{}-123.json", Uuid::new_v4()));
+        fs::write(&corrupt_path, b"{ not valid json").unwrap();
+
+        let entries = read_corpus_dir(&dir).collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2, "directory scan should surface both files");
+
+        let (mut ok, mut err) = (0u32, 0u32);
+        for entry in &entries {
+            match entry.read_tx_seq() {
+                Ok(seq) => {
+                    ok += 1;
+                    assert_eq!(seq.len(), 1);
+                }
+                Err(_) => err += 1,
+            }
+        }
+        assert_eq!((ok, err), (1, 1), "the corrupt file must read as Err, the valid one as Ok");
+    }
+
     #[test]
     fn campaign_processing_returns_corpus_without_writing_worker_file() {
         let corpus_root = temp_corpus_dir();
@@ -2431,6 +2547,37 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].uuid, corpus.uuid);
+    }
+
+    #[test]
+    fn corpus_entry_write_uses_unparsable_temp_file() {
+        let corpus_dir = temp_corpus_dir();
+        let corpus = CorpusEntry::new(vec![basic_tx()]);
+        let temp_path =
+            corpus_dir.join(format!(".{}.{}.tmp", corpus.file_name(false), Uuid::new_v4()));
+        fs::write(&temp_path, b"{").unwrap();
+
+        let path = corpus.write_to_disk_in(&corpus_dir, false).unwrap();
+        let entries = read_corpus_dir(&corpus_dir).collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, path);
+        assert!(temp_path.exists());
+    }
+
+    #[test]
+    fn persist_corpus_seed_skips_duplicate_sequence() {
+        let corpus_root = temp_corpus_dir();
+        let config = corpus_config(corpus_root.clone());
+        let sequence = vec![basic_tx_with_calldata(vec![0x12, 0x34])];
+
+        let first = persist_corpus_seed(&config, sequence.clone()).unwrap().unwrap();
+        let second = persist_corpus_seed(&config, sequence).unwrap().unwrap();
+        let entries =
+            read_corpus_dir(&corpus_root.join("worker0").join(CORPUS_DIR)).collect::<Vec<_>>();
+
+        assert_eq!(first, second);
+        assert_eq!(entries.len(), 1);
     }
 
     #[test]
@@ -2602,6 +2749,47 @@ mod tests {
 
         assert!(with_cmp.in_memory_corpus.iter().all(|entry| !entry.cmp_seq[0].is_empty()));
         assert!(without_cmp.in_memory_corpus.iter().all(|entry| entry.cmp_seq.is_empty()));
+    }
+
+    #[test]
+    fn retain_replayable_removes_off_target_corpus_entries() {
+        let target = Address::from([0x11; 20]);
+        let foo = Function::parse("foo()").unwrap();
+        let bar = Function::parse("bar()").unwrap();
+        let foo_selector = foo.selector();
+        let foo_tx = tx_for_function(target, &foo, &[]);
+        let bar_tx = tx_for_function(target, &bar, &[]);
+        let mut foo_entry = CorpusEntry::new(vec![foo_tx.clone()]);
+        foo_entry.is_favored = true;
+        let mut bar_entry = CorpusEntry::new(vec![bar_tx.clone()]);
+        bar_entry.is_favored = true;
+        let mut seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![foo_entry, bar_entry],
+            metrics: CorpusMetrics { corpus_count: 2, favored_items: 2, ..Default::default() },
+            optimization_best_value: Some(I256::try_from(17).unwrap()),
+            optimization_best_sequence: vec![bar_tx],
+            ..Default::default()
+        };
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
+        let targets = targeted_contracts.targets();
+
+        seed.retain_replayable(&targets);
+
+        assert_eq!(seed.in_memory_corpus.len(), 1);
+        assert_eq!(seed.in_memory_corpus[0].tx_seq.len(), 1);
+        assert_eq!(
+            seed.in_memory_corpus[0].tx_seq[0].call_details.target,
+            foo_tx.call_details.target
+        );
+        assert_eq!(
+            seed.in_memory_corpus[0].tx_seq[0].call_details.calldata,
+            foo_tx.call_details.calldata
+        );
+        assert_eq!(seed.metrics.corpus_count, 1);
+        assert_eq!(seed.metrics.favored_items, 1);
+        assert!(seed.optimization_best_value.is_none());
+        assert!(seed.optimization_best_sequence.is_empty());
     }
 
     #[test]

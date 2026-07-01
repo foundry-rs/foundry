@@ -339,6 +339,7 @@ interface Vm {
     function isDir(string calldata path) external view returns (bool result);
     function isFile(string calldata path) external view returns (bool result);
     function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
+    function isIsolateMode() external view returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);

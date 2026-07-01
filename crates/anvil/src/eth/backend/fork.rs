@@ -17,14 +17,21 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
-    FeeHistory, Filter, Log,
+    FeeHistory, Filter, Index, Log,
+    request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
+    state::StateOverride,
     trace::{
         geth::{GethDebugTracingOptions, GethTrace, TraceResult},
         opcode::TransactionOpcodeGas,
-        parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
+        parity::{
+            LocalizedTransactionTrace as Trace, TraceResults, TraceResultsWithTransactionHash,
+            TraceType,
+        },
     },
 };
+use alloy_rpc_types_eth::{Bundle, EthCallResponse, StateContext};
+use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::hardfork::FoundryHardfork;
@@ -139,6 +146,40 @@ impl<N: Network> ClientFork<N> {
         self.provider().get_proof(address, keys).block_id(block_number.unwrap_or_default()).await
     }
 
+    /// Sends `eth_getBlockAccessList`
+    pub async fn block_access_list(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<serde_json::Value>, TransportError> {
+        self.provider().raw_request("eth_getBlockAccessList".into(), (block_id,)).await
+    }
+
+    /// Sends `eth_getBlockAccessListByBlockHash`
+    pub async fn block_access_list_by_hash(
+        &self,
+        block_hash: B256,
+    ) -> Result<Option<serde_json::Value>, TransportError> {
+        self.provider().raw_request("eth_getBlockAccessListByBlockHash".into(), (block_hash,)).await
+    }
+
+    /// Sends `eth_getBlockAccessListByBlockNumber`
+    pub async fn block_access_list_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<serde_json::Value>, TransportError> {
+        self.provider()
+            .raw_request("eth_getBlockAccessListByBlockNumber".into(), (block_number,))
+            .await
+    }
+
+    /// Sends `eth_getBlockAccessListRaw`.
+    pub async fn block_access_list_raw(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<Bytes>, TransportError> {
+        self.provider().raw_request("eth_getBlockAccessListRaw".into(), (block_id,)).await
+    }
+
     pub async fn storage_at(
         &self,
         address: Address,
@@ -224,6 +265,25 @@ impl<N: Network> ClientFork<N> {
         hash: B256,
     ) -> Result<Option<TransactionOpcodeGas>, TransportError> {
         self.provider().raw_request("trace_transactionOpcodeGas".into(), (hash,)).await
+    }
+
+    /// Sends `trace_call`.
+    pub async fn trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        trace_types: HashSet<TraceType>,
+        block: BlockId,
+    ) -> Result<TraceResults, TransportError> {
+        self.provider().raw_request("trace_call".into(), (request, trace_types, block)).await
+    }
+
+    /// Sends `trace_get`.
+    pub async fn trace_get(
+        &self,
+        hash: B256,
+        indices: Vec<Index>,
+    ) -> Result<Option<Trace>, TransportError> {
+        self.provider().raw_request("trace_get".into(), (hash, indices)).await
     }
 
     pub async fn debug_trace_transaction(
@@ -365,6 +425,18 @@ impl<N: Network> ClientFork<N> {
         let res = self.provider().call(request.clone()).block(block.into()).await?;
 
         Ok(res)
+    }
+
+    /// Sends `eth_callMany`
+    pub async fn call_many(
+        &self,
+        bundles: Vec<Bundle<WithOtherFields<TransactionRequest>>>,
+        state_context: Option<StateContext>,
+        state_override: Option<StateOverride>,
+    ) -> Result<Vec<Vec<EthCallResponse>>, TransportError> {
+        self.provider()
+            .raw_request("eth_callMany".into(), (bundles, state_context, state_override))
+            .await
     }
 
     /// Sends `eth_simulateV1`

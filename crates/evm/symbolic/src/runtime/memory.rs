@@ -70,6 +70,16 @@ impl SymbolicMemoryWrite {
     fn concrete_offset(&self) -> Option<usize> {
         self.offset.eval().and_then(|offset| usize::try_from(offset).ok())
     }
+
+    fn concrete_byte_index(&self, offset: usize) -> Option<usize> {
+        let write_offset = self.concrete_offset()?;
+        let idx = offset.checked_sub(write_offset)?;
+        (idx < self.bytes.len()).then_some(idx)
+    }
+
+    fn concrete_byte(&self, offset: usize) -> Option<SymExpr> {
+        self.concrete_byte_index(offset).map(|idx| self.bytes.byte(idx))
+    }
 }
 
 impl SymMemory {
@@ -303,8 +313,26 @@ impl SymMemory {
     }
 
     pub(crate) fn byte(&self, offset: usize) -> SymExpr {
-        let mut result = SymExpr::zero();
-        for write in &self.symbolic_writes {
+        let mut writes = self.symbolic_writes.as_slice();
+        let mut result = if let Some(base_idx) =
+            writes.iter().rposition(|write| write.concrete_byte_index(offset).is_some())
+        {
+            let write = &writes[base_idx];
+            let byte = write.concrete_byte(offset).expect("concrete byte index is present");
+            writes = &writes[base_idx + 1..];
+            byte
+        } else {
+            SymExpr::zero()
+        };
+
+        for write in writes {
+            if let Some(byte) = write.concrete_byte(offset) {
+                result = byte;
+                continue;
+            }
+            if write.concrete_offset().is_some() {
+                continue;
+            }
             for idx in 0..write.bytes.len() {
                 result = SymExpr::ite(
                     SymBoolExpr::eq(
@@ -322,22 +350,9 @@ impl SymMemory {
     pub(crate) fn byte_dynamic_with_delta(&self, offset: &SymExpr, delta: usize) -> SymExpr {
         let mut result = SymExpr::constant(U256::ZERO);
         for candidate in (delta..self.size).rev() {
-            let mut candidate_result = SymExpr::zero();
-            for write in &self.symbolic_writes {
-                for idx in 0..write.bytes.len() {
-                    candidate_result = SymExpr::ite(
-                        SymBoolExpr::eq(
-                            SymExpr::add_const(write.offset.clone(), U256::from(idx)),
-                            SymExpr::constant(U256::from(candidate)),
-                        ),
-                        write.bytes.byte(idx),
-                        candidate_result,
-                    );
-                }
-            }
             result = SymExpr::ite(
                 SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
-                candidate_result,
+                self.byte(candidate),
                 result,
             );
         }

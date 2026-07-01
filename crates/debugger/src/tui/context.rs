@@ -70,6 +70,8 @@ pub(crate) struct TUIContext<'a> {
     pub(crate) pc_input: Option<String>,
     /// Current active-buffer byte offset prompt contents, if the prompt is active.
     pub(crate) buffer_offset_input: Option<String>,
+    /// Current debugger command prompt contents, if the prompt is active.
+    pub(crate) command_input: Option<String>,
     /// Current opcode search prompt contents, if the prompt is active.
     pub(crate) opcode_search_input: Option<String>,
     /// Last opcode search term, used by repeat-search shortcuts.
@@ -86,6 +88,7 @@ pub(crate) struct TUIContext<'a> {
     /// Whether to decode active buffer as utf8 or not.
     pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
+    pub(crate) show_source: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
     pub(crate) active_buffer: BufferKind,
 }
@@ -98,6 +101,7 @@ impl<'a> TUIContext<'a> {
             key_buffer: String::with_capacity(64),
             pc_input: None,
             buffer_offset_input: None,
+            command_input: None,
             opcode_search_input: None,
             last_opcode_search: None,
             status: None,
@@ -109,6 +113,7 @@ impl<'a> TUIContext<'a> {
             stack_labels: false,
             buf_utf: false,
             show_shortcuts: true,
+            show_source: true,
             active_buffer: BufferKind::Memory,
         }
     }
@@ -166,7 +171,11 @@ impl<'a> TUIContext<'a> {
     }
 
     fn active_buffer(&self) -> &[u8] {
-        match self.active_buffer {
+        self.buffer(&self.active_buffer)
+    }
+
+    fn buffer(&self, buffer: &BufferKind) -> &[u8] {
+        match buffer {
             BufferKind::Memory => self.current_step().memory.as_ref().map_or(&[], |m| m.as_bytes()),
             BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
@@ -174,11 +183,7 @@ impl<'a> TUIContext<'a> {
     }
 
     pub(crate) const fn active_buffer_name(&self) -> &'static str {
-        match self.active_buffer {
-            BufferKind::Memory => "memory",
-            BufferKind::Calldata => "calldata",
-            BufferKind::Returndata => "returndata",
-        }
+        buffer_name(&self.active_buffer)
     }
 }
 
@@ -207,6 +212,11 @@ impl TUIContext<'_> {
 
         if self.buffer_offset_input.is_some() {
             self.handle_buffer_offset_input_key_event(event);
+            return ControlFlow::Continue(());
+        }
+
+        if self.command_input.is_some() {
+            self.handle_command_input_key_event(event);
             return ControlFlow::Continue(());
         }
 
@@ -261,6 +271,7 @@ impl TUIContext<'_> {
             KeyCode::Char('b') => {
                 self.active_buffer = self.active_buffer.next();
                 self.draw_memory.current_buf_startline = 0;
+                self.set_info(format!("Active buffer: {}", self.active_buffer_name()));
             }
 
             // Cycle layout
@@ -329,10 +340,23 @@ impl TUIContext<'_> {
             }),
 
             // Toggle stack labels
-            KeyCode::Char('t') => self.stack_labels = !self.stack_labels,
+            KeyCode::Char('t') => {
+                self.stack_labels = !self.stack_labels;
+                self.set_info(format!("Stack labels: {}", toggle_state(self.stack_labels)));
+            }
 
             // Toggle memory UTF-8 decoding
-            KeyCode::Char('m') => self.buf_utf = !self.buf_utf,
+            KeyCode::Char('m') => {
+                self.buf_utf = !self.buf_utf;
+                self.set_info(format!("UTF-8 decoding: {}", toggle_state(self.buf_utf)));
+            }
+
+            // Toggle source pane
+            KeyCode::Char('v') => {
+                self.show_source = !self.show_source;
+                let state = if self.show_source { "shown" } else { "hidden" };
+                self.set_info(format!("Source pane: {state}"));
+            }
 
             // Go to program counter
             KeyCode::Char('p') => {
@@ -346,6 +370,13 @@ impl TUIContext<'_> {
                 self.key_buffer.clear();
                 self.status = None;
                 self.buffer_offset_input = Some(String::new());
+            }
+
+            // Run debugger command
+            KeyCode::Char(':') => {
+                self.key_buffer.clear();
+                self.status = None;
+                self.command_input = Some(String::new());
             }
 
             // Search opcodes in the current call
@@ -366,7 +397,11 @@ impl TUIContext<'_> {
             }),
 
             // Toggle help notice
-            KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
+            KeyCode::Char('h') => {
+                self.show_shortcuts = !self.show_shortcuts;
+                let state = if self.show_shortcuts { "shown" } else { "hidden" };
+                self.set_info(format!("Shortcut help: {state}"));
+            }
 
             // Numbers for repeating commands or breakpoints
             KeyCode::Char(
@@ -400,6 +435,14 @@ impl TUIContext<'_> {
             is_buffer_offset_input_char,
         ) {
             self.goto_buffer_offset_from_input(&input);
+        }
+    }
+
+    fn handle_command_input_key_event(&mut self, event: KeyEvent) {
+        if let Some(input) =
+            handle_prompt_input_key_event(&mut self.command_input, event, |_, c| !c.is_control())
+        {
+            self.run_command_from_input(&input);
         }
     }
 
@@ -537,6 +580,10 @@ impl TUIContext<'_> {
     }
 
     fn goto_buffer_offset_from_input(&mut self, input: &str) {
+        self.goto_buffer_offset(self.active_buffer, input);
+    }
+
+    fn goto_buffer_offset(&mut self, buffer: BufferKind, input: &str) {
         let offset = match parse_buffer_offset(input) {
             Ok(offset) => offset,
             Err(err) => {
@@ -545,8 +592,8 @@ impl TUIContext<'_> {
             }
         };
 
-        let buffer_name = self.active_buffer_name();
-        let buffer_len = self.active_buffer().len();
+        let buffer_name = buffer_name(&buffer);
+        let buffer_len = self.buffer(&buffer).len();
         if buffer_len == 0 {
             self.set_error(format!("Current {buffer_name} buffer is empty"));
             return;
@@ -559,7 +606,54 @@ impl TUIContext<'_> {
             return;
         }
 
+        self.active_buffer = buffer;
         self.apply_buffer_offset(offset);
+    }
+
+    fn run_command_from_input(&mut self, input: &str) {
+        let input = input.trim();
+        let input = input.strip_prefix(':').unwrap_or(input).trim_start();
+        if input.is_empty() {
+            self.set_error("Enter a debugger command".to_string());
+            return;
+        }
+
+        let mut parts = input.split_whitespace();
+        let command = parts.next().unwrap();
+        if CONTINUE_COMMANDS.contains(&command) || PC_COMMANDS.contains(&command) {
+            let Some(pc) = parts.next() else {
+                return self.set_error(command_usage(command, "<pc>"));
+            };
+            if parts.next().is_some() {
+                return self.set_error(command_usage(command, "<pc>"));
+            }
+            self.goto_pc_from_input(pc);
+        } else if MEMORY_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Memory, parts);
+        } else if CALLDATA_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Calldata, parts);
+        } else if RETURNDATA_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Returndata, parts);
+        } else if HELP_COMMANDS.contains(&command) {
+            self.set_info(command_help());
+        } else {
+            self.set_error(format!("Unknown command `{command}`; try `help`"));
+        }
+    }
+
+    fn run_buffer_command<'a>(
+        &mut self,
+        command: &str,
+        buffer: BufferKind,
+        mut args: impl Iterator<Item = &'a str>,
+    ) {
+        let Some(offset) = args.next() else {
+            return self.set_error(command_usage(command, "<offset>"));
+        };
+        if args.next().is_some() {
+            return self.set_error(command_usage(command, "<offset>"));
+        }
+        self.goto_buffer_offset(buffer, offset);
     }
 
     fn apply_buffer_offset(&mut self, offset: usize) {
@@ -578,26 +672,41 @@ impl TUIContext<'_> {
     }
 
     fn handle_breakpoint(&mut self, c: char) {
+        self.key_buffer.clear();
+
+        let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c).copied() else {
+            self.set_error(format!("Breakpoint '{c}' not found"));
+            return;
+        };
+
         // Find the location of the called breakpoint in the whole debug arena (at this address with
         // this pc)
-        if let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c) {
-            for (i, node) in self.debug_arena().iter().enumerate() {
-                if node.address == *caller
-                    && let Some(step) = node.steps.iter().position(|step| step.pc == *pc)
-                {
-                    self.draw_memory.inner_call_index = i;
-                    self.current_step = step;
-                    self.scroll_memory_to_current_write();
-                    break;
-                }
-            }
-        }
-        self.key_buffer.clear();
+        let Some((inner_call_index, step_index)) =
+            self.debug_arena().iter().enumerate().find_map(|(i, node)| {
+                (node.address == caller)
+                    .then(|| node.steps.iter().position(|step| step.pc == pc).map(|step| (i, step)))
+                    .flatten()
+            })
+        else {
+            self.set_error(format!("Breakpoint '{c}' target not found in trace"));
+            return;
+        };
+
+        let already_at_target = self.draw_memory.inner_call_index == inner_call_index
+            && self.current_step == step_index;
+
+        self.draw_memory.inner_call_index = inner_call_index;
+        self.current_step = step_index;
+        self.scroll_memory_to_current_write();
+
+        let action = if already_at_target { "Already at" } else { "Jumped to" };
+        self.set_info(format!("{action} breakpoint '{c}' at PC 0x{pc:x} ({pc})"));
     }
 
     fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
         if self.pc_input.is_some()
             || self.buffer_offset_input.is_some()
+            || self.command_input.is_some()
             || self.opcode_search_input.is_some()
         {
             return ControlFlow::Continue(());
@@ -693,6 +802,44 @@ fn buffer_as_number(s: &str) -> usize {
     const MIN: usize = 1;
     const MAX: usize = 100_000;
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
+}
+
+const fn toggle_state(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
+}
+
+const fn buffer_name(buffer: &BufferKind) -> &'static str {
+    match buffer {
+        BufferKind::Memory => "memory",
+        BufferKind::Calldata => "calldata",
+        BufferKind::Returndata => "returndata",
+    }
+}
+
+const CONTINUE_COMMANDS: &[&str] = &["continue", "cont", "c"];
+const PC_COMMANDS: &[&str] = &["pc", "p"];
+const MEMORY_COMMANDS: &[&str] = &["mem", "memory"];
+const CALLDATA_COMMANDS: &[&str] = &["calldata", "cd"];
+const RETURNDATA_COMMANDS: &[&str] = &["returndata", "ret", "rd"];
+const HELP_COMMANDS: &[&str] = &["help", "h"];
+
+fn command_usage(command: &str, arg: &str) -> String {
+    format!("Usage: :{command} {arg}")
+}
+
+fn command_help() -> String {
+    format!(
+        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>",
+        command_aliases(CONTINUE_COMMANDS),
+        command_aliases(PC_COMMANDS),
+        command_aliases(MEMORY_COMMANDS),
+        command_aliases(CALLDATA_COMMANDS),
+        command_aliases(RETURNDATA_COMMANDS)
+    )
+}
+
+fn command_aliases(commands: &[&str]) -> String {
+    commands.iter().map(|command| format!(":{command}")).collect::<Vec<_>>().join("/")
 }
 
 fn handle_prompt_input_key_event(
@@ -1099,6 +1246,104 @@ mod tests {
     }
 
     #[test]
+    fn view_shortcuts_report_status() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert_eq!(tui.active_buffer, BufferKind::Memory);
+        let _ = tui.handle_key_event(key(KeyCode::Char('b')));
+        assert_eq!(tui.active_buffer, BufferKind::Calldata);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Active buffer: calldata");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('t')));
+        assert!(tui.stack_labels);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack labels: on");
+        let _ = tui.handle_key_event(key(KeyCode::Char('t')));
+        assert!(!tui.stack_labels);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack labels: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('m')));
+        assert!(tui.buf_utf);
+        assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: on");
+        let _ = tui.handle_key_event(key(KeyCode::Char('m')));
+        assert!(!tui.buf_utf);
+        assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('v')));
+        assert!(!tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('v')));
+        assert!(tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: shown");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('h')));
+        assert!(!tui.show_shortcuts);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('h')));
+        assert!(tui.show_shortcuts);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: shown");
+    }
+
+    #[test]
+    fn breakpoint_shortcut_jumps_and_reports_status() {
+        let address = Address::repeat_byte(1);
+        let other = Address::repeat_byte(2);
+        let mut context = context_with_arena(vec![
+            node(other, CallKind::Call, &[1]),
+            node(address, CallKind::Call, &[7, 42]),
+        ]);
+        context.breakpoints.insert('a', (address, 42));
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 1);
+        assert_eq!(tui.current_step, 1);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Jumped to breakpoint 'a' at PC 0x2a (42)");
+    }
+
+    #[test]
+    fn breakpoint_shortcut_reports_missing_key() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('z')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 0);
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Breakpoint 'z' not found");
+    }
+
+    #[test]
+    fn breakpoint_shortcut_reports_missing_trace_target() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        context.breakpoints.insert('a', (address, 42));
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 0);
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Breakpoint 'a' target not found in trace");
+    }
+
+    #[test]
     fn parses_prefixed_hex_pc() {
         assert_eq!(
             parse_pc_candidates("0x2a").unwrap(),
@@ -1341,6 +1586,93 @@ mod tests {
         assert_eq!(tui.pc_input, None);
         assert_eq!(tui.current_step, 0);
         assert_eq!(tui.status, None);
+    }
+
+    #[test]
+    fn command_input_mode_handles_keys_and_blocks_normal_commands() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert!(matches!(tui.handle_key_event(key(KeyCode::Char(':'))), ControlFlow::Continue(())));
+        assert_eq!(tui.command_input.as_deref(), Some(""));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('q')));
+        assert_eq!(tui.command_input.as_deref(), Some("q"));
+        assert_eq!(tui.current_step, 0);
+
+        let _ = tui.handle_key_event(key(KeyCode::Backspace));
+        for c in "continue 2a".chars() {
+            let _ = tui.handle_key_event(key(KeyCode::Char(c)));
+        }
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+
+        assert_eq!(tui.command_input, None);
+        assert_eq!(tui.current_step, 1);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Jumped to PC 0x2a (42) in current trace");
+    }
+
+    #[test]
+    fn command_prompt_jumps_to_named_buffer_offset() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1)],
+            Bytes::from(vec![0; 96]),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("calldata 40");
+
+        assert_eq!(tui.active_buffer, BufferKind::Calldata);
+        assert_eq!(tui.draw_memory.current_buf_startline, 2);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to calldata offset 0x40 (64)");
+    }
+
+    #[test]
+    fn command_prompt_accepts_optional_leading_colon() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input(":pc 2a");
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to PC 0x2a (42) in current trace");
+    }
+
+    #[test]
+    fn command_prompt_reports_help_and_usage_errors() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("help");
+        assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
+        let help = &tui.status.as_ref().unwrap().text;
+        for commands in [
+            CONTINUE_COMMANDS,
+            PC_COMMANDS,
+            MEMORY_COMMANDS,
+            CALLDATA_COMMANDS,
+            RETURNDATA_COMMANDS,
+        ] {
+            assert!(help.contains(&command_aliases(commands)));
+        }
+
+        tui.run_command_from_input("mem");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Usage: :mem <offset>");
     }
 
     #[test]

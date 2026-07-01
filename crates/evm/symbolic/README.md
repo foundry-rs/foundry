@@ -93,6 +93,28 @@ schema lives at
 the replay status, bounds, assumptions, solver metadata, optional trace
 reference, and concrete call data needed by downstream minimizers and exporters.
 
+Symbolic execution can also seed coverage-guided fuzzing by concretizing
+non-failing fuzz-test inputs into the configured `fuzz.corpus_dir`:
+
+```sh
+forge test --symbolic-seed-corpus --fuzz-corpus-dir fuzz_corpus
+```
+
+Forge symbolically executes matching fuzz tests, reuses their normal corpus
+layout, and writes a successful concrete input as a seed for later fuzz runs.
+
+Symbolic execution can import the same Foundry fuzz corpus as path-priority
+hints for fuzz tests:
+
+```sh
+forge test --symbolic-use-fuzz-corpus --fuzz-corpus-dir fuzz_corpus
+```
+
+Imported corpus entries are bounded by `symbolic.corpus_seed_limit` and only
+guide branch order; they do not prune feasible symbolic paths. JSON output
+records the per-test corpus directory, import counts, and seed files that
+matched a symbolic calldata variant under `symbolic.corpus_seeds.used`.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
@@ -354,8 +376,7 @@ when symbolic tests run. This also applies when these values come from inline
 settings before running symbolic tests from untrusted projects.
 Timeouts and portfolio cancellation terminate only the direct solver child
 process. Wrapper commands should forward termination to any subprocesses they
-spawn and close inherited stdout/stderr so descendant solvers do not outlive the
-cancelled query.
+spawn so descendant solvers do not outlive the cancelled query.
 
 Halmos-style annotations are accepted as compatibility input and translated into
 the same internal config:
