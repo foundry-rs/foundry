@@ -5,8 +5,8 @@ type PositiveFacts<'a> = HashSet<&'a SymExpr>;
 
 /// Returns whether monotonic product facts make these constraints unsatisfiable.
 #[cfg(test)]
-pub(crate) fn product_monotonic_unsat(constraints: &[SymBoolExpr]) -> bool {
-    let constraints = normalize_constraints_for_solver(constraints);
+pub(crate) fn product_monotonic_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
+    let constraints = normalize_constraints_for_solver(cx, constraints);
     product_monotonic_unsat_normalized(&constraints)
 }
 

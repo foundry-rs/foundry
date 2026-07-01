@@ -6,7 +6,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, I256, U256, hex, keccak256,
-    map::{DefaultHashBuilder, HashMap, HashSet, IndexSet},
+    map::{HashMap, HashSet, IndexSet},
 };
 use alloy_signer::SignerSync;
 use alloy_signer_local::{
@@ -36,12 +36,11 @@ use std::{
     collections::VecDeque,
     fmt::{self, Write as _},
     io::Write,
-    num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc, LazyLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -446,6 +445,7 @@ pub struct SymbolicStats {
 /// or an incomplete result.
 pub struct SymbolicExecutor {
     config: SymbolicConfig,
+    cx: runtime::SymCx,
     solver: Box<dyn runtime::SymbolicSolver>,
     deferred_incomplete: Option<DeferredIncomplete>,
 }
