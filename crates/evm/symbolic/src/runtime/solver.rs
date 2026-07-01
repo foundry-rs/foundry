@@ -14,10 +14,7 @@ pub(crate) use hard_arith_fallback::hard_arith_fallback_model;
 pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
 pub(crate) use opt::normalize_constraints_for_solver;
-use opt::{
-    constraint_cache_key, constraints_are_directly_unsat, sorted_bool_exprs_are_subset,
-    write_smt_assertions,
-};
+use opt::{constraints_are_directly_unsat, sorted_bool_exprs_are_subset, write_smt_assertions};
 #[cfg(test)]
 pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
 
@@ -350,7 +347,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let smt_constraints = normalize_constraints_for_solver(cx, constraints);
-        let cache_key = constraint_cache_key(cx, &smt_constraints);
+        let cache_key = smt_constraints.clone();
 
         if self.sat_cache.get(&cache_key) == Some(&false) {
             self.model_cache.remove(&cache_key);
@@ -455,7 +452,7 @@ impl SmtLibSubprocessSolver {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let smt_constraints = normalize_constraints_for_solver(cx, constraints);
-        let cache_key = constraint_cache_key(cx, &smt_constraints);
+        let cache_key = smt_constraints.clone();
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
             trace!(result, "is_sat: normalized cache hit");
@@ -471,16 +468,14 @@ impl SmtLibSubprocessSolver {
             && let Some((condition, base)) = constraints.split_last()
             && {
                 let normalized_base = normalize_constraints_for_solver(cx, base);
-                let base_key = constraint_cache_key(cx, &normalized_base);
-                self.sat_cache.get(&base_key) == Some(&true)
+                self.sat_cache.get(&normalized_base) == Some(&true)
             }
             && {
                 let mut complement = Vec::with_capacity(constraints.len());
                 complement.extend(base.iter().cloned());
                 complement.push(condition.clone().not(cx));
                 let normalized_complement = normalize_constraints_for_solver(cx, &complement);
-                let complement_key = constraint_cache_key(cx, &normalized_complement);
-                self.has_cached_unsat_subset(&complement_key)
+                self.has_cached_unsat_subset(&normalized_complement)
             }
         {
             self.sat_cache_hits += 1;

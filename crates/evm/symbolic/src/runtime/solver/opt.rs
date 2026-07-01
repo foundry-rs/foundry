@@ -172,19 +172,6 @@ const fn expr_op_key(op: SymExprOp) -> u8 {
     }
 }
 
-/// Returns a structural key for normalized solver cache lookups.
-pub(super) fn constraint_cache_key(
-    cx: &mut SymCx,
-    constraints: &[SymBoolExpr],
-) -> Vec<SymBoolExpr> {
-    let mut key = Vec::with_capacity(constraints.len());
-    for constraint in constraints.iter().cloned() {
-        constraint.cache_key(cx).push_cache_key_conjuncts(&mut key);
-    }
-    sort_dedup_bool_exprs(&mut key);
-    key
-}
-
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
 pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
     constraints.iter().any(|constraint| match constraint.kind() {
@@ -216,58 +203,6 @@ pub(crate) fn normalize_bool_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> Sy
 }
 
 impl SymBoolExpr {
-    fn cache_key(self, cx: &mut SymCx) -> Self {
-        self.fold(cx, &mut Self::cache_key_node)
-    }
-
-    fn cache_key_node(cx: &mut SymCx, expr: Self) -> Self {
-        match expr.kind() {
-            SymBoolExprKind::Not(value) => value.clone().not(cx),
-            SymBoolExprKind::And(values) => {
-                let mut conjuncts = Vec::new();
-                for value in values.iter().cloned() {
-                    value.push_cache_key_conjuncts(&mut conjuncts);
-                }
-                sort_dedup_bool_exprs(&mut conjuncts);
-                Self::and(cx, conjuncts)
-            }
-            SymBoolExprKind::Eq(left, right) => {
-                let left = left.clone().cache_key(cx);
-                let right = right.clone().cache_key(cx);
-                Self::eq(cx, left, right)
-            }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                let left = left.clone().cache_key(cx);
-                let right = right.clone().cache_key(cx);
-                Self::cache_key_cmp(cx, *op, left, right)
-            }
-            SymBoolExprKind::Const(value) => Self::constant(cx, *value),
-        }
-    }
-
-    fn push_cache_key_conjuncts(self, out: &mut Vec<Self>) {
-        match self.kind() {
-            SymBoolExprKind::Const(true) => {}
-            SymBoolExprKind::And(values) => {
-                for value in values.iter().cloned() {
-                    value.push_cache_key_conjuncts(out);
-                }
-            }
-            _ => out.push(self),
-        }
-    }
-
-    fn cache_key_cmp(cx: &mut SymCx, op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> Self {
-        match op {
-            SymBoolExprOp::Ugt => Self::cmp(cx, SymBoolExprOp::Ult, right, left),
-            SymBoolExprOp::Uge => Self::cmp(cx, SymBoolExprOp::Ule, right, left),
-            SymBoolExprOp::Sgt => Self::cmp(cx, SymBoolExprOp::Slt, right, left),
-            SymBoolExprOp::Ult | SymBoolExprOp::Ule | SymBoolExprOp::Slt => {
-                Self::cmp(cx, op, left, right)
-            }
-        }
-    }
-
     fn push_normalized_conjuncts(self, out: &mut Vec<Self>) {
         match self.kind() {
             SymBoolExprKind::Const(true) => {}
@@ -277,22 +212,6 @@ impl SymBoolExpr {
                 }
             }
             _ => out.push(self),
-        }
-    }
-}
-
-impl SymExpr {
-    fn cache_key(self, cx: &mut SymCx) -> Self {
-        self.fold(cx, &mut Self::cache_key_node)
-    }
-
-    fn cache_key_node(cx: &mut SymCx, expr: Self) -> Self {
-        match expr.kind() {
-            SymExprKind::Ite(cond, left, right) => {
-                let cond = cond.clone().cache_key(cx);
-                Self::ite(cx, cond, left.clone(), right.clone())
-            }
-            _ => expr,
         }
     }
 }
@@ -668,10 +587,29 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
         SymBoolExprKind::Cmp(op, left, right) => {
             let left = normalize_expr_for_solver(cx, left.clone());
             let right = normalize_expr_for_solver(cx, right.clone());
-            let normalized = SymBoolExpr::cmp(cx, *op, left, right);
+            let normalized = normalize_cmp_for_solver(cx, *op, left, right);
             normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
         }
         _ => expr,
+    }
+}
+
+fn normalize_cmp_for_solver(
+    cx: &mut SymCx,
+    op: SymBoolExprOp,
+    left: SymExpr,
+    right: SymExpr,
+) -> SymBoolExpr {
+    match op {
+        // `a > b => b < a`.
+        SymBoolExprOp::Ugt => SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, right, left),
+        // `a >= b => b <= a`.
+        SymBoolExprOp::Uge => SymBoolExpr::cmp(cx, SymBoolExprOp::Ule, right, left),
+        // `a >s b => b <s a`.
+        SymBoolExprOp::Sgt => SymBoolExpr::cmp(cx, SymBoolExprOp::Slt, right, left),
+        SymBoolExprOp::Ult | SymBoolExprOp::Ule | SymBoolExprOp::Slt => {
+            SymBoolExpr::cmp(cx, op, left, right)
+        }
     }
 }
 
