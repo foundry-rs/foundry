@@ -1,4 +1,4 @@
-use alloy_primitives::{hex, keccak256};
+use alloy_primitives::{U256, hex, keccak256};
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use serde_json::Value;
@@ -1745,6 +1745,118 @@ contract SymbolicFuzzCorpusBestEffort {
         .stdout_lossy();
 
     assert!(stdout.contains("[PASS] testFuzz_symbolicHostile(uint256)"), "{stdout}");
+});
+
+forgetest_init!(symbolic_fuzz_frontier_seeding_persists_branch_flipping_input, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fuzz_frontier_seeding_persists_branch_flipping_input because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzFrontierSeed.t.sol",
+        r#"
+contract SymbolicFuzzFrontierSeed {
+    function testFuzz_frontier(uint64 amount, uint256 feeMultiplier) public pure {
+        uint256 credited;
+        unchecked {
+            credited = uint256(amount) + (feeMultiplier - 100);
+        }
+
+        if (feeMultiplier < 100) {
+            assert(credited <= amount);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_frontier",
+            "--fuzz-runs",
+            "8",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_frontier",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "8",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("testFuzz_frontier(uint64,uint256)"), "{output}");
+
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicFuzzFrontierSeed")
+        .join("testFuzz_frontier")
+        .join("worker0")
+        .join("corpus");
+    let expected_selector = hex::encode(&keccak256(b"testFuzz_frontier(uint64,uint256)")[..4]);
+    let mut found_branch_flipping_seed = false;
+    for entry in std::fs::read_dir(&corpus_dir)
+        .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
+    {
+        let entry = entry.unwrap();
+        let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+        for tx in corpus.as_array().unwrap() {
+            let calldata = tx["calldata"].as_str().expect("seed calldata");
+            if !calldata.starts_with(&format!("0x{expected_selector}")) {
+                continue;
+            }
+            let fee_multiplier = U256::from_be_slice(&hex::decode(&calldata[74..138]).unwrap());
+            if fee_multiplier < U256::from(100) {
+                found_branch_flipping_seed = true;
+            }
+        }
+    }
+    assert!(found_branch_flipping_seed);
+
+    let replay_output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicFuzzFrontierSeed",
+            "--match-test",
+            "testFuzz_frontier",
+            "--corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(replay_output.contains("corpus replay failed"), "{replay_output}");
 });
 
 forgetest_init!(symbolic_import_fuzz_corpus_guides_bounded_symbolic_path, |prj, cmd| {

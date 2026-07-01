@@ -215,6 +215,7 @@ impl SymbolicExecutor {
                 input.ffi_enabled,
             );
             root.set_corpus_seed_models(corpus_seed_models);
+            root.set_branch_target(input.branch_target);
             root.apply_executor_env(&mut self.cx, input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();
@@ -270,6 +271,7 @@ impl SymbolicExecutor {
                         });
                     }
                     if input.collect_success_input
+                        && state.satisfies_branch_target()
                         && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                     {
                         success_input = Some((
@@ -287,7 +289,7 @@ impl SymbolicExecutor {
                     break;
                 };
 
-                let _step_span = trace_span!("symbolic_step", pc = state.pc - 1, op).entered();
+                let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
                 match self.step(
                     input.executor,
                     &code,
@@ -315,6 +317,7 @@ impl SymbolicExecutor {
                             });
                         }
                         if input.collect_success_input
+                            && state.satisfies_branch_target()
                             && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                         {
                             success_input = Some((

@@ -127,6 +127,8 @@ enabled = false
 seed_corpus = false
 use_fuzz_corpus = false
 corpus_seed_limit = 32
+use_fuzz_frontiers = false
+frontier_limit = 8
 solver = "z3"
 timeout = 30
 max_depth = 10000
@@ -371,6 +373,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             seed_corpus: true,
             use_fuzz_corpus: true,
             corpus_seed_limit: 17,
+            use_fuzz_frontiers: true,
+            frontier_limit: 11,
             solver: "custom-z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
@@ -1533,6 +1537,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "seed_corpus": false,
     "use_fuzz_corpus": false,
     "corpus_seed_limit": 32,
+    "use_fuzz_frontiers": false,
+    "frontier_limit": 8,
     "solver": "z3",
     "timeout": 30,
     "max_depth": 10000,
