@@ -3,9 +3,11 @@ use std::{
     cmp::Ordering,
     collections::hash_map::DefaultHasher,
     fmt,
-    hash::{Hash, Hasher},
+    hash::{BuildHasher, BuildHasherDefault, Hash, Hasher},
     sync::{Arc, Weak},
 };
+
+type HashBuilder = BuildHasherDefault<DefaultHasher>;
 
 /// Shared handle for a hash-consed value.
 ///
@@ -27,7 +29,11 @@ impl<T> HashConsed<T> {
         Self { inner }
     }
 
-    pub(crate) fn cached_hash(&self) -> u64 {
+    fn from_value(hash: u64, value: T) -> Self {
+        Self::from_inner(Arc::new(HashConsedInner { hash, value }))
+    }
+
+    fn cached_hash(&self) -> u64 {
         self.inner.hash
     }
 
@@ -47,13 +53,6 @@ impl<T> HashConsed<T> {
             Ok(inner) => inner.value,
             Err(inner) => inner.value.clone(),
         }
-    }
-}
-
-impl<T: Hash> HashConsed<T> {
-    pub(crate) fn new(value: T) -> Self {
-        let hash = structural_hash(&value);
-        Self::from_inner(Arc::new(HashConsedInner { hash, value }))
     }
 }
 
@@ -96,6 +95,7 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
 /// weak entries are ignored and left in the table until the context is dropped.
 pub(crate) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
+    hash_builder: HashBuilder,
 }
 
 struct HashConsEntry<T> {
@@ -110,14 +110,24 @@ impl<T> HashConsEntry<T> {
 }
 
 impl<T> HashCons<T> {
-    pub(crate) const fn new() -> Self {
-        Self { table: HashTable::new() }
+    pub(crate) fn new() -> Self {
+        Self { table: HashTable::new(), hash_builder: HashBuilder::default() }
+    }
+
+    fn hash<Q: Hash + ?Sized>(&self, value: &Q) -> u64 {
+        self.hash_builder.hash_one(value)
     }
 }
 
 impl<T: Eq + Hash> HashCons<T> {
+    pub(crate) fn uninterned(value: T) -> HashConsed<T> {
+        let hashcons = Self::new();
+        let hash = hashcons.hash(&value);
+        HashConsed::from_value(hash, value)
+    }
+
     pub(crate) fn make(&mut self, value: T) -> HashConsed<T> {
-        let hash = structural_hash(&value);
+        let hash = self.hash(&value);
         let mut found = None;
         match self.table.entry(
             hash,
@@ -136,18 +146,13 @@ impl<T: Eq + Hash> HashCons<T> {
         ) {
             Entry::Occupied(_) => HashConsed::from_inner(found.expect("matched live value")),
             Entry::Vacant(entry) => {
-                let inner = Arc::new(HashConsedInner { hash, value });
+                let inner = HashConsedInner { hash, value };
+                let inner = Arc::new(inner);
                 entry.insert(HashConsEntry { hash, value: Arc::downgrade(&inner) });
                 HashConsed::from_inner(inner)
             }
         }
     }
-}
-
-fn structural_hash<T: Hash + ?Sized>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[cfg(test)]
@@ -192,11 +197,11 @@ mod tests {
     }
 
     #[test]
-    fn raw_and_interned_values_hash_the_same() {
+    fn uninterned_and_interned_values_hash_the_same() {
         let mut table = HashCons::<String>::new();
 
         let interned = table.make("same".to_string());
-        let raw = HashConsed::new("same".to_string());
+        let raw = HashCons::<String>::uninterned("same".to_string());
 
         assert_eq!(interned, raw);
         assert_eq!(interned.cached_hash(), raw.cached_hash());
