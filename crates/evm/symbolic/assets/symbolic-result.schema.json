@@ -53,6 +53,9 @@
         { "$ref": "#/$defs/counterexample" }
       ]
     },
+    "corpus_seeds": {
+      "$ref": "#/$defs/corpus_seeds"
+    },
     "artifact": {
       "$ref": "#/$defs/artifact_ref"
     },
@@ -458,6 +461,47 @@
         },
         "value": {
           "type": ["string", "null"]
+        }
+      }
+    },
+    "corpus_seeds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpus_dir", "limit", "loaded", "skipped", "used"],
+      "properties": {
+        "corpus_dir": {
+          "type": ["string", "null"]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "loaded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "used": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/corpus_seed" }
+        }
+      }
+    },
+    "corpus_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "calldata"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "calldata": {
+          "type": "string",
+          "pattern": "^0x([0-9a-fA-F]{2})*$"
         }
       }
     },

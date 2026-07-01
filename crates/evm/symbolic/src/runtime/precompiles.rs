@@ -104,7 +104,7 @@ pub(crate) fn execute_symbolic_precompile(
         Some(4) => Ok(Some(SymReturnData::from_bytes_with_len(input, input_len))),
         Some(5) => symbolic_modexp_precompile(&input, input_len),
         Some(6) => {
-            let input_len = input_len.into_usize("symbolic precompile input")?;
+            let input_len = input_len.as_usize_or("symbolic precompile input")?;
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
@@ -116,7 +116,7 @@ pub(crate) fn execute_symbolic_precompile(
             Ok(Some(symbolic_fixed_len_precompile_output("bn254_add", &input, input_len, 64)))
         }
         Some(7) => {
-            let input_len = input_len.into_usize("symbolic precompile input")?;
+            let input_len = input_len.as_usize_or("symbolic precompile input")?;
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
@@ -128,7 +128,7 @@ pub(crate) fn execute_symbolic_precompile(
             Ok(Some(symbolic_fixed_len_precompile_output("bn254_mul", &input, input_len, 64)))
         }
         Some(8) => {
-            let input_len = input_len.into_usize("symbolic precompile input")?;
+            let input_len = input_len.as_usize_or("symbolic precompile input")?;
             if input_len % 192 != 0 {
                 return Ok(None);
             }
@@ -143,7 +143,7 @@ pub(crate) fn execute_symbolic_precompile(
             Ok(Some(symbolic_fixed_len_precompile_output("bn254_pairing", &input, input_len, 32)))
         }
         Some(9) => {
-            let input_len = input_len.into_usize("symbolic precompile input")?;
+            let input_len = input_len.as_usize_or("symbolic precompile input")?;
             if input_len != 213 {
                 return Ok(None);
             }
@@ -164,7 +164,7 @@ pub(crate) fn execute_symbolic_precompile(
         }
         Some(10) => Err(SymbolicError::Unsupported("KZG handled by execute_kzg_precompile_call")),
         _ => {
-            let input_len = input_len.into_usize("symbolic precompile input")?;
+            let input_len = input_len.as_usize_or("symbolic precompile input")?;
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
@@ -183,7 +183,7 @@ pub(crate) fn symbolic_modexp_precompile(
     input: &SymBytes,
     input_len: SymExpr,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
-    let input_len = input_len.into_usize("symbolic precompile input")?;
+    let input_len = input_len.as_usize_or("symbolic precompile input")?;
     if input_len > input.len() {
         return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
     }

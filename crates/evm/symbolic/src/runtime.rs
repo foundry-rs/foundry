@@ -52,6 +52,8 @@ pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     pub ffi_enabled: bool,
     /// Whether to return one successful concrete input when execution is safe.
     pub collect_success_input: bool,
+    /// Concrete fuzz corpus entries used as path-priority hints.
+    pub corpus_seeds: Vec<SymbolicConcreteInput>,
 }
 
 /// Error returned by the internal symbolic executor.

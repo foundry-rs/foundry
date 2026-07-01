@@ -277,38 +277,45 @@ impl BenchmarkProject {
         let name = self.name.to_ascii_lowercase();
         if name == "solady" || name.ends_with("-solady") {
             return SymbolicBenchmarkSpec {
-                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build".to_string(),
+                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
+                    .to_string(),
                 test_command: format!(
-                    "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --symbolic --json \
+                    "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
+                     --symbolic --json \
                      --match-test '{SOLADY_SYMBOLIC_MATCH_TEST}'"
                 ),
             };
         }
         if name == "angstrom" || name.ends_with("-angstrom") {
             return SymbolicBenchmarkSpec {
-                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build --root contracts"
-                    .to_string(),
+                build_command:
+                    "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build --root contracts"
+                        .to_string(),
                 test_command: format!(
-                    "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --root contracts --symbolic \
-                     --json --symbolic-timeout 5 --match-path {ANGSTROM_SYMBOLIC_MATCH_PATH} \
-                     --match-test {ANGSTROM_SYMBOLIC_MATCH_TEST}"
+                    "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
+                     --root contracts --symbolic --json --symbolic-timeout 5 --match-path \
+                     {ANGSTROM_SYMBOLIC_MATCH_PATH} --match-test {ANGSTROM_SYMBOLIC_MATCH_TEST}"
                 ),
             };
         }
         if name == "farcasterxyz-contracts" || name == "farcaster-contracts" {
             return SymbolicBenchmarkSpec {
-                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build".to_string(),
+                build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
+                    .to_string(),
                 test_command: format!(
-                    "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --symbolic --json \
+                    "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test \
+                     --symbolic --json \
                      --symbolic-timeout 5 --match-path '{FARCASTER_SYMBOLIC_MATCH_PATH}' \
                      --match-test 'check_'"
                 ),
             };
         }
         SymbolicBenchmarkSpec {
-            build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge build".to_string(),
-            test_command: "FOUNDRY_LINT_LINT_ON_BUILD=false forge test --symbolic --json"
+            build_command: "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
                 .to_string(),
+            test_command:
+                "FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge test --symbolic --json"
+                    .to_string(),
         }
     }
 
@@ -451,7 +458,7 @@ impl BenchmarkProject {
             version,
             &self.cmd("FOUNDRY_ISOLATE=false forge test"),
             runs,
-            Some("forge build"),
+            Some("FOUNDRY_ISOLATE=false forge build"),
             None,
             None,
             verbose,
@@ -468,10 +475,10 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_with_cache",
             version,
-            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false forge build"),
+            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"),
             runs,
             None,
-            Some("forge build"),
+            Some("FOUNDRY_ISOLATE=false forge build"),
             None,
             verbose,
         )
@@ -488,11 +495,11 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_no_cache",
             version,
-            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false forge build"),
+            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"),
             runs,
-            Some("forge clean"),
+            Some("FOUNDRY_ISOLATE=false forge clean"),
             None,
-            Some("forge clean"),
+            Some("FOUNDRY_ISOLATE=false forge clean"),
             verbose,
         )
     }
@@ -510,7 +517,7 @@ impl BenchmarkProject {
             version,
             &self.cmd(r#"FOUNDRY_ISOLATE=false forge test --match-test "test[^(]*\([^)]+\)""#),
             runs,
-            Some("forge build"),
+            Some("FOUNDRY_ISOLATE=false forge build"),
             None,
             None,
             verbose,
@@ -529,7 +536,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_coverage",
             version,
-            &self.cmd("forge coverage --ir-minimum"),
+            &self.cmd("FOUNDRY_ISOLATE=false forge coverage --ir-minimum"),
             runs,
             None,
             None,
@@ -549,9 +556,9 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_isolate_test",
             version,
-            &self.cmd("forge test --isolate"),
+            &self.cmd("FOUNDRY_ISOLATE=true forge test --isolate"),
             runs,
-            Some("forge build"),
+            Some("FOUNDRY_ISOLATE=true forge build"),
             None,
             None,
             verbose,

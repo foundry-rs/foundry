@@ -1,11 +1,14 @@
 //! txpool related tests
 
-use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::U256;
+use alloy_consensus::Transaction;
+use alloy_network::{AnyRpcTransaction, ReceiptResponse, TransactionBuilder, TransactionResponse};
+use alloy_primitives::{TxHash, U256};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
+use std::time::Duration;
+use tokio::time::sleep;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {
@@ -228,6 +231,62 @@ async fn geth_txpool_content_from_filters_sender() {
     let empty_content = provider.txpool_content_from(empty_sender).await.unwrap();
     assert!(empty_content.pending.is_empty());
     assert!(empty_content.queued.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_filter_full_pending_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let account = provider.get_accounts().await.unwrap().remove(0);
+    let value = U256::from(42);
+    let tx = TransactionRequest::default().with_to(account).with_from(account).with_value(value);
+    let tx = WithOtherFields::new(tx);
+
+    let hash_filter: String =
+        provider.client().request("eth_newPendingTransactionFilter", (false,)).await.unwrap();
+    let full_filter: String =
+        provider.client().request("eth_newPendingTransactionFilter", (true,)).await.unwrap();
+
+    let pending = provider.send_transaction(tx).await.unwrap();
+    let tx_hash = *pending.tx_hash();
+
+    let mut hash_changes = Vec::new();
+    for _ in 0..100 {
+        let changes: Vec<TxHash> = provider
+            .client()
+            .request("eth_getFilterChanges", (hash_filter.clone(),))
+            .await
+            .unwrap();
+        if !changes.is_empty() {
+            hash_changes = changes;
+            break;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    let mut full_changes = Vec::new();
+    for _ in 0..100 {
+        let changes: Vec<AnyRpcTransaction> = provider
+            .client()
+            .request("eth_getFilterChanges", (full_filter.clone(),))
+            .await
+            .unwrap();
+        if !changes.is_empty() {
+            full_changes = changes;
+            break;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(hash_changes, vec![tx_hash]);
+    assert_eq!(full_changes.len(), 1);
+
+    let full_tx = &full_changes[0];
+    assert_eq!(full_tx.inner.tx_hash(), tx_hash);
+    assert_eq!(full_tx.inner.value(), value);
 }
 
 // Cf. https://github.com/foundry-rs/foundry/issues/11239
