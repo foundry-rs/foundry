@@ -390,6 +390,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_freeOSMemory", with = "empty_params")]
     DebugFreeOsMemory(()),
 
+    /// geth's `debug_traceBlock` endpoint.
+    #[serde(rename = "debug_traceBlock")]
+    DebugTraceBlock(Bytes, #[serde(default)] GethDebugTracingOptions),
+
     /// geth's `debug_traceBlockByHash` endpoint
     #[serde(rename = "debug_traceBlockByHash")]
     DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
@@ -1823,6 +1827,13 @@ true}]}"#;
             EthRequest::DebugFreeOsMemory(()) => {}
             req => panic!("unexpected request: {req:?}"),
         }
+    }
+
+    #[test]
+    fn test_serde_debug_trace_block() {
+        let s = r#"{"method":"debug_traceBlock","params":["0xc0",{"tracer":"callTracer"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]

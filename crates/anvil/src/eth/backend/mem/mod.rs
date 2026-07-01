@@ -63,6 +63,7 @@ use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
 };
+use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
@@ -3578,6 +3579,27 @@ where
         }
 
         Ok(GethTrace::Default(Default::default()))
+    }
+
+    /// Returns geth-style traces for all transactions in an RLP-encoded block.
+    pub async fn debug_trace_block(
+        &self,
+        rlp_block: Bytes,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let mut rlp = rlp_block.as_ref();
+        let block = Block::<FoundryTxEnvelope>::decode(&mut rlp).map_err(|err| {
+            BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "failed to decode block: {err}"
+            )))
+        })?;
+        if !rlp.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "failed to decode block: trailing bytes".to_string(),
+            )));
+        }
+
+        self.debug_trace_block_by_hash(block.header.hash_slow(), opts).await
     }
 
     /// Returns geth-style traces for all transactions in a block by hash.

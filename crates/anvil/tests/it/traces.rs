@@ -15,6 +15,7 @@ use alloy_provider::{
     Provider,
     ext::{DebugApi, TraceApi},
 };
+use alloy_rlp::Encodable;
 use alloy_rpc_types::{
     BlockNumberOrTag, TransactionRequest,
     state::StateOverride,
@@ -1472,6 +1473,51 @@ async fn test_debug_trace_block_by_hash() {
         .backend
         .debug_trace_block_by_hash(
             block_hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(traces.len(), 1);
+
+    match &traces[0] {
+        alloy_rpc_types::trace::geth::TraceResult::Success { result, .. } => match result {
+            GethTrace::CallTracer(call_frame) => {
+                assert_eq!(call_frame.from, from);
+                assert_eq!(call_frame.to.unwrap(), to);
+                assert_eq!(call_frame.value, Some(amount));
+            }
+            _ => unreachable!("expected CallTracer"),
+        },
+        alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
+            panic!("trace failed: {error}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(3000);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+    let block = api.backend.get_block(BlockId::Hash(block_hash.into())).unwrap();
+
+    let mut rlp_block = Vec::new();
+    block.encode(&mut rlp_block);
+
+    let traces = provider
+        .debug_trace_block(
+            &rlp_block,
             GethDebugTracingOptions::default()
                 .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
         )
