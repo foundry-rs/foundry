@@ -1,4 +1,4 @@
-use super::{super::hashcons::HashConsed, *};
+use super::{hashcons::HashConsed, *};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SymBoolExpr {

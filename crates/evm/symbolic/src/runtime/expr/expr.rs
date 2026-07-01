@@ -1,4 +1,4 @@
-use super::{super::hashcons::HashConsed, *};
+use super::{hashcons::HashConsed, *};
 
 pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();

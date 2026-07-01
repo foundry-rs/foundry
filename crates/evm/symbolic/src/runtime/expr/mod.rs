@@ -2,6 +2,7 @@ use super::*;
 
 mod bool;
 mod cx;
+pub(super) mod hashcons;
 #[path = "expr.rs"]
 mod word;
 

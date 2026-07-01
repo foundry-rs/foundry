@@ -1,4 +1,4 @@
-use super::{hashcons::HashConsed, *};
+use super::{expr::hashcons::HashConsed, *};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SymBytes {

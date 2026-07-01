@@ -1,4 +1,4 @@
-use super::{super::hashcons::HashCons, *};
+use super::{hashcons::HashCons, *};
 
 pub(crate) struct SymCx {
     words: HashCons<SymExprKind>,
