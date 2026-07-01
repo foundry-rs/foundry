@@ -23,7 +23,7 @@ pub(in crate::runtime) enum SymBytesKind {
 
 impl SymBytes {
     fn from_kind(cx: &mut SymCx, kind: SymBytesKind) -> Self {
-        cx.make_bytes(kind)
+        cx.mk_bytes_kind(kind)
     }
 
     fn kind(&self) -> &SymBytesKind {
