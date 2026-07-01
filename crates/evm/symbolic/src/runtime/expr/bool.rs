@@ -137,51 +137,69 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn cmp(cx: &mut SymCx, op: SymCmpOp, left: SymExpr, right: SymExpr) -> Self {
-        if op == SymCmpOp::Eq {
-            return Self::eq_cmp(cx, left, right);
-        }
-        match (op, left.kind(), right.kind()) {
-            // `a <= a => true`, `a < a => false`.
-            (op, _, _) if left == right => {
-                Self::constant(cx, matches!(op, SymCmpOp::Ule | SymCmpOp::Uge))
-            }
-            (op, SymExprKind::Const(left), SymExprKind::Const(right)) => {
-                // `const < const => const`.
-                Self::constant(cx, op.eval(*left, *right))
-            }
-            // `0 > a => false`.
-            (SymCmpOp::Ugt, SymExprKind::Const(value), _) if value.is_zero() => {
-                Self::constant(cx, false)
-            }
-            // `0 <= a => true`.
-            (SymCmpOp::Ule, SymExprKind::Const(value), _) if value.is_zero() => {
-                Self::constant(cx, true)
-            }
-            // `a < 0 => false`.
-            (SymCmpOp::Ult, _, SymExprKind::Const(value)) if value.is_zero() => {
-                Self::constant(cx, false)
-            }
-            // `a >= 0 => true`.
-            (SymCmpOp::Uge, _, SymExprKind::Const(value)) if value.is_zero() => {
-                Self::constant(cx, true)
-            }
-            // `MAX < a => false`.
-            (SymCmpOp::Ult, SymExprKind::Const(value), _) if *value == U256::MAX => {
-                Self::constant(cx, false)
-            }
-            // `MAX >= a => true`.
-            (SymCmpOp::Uge, SymExprKind::Const(value), _) if *value == U256::MAX => {
-                Self::constant(cx, true)
-            }
-            // `a > MAX => false`.
-            (SymCmpOp::Ugt, _, SymExprKind::Const(value)) if *value == U256::MAX => {
-                Self::constant(cx, false)
-            }
-            // `a <= MAX => true`.
-            (SymCmpOp::Ule, _, SymExprKind::Const(value)) if *value == U256::MAX => {
-                Self::constant(cx, true)
-            }
-            _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
+        match op {
+            SymCmpOp::Eq => Self::eq_cmp(cx, left, right),
+            SymCmpOp::Ult => match (left.kind(), right.kind()) {
+                // `a < a => false`.
+                _ if left == right => Self::constant(cx, false),
+                (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                    // `const < const => const`.
+                    Self::constant(cx, op.eval(*left, *right))
+                }
+                // `a < 0 => false`.
+                (_, SymExprKind::Const(value)) if value.is_zero() => Self::constant(cx, false),
+                // `MAX < a => false`.
+                (SymExprKind::Const(value), _) if *value == U256::MAX => Self::constant(cx, false),
+                _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
+            },
+            SymCmpOp::Ugt => match (left.kind(), right.kind()) {
+                // `a > a => false`.
+                _ if left == right => Self::constant(cx, false),
+                (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                    // `const > const => const`.
+                    Self::constant(cx, op.eval(*left, *right))
+                }
+                // `0 > a => false`.
+                (SymExprKind::Const(value), _) if value.is_zero() => Self::constant(cx, false),
+                // `a > MAX => false`.
+                (_, SymExprKind::Const(value)) if *value == U256::MAX => Self::constant(cx, false),
+                _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
+            },
+            SymCmpOp::Ule => match (left.kind(), right.kind()) {
+                // `a <= a => true`.
+                _ if left == right => Self::constant(cx, true),
+                (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                    // `const <= const => const`.
+                    Self::constant(cx, op.eval(*left, *right))
+                }
+                // `0 <= a => true`.
+                (SymExprKind::Const(value), _) if value.is_zero() => Self::constant(cx, true),
+                // `a <= MAX => true`.
+                (_, SymExprKind::Const(value)) if *value == U256::MAX => Self::constant(cx, true),
+                _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
+            },
+            SymCmpOp::Uge => match (left.kind(), right.kind()) {
+                // `a >= a => true`.
+                _ if left == right => Self::constant(cx, true),
+                (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                    // `const >= const => const`.
+                    Self::constant(cx, op.eval(*left, *right))
+                }
+                // `a >= 0 => true`.
+                (_, SymExprKind::Const(value)) if value.is_zero() => Self::constant(cx, true),
+                // `MAX >= a => true`.
+                (SymExprKind::Const(value), _) if *value == U256::MAX => Self::constant(cx, true),
+                _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
+            },
+            SymCmpOp::Slt | SymCmpOp::Sgt => match (left.kind(), right.kind()) {
+                // `a <s a => false`, `a >s a => false`.
+                _ if left == right => Self::constant(cx, false),
+                (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                    // `const <s const => const`.
+                    Self::constant(cx, op.eval(*left, *right))
+                }
+                _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
+            },
         }
     }
 
