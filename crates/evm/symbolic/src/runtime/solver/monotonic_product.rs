@@ -48,10 +48,7 @@ fn collect_order_facts<'a>(
                 positive.insert(left);
             }
         }
-        SymBoolExprKind::Const(_)
-        | SymBoolExprKind::Not(_)
-        | SymBoolExprKind::Cmp(SymCmpOp::Eq, _, _)
-        | SymBoolExprKind::Cmp(_, _, _) => {}
+        SymBoolExprKind::Const(_) | SymBoolExprKind::Not(_) | SymBoolExprKind::Cmp(_, _, _) => {}
     }
 }
 
