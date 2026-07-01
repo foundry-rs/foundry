@@ -4,7 +4,7 @@ use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
-    multi_runner::{TestContract, TestFunctionMatcher, TestRunnerConfig},
+    multi_runner::{FuzzMinimizeObservation, TestContract, TestFunctionMatcher, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
@@ -33,8 +33,9 @@ use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
-        CallResult, EvmError, Executor, ITest, InvariantReplayOptions, RawCallResult, ShowmapOpts,
-        ShowmapReplayTarget, canonical_replay_dirs,
+        CallResult, EvmError, Executor, ITest, InvariantReplayOptions, MinimizationReplayInput,
+        RawCallResult, ShowmapOpts, ShowmapReplayTarget, StatelessReplayTarget,
+        canonical_replay_dirs,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
@@ -43,6 +44,7 @@ use foundry_evm::{
             replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
+        replay_sequence_for_minimization,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -67,7 +69,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Instant,
 };
 use tokio::signal;
@@ -1120,6 +1122,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     /// Returns whether verbose symbolic diagnostics should be rendered after progress clears.
     fn should_defer_symbolic_diagnostics(&self) -> bool {
         self.cr.progress.is_some() && self.config.symbolic.dump_smt
+    }
+
+    fn fuzz_minimize_target_id(&self, test_name: &str) -> String {
+        let network = self
+            .cr
+            .mcr
+            .tcfg
+            .multi_network
+            .pass_network
+            .as_ref()
+            .map(|network| format!("{network:?}"))
+            .unwrap_or_else(|| "default".to_string());
+        format!("{network}:{}::{test_name}", self.cr.name)
     }
 
     fn persist_symbolic_counterexample_artifact(
@@ -2654,7 +2669,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 corpus_dir,
                 &showmap,
                 ShowmapReplayTarget {
-                    fuzzed_function: None,
+                    stateless: None,
                     fuzz_fail_on_revert: false,
                     fuzzed_contracts: Some(&targeted),
                     invariant_address: Some(invariant_address),
@@ -2751,6 +2766,68 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         } else {
             Cow::Borrowed(func.name.as_str())
         };
+
+        if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.as_ref() {
+            let target = self.fuzz_minimize_target_id(invariant_display_name.as_ref());
+            if let Err(e) = evm.select_contract_artifacts(self.address) {
+                self.result.invariant_setup_fail(e);
+                return self.result;
+            }
+            let Ok((_, targeted)) = evm.select_contracts_and_senders(self.address).map_err(|e| {
+                self.result.invariant_setup_fail(e);
+            }) else {
+                return self.result;
+            };
+            let dynamic = evm.dynamic_target_ctx();
+            let Ok(mut evm_edge_indices_by_target) = minimize.evm_edge_indices.lock() else {
+                self.result.single_fail(Some("minimize edge index lock poisoned".to_string()));
+                return self.result;
+            };
+            let evm_edge_indices = evm_edge_indices_by_target
+                .entry(target.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(Default::default())))
+                .clone();
+            drop(evm_edge_indices_by_target);
+            let Ok(mut evm_edge_indices) = evm_edge_indices.lock() else {
+                self.result.single_fail(Some("minimize edge index lock poisoned".to_string()));
+                return self.result;
+            };
+            match replay_sequence_for_minimization(
+                &evm.executor,
+                MinimizationReplayInput {
+                    sequence: minimize.input.as_ref(),
+                    evm_edge_indices: &mut evm_edge_indices,
+                    corpus: &invariant_config.corpus,
+                },
+                ShowmapReplayTarget {
+                    stateless: None,
+                    fuzz_fail_on_revert: false,
+                    fuzzed_contracts: Some(&targeted),
+                    invariant_address: Some(invariant_contract.address),
+                    invariant_fns: &invariant_contract.invariant_fns,
+                    invariant_replay: InvariantReplayOptions {
+                        check_interval: invariant_config.check_interval,
+                        call_after_invariant,
+                        is_optimization,
+                    },
+                    dynamic: Some(&dynamic),
+                },
+            ) {
+                Ok(observation) => {
+                    let replayed = observation.replayed;
+                    let skipped = observation.skipped + observation.unmatched;
+                    let Ok(mut observations) = minimize.observations.lock() else {
+                        self.result
+                            .single_fail(Some("minimize observations lock poisoned".to_string()));
+                        return self.result;
+                    };
+                    observations.push(FuzzMinimizeObservation { target, observation });
+                    self.result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
+                }
+                Err(e) => self.result.single_fail(Some(e.to_string())),
+            }
+            return self.result;
+        }
 
         let progress = start_fuzz_progress(
             self.cr.progress,
@@ -3381,12 +3458,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &func.name)
                 })
                 .or_else(|| fuzz_config.corpus.corpus_dir.clone());
+            let fuzzed_address = self.address;
             return self.run_showmap(
                 func,
                 corpus_dir,
                 &showmap,
                 ShowmapReplayTarget {
-                    fuzzed_function: Some(func),
+                    stateless: Some(StatelessReplayTarget {
+                        function: func,
+                        address: fuzzed_address,
+                    }),
                     fuzz_fail_on_revert: fuzz_config.fail_on_revert,
                     fuzzed_contracts: None,
                     invariant_address: None,
@@ -3395,6 +3476,57 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     dynamic: None,
                 },
             );
+        }
+
+        if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.as_ref() {
+            let target = self.fuzz_minimize_target_id(&func.signature());
+            let Ok(mut evm_edge_indices_by_target) = minimize.evm_edge_indices.lock() else {
+                self.result.single_fail(Some("minimize edge index lock poisoned".to_string()));
+                return self.result;
+            };
+            let evm_edge_indices = evm_edge_indices_by_target
+                .entry(target.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(Default::default())))
+                .clone();
+            drop(evm_edge_indices_by_target);
+            let Ok(mut evm_edge_indices) = evm_edge_indices.lock() else {
+                self.result.single_fail(Some("minimize edge index lock poisoned".to_string()));
+                return self.result;
+            };
+            match replay_sequence_for_minimization(
+                self.executor.as_ref(),
+                MinimizationReplayInput {
+                    sequence: minimize.input.as_ref(),
+                    evm_edge_indices: &mut evm_edge_indices,
+                    corpus: &fuzz_config.corpus,
+                },
+                ShowmapReplayTarget {
+                    stateless: Some(StatelessReplayTarget {
+                        function: func,
+                        address: self.address,
+                    }),
+                    fuzz_fail_on_revert: fuzz_config.fail_on_revert,
+                    fuzzed_contracts: None,
+                    invariant_address: None,
+                    invariant_fns: &[],
+                    invariant_replay: InvariantReplayOptions::default(),
+                    dynamic: None,
+                },
+            ) {
+                Ok(observation) => {
+                    let replayed = observation.replayed;
+                    let skipped = observation.skipped + observation.unmatched;
+                    let Ok(mut observations) = minimize.observations.lock() else {
+                        self.result
+                            .single_fail(Some("minimize observations lock poisoned".to_string()));
+                        return self.result;
+                    };
+                    observations.push(FuzzMinimizeObservation { target, observation });
+                    self.result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
+                }
+                Err(e) => self.result.single_fail(Some(e.to_string())),
+            }
+            return self.result;
         }
 
         // Load persisted counterexample, if any.

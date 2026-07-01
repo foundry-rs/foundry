@@ -1,6 +1,6 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
-    corpus::{GlobalCorpusMetrics, WorkerCorpus},
+    corpus::{GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget, WorkerCorpus},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -568,15 +568,18 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 call_details: CallDetails { target: Default::default(), calldata, value },
             });
 
+        let replay_target = ReplayTarget {
+            stateless: Some(StatelessReplayTarget { function: func, address }),
+            fuzzed_contracts: None,
+            dynamic: None,
+        };
         let mut corpus = WorkerCorpus::new(
             worker_id,
             self.config.corpus.clone(),
             strategy.boxed(),
             // Master worker replays the persisted corpus using the executor
             (worker_id == 0).then_some(&self.executor_f),
-            Some(func),
-            None, // fuzzed_contracts for invariant tests
-            None, // dynamic target ctx (invariant-only)
+            replay_target,
         )?;
         let mut executor = self.executor_f.clone();
 
@@ -655,9 +658,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     corpus.sync(
                         self.num_workers,
                         &executor,
-                        Some(func),
-                        None,
-                        None,
+                        replay_target,
                         &shared_state.global_corpus_metrics,
                     )?;
                     trace!("finished corpus sync in {:?}", timer.elapsed());

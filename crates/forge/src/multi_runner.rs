@@ -26,10 +26,13 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::RevertDecoder,
-    executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
+    executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fork::CreateFork,
-    fuzz::strategies::{EnumBounds, LiteralsDictionary},
-    inspectors::CheatsConfig,
+    fuzz::{
+        BasicTxDetails,
+        strategies::{EnumBounds, LiteralsDictionary},
+    },
+    inspectors::{CheatsConfig, EdgeIndexMap},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceRequirements},
 };
@@ -42,7 +45,7 @@ use std::{
     collections::BTreeMap,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
+    sync::{Arc, Mutex, mpsc},
     time::Instant,
 };
 
@@ -373,6 +376,30 @@ pub struct ShowmapConfig {
     pub emit_files: bool,
 }
 
+pub type FuzzMinimizeEdgeIndices = Arc<Mutex<BTreeMap<String, Arc<Mutex<EdgeIndexMap>>>>>;
+
+/// CLI-only options that switch fuzz/invariant tests into single-entry replay
+/// mode for corpus minimization.
+#[derive(Clone, Debug)]
+pub struct FuzzMinimizeConfig {
+    /// Entry to replay.
+    pub input: Arc<[BasicTxDetails]>,
+    /// Shared edge-index assignments for all candidate replays in this minimization invocation,
+    /// namespaced by matched target.
+    pub evm_edge_indices: FuzzMinimizeEdgeIndices,
+    /// Shared replay observations collected from matched fuzz/invariant tests.
+    pub observations: Arc<Mutex<Vec<FuzzMinimizeObservation>>>,
+}
+
+/// Replay observation for one matched minimization target.
+#[derive(Clone, Debug)]
+pub struct FuzzMinimizeObservation {
+    /// Stable target identity for this minimization run.
+    pub target: String,
+    /// Replay result for this target.
+    pub observation: ReplayObservation,
+}
+
 #[derive(Clone, Debug)]
 pub struct SymbolicArtifactReplayConfig {
     /// Artifact payload to replay.
@@ -421,6 +448,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     /// When set, fuzz/invariant tests run in corpus replay mode and emit
     /// AFL-`afl-showmap`-style files instead of running a campaign.
     pub showmap: Option<ShowmapConfig>,
+    /// When set, fuzz/invariant tests replay one candidate input and record minimization facts.
+    pub fuzz_minimize: Option<FuzzMinimizeConfig>,
     /// Run only fuzz and invariant tests.
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
@@ -554,6 +583,8 @@ pub struct MultiContractRunnerBuilder {
     pub multi_network: MultiNetworkConfig,
     /// Showmap replay mode (CLI-only, off by default).
     pub showmap: Option<ShowmapConfig>,
+    /// Fuzz minimization replay mode (CLI-only, off by default).
+    pub fuzz_minimize: Option<FuzzMinimizeConfig>,
     /// Run only fuzz and invariant tests.
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
@@ -578,6 +609,7 @@ impl MultiContractRunnerBuilder {
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
+            fuzz_minimize: None,
             fuzz_only: false,
             fuzz_failure_replay: false,
             symbolic_artifact_replay: None,
@@ -586,6 +618,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
         self.showmap = showmap;
+        self
+    }
+
+    pub fn with_fuzz_minimize(mut self, fuzz_minimize: Option<FuzzMinimizeConfig>) -> Self {
+        self.fuzz_minimize = fuzz_minimize;
         self
     }
 
@@ -796,6 +833,7 @@ impl MultiContractRunnerBuilder {
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
                 showmap: self.showmap,
+                fuzz_minimize: self.fuzz_minimize,
                 fuzz_only: self.fuzz_only,
                 fuzz_failure_replay: self.fuzz_failure_replay,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,

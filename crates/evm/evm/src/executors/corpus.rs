@@ -290,8 +290,25 @@ struct ReplayOutcome {
 }
 
 #[derive(Clone, Copy)]
+pub struct StatelessReplayTarget<'a> {
+    pub function: &'a Function,
+    pub address: Address,
+}
+
+impl StatelessReplayTarget<'_> {
+    fn can_replay(self, tx: &BasicTxDetails) -> bool {
+        tx.call_details.target == self.address
+            && tx
+                .call_details
+                .calldata
+                .get(..4)
+                .is_some_and(|selector| self.function.selector() == selector)
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct ReplayTarget<'a> {
-    pub(crate) fuzzed_function: Option<&'a Function>,
+    pub(crate) stateless: Option<StatelessReplayTarget<'a>>,
     pub(crate) fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
     pub(crate) dynamic: Option<&'a DynamicTargetCtx<'a>>,
 }
@@ -401,9 +418,7 @@ impl WorkerCorpusSeed {
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
         config: &FuzzCorpusConfig,
         executor: Option<&Executor<FEN>>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
     ) -> Result<Self> {
         let mut seed = Self::empty(config).with_optimization_state(config);
         let Some(corpus_dir) = &config.corpus_dir else {
@@ -417,7 +432,7 @@ impl WorkerCorpusSeed {
             seed.metrics.corpus_count += 1;
         }
 
-        if fuzzed_contracts.is_some() && has_legacy_invariant_corpus_dirs(corpus_dir) {
+        if target.fuzzed_contracts.is_some() && has_legacy_invariant_corpus_dirs(corpus_dir) {
             let _ = sh_warn!(
                 "Ignoring legacy invariant corpus directories under {}; new corpus entries are persisted under the contract-level corpus directory.",
                 corpus_dir.display(),
@@ -429,7 +444,6 @@ impl WorkerCorpusSeed {
         };
         let mut seen_entries =
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
-        let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
         for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
             // A corrupt or truncated corpus file (e.g. a process killed mid-write, since entries
             // are persisted non-atomically) must not abort the whole campaign startup: skip it
@@ -739,7 +753,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     let mut created: Vec<Address> = Vec::new();
 
     for tx in tx_seq {
-        if WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
+        if WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
             let mut call_result = execute_tx(executor, tx)?;
             cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
             let (new_coverage, is_edge) = call_result.merge_all_coverage(
@@ -779,7 +793,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             cmp_seq.push(Vec::new());
             failed_replays += 1;
 
-            if reject_unmatched_function && target.fuzzed_function.is_some() {
+            if reject_unmatched_function && target.stateless.is_some() {
                 rollback_replay_created(target.fuzzed_contracts, created);
                 return Ok(ReplayOutcome {
                     keep_entry: false,
@@ -809,18 +823,10 @@ impl WorkerCorpus {
         tx_generator: BoxedStrategy<BasicTxDetails>,
         // Only required by master worker (id = 0) to replay existing corpus.
         executor: Option<&Executor<FEN>>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
     ) -> Result<Self> {
         let seed = if id == 0 {
-            WorkerCorpusSeed::load_from_disk(
-                &config,
-                executor,
-                fuzzed_function,
-                fuzzed_contracts,
-                dynamic,
-            )?
+            WorkerCorpusSeed::load_from_disk(&config, executor, target)?
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
@@ -1730,9 +1736,7 @@ impl WorkerCorpus {
     fn calibrate<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<&DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
     ) -> Result<()> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(());
@@ -1741,7 +1745,6 @@ impl WorkerCorpus {
 
         let mut executor = executor.clone();
         for (entry, tx_seq) in self.load_sync_corpus()? {
-            let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic };
             let coverage = ReplayCoverage {
                 history_map: &mut self.history_map,
                 edge_indices: &mut self.edge_indices,
@@ -1937,16 +1940,14 @@ impl WorkerCorpus {
         &mut self,
         num_workers: usize,
         executor: &Executor<FEN>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<&DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
         global_corpus_metrics: &GlobalCorpusMetrics,
     ) -> Result<()> {
         trace!(target: "corpus", "syncing");
 
         self.sync_metrics(global_corpus_metrics);
 
-        self.calibrate(executor, fuzzed_function, fuzzed_contracts, dynamic)?;
+        self.calibrate(executor, target)?;
         if self.id == 0 {
             self.export_to_workers(num_workers)?;
         } else {
@@ -1966,16 +1967,11 @@ impl WorkerCorpus {
     /// Helper to check if a tx can be replayed.
     pub(crate) fn can_replay_tx(
         tx: &BasicTxDetails,
-        fuzzed_function: Option<&Function>,
+        stateless: Option<StatelessReplayTarget<'_>>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> bool {
         fuzzed_contracts.is_some_and(|contracts| contracts.targets().can_replay(tx))
-            || fuzzed_function.is_some_and(|function| {
-                tx.call_details
-                    .calldata
-                    .get(..4)
-                    .is_some_and(|selector| function.selector() == selector)
-            })
+            || stateless.is_some_and(|target| target.can_replay(tx))
     }
 }
 
@@ -2598,9 +2594,7 @@ mod tests {
             corpus_config(corpus_root),
             Just(basic_tx()).boxed(),
             None,
-            None,
-            None,
-            None,
+            ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )
         .unwrap();
 
