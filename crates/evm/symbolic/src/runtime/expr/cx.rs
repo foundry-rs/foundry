@@ -21,40 +21,17 @@ impl SymCx {
             SymExprKind::Var(name) => self.var_symbol(name),
             SymExprKind::GasLeft(id) => self.gas_left(id),
             SymExprKind::Keccak { name, len, bytes } => {
-                let len = self.intern_expr(len);
-                let bytes = bytes.iter().cloned().map(|byte| self.intern_expr(byte)).collect();
-                self.keccak_symbol(name, len, bytes)
+                self.keccak_symbol(name, len, bytes.iter().cloned().collect())
             }
             SymExprKind::Hash { name, algorithm, bytes } => {
-                let bytes = bytes.iter().cloned().map(|byte| self.intern_expr(byte)).collect();
-                self.hash_symbol(name, algorithm, bytes)
+                self.hash_symbol(name, algorithm, bytes.iter().cloned().collect())
             }
-            SymExprKind::Not(value) => {
-                let value = self.intern_expr(value);
-                self.make_expr(SymExprKind::Not(value))
-            }
-            SymExprKind::Op(op, left, right) => {
-                let left = self.intern_expr(left);
-                let right = self.intern_expr(right);
-                self.make_expr(SymExprKind::Op(op, left, right))
-            }
-            SymExprKind::AddMod { left, right, modulus } => {
-                let left = self.intern_expr(left);
-                let right = self.intern_expr(right);
-                let modulus = self.intern_expr(modulus);
-                self.make_expr(SymExprKind::AddMod { left, right, modulus })
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                let left = self.intern_expr(left);
-                let right = self.intern_expr(right);
-                let modulus = self.intern_expr(modulus);
-                self.make_expr(SymExprKind::MulMod { left, right, modulus })
-            }
+            SymExprKind::Not(value) => self.not(value),
+            SymExprKind::Op(op, left, right) => self.op(op, left, right),
+            SymExprKind::AddMod { left, right, modulus } => self.addmod(left, right, modulus),
+            SymExprKind::MulMod { left, right, modulus } => self.mulmod(left, right, modulus),
             SymExprKind::Ite(condition, then_expr, else_expr) => {
-                let condition = self.intern_bool(condition);
-                let then_expr = self.intern_expr(then_expr);
-                let else_expr = self.intern_expr(else_expr);
-                self.make_expr(SymExprKind::Ite(condition, then_expr, else_expr))
+                self.ite(condition, then_expr, else_expr)
             }
         }
     }
@@ -62,44 +39,10 @@ impl SymCx {
     pub(crate) fn intern_bool(&mut self, expr: SymBoolExpr) -> SymBoolExpr {
         match expr.into_kind() {
             SymBoolExprKind::Const(value) => self.bool_constant(value),
-            SymBoolExprKind::Not(value) => {
-                let value = self.intern_bool(value);
-                self.intern_bool_peepholed(value.not(), |kind| {
-                    matches!(kind, SymBoolExprKind::Not(_))
-                })
-            }
-            SymBoolExprKind::And(values) => {
-                let values = values.iter().cloned().map(|value| self.intern_bool(value)).collect();
-                self.intern_bool_peepholed(SymBoolExpr::and(values), |kind| {
-                    matches!(kind, SymBoolExprKind::And(_))
-                })
-            }
-            SymBoolExprKind::Eq(left, right) => {
-                let left = self.intern_expr(left);
-                let right = self.intern_expr(right);
-                self.intern_bool_peepholed(SymBoolExpr::eq(left, right), |kind| {
-                    matches!(kind, SymBoolExprKind::Eq(_, _))
-                })
-            }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                let left = self.intern_expr(left);
-                let right = self.intern_expr(right);
-                self.intern_bool_peepholed(SymBoolExpr::cmp(op, left, right), |kind| {
-                    matches!(kind, SymBoolExprKind::Cmp(_, _, _))
-                })
-            }
-        }
-    }
-
-    fn intern_bool_peepholed(
-        &mut self,
-        expr: SymBoolExpr,
-        terminal: impl FnOnce(&SymBoolExprKind) -> bool,
-    ) -> SymBoolExpr {
-        if terminal(expr.kind()) {
-            self.bool_from_kind(expr.into_kind())
-        } else {
-            self.intern_bool(expr)
+            SymBoolExprKind::Not(value) => self.not_bool(value),
+            SymBoolExprKind::And(values) => self.and(values.iter().cloned().collect()),
+            SymBoolExprKind::Eq(left, right) => self.eq(left, right),
+            SymBoolExprKind::Cmp(op, left, right) => self.cmp(op, left, right),
         }
     }
 
@@ -139,19 +82,137 @@ impl SymCx {
     }
 
     pub(crate) fn not(&mut self, value: SymExpr) -> SymExpr {
-        self.intern_expr(SymExpr::not(value))
+        let value = self.intern_expr(value);
+        match value.kind() {
+            SymExprKind::Const(value) => self.constant(!*value),
+            SymExprKind::Not(value) => value.clone(),
+            _ => self.make_expr(SymExprKind::Not(value)),
+        }
     }
 
     pub(crate) fn op(&mut self, op: SymExprOp, left: SymExpr, right: SymExpr) -> SymExpr {
-        self.intern_expr(SymExpr::op(op, left, right))
+        let left = self.intern_expr(left);
+        let right = self.intern_expr(right);
+        match op {
+            SymExprOp::Add => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (SymExprKind::Const(value), _) if value.is_zero() => right,
+                (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+            SymExprOp::Sub => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                _ if left == right => self.zero(),
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+            SymExprOp::Mul => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (SymExprKind::Const(value), _) | (_, SymExprKind::Const(value))
+                    if value.is_zero() =>
+                {
+                    self.zero()
+                }
+                (SymExprKind::Const(value), _) if *value == U256::from(1) => right,
+                (_, SymExprKind::Const(value)) if *value == U256::from(1) => left,
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+            SymExprOp::UDiv | SymExprOp::SDiv => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (_, SymExprKind::Const(value)) if value.is_zero() => self.zero(),
+                (_, SymExprKind::Const(value)) if *value == U256::from(1) => left,
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+            SymExprOp::URem | SymExprOp::SRem => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (_, SymExprKind::Const(value)) if value.is_zero() => self.zero(),
+                (_, SymExprKind::Const(value)) if *value == U256::from(1) => self.zero(),
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+            SymExprOp::And => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (SymExprKind::Const(value), _) | (_, SymExprKind::Const(value))
+                    if value.is_zero() =>
+                {
+                    self.zero()
+                }
+                (SymExprKind::Const(value), _) if *value == U256::MAX => right,
+                (_, SymExprKind::Const(value)) if *value == U256::MAX => left,
+                _ if left == right => left,
+                (SymExprKind::Const(mask), _) => self.and_const(right, *mask),
+                (_, SymExprKind::Const(mask)) => self.and_const(left, *mask),
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+            SymExprOp::Or | SymExprOp::Xor => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (SymExprKind::Const(value), _) if value.is_zero() => right,
+                (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+            SymExprOp::Shl | SymExprOp::Shr => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                (SymExprKind::Const(value), _) if value.is_zero() => self.zero(),
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+            SymExprOp::Sar => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    self.constant(op.eval(*left_value, *right_value))
+                }
+                (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                _ => self.make_expr(SymExprKind::Op(op, left, right)),
+            },
+        }
     }
 
     pub(crate) fn addmod(&mut self, left: SymExpr, right: SymExpr, modulus: SymExpr) -> SymExpr {
-        self.intern_expr(SymExpr::addmod(left, right, modulus))
+        let left = self.intern_expr(left);
+        let right = self.intern_expr(right);
+        let modulus = self.intern_expr(modulus);
+        match (left.kind(), right.kind(), modulus.kind()) {
+            (_, _, SymExprKind::Const(modulus))
+                if modulus.is_zero() || *modulus == U256::from(1) =>
+            {
+                self.zero()
+            }
+            (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
+                self.constant(left.add_mod(*right, *modulus))
+            }
+            _ => self.make_expr(SymExprKind::AddMod { left, right, modulus }),
+        }
     }
 
     pub(crate) fn mulmod(&mut self, left: SymExpr, right: SymExpr, modulus: SymExpr) -> SymExpr {
-        self.intern_expr(SymExpr::mulmod(left, right, modulus))
+        let left = self.intern_expr(left);
+        let right = self.intern_expr(right);
+        let modulus = self.intern_expr(modulus);
+        match (left.kind(), right.kind(), modulus.kind()) {
+            (_, _, SymExprKind::Const(modulus))
+                if modulus.is_zero() || *modulus == U256::from(1) =>
+            {
+                self.zero()
+            }
+            (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
+                self.constant(left.mul_mod(*right, *modulus))
+            }
+            _ => self.make_expr(SymExprKind::MulMod { left, right, modulus }),
+        }
     }
 
     pub(crate) fn ite(
@@ -160,7 +221,15 @@ impl SymCx {
         then_expr: SymExpr,
         else_expr: SymExpr,
     ) -> SymExpr {
-        self.intern_expr(SymExpr::ite(condition, then_expr, else_expr))
+        let condition = self.intern_bool(condition);
+        let then_expr = self.intern_expr(then_expr);
+        let else_expr = self.intern_expr(else_expr);
+        match condition.as_const() {
+            Some(true) => then_expr,
+            Some(false) => else_expr,
+            None if then_expr == else_expr => then_expr,
+            None => self.make_expr(SymExprKind::Ite(condition, then_expr, else_expr)),
+        }
     }
 
     pub(crate) fn bool_word(&mut self, value: SymBoolExpr) -> SymExpr {
@@ -175,6 +244,8 @@ impl SymCx {
         len: SymExpr,
         bytes: Vec<SymExpr>,
     ) -> SymExpr {
+        let len = self.intern_expr(len);
+        let bytes = bytes.into_iter().map(|byte| self.intern_expr(byte)).collect::<Vec<_>>();
         self.make_expr(SymExprKind::Keccak { name, len, bytes: bytes.into() })
     }
 
@@ -184,6 +255,7 @@ impl SymCx {
         algorithm: &'static str,
         bytes: Vec<SymExpr>,
     ) -> SymExpr {
+        let bytes = bytes.into_iter().map(|byte| self.intern_expr(byte)).collect::<Vec<_>>();
         self.make_expr(SymExprKind::Hash { name, algorithm, bytes: bytes.into() })
     }
 
@@ -211,11 +283,166 @@ impl SymCx {
     }
 
     pub(crate) fn eq(&mut self, left: SymExpr, right: SymExpr) -> SymBoolExpr {
-        self.intern_bool(SymBoolExpr::eq(left, right))
+        let left = self.intern_expr(left);
+        let right = self.intern_expr(right);
+        match (left.kind(), right.kind()) {
+            _ if left == right => self.bool_constant(true),
+            (SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                self.bool_constant(left == right)
+            }
+            (_, SymExprKind::Const(right_value)) => {
+                if let Some(condition) = self.bool_word_eq_const(&left, *right_value) {
+                    return condition;
+                }
+                if let Some(left_value) = left.known_word() {
+                    return self.bool_constant(left_value == *right_value);
+                }
+                self.bool_from_kind(SymBoolExprKind::Eq(left, right))
+            }
+            (SymExprKind::Const(left_value), _) => {
+                if let Some(condition) = self.bool_word_eq_const(&right, *left_value) {
+                    return condition;
+                }
+                if let Some(right_value) = right.known_word() {
+                    return self.bool_constant(*left_value == right_value);
+                }
+                self.bool_from_kind(SymBoolExprKind::Eq(left, right))
+            }
+            (
+                SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
+                SymExprKind::Keccak { len: right_len, bytes: right_bytes, .. },
+            ) if left_bytes.len() == right_bytes.len() => {
+                let mut conditions = vec![self.eq(left_len.clone(), right_len.clone())];
+                conditions.extend(
+                    left_bytes
+                        .iter()
+                        .cloned()
+                        .zip(right_bytes.iter().cloned())
+                        .map(|(left, right)| self.eq(left, right)),
+                );
+                self.and(conditions)
+            }
+            (
+                SymExprKind::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
+                SymExprKind::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
+            ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
+                let conditions = left_bytes
+                    .iter()
+                    .cloned()
+                    .zip(right_bytes.iter().cloned())
+                    .map(|(left, right)| self.eq(left, right))
+                    .collect();
+                self.and(conditions)
+            }
+            _ => self.bool_from_kind(SymBoolExprKind::Eq(left, right)),
+        }
     }
 
     pub(crate) fn cmp(&mut self, op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> SymBoolExpr {
-        self.intern_bool(SymBoolExpr::cmp(op, left, right))
+        let left = self.intern_expr(left);
+        let right = self.intern_expr(right);
+        match (op, left.kind(), right.kind()) {
+            (op, _, _) if left == right => {
+                self.bool_constant(matches!(op, SymBoolExprOp::Ule | SymBoolExprOp::Uge))
+            }
+            (op, SymExprKind::Const(left), SymExprKind::Const(right)) => {
+                self.bool_constant(op.eval(*left, *right))
+            }
+            (SymBoolExprOp::Ugt, SymExprKind::Const(value), _) if value.is_zero() => {
+                self.bool_constant(false)
+            }
+            (SymBoolExprOp::Ule, SymExprKind::Const(value), _) if value.is_zero() => {
+                self.bool_constant(true)
+            }
+            (SymBoolExprOp::Ult, _, SymExprKind::Const(value)) if value.is_zero() => {
+                self.bool_constant(false)
+            }
+            (SymBoolExprOp::Uge, _, SymExprKind::Const(value)) if value.is_zero() => {
+                self.bool_constant(true)
+            }
+            (SymBoolExprOp::Ult, SymExprKind::Const(value), _) if *value == U256::MAX => {
+                self.bool_constant(false)
+            }
+            (SymBoolExprOp::Uge, SymExprKind::Const(value), _) if *value == U256::MAX => {
+                self.bool_constant(true)
+            }
+            (SymBoolExprOp::Ugt, _, SymExprKind::Const(value)) if *value == U256::MAX => {
+                self.bool_constant(false)
+            }
+            (SymBoolExprOp::Ule, _, SymExprKind::Const(value)) if *value == U256::MAX => {
+                self.bool_constant(true)
+            }
+            _ => self.bool_from_kind(SymBoolExprKind::Cmp(op, left, right)),
+        }
+    }
+
+    pub(crate) fn and(&mut self, values: Vec<SymBoolExpr>) -> SymBoolExpr {
+        let mut out = Vec::new();
+        for value in values {
+            let value = self.intern_bool(value);
+            match value.kind() {
+                SymBoolExprKind::Const(true) => {}
+                SymBoolExprKind::Const(false) => return self.bool_constant(false),
+                SymBoolExprKind::And(values) => out.extend(values.iter().cloned()),
+                _ => out.push(value),
+            }
+        }
+        if out.is_empty() {
+            self.bool_constant(true)
+        } else if out.len() == 1 {
+            out.pop().expect("single item exists")
+        } else {
+            self.bool_from_kind(SymBoolExprKind::And(out.into()))
+        }
+    }
+
+    pub(crate) fn not_bool(&mut self, value: SymBoolExpr) -> SymBoolExpr {
+        let value = self.intern_bool(value);
+        match value.kind() {
+            SymBoolExprKind::Const(value) => self.bool_constant(!*value),
+            SymBoolExprKind::Not(value) => value.clone(),
+            _ => self.bool_from_kind(SymBoolExprKind::Not(value)),
+        }
+    }
+
+    fn and_const(&mut self, expr: SymExpr, mask: U256) -> SymExpr {
+        if mask.is_zero() {
+            return self.zero();
+        }
+        if mask == U256::MAX {
+            return expr;
+        }
+
+        match expr.kind() {
+            SymExprKind::Op(SymExprOp::And, left, right) => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(value), _) if *value == mask => {
+                    self.and_const(right.clone(), mask)
+                }
+                (_, SymExprKind::Const(value)) if *value == mask => {
+                    self.and_const(left.clone(), mask)
+                }
+                _ if left == right => self.and_const(left.clone(), mask),
+                _ => {
+                    let mask = self.constant(mask);
+                    self.make_expr(SymExprKind::Op(SymExprOp::And, expr, mask))
+                }
+            },
+            _ => {
+                let mask = self.constant(mask);
+                self.make_expr(SymExprKind::Op(SymExprOp::And, expr, mask))
+            }
+        }
+    }
+
+    fn bool_word_eq_const(&mut self, word: &SymExpr, value: U256) -> Option<SymBoolExpr> {
+        let condition = word.bool_word_condition()?;
+        Some(if value.is_zero() {
+            self.not_bool(condition)
+        } else if value == U256::from(1) {
+            condition
+        } else {
+            self.bool_constant(false)
+        })
     }
 
     fn bool_from_kind(&mut self, expr: SymBoolExprKind) -> SymBoolExpr {
