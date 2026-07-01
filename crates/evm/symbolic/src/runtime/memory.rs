@@ -93,7 +93,7 @@ impl SymMemory {
         if left == right {
             left
         } else {
-            let condition = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, left.clone(), right.clone());
+            let condition = SymBoolExpr::cmp(cx, SymCmpOp::Ult, left.clone(), right.clone());
             SymExpr::ite(cx, condition, right, left)
         }
     }
@@ -517,7 +517,7 @@ impl SymMemory {
         existing: SymExpr,
     ) -> SymExpr {
         let idx = SymExpr::constant(cx, U256::from(idx));
-        let condition = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx, size.clone());
+        let condition = SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx, size.clone());
         SymExpr::ite(cx, condition, source, existing)
     }
 
@@ -621,11 +621,11 @@ impl SymMemory {
         let mut guards = Vec::new();
         if let Some(output_size) = output_size {
             let idx_expr = SymExpr::constant(cx, U256::from(idx));
-            guards.push(SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx_expr, output_size.clone()));
+            guards.push(SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx_expr, output_size.clone()));
         }
         if return_data.has_symbolic_len() {
             let idx_expr = SymExpr::constant(cx, U256::from(idx));
-            guards.push(SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, idx_expr, return_data.len_expr()));
+            guards.push(SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx_expr, return_data.len_expr()));
         }
         let guard = SymBoolExpr::and(cx, guards);
         match guard.as_const() {

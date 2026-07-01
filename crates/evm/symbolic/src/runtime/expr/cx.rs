@@ -119,8 +119,8 @@ mod tests {
         let x = SymExpr::var(&mut cx, "x");
 
         let upper = SymExpr::constant(&mut cx, U256::from(7));
-        let first = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), upper.clone());
-        let second = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, upper);
+        let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), upper.clone());
+        let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, upper);
 
         assert!(first.ptr_eq(&second));
     }

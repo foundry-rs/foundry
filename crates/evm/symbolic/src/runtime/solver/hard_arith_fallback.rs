@@ -334,7 +334,9 @@ impl MaskHints {
                     self.apply_bool(var, value, false);
                 }
             }
-            SymBoolExprKind::Eq(left, right) => self.apply_equality(var, left, right, inverted),
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                self.apply_equality(var, left, right, inverted)
+            }
             SymBoolExprKind::Cmp(_, _, _) | SymBoolExprKind::And(_) => {}
         }
     }

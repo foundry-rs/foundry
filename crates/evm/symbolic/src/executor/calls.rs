@@ -1261,7 +1261,7 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
-        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Uge, balance, value);
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
@@ -1320,7 +1320,7 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
-        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Uge, balance, value);
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {

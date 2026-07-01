@@ -126,7 +126,7 @@ fn comparison_helpers_use_evm_operand_order() {
     state.stack.push(SymExpr::constant(&mut cx, U256::from(2))).unwrap();
     state.stack.push(SymExpr::constant(&mut cx, U256::from(10))).unwrap();
 
-    state.cmp_word(&mut cx, SymBoolExprOp::Ult).unwrap();
+    state.cmp_word(&mut cx, SymCmpOp::Ult).unwrap();
 
     assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(&mut cx, U256::ZERO));
 }
@@ -165,7 +165,7 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
     let mut state = empty_state(&mut cx);
     let exponent = SymExpr::var(&mut cx, "exponent");
     let five = SymExpr::constant(&mut cx, U256::from(5));
-    let bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, exponent.clone(), five);
+    let bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, exponent.clone(), five);
     state.constraints.push(bound);
     state.stack.push(exponent).unwrap();
     state.stack.push(SymExpr::constant(&mut cx, U256::from(3))).unwrap();
@@ -1710,7 +1710,7 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
     let size = SymExpr::var(&mut cx, "size");
 
     let five = SymExpr::constant(&mut cx, U256::from(5));
-    let constraint = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, size.clone(), five);
+    let constraint = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, size.clone(), five);
     state.constraints.push(constraint);
 
     assert_eq!(state.upper_bound_usize(&mut cx, &size), Some(4));
@@ -2393,8 +2393,8 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
     let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, var.clone(), var.clone());
     let sender_word = SymExpr::constant(&mut cx, msg_sender);
     let product_below_sender =
-        SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, product, sender_word.clone());
-    let above_sender = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, var.clone(), sender_word);
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product, sender_word.clone());
+    let above_sender = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, var.clone(), sender_word);
     let mask_800 = SymExpr::constant(&mut cx, U256::from(0x800));
     let masked_800 = SymExpr::binop(&mut cx, SymExprBinOp::And, var.clone(), mask_800);
     let zero = SymExpr::zero(&mut cx);
@@ -2458,7 +2458,7 @@ fn bool_word_equality_simplifies_to_condition() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
     let y = SymExpr::var(&mut cx, "y");
-    let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, y);
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
     let word = SymExpr::bool_word(&mut cx, condition.clone());
 
     let one = SymExpr::one(&mut cx);
@@ -2479,7 +2479,7 @@ fn inverted_bool_word_equality_simplifies_to_condition() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
     let y = SymExpr::var(&mut cx, "y");
-    let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, y);
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
     let zero = SymExpr::zero(&mut cx);
     let one = SymExpr::one(&mut cx);
     let word = SymExpr::ite(&mut cx, condition.clone(), zero, one);
@@ -2497,22 +2497,22 @@ fn bool_comparison_folds_reflexive_operands() {
     let mut cx = SymCx::new();
 
     let x = SymExpr::var(&mut cx, "x");
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), x.clone());
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), x.clone());
     let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), x.clone());
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), x.clone());
     let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, x.clone(), x.clone());
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x.clone(), x.clone());
     let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, x.clone(), x.clone());
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x.clone(), x.clone());
     let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Slt, x.clone(), x.clone());
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Slt, x.clone(), x.clone());
     let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Sgt, x.clone(), x);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Sgt, x.clone(), x);
     let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
 }
@@ -2523,42 +2523,42 @@ fn bool_comparison_folds_unsigned_boundaries() {
 
     let zero = SymExpr::zero(&mut cx);
     let x = SymExpr::var(&mut cx, "x");
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, zero, x);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, zero, x);
     let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
     let zero = SymExpr::zero(&mut cx);
     let x = SymExpr::var(&mut cx, "x");
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, zero, x);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, zero, x);
     let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
     let x = SymExpr::var(&mut cx, "x");
     let zero = SymExpr::zero(&mut cx);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, zero);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, zero);
     let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
     let x = SymExpr::var(&mut cx, "x");
     let zero = SymExpr::zero(&mut cx);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, x, zero);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x, zero);
     let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
     let max = SymExpr::constant(&mut cx, U256::MAX);
     let x = SymExpr::var(&mut cx, "x");
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, max, x);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, max, x);
     let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
     let max = SymExpr::constant(&mut cx, U256::MAX);
     let x = SymExpr::var(&mut cx, "x");
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, max, x);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, max, x);
     let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
     let x = SymExpr::var(&mut cx, "x");
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x, max);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x, max);
     let expected = SymBoolExpr::constant(&mut cx, false);
     assert_eq!(actual, expected);
     let x = SymExpr::var(&mut cx, "x");
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let actual = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, x, max);
+    let actual = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x, max);
     let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
 }
@@ -2658,7 +2658,7 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
     let denominator = SymExpr::var(&mut cx, "denominator");
     let div = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, numerator, denominator);
     let zero = SymExpr::zero(&mut cx);
-    let original = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, div, zero);
+    let original = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, div, zero);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
     assert!(!normalized.smt().contains("bvudiv"));
@@ -2687,7 +2687,7 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     let x = SymExpr::var(&mut cx, "x");
     let y = SymExpr::var(&mut cx, "y");
     let ten = SymExpr::constant(&mut cx, U256::from(10));
-    let a = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), ten);
+    let a = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), ten);
     let three = SymExpr::constant(&mut cx, U256::from(3));
     let b = SymBoolExpr::eq(&mut cx, y.clone(), three);
     let grouped = vec![
@@ -2835,7 +2835,7 @@ fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
     let zero = SymExpr::zero(&mut cx);
     let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
     let thousand = SymExpr::constant(&mut cx, U256::from(1000));
-    let upper_bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, a, thousand);
+    let upper_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, a, thousand);
     let constraints = vec![upper_bound, guard_is_false.clone()];
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
 
@@ -2920,7 +2920,7 @@ fn solver_normalizes_guarded_self_division_add_overflow_guard() {
     let checked_quotient = SymExpr::ite(&mut cx, a_is_zero, zero, quotient);
     let one = SymExpr::one(&mut cx);
     let sum = SymExpr::binop(&mut cx, SymExprBinOp::Add, one, checked_quotient.clone());
-    let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, checked_quotient, sum);
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, checked_quotient, sum);
 
     assert_eq!(
         normalize_bool_for_solver(&mut cx, condition),
@@ -2935,9 +2935,9 @@ fn solver_normalizes_checked_mul_guard_with_context_bound() {
     let scale = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u128));
     let guard = checked_mul_guard_word(&mut cx, &a, &scale);
     let zero = SymExpr::zero(&mut cx);
-    let a_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a.clone(), zero.clone());
+    let a_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a.clone(), zero.clone());
     let thousand = SymExpr::constant(&mut cx, U256::from(1000));
-    let above_thousand = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a, thousand).not(&mut cx);
+    let above_thousand = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a, thousand).not(&mut cx);
     let guard_is_zero = SymBoolExpr::eq(&mut cx, guard, zero);
     let constraints = vec![a_positive, above_thousand, guard_is_zero];
 
@@ -2961,7 +2961,7 @@ fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
         vec![SymBoolExpr::constant(&mut cx, false)]
     );
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, a, max);
+    let bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, a, max);
     assert_ne!(
         normalize_constraints_for_solver(&mut cx, &[bound, guard_is_zero.clone()]),
         vec![SymBoolExpr::constant(&mut cx, false)]
@@ -2997,7 +2997,7 @@ fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
     let zero = SymExpr::zero(&mut cx);
     let original = SymBoolExpr::eq(&mut cx, guard, zero);
     let max = SymExpr::constant(&mut cx, U256::MAX);
-    let bound = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, a, max);
+    let bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, a, max);
     let normalized = normalize_constraints_for_solver(&mut cx, &[bound, original.clone()]);
 
     assert!(!matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)));
@@ -3022,7 +3022,7 @@ fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
     let denominator = SymExpr::binop(&mut cx, SymExprBinOp::And, denominator_raw, high_mask);
     let b = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, numerator, denominator);
     let sum = SymExpr::binop(&mut cx, SymExprBinOp::Add, a.clone(), b);
-    let condition = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a, sum);
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a, sum);
 
     assert_eq!(
         normalize_bool_for_solver(&mut cx, condition),
@@ -3036,7 +3036,7 @@ fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
     let a = SymExpr::var(&mut cx, "a");
     let b = SymExpr::var(&mut cx, "b");
     let sum = SymExpr::binop(&mut cx, SymExprBinOp::Add, a.clone(), b);
-    let original = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a, sum);
+    let original = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a, sum);
     let normalized = normalize_bool_for_solver(&mut cx, original.clone());
 
     assert_ne!(normalized, SymBoolExpr::constant(&mut cx, false));
@@ -3062,14 +3062,14 @@ fn solver_detects_monotonic_product_contradiction() {
     let u64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
     let rate = SymExpr::binop(&mut cx, SymExprBinOp::And, rate_word, u64_max);
     let zero = SymExpr::zero(&mut cx);
-    let ink_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, ink.clone(), zero.clone());
-    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
-    let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
-    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
+    let ink_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, ink.clone(), zero.clone());
+    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, art.clone(), ink.clone());
+    let spot_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, spot.clone(), zero);
+    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, rate.clone(), spot.clone());
     let left_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, ink, spot);
     let right_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, art, rate);
     let wrapping =
-        SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
 
     assert!(product_monotonic_unsat(&mut cx, &constraints));
@@ -3083,14 +3083,14 @@ fn solver_does_not_prune_wrapping_product_inequality() {
     let spot = SymExpr::var(&mut cx, "spot");
     let rate = SymExpr::var(&mut cx, "rate");
     let zero = SymExpr::zero(&mut cx);
-    let ink_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, ink.clone(), zero.clone());
-    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
-    let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
-    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
+    let ink_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, ink.clone(), zero.clone());
+    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, art.clone(), ink.clone());
+    let spot_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, spot.clone(), zero);
+    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, rate.clone(), spot.clone());
     let left_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, ink, spot);
     let right_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, art, rate);
     let wrapping =
-        SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
 
     assert!(!product_monotonic_unsat(&mut cx, &constraints));
@@ -3130,9 +3130,9 @@ fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
     let numerator = SymExpr::binop(&mut cx, SymExprBinOp::Mul, second.clone(), first.clone());
     let shares = SymExpr::binop(&mut cx, SymExprBinOp::UDiv, numerator, denominator);
     let zero = SymExpr::zero(&mut cx);
-    let first_nonzero = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, first, zero.clone());
-    let donation_nonzero = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, donation, zero.clone());
-    let second_nonzero = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, second, zero.clone());
+    let first_nonzero = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, first, zero.clone());
+    let donation_nonzero = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, donation, zero.clone());
+    let second_nonzero = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, second, zero.clone());
     let shares_zero = SymBoolExpr::eq(&mut cx, shares, zero);
     let constraints = vec![first_nonzero, donation_nonzero, second_nonzero, shares_zero];
 
@@ -3149,14 +3149,14 @@ fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
     let spot = SymExpr::var(&mut cx, "spot");
     let rate = SymExpr::var(&mut cx, "rate");
     let zero = SymExpr::zero(&mut cx);
-    let ink_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, ink.clone(), zero.clone());
-    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, art.clone(), ink.clone());
-    let spot_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, spot.clone(), zero);
-    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, rate.clone(), spot.clone());
+    let ink_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, ink.clone(), zero.clone());
+    let art_above_ink = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, art.clone(), ink.clone());
+    let spot_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, spot.clone(), zero);
+    let rate_above_spot = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, rate.clone(), spot.clone());
     let left_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, ink, spot);
     let right_product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, art, rate);
     let wrapping =
-        SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, left_product, right_product).not(&mut cx);
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, left_product, right_product).not(&mut cx);
     let constraints = vec![ink_positive, art_above_ink, spot_positive, rate_above_spot, wrapping];
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
@@ -3169,7 +3169,7 @@ fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
     let zero = SymExpr::zero(&mut cx);
-    let positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, a.clone(), zero.clone());
+    let positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a.clone(), zero.clone());
     let max = SymExpr::constant(&mut cx, U256::MAX);
     let product = SymExpr::ternop(&mut cx, SymExprTernOp::MulMod, a.clone(), a, max);
     let exact = SymBoolExpr::eq(&mut cx, product, zero);
@@ -3461,8 +3461,8 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let x = SymExpr::var(&mut cx, "x");
     let y = SymExpr::var(&mut cx, "y");
     let zero = SymExpr::zero(&mut cx);
-    let x_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), zero.clone());
-    let y_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, y.clone(), zero);
+    let x_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), zero.clone());
+    let y_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, y.clone(), zero);
     let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, x, y);
     let four = SymExpr::constant(&mut cx, U256::from(4));
     let product_eq_four = SymBoolExpr::eq(&mut cx, product, four);
@@ -3494,8 +3494,8 @@ fn model_uses_validated_hard_arithmetic_fallback_cache() {
     let x = SymExpr::var(&mut cx, "x");
     let y = SymExpr::var(&mut cx, "y");
     let zero = SymExpr::zero(&mut cx);
-    let x_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), zero.clone());
-    let y_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, y.clone(), zero);
+    let x_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), zero.clone());
+    let y_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, y.clone(), zero);
     let product = SymExpr::binop(&mut cx, SymExprBinOp::Mul, x, y);
     let four = SymExpr::constant(&mut cx, U256::from(4));
     let product_eq_four = SymBoolExpr::eq(&mut cx, product, four);
@@ -3701,17 +3701,17 @@ fn sat_cache_reuses_reversed_comparisons() {
     let x = SymExpr::var(&mut cx, "x");
     let y = SymExpr::var(&mut cx, "y");
 
-    let ugt = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, x.clone(), y.clone());
+    let ugt = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), y.clone());
     assert!(solver.is_sat(&mut cx, &[ugt]).unwrap());
-    let ult = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, y.clone(), x.clone());
+    let ult = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y.clone(), x.clone());
     assert!(solver.is_sat(&mut cx, &[ult]).unwrap());
-    let uge = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, x.clone(), y.clone());
+    let uge = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x.clone(), y.clone());
     assert!(solver.is_sat(&mut cx, &[uge]).unwrap());
-    let ule = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, y.clone(), x.clone());
+    let ule = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, y.clone(), x.clone());
     assert!(solver.is_sat(&mut cx, &[ule]).unwrap());
-    let sgt = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Sgt, x.clone(), y.clone());
+    let sgt = SymBoolExpr::cmp(&mut cx, SymCmpOp::Sgt, x.clone(), y.clone());
     assert!(solver.is_sat(&mut cx, &[sgt]).unwrap());
-    let slt = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Slt, y, x);
+    let slt = SymBoolExpr::cmp(&mut cx, SymCmpOp::Slt, y, x);
     assert!(solver.is_sat(&mut cx, &[slt]).unwrap());
 
     let stats = solver.stats();
@@ -3731,7 +3731,7 @@ fn sat_cache_reuses_unsat_branch_complement() {
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = SymExpr::var(&mut cx, "x");
     let ten = SymExpr::constant(&mut cx, U256::from(10));
-    let base = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), ten);
+    let base = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), ten);
     let one = SymExpr::constant(&mut cx, U256::from(1));
     let condition = SymBoolExpr::eq(&mut cx, x, one);
     let not_condition = condition.clone().not(&mut cx);
@@ -3758,8 +3758,8 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     let x = SymExpr::var(&mut cx, "x");
     let two = SymExpr::constant(&mut cx, U256::from(2));
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let lower = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Uge, x.clone(), two);
-    let upper = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ule, x.clone(), one.clone());
+    let lower = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x.clone(), two);
+    let upper = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x.clone(), one.clone());
     let base = SymBoolExpr::and(&mut cx, vec![lower, upper]);
     let condition = SymBoolExpr::eq(&mut cx, x, one);
 
@@ -4287,7 +4287,7 @@ fn solver_smt_dump_shares_repeated_subterms() {
     let shifted = SymExpr::binop(&mut cx, SymExprBinOp::Shl, byte, shift);
     let zero = SymExpr::zero(&mut cx);
     let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero.clone());
-    let shifted_positive = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ugt, shifted, zero);
+    let shifted_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, shifted, zero);
     let constraints = vec![shifted_zero, shifted_positive];
 
     solver.capture_diagnostics();

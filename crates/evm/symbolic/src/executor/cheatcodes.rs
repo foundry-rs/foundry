@@ -3190,50 +3190,50 @@ impl SymbolicExecutor {
             assertLt_0Call::SELECTOR | assertLt_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                let condition = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Ult, left, right);
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ult, left, right);
                 return self.handle_assertion(state, condition);
             }
             assertLe_0Call::SELECTOR | assertLe_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                let condition = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Ule, left, right);
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, left, right);
                 return self.handle_assertion(state, condition);
             }
             assertGt_0Call::SELECTOR | assertGt_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                let condition = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Ugt, left, right);
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ugt, left, right);
                 return self.handle_assertion(state, condition);
             }
             assertGe_0Call::SELECTOR | assertGe_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                let condition = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Uge, left, right);
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, left, right);
                 return self.handle_assertion(state, condition);
             }
             assertLt_2Call::SELECTOR | assertLt_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                let condition = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Slt, left, right);
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Slt, left, right);
                 return self.handle_assertion(state, condition);
             }
             assertGt_2Call::SELECTOR | assertGt_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                let condition = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Sgt, left, right);
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Sgt, left, right);
                 return self.handle_assertion(state, condition);
             }
             assertLe_2Call::SELECTOR | assertLe_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                let condition = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Sgt, left, right);
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Sgt, left, right);
                 let condition = condition.not(&mut self.cx);
                 return self.handle_assertion(state, condition);
             }
             assertGe_2Call::SELECTOR | assertGe_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
-                let condition = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Slt, left, right);
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Slt, left, right);
                 let condition = condition.not(&mut self.cx);
                 return self.handle_assertion(state, condition);
             }
@@ -3261,13 +3261,13 @@ impl SymbolicExecutor {
                 let value = state.fresh_word(&mut self.cx, "vmRandomUintRange");
                 state.constraints.push(SymBoolExpr::cmp_word_expr(
                     &mut self.cx,
-                    SymBoolExprOp::Uge,
+                    SymCmpOp::Uge,
                     &value,
                     min,
                 ));
                 state.constraints.push(SymBoolExpr::cmp_word_expr(
                     &mut self.cx,
-                    SymBoolExprOp::Ule,
+                    SymCmpOp::Ule,
                     &value,
                     max,
                 ));

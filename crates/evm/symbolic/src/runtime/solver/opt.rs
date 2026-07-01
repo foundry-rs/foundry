@@ -63,14 +63,8 @@ fn write_bool_structural_key(out: &mut String, expr: &SymBoolExpr) {
                 out.push(';');
             }
         }
-        SymBoolExprKind::Eq(left, right) => {
-            out.push_str("3:");
-            write_expr_structural_key(out, left);
-            out.push(':');
-            write_expr_structural_key(out, right);
-        }
         SymBoolExprKind::Cmp(op, left, right) => {
-            let _ = write!(out, "4:{}:", bool_op_key(*op));
+            let _ = write!(out, "3:{}:", cmp_op_key(*op));
             write_expr_structural_key(out, left);
             out.push(':');
             write_expr_structural_key(out, right);
@@ -135,14 +129,15 @@ fn write_exprs_structural_key(out: &mut String, exprs: &[SymExpr]) {
     }
 }
 
-const fn bool_op_key(op: SymBoolExprOp) -> u8 {
+const fn cmp_op_key(op: SymCmpOp) -> u8 {
     match op {
-        SymBoolExprOp::Ult => 0,
-        SymBoolExprOp::Ugt => 1,
-        SymBoolExprOp::Ule => 2,
-        SymBoolExprOp::Uge => 3,
-        SymBoolExprOp::Slt => 4,
-        SymBoolExprOp::Sgt => 5,
+        SymCmpOp::Eq => 0,
+        SymCmpOp::Ult => 1,
+        SymCmpOp::Ugt => 2,
+        SymCmpOp::Ule => 3,
+        SymCmpOp::Uge => 4,
+        SymCmpOp::Slt => 5,
+        SymCmpOp::Sgt => 6,
     }
 }
 
@@ -316,7 +311,7 @@ impl SmtCsePlan {
                     self.count_bool(value);
                 }
             }
-            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
+            SymBoolExprKind::Cmp(_, left, right) => {
                 self.count_expr(left);
                 self.count_expr(right);
             }
@@ -358,7 +353,7 @@ impl SmtCsePlan {
                     self.collect_bool_binding(value);
                 }
             }
-            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
+            SymBoolExprKind::Cmp(_, left, right) => {
                 self.collect_expr_binding(left);
                 self.collect_expr_binding(right);
             }
@@ -548,13 +543,6 @@ impl SmtCseWriter<'_> {
                 }
                 out.push(')');
             }
-            SymBoolExprKind::Eq(left, right) => {
-                out.push_str("(= ");
-                self.write_expr(out, left, skip_expr, skip_bool);
-                out.push(' ');
-                self.write_expr(out, right, skip_expr, skip_bool);
-                out.push(')');
-            }
             SymBoolExprKind::Cmp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 self.write_expr(out, left, skip_expr, skip_bool);
@@ -572,12 +560,6 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
     }
 
     match expr.kind() {
-        SymBoolExprKind::Eq(left, right) => {
-            let left = normalize_expr_for_solver(cx, left.clone());
-            let right = normalize_expr_for_solver(cx, right.clone());
-            let normalized = SymBoolExpr::eq(cx, left, right);
-            normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
-        }
         SymBoolExprKind::Cmp(op, left, right) => {
             let left = normalize_expr_for_solver(cx, left.clone());
             let right = normalize_expr_for_solver(cx, right.clone());
@@ -590,18 +572,18 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
 
 fn normalize_cmp_for_solver(
     cx: &mut SymCx,
-    op: SymBoolExprOp,
+    op: SymCmpOp,
     left: SymExpr,
     right: SymExpr,
 ) -> SymBoolExpr {
     match op {
         // `a > b => b < a`.
-        SymBoolExprOp::Ugt => SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, right, left),
+        SymCmpOp::Ugt => SymBoolExpr::cmp(cx, SymCmpOp::Ult, right, left),
         // `a >= b => b <= a`.
-        SymBoolExprOp::Uge => SymBoolExpr::cmp(cx, SymBoolExprOp::Ule, right, left),
+        SymCmpOp::Uge => SymBoolExpr::cmp(cx, SymCmpOp::Ule, right, left),
         // `a >s b => b <s a`.
-        SymBoolExprOp::Sgt => SymBoolExpr::cmp(cx, SymBoolExprOp::Slt, right, left),
-        SymBoolExprOp::Ult | SymBoolExprOp::Ule | SymBoolExprOp::Slt => {
+        SymCmpOp::Sgt => SymBoolExpr::cmp(cx, SymCmpOp::Slt, right, left),
+        SymCmpOp::Eq | SymCmpOp::Ult | SymCmpOp::Ule | SymCmpOp::Slt => {
             SymBoolExpr::cmp(cx, op, left, right)
         }
     }
@@ -663,33 +645,30 @@ impl ConstraintContext {
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
         match constraint.kind() {
-            SymBoolExprKind::Eq(left, right) => match (left.as_const(), right.as_const()) {
-                (_, Some(value)) => Some((left, value)),
-                (Some(value), _) => Some((right, value)),
-                _ => None,
-            },
             SymBoolExprKind::Cmp(op, left, right) => {
                 match (*op, left.as_const(), right.as_const()) {
-                    (SymBoolExprOp::Ult, _, Some(bound)) => {
+                    (SymCmpOp::Eq, _, Some(value)) => Some((left, value)),
+                    (SymCmpOp::Eq, Some(value), _) => Some((right, value)),
+                    (SymCmpOp::Ult, _, Some(bound)) => {
                         (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
                     }
-                    (SymBoolExprOp::Ule, _, Some(bound)) => Some((left, bound)),
-                    (SymBoolExprOp::Ugt, Some(bound), _) => {
+                    (SymCmpOp::Ule, _, Some(bound)) => Some((left, bound)),
+                    (SymCmpOp::Ugt, Some(bound), _) => {
                         (!bound.is_zero()).then(|| (right, bound - U256::from(1)))
                     }
-                    (SymBoolExprOp::Uge, Some(bound), _) => Some((right, bound)),
+                    (SymCmpOp::Uge, Some(bound), _) => Some((right, bound)),
                     _ => None,
                 }
             }
             SymBoolExprKind::Not(value) => match value.kind() {
                 SymBoolExprKind::Cmp(op, left, right) => {
                     match (*op, left.as_const(), right.as_const()) {
-                        (SymBoolExprOp::Ugt, _, Some(bound)) => Some((left, bound)),
-                        (SymBoolExprOp::Uge, _, Some(bound)) => {
+                        (SymCmpOp::Ugt, _, Some(bound)) => Some((left, bound)),
+                        (SymCmpOp::Uge, _, Some(bound)) => {
                             (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
                         }
-                        (SymBoolExprOp::Ult, Some(bound), _) => Some((right, bound)),
-                        (SymBoolExprOp::Ule, Some(bound), _) => {
+                        (SymCmpOp::Ult, Some(bound), _) => Some((right, bound)),
+                        (SymCmpOp::Ule, Some(bound), _) => {
                             (!bound.is_zero()).then(|| (right, bound - U256::from(1)))
                         }
                         _ => None,
@@ -759,7 +738,7 @@ impl SymExpr {
 impl SymBoolExpr {
     fn normalize_udiv_for_solver(&self, cx: &mut SymCx) -> Option<Self> {
         match self.kind() {
-            SymBoolExprKind::Eq(left, right)
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if right.as_const().is_some_and(|value| value.is_zero()) =>
             {
                 left.normalized_bool_word_condition(cx).map(|value| value.not(cx)).or_else(|| {
@@ -771,7 +750,7 @@ impl SymBoolExpr {
                     }
                 })
             }
-            SymBoolExprKind::Eq(left, right)
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if left.as_const().is_some_and(|value| value.is_zero()) =>
             {
                 right.normalized_bool_word_condition(cx).map(|value| value.not(cx)).or_else(|| {
@@ -783,22 +762,18 @@ impl SymBoolExpr {
                     }
                 })
             }
-            SymBoolExprKind::Eq(left, right) if right.as_const() == Some(U256::from(1)) => {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                if right.as_const() == Some(U256::from(1)) =>
+            {
                 left.normalized_bool_word_condition(cx)
             }
-            SymBoolExprKind::Eq(left, right) if left.as_const() == Some(U256::from(1)) => {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                if left.as_const() == Some(U256::from(1)) =>
+            {
                 right.normalized_bool_word_condition(cx)
             }
             SymBoolExprKind::Not(value) => match value.kind() {
-                SymBoolExprKind::Cmp(op, left, right) => {
-                    Self::normalize_add_overflow_cmp(cx, *op, left, right)
-                        .map(|value| value.not(cx))
-                        .or_else(|| {
-                            Self::normalize_udiv_cmp(cx, *op, left, right)
-                                .map(|value| value.not(cx))
-                        })
-                }
-                SymBoolExprKind::Eq(left, right)
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                     if right.as_const().is_some_and(|value| value.is_zero()) =>
                 {
                     if left.word_bool_always_true(cx) {
@@ -808,7 +783,7 @@ impl SymBoolExpr {
                         Self::normalize_udiv_eq_zero(cx, left, &zero).map(|value| value.not(cx))
                     }
                 }
-                SymBoolExprKind::Eq(left, right)
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                     if left.as_const().is_some_and(|value| value.is_zero()) =>
                 {
                     if right.word_bool_always_true(cx) {
@@ -818,12 +793,22 @@ impl SymBoolExpr {
                         Self::normalize_udiv_eq_zero(cx, &zero, right).map(|value| value.not(cx))
                     }
                 }
-                SymBoolExprKind::Eq(left, right) => {
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
                     Self::normalize_udiv_eq_zero(cx, left, right).map(|value| value.not(cx))
+                }
+                SymBoolExprKind::Cmp(op, left, right) => {
+                    Self::normalize_add_overflow_cmp(cx, *op, left, right)
+                        .map(|value| value.not(cx))
+                        .or_else(|| {
+                            Self::normalize_udiv_cmp(cx, *op, left, right)
+                                .map(|value| value.not(cx))
+                        })
                 }
                 _ => None,
             },
-            SymBoolExprKind::Eq(left, right) => Self::normalize_udiv_eq_zero(cx, left, right),
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                Self::normalize_udiv_eq_zero(cx, left, right)
+            }
             SymBoolExprKind::Cmp(op, left, right) => {
                 Self::normalize_add_overflow_cmp(cx, *op, left, right)
                     .or_else(|| Self::normalize_udiv_cmp(cx, *op, left, right))
@@ -834,13 +819,13 @@ impl SymBoolExpr {
 
     fn normalize_add_overflow_cmp(
         cx: &mut SymCx,
-        op: SymBoolExprOp,
+        op: SymCmpOp,
         left: &SymExpr,
         right: &SymExpr,
     ) -> Option<Self> {
         match op {
-            SymBoolExprOp::Ugt if left.add_overflow_check(right) => Some(Self::constant(cx, false)),
-            SymBoolExprOp::Ult if right.add_overflow_check(left) => Some(Self::constant(cx, false)),
+            SymCmpOp::Ugt if left.add_overflow_check(right) => Some(Self::constant(cx, false)),
+            SymCmpOp::Ult if right.add_overflow_check(left) => Some(Self::constant(cx, false)),
             _ => None,
         }
     }
@@ -861,33 +846,33 @@ impl SymBoolExpr {
 
     fn normalize_udiv_cmp(
         cx: &mut SymCx,
-        op: SymBoolExprOp,
+        op: SymCmpOp,
         left: &SymExpr,
         right: &SymExpr,
     ) -> Option<Self> {
         match (op, left.as_const(), right.as_const()) {
-            (SymBoolExprOp::Ugt, _, Some(value)) if value.is_zero() => {
+            (SymCmpOp::Ugt, _, Some(value)) if value.is_zero() => {
                 left.normalize_ne_zero_for_solver(cx)
             }
-            (SymBoolExprOp::Uge, _, Some(value)) if value == U256::from(1) => {
+            (SymCmpOp::Uge, _, Some(value)) if value == U256::from(1) => {
                 left.normalize_ne_zero_for_solver(cx)
             }
-            (SymBoolExprOp::Ule, _, Some(value)) if value.is_zero() => {
+            (SymCmpOp::Ule, _, Some(value)) if value.is_zero() => {
                 left.normalize_eq_zero_for_solver(cx)
             }
-            (SymBoolExprOp::Ult, _, Some(value)) if value == U256::from(1) => {
+            (SymCmpOp::Ult, _, Some(value)) if value == U256::from(1) => {
                 left.normalize_eq_zero_for_solver(cx)
             }
-            (SymBoolExprOp::Ult, Some(value), _) if value.is_zero() => {
+            (SymCmpOp::Ult, Some(value), _) if value.is_zero() => {
                 right.normalize_ne_zero_for_solver(cx)
             }
-            (SymBoolExprOp::Ule, Some(value), _) if value == U256::from(1) => {
+            (SymCmpOp::Ule, Some(value), _) if value == U256::from(1) => {
                 right.normalize_ne_zero_for_solver(cx)
             }
-            (SymBoolExprOp::Uge, Some(value), _) if value.is_zero() => {
+            (SymCmpOp::Uge, Some(value), _) if value.is_zero() => {
                 right.normalize_eq_zero_for_solver(cx)
             }
-            (SymBoolExprOp::Ugt, Some(value), _) if value == U256::from(1) => {
+            (SymCmpOp::Ugt, Some(value), _) if value == U256::from(1) => {
                 right.normalize_eq_zero_for_solver(cx)
             }
             _ => None,
@@ -989,7 +974,7 @@ impl SymExpr {
         let denominator = normalize_expr_for_solver(cx, denominator.clone());
         let zero = Self::zero(cx);
         let denominator_zero = SymBoolExpr::eq(cx, denominator.clone(), zero);
-        let below_denominator = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, numerator, denominator);
+        let below_denominator = SymBoolExpr::cmp(cx, SymCmpOp::Ult, numerator, denominator);
         SymBoolExpr::or(cx, vec![denominator_zero, below_denominator])
     }
 
@@ -998,7 +983,7 @@ impl SymExpr {
         let denominator = normalize_expr_for_solver(cx, denominator.clone());
         let zero = Self::zero(cx);
         let denominator_nonzero = SymBoolExpr::eq(cx, denominator.clone(), zero).not(cx);
-        let at_least_denominator = SymBoolExpr::cmp(cx, SymBoolExprOp::Uge, numerator, denominator);
+        let at_least_denominator = SymBoolExpr::cmp(cx, SymCmpOp::Uge, numerator, denominator);
         SymBoolExpr::and(cx, vec![denominator_nonzero, at_least_denominator])
     }
 }
@@ -1032,7 +1017,9 @@ impl ConstraintContext {
     }
 
     fn checked_mul_guard_for_operand(&self, expr: &SymBoolExpr, zero_operand: &SymExpr) -> bool {
-        let SymBoolExprKind::Eq(left, right) = expr.kind() else { return false };
+        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = expr.kind() else {
+            return false;
+        };
         self.checked_mul_guard_side(left, right, zero_operand)
             || self.checked_mul_guard_side(right, left, zero_operand)
     }

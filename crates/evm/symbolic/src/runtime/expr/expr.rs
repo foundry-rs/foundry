@@ -138,7 +138,7 @@ pub(crate) fn symbolic_create_address_word(
     let word = SymExpr::var_symbol(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(
         cx,
-        SymBoolExprOp::Ult,
+        SymCmpOp::Ult,
         &word,
         U256::from(1) << 160,
     ));
@@ -159,7 +159,7 @@ pub(crate) fn symbolic_create2_address_word(
     let word = SymExpr::var_symbol(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(
         cx,
-        SymBoolExprOp::Ult,
+        SymCmpOp::Ult,
         &word,
         U256::from(1) << 160,
     ));
@@ -251,7 +251,7 @@ fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256
 
 fn context_forces_masked_expr(context: &[SymBoolExpr], target: &SymExpr, mask: U256) -> bool {
     context.iter().any(|condition| match condition.kind() {
-        SymBoolExprKind::Eq(left, right) => {
+        SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
             (left == target && masked_expr_matches(right.kind(), target) == Some(mask))
                 || (right == target && masked_expr_matches(left.kind(), target) == Some(mask))
         }

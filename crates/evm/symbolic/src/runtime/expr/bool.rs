@@ -16,8 +16,7 @@ pub(in crate::runtime) enum SymBoolExprKind {
     Const(bool),
     Not(SymBoolExpr),
     And(Arc<[SymBoolExpr]>),
-    Eq(SymExpr, SymExpr),
-    Cmp(SymBoolExprOp, SymExpr, SymExpr),
+    Cmp(SymCmpOp, SymExpr, SymExpr),
 }
 
 impl SymBoolExpr {
@@ -44,7 +43,7 @@ impl SymBoolExpr {
 
     pub(crate) fn cmp_word_const(
         cx: &mut SymCx,
-        op: SymBoolExprOp,
+        op: SymCmpOp,
         word: &SymExpr,
         value: U256,
     ) -> Self {
@@ -66,6 +65,10 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn eq(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> Self {
+        Self::cmp(cx, SymCmpOp::Eq, left, right)
+    }
+
+    fn eq_cmp(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> Self {
         match (left.kind(), right.kind()) {
             _ if left == right => Self::constant(cx, true),
             (SymExprKind::Const(left), SymExprKind::Const(right)) => {
@@ -79,7 +82,7 @@ impl SymBoolExpr {
                     return Self::constant(cx, left_value == *right_value);
                 }
                 let (left, right) = SymExpr::ordered_commutative_operands(left, right);
-                Self::from_kind(cx, SymBoolExprKind::Eq(left, right))
+                Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
             }
             (SymExprKind::Const(left_value), _) => {
                 if let Some(condition) = Self::bool_word_eq_const(cx, &right, *left_value) {
@@ -89,7 +92,7 @@ impl SymBoolExpr {
                     return Self::constant(cx, *left_value == right_value);
                 }
                 let (left, right) = SymExpr::ordered_commutative_operands(left, right);
-                Self::from_kind(cx, SymBoolExprKind::Eq(left, right))
+                Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
             }
             (
                 SymExprKind::Keccak { len: left_len, bytes: left_bytes, .. },
@@ -119,41 +122,44 @@ impl SymBoolExpr {
             }
             _ => {
                 let (left, right) = SymExpr::ordered_commutative_operands(left, right);
-                Self::from_kind(cx, SymBoolExprKind::Eq(left, right))
+                Self::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right))
             }
         }
     }
 
-    pub(crate) fn cmp(cx: &mut SymCx, op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> Self {
+    pub(crate) fn cmp(cx: &mut SymCx, op: SymCmpOp, left: SymExpr, right: SymExpr) -> Self {
+        if op == SymCmpOp::Eq {
+            return Self::eq_cmp(cx, left, right);
+        }
         match (op, left.kind(), right.kind()) {
             (op, _, _) if left == right => {
-                Self::constant(cx, matches!(op, SymBoolExprOp::Ule | SymBoolExprOp::Uge))
+                Self::constant(cx, matches!(op, SymCmpOp::Ule | SymCmpOp::Uge))
             }
             (op, SymExprKind::Const(left), SymExprKind::Const(right)) => {
                 Self::constant(cx, op.eval(*left, *right))
             }
-            (SymBoolExprOp::Ugt, SymExprKind::Const(value), _) if value.is_zero() => {
+            (SymCmpOp::Ugt, SymExprKind::Const(value), _) if value.is_zero() => {
                 Self::constant(cx, false)
             }
-            (SymBoolExprOp::Ule, SymExprKind::Const(value), _) if value.is_zero() => {
+            (SymCmpOp::Ule, SymExprKind::Const(value), _) if value.is_zero() => {
                 Self::constant(cx, true)
             }
-            (SymBoolExprOp::Ult, _, SymExprKind::Const(value)) if value.is_zero() => {
+            (SymCmpOp::Ult, _, SymExprKind::Const(value)) if value.is_zero() => {
                 Self::constant(cx, false)
             }
-            (SymBoolExprOp::Uge, _, SymExprKind::Const(value)) if value.is_zero() => {
+            (SymCmpOp::Uge, _, SymExprKind::Const(value)) if value.is_zero() => {
                 Self::constant(cx, true)
             }
-            (SymBoolExprOp::Ult, SymExprKind::Const(value), _) if *value == U256::MAX => {
+            (SymCmpOp::Ult, SymExprKind::Const(value), _) if *value == U256::MAX => {
                 Self::constant(cx, false)
             }
-            (SymBoolExprOp::Uge, SymExprKind::Const(value), _) if *value == U256::MAX => {
+            (SymCmpOp::Uge, SymExprKind::Const(value), _) if *value == U256::MAX => {
                 Self::constant(cx, true)
             }
-            (SymBoolExprOp::Ugt, _, SymExprKind::Const(value)) if *value == U256::MAX => {
+            (SymCmpOp::Ugt, _, SymExprKind::Const(value)) if *value == U256::MAX => {
                 Self::constant(cx, false)
             }
-            (SymBoolExprOp::Ule, _, SymExprKind::Const(value)) if *value == U256::MAX => {
+            (SymCmpOp::Ule, _, SymExprKind::Const(value)) if *value == U256::MAX => {
                 Self::constant(cx, true)
             }
             _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
@@ -245,12 +251,12 @@ impl SymBoolExpr {
 
     pub(in crate::runtime) fn zero_check_operand(&self) -> Option<&SymExpr> {
         match self.kind() {
-            SymBoolExprKind::Eq(left, right)
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if right.as_const().is_some_and(|value| value.is_zero()) =>
             {
                 Some(left)
             }
-            SymBoolExprKind::Eq(left, right)
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if left.as_const().is_some_and(|value| value.is_zero()) =>
             {
                 Some(right)
@@ -277,7 +283,7 @@ impl SymBoolExpr {
         context: &[Self],
     ) -> Option<U256> {
         match self.kind() {
-            SymBoolExprKind::Eq(left, right) => match (left.kind(), right.kind()) {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => match (left.kind(), right.kind()) {
                 (_, SymExprKind::Const(value)) => left.equality_forces_const(*value, expr, context),
                 (SymExprKind::Const(value), _) => {
                     right.equality_forces_const(*value, expr, context)
@@ -285,15 +291,17 @@ impl SymBoolExpr {
                 _ => None,
             },
             SymBoolExprKind::Not(value) => match value.kind() {
-                SymBoolExprKind::Eq(left, right) => match (left.kind(), right.kind()) {
-                    (_, SymExprKind::Const(value)) if value.is_zero() => {
-                        left.nonzero_forces_const(expr, context)
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                    match (left.kind(), right.kind()) {
+                        (_, SymExprKind::Const(value)) if value.is_zero() => {
+                            left.nonzero_forces_const(expr, context)
+                        }
+                        (SymExprKind::Const(value), _) if value.is_zero() => {
+                            right.nonzero_forces_const(expr, context)
+                        }
+                        _ => None,
                     }
-                    (SymExprKind::Const(value), _) if value.is_zero() => {
-                        right.nonzero_forces_const(expr, context)
-                    }
-                    _ => None,
-                },
+                }
                 SymBoolExprKind::Not(value) => value.forces_expr_const_with_context(expr, context),
                 _ => None,
             },
@@ -316,32 +324,30 @@ impl SymBoolExpr {
                 }
                 bound
             }
-            SymBoolExprKind::Eq(left, right) => match (left == expr, right == expr) {
-                (true, _) => right.eval().and_then(|value| usize::try_from(value).ok()),
-                (_, true) => left.eval().and_then(|value| usize::try_from(value).ok()),
-                _ => None,
-            },
             SymBoolExprKind::Cmp(op, left, right) => {
+                if *op == SymCmpOp::Eq {
+                    return match (left == expr, right == expr) {
+                        (true, _) => right.eval().and_then(|value| usize::try_from(value).ok()),
+                        (_, true) => left.eval().and_then(|value| usize::try_from(value).ok()),
+                        _ => None,
+                    };
+                }
                 if left == expr {
                     match *op {
-                        SymBoolExprOp::Ult => right
+                        SymCmpOp::Ult => right
                             .eval()
                             .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                             .and_then(|value| usize::try_from(value).ok()),
-                        SymBoolExprOp::Ule => {
-                            right.eval().and_then(|value| usize::try_from(value).ok())
-                        }
+                        SymCmpOp::Ule => right.eval().and_then(|value| usize::try_from(value).ok()),
                         _ => None,
                     }
                 } else if right == expr {
                     match *op {
-                        SymBoolExprOp::Ugt => left
+                        SymCmpOp::Ugt => left
                             .eval()
                             .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                             .and_then(|value| usize::try_from(value).ok()),
-                        SymBoolExprOp::Uge => {
-                            left.eval().and_then(|value| usize::try_from(value).ok())
-                        }
+                        SymCmpOp::Uge => left.eval().and_then(|value| usize::try_from(value).ok()),
                         _ => None,
                     }
                 } else {
@@ -365,9 +371,6 @@ impl SymBoolExpr {
                     }
                 }
                 true
-            }
-            SymBoolExprKind::Eq(left, right) => {
-                left.eval_model(model)? == right.eval_model(model)?
             }
             SymBoolExprKind::Cmp(op, left, right) => {
                 op.eval(left.eval_model(model)?, right.eval_model(model)?)
@@ -401,7 +404,7 @@ impl SymBoolExpr {
                     value.visit_exprs(visitor)?;
                 }
             }
-            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
+            SymBoolExprKind::Cmp(_, left, right) => {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
             }
@@ -434,7 +437,6 @@ impl SymBoolExpr {
                 let values = values.iter().cloned().map(|value| value.fold(cx, folder)).collect();
                 Self::and(cx, values)
             }
-            SymBoolExprKind::Eq(left, right) => Self::eq(cx, left, right),
             SymBoolExprKind::Cmp(op, left, right) => Self::cmp(cx, op, left, right),
             SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding"),
         };
@@ -460,11 +462,6 @@ impl SymBoolExpr {
                     values.iter().cloned().map(|value| value.fold_exprs(cx, folder)).collect();
                 Self::and(cx, values)
             }
-            SymBoolExprKind::Eq(left, right) => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                Self::eq(cx, left, right)
-            }
             SymBoolExprKind::Cmp(op, left, right) => {
                 let left = left.fold(cx, folder);
                 let right = right.fold(cx, folder);
@@ -481,7 +478,7 @@ impl SymBoolExpr {
 
     pub(crate) fn cmp_word_expr(
         cx: &mut SymCx,
-        op: SymBoolExprOp,
+        op: SymCmpOp,
         word: &SymExpr,
         expr: SymExpr,
     ) -> Self {
@@ -540,13 +537,6 @@ impl SymBoolExpr {
                 }
                 out.push(')');
             }
-            SymBoolExprKind::Eq(left, right) => {
-                out.push_str("(= ");
-                left.write_smt(out);
-                out.push(' ');
-                right.write_smt(out);
-                out.push(')');
-            }
             SymBoolExprKind::Cmp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 left.write_smt(out);
@@ -559,7 +549,8 @@ impl SymBoolExpr {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum SymBoolExprOp {
+pub(crate) enum SymCmpOp {
+    Eq,
     Ult,
     Ugt,
     Ule,
@@ -568,9 +559,10 @@ pub(crate) enum SymBoolExprOp {
     Sgt,
 }
 
-impl SymBoolExprOp {
+impl SymCmpOp {
     pub(crate) const fn smt(self) -> &'static str {
         match self {
+            Self::Eq => "=",
             Self::Ult => "bvult",
             Self::Ugt => "bvugt",
             Self::Ule => "bvule",
@@ -582,6 +574,7 @@ impl SymBoolExprOp {
 
     pub(crate) fn eval(self, left: U256, right: U256) -> bool {
         match self {
+            Self::Eq => left == right,
             Self::Ult => left < right,
             Self::Ugt => left > right,
             Self::Ule => left <= right,

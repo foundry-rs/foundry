@@ -413,7 +413,7 @@ impl PathState {
     pub(crate) fn cmp_word(
         &mut self,
         cx: &mut SymCx,
-        op: SymBoolExprOp,
+        op: SymCmpOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
@@ -579,12 +579,7 @@ impl PathState {
             } else {
                 U256::from(1) << usize::try_from(bits).expect("checked bit width")
             };
-            self.constraints.push(SymBoolExpr::cmp_word_const(
-                cx,
-                SymBoolExprOp::Ult,
-                &value,
-                upper,
-            ));
+            self.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, upper));
         }
         value
     }
@@ -603,13 +598,13 @@ impl PathState {
                 let byte = self.fresh_bounded_uint(cx, U256::from(8));
                 self.constraints.push(SymBoolExpr::cmp_word_const(
                     cx,
-                    SymBoolExprOp::Uge,
+                    SymCmpOp::Uge,
                     &byte,
                     U256::from(0x20),
                 ));
                 self.constraints.push(SymBoolExpr::cmp_word_const(
                     cx,
-                    SymBoolExprOp::Ule,
+                    SymCmpOp::Ule,
                     &byte,
                     U256::from(0x7e),
                 ));
@@ -625,10 +620,10 @@ impl PathState {
         } else if bits < U256::from(256) {
             let magnitude =
                 U256::from(1) << (usize::try_from(bits).expect("checked bit width") - 1);
-            let lt = SymBoolExpr::cmp_word_const(cx, SymBoolExprOp::Ult, &value, magnitude);
+            let lt = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, magnitude);
             let ge = SymBoolExpr::cmp_word_const(
                 cx,
-                SymBoolExprOp::Uge,
+                SymCmpOp::Uge,
                 &value,
                 U256::ZERO.wrapping_sub(magnitude),
             );
@@ -805,7 +800,7 @@ impl ExpectedRevert {
                 let prefix_len = SymExpr::constant(cx, U256::from(prefix.len()));
                 conditions.push(SymBoolExpr::cmp(
                     cx,
-                    SymBoolExprOp::Uge,
+                    SymCmpOp::Uge,
                     return_data.len_expr(),
                     prefix_len,
                 ));

@@ -450,7 +450,7 @@ pub(crate) fn hex_nibble_ascii(cx: &mut SymCx, nibble: SymExpr) -> SymExpr {
         SymExpr::constant(cx, U256::from(byte))
     } else {
         let ten = SymExpr::constant(cx, U256::from(10));
-        let condition = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, nibble.clone(), ten);
+        let condition = SymBoolExpr::cmp(cx, SymCmpOp::Ult, nibble.clone(), ten);
         let zero = SymExpr::constant(cx, U256::from(b'0'));
         let digit = SymExpr::binop(cx, SymExprBinOp::Add, nibble.clone(), zero);
         let alpha_base = SymExpr::constant(cx, U256::from(b'a' - 10));

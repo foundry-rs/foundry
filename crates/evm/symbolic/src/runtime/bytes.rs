@@ -174,7 +174,7 @@ impl SymBytes {
                 }
                 let source = bytes.byte(cx, offset);
                 let offset = SymExpr::constant(cx, U256::from(offset));
-                let condition = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, offset, size.clone());
+                let condition = SymBoolExpr::cmp(cx, SymCmpOp::Ult, offset, size.clone());
                 let zero = SymExpr::zero(cx);
                 SymExpr::ite(cx, condition, source, zero)
             }

@@ -36,13 +36,13 @@ fn collect_order_facts<'a>(
                 collect_order_facts(value, less_than, positive);
             }
         }
-        SymBoolExprKind::Cmp(SymBoolExprOp::Ult, left, right) => {
+        SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => {
             less_than.insert((left, right));
             if left.as_const().is_some_and(|value| value.is_zero()) {
                 positive.insert(right);
             }
         }
-        SymBoolExprKind::Cmp(SymBoolExprOp::Ugt, left, right) => {
+        SymBoolExprKind::Cmp(SymCmpOp::Ugt, left, right) => {
             less_than.insert((right, left));
             if right.as_const().is_some_and(|value| value.is_zero()) {
                 positive.insert(left);
@@ -50,7 +50,7 @@ fn collect_order_facts<'a>(
         }
         SymBoolExprKind::Const(_)
         | SymBoolExprKind::Not(_)
-        | SymBoolExprKind::Eq(_, _)
+        | SymBoolExprKind::Cmp(SymCmpOp::Eq, _, _)
         | SymBoolExprKind::Cmp(_, _, _) => {}
     }
 }
@@ -59,7 +59,7 @@ fn product_less_than_negation(
     expr: &SymBoolExpr,
 ) -> Option<(&SymExpr, &SymExpr, &SymExpr, &SymExpr)> {
     let SymBoolExprKind::Not(value) = expr.kind() else { return None };
-    let SymBoolExprKind::Cmp(SymBoolExprOp::Ult, left, right) = value.kind() else {
+    let SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) = value.kind() else {
         return None;
     };
     let (left_a, left_b) = mul_operands(left)?;

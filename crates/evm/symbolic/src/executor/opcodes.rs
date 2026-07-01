@@ -75,16 +75,16 @@ impl SymbolicExecutor {
                 state.stack.push(SymExpr::ternop(&mut self.cx, SymExprTernOp::MulMod, a, b, n))?;
             }
             opcode::LT => {
-                state.cmp_word(&mut self.cx, SymBoolExprOp::Ult)?;
+                state.cmp_word(&mut self.cx, SymCmpOp::Ult)?;
             }
             opcode::GT => {
-                state.cmp_word(&mut self.cx, SymBoolExprOp::Ugt)?;
+                state.cmp_word(&mut self.cx, SymCmpOp::Ugt)?;
             }
             opcode::SLT => {
-                state.cmp_word(&mut self.cx, SymBoolExprOp::Slt)?;
+                state.cmp_word(&mut self.cx, SymCmpOp::Slt)?;
             }
             opcode::SGT => {
-                state.cmp_word(&mut self.cx, SymBoolExprOp::Sgt)?;
+                state.cmp_word(&mut self.cx, SymCmpOp::Sgt)?;
             }
             opcode::EQ => {
                 let a = state.stack.pop()?;
@@ -781,7 +781,7 @@ impl SymbolicExecutor {
         }
         let end = SymExpr::binop(&mut self.cx, SymExprBinOp::Add, offset, size);
         let in_bounds =
-            SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Ule, end, state.return_data.len_expr());
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, end, state.return_data.len_expr());
         match in_bounds.as_const() {
             Some(value) => Ok(value),
             None => {
