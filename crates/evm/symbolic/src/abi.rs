@@ -67,11 +67,11 @@ impl SymbolicCalldata {
             variants.iter().map(|(state, _)| state.positional_dynamic_index).max().unwrap_or(0),
         )?;
 
+        let selector = SymBytes::concrete(builder.cx, function.selector().to_vec());
         let mut out = Vec::with_capacity(variants.len());
         for (state, inputs) in variants {
-            let selector = SymBytes::concrete(builder.cx, function.selector().to_vec());
             let encoded = builder.encode_sequence(inputs.iter().map(|input| &input.value));
-            let bytes = SymBytes::concat(builder.cx, [selector, encoded]);
+            let bytes = SymBytes::concat(builder.cx, [selector.clone(), encoded]);
             if bytes.len() > config.max_calldata_bytes as usize {
                 return Err(SymbolicError::Unsupported(
                     "symbolic calldata size exceeds configured max",
