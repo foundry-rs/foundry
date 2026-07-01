@@ -18,7 +18,6 @@ use revm::{
 };
 use std::collections::HashMap;
 use tempo_chainspec::hardfork::TempoHardfork;
-use tempo_primitives::TempoBlockEnv;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
@@ -30,6 +29,7 @@ use tempo_precompiles::{
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
 };
+use tempo_primitives::TempoBlockEnv;
 
 use super::db::Db;
 
@@ -63,7 +63,11 @@ impl<'a> AnvilStorageProvider<'a> {
             db,
             chain_id,
             block_env: TempoBlockEnv {
-                inner: BlockEnv { timestamp, number: U256::from(block_number), ..Default::default() },
+                inner: BlockEnv {
+                    timestamp,
+                    number: U256::from(block_number),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             gas_used: 0,
