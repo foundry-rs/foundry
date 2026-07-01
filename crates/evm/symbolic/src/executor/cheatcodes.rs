@@ -2647,7 +2647,9 @@ impl SymbolicExecutor {
                 );
             }
             randomUint_0Call::SELECTOR => {
-                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomUint")]));
+                return Ok(CheatcodeOutcome::Continue(vec![
+                    state.fresh_word(&mut self.cx, "vmRandomUint"),
+                ]));
             }
             randomUint_2Call::SELECTOR => {
                 let bits = read_abi_constrained_word_arg(
@@ -2657,18 +2659,22 @@ impl SymbolicExecutor {
                     "symbolic randomUint bits",
                 )?;
                 Self::validate_symbolic_integer_bits(bits, "symbolic randomUint bits")?;
-                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_uint(bits)]));
+                return Ok(CheatcodeOutcome::Continue(vec![
+                    state.fresh_bounded_uint(&mut self.cx, bits),
+                ]));
             }
             randomUint_1Call::SELECTOR => {
                 let min = state.memory.load_word(in_offset + 4)?;
                 let max = state.memory.load_word(in_offset + 36)?;
-                let value = state.fresh_word("vmRandomUintRange");
+                let value = state.fresh_word(&mut self.cx, "vmRandomUintRange");
                 state.constraints.push(SymBoolExpr::cmp_word_expr(SymBoolExprOp::Uge, &value, min));
                 state.constraints.push(SymBoolExpr::cmp_word_expr(SymBoolExprOp::Ule, &value, max));
                 return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             randomInt_0Call::SELECTOR => {
-                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomInt")]));
+                return Ok(CheatcodeOutcome::Continue(vec![
+                    state.fresh_word(&mut self.cx, "vmRandomInt"),
+                ]));
             }
             randomInt_1Call::SELECTOR => {
                 let bits = read_abi_constrained_word_arg(
@@ -2678,14 +2684,16 @@ impl SymbolicExecutor {
                     "symbolic randomInt bits",
                 )?;
                 Self::validate_symbolic_integer_bits(bits, "symbolic randomInt bits")?;
-                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_int(bits)]));
+                return Ok(CheatcodeOutcome::Continue(vec![
+                    state.fresh_bounded_int(&mut self.cx, bits),
+                ]));
             }
             randomAddressCall::SELECTOR => {
-                let value = state.fresh_bounded_uint(U256::from(160));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(160));
                 return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             randomBoolCall::SELECTOR => {
-                let value = state.fresh_bounded_uint(U256::from(1));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(1));
                 return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             randomBytesCall::SELECTOR => {
@@ -2705,15 +2713,15 @@ impl SymbolicExecutor {
                     })?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_bytes_return_with_len(
                     len,
-                    state.fresh_bytes(max_len),
+                    state.fresh_bytes(&mut self.cx, max_len),
                 )));
             }
             randomBytes4Call::SELECTOR => {
-                let value = state.fresh_bounded_uint(U256::from(32));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(32));
                 return Ok(CheatcodeOutcome::Continue(vec![shift_left(value, 224)]));
             }
             randomBytes8Call::SELECTOR => {
-                let value = state.fresh_bounded_uint(U256::from(64));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(64));
                 return Ok(CheatcodeOutcome::Continue(vec![shift_left(value, 192)]));
             }
 
@@ -2737,25 +2745,28 @@ impl SymbolicExecutor {
         match cheatcode {
             SymbolicVmCheatcode::CreateUintBits(bits) => {
                 let value = if bits == 256 {
-                    state.fresh_word("svm")
+                    state.fresh_word(&mut self.cx, "svm")
                 } else {
-                    state.fresh_bounded_uint(U256::from(bits))
+                    state.fresh_bounded_uint(&mut self.cx, U256::from(bits))
                 };
                 Ok(SymReturnData::from_words(vec![value]))
             }
             SymbolicVmCheatcode::CreateIntBits(bits) => {
                 let value = if bits == 256 {
-                    state.fresh_word("svm")
+                    state.fresh_word(&mut self.cx, "svm")
                 } else {
-                    state.fresh_bounded_int(U256::from(bits))
+                    state.fresh_bounded_int(&mut self.cx, U256::from(bits))
                 };
                 Ok(SymReturnData::from_words(vec![value]))
             }
             SymbolicVmCheatcode::CreateBytesFixed(bytes) => {
                 let value = if bytes == 32 {
-                    state.fresh_word("svm")
+                    state.fresh_word(&mut self.cx, "svm")
                 } else {
-                    shift_left(state.fresh_bounded_uint(U256::from(bytes * 8)), (32 - bytes) * 8)
+                    shift_left(
+                        state.fresh_bounded_uint(&mut self.cx, U256::from(bytes * 8)),
+                        (32 - bytes) * 8,
+                    )
                 };
                 Ok(SymReturnData::from_words(vec![value]))
             }
@@ -2767,7 +2778,7 @@ impl SymbolicExecutor {
                     "symbolic svm.create integer bits",
                 )?;
                 Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
-                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(bits)]))
+                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(&mut self.cx, bits)]))
             }
             SymbolicVmCheatcode::CreateInt => {
                 let bits = read_abi_constrained_word_arg(
@@ -2777,17 +2788,17 @@ impl SymbolicExecutor {
                     "symbolic svm.create integer bits",
                 )?;
                 Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
-                Ok(SymReturnData::from_words(vec![state.fresh_bounded_int(bits)]))
+                Ok(SymReturnData::from_words(vec![state.fresh_bounded_int(&mut self.cx, bits)]))
             }
-            SymbolicVmCheatcode::CreateAddress => {
-                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(160))]))
-            }
-            SymbolicVmCheatcode::CreateBool => {
-                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(1))]))
-            }
-            SymbolicVmCheatcode::CreateBytes => {
-                Ok(abi_bytes_return(state.fresh_bytes(self.config.default_dynamic_length as usize)))
-            }
+            SymbolicVmCheatcode::CreateAddress => Ok(SymReturnData::from_words(vec![
+                state.fresh_bounded_uint(&mut self.cx, U256::from(160)),
+            ])),
+            SymbolicVmCheatcode::CreateBool => Ok(SymReturnData::from_words(vec![
+                state.fresh_bounded_uint(&mut self.cx, U256::from(1)),
+            ])),
+            SymbolicVmCheatcode::CreateBytes => Ok(abi_bytes_return(
+                state.fresh_bytes(&mut self.cx, self.config.default_dynamic_length as usize),
+            )),
             SymbolicVmCheatcode::CreateBytesSized => {
                 let len = read_abi_constrained_word_arg(
                     state,
@@ -2799,11 +2810,14 @@ impl SymbolicExecutor {
                     .ok()
                     .filter(|len| *len <= self.config.max_calldata_bytes as usize)
                     .ok_or(SymbolicError::Unsupported("symbolic svm.createBytes length"))?;
-                Ok(abi_bytes_return(state.fresh_bytes(len)))
+                Ok(abi_bytes_return(state.fresh_bytes(&mut self.cx, len)))
             }
-            SymbolicVmCheatcode::CreateString => Ok(abi_bytes_return(
-                state.fresh_printable_ascii_bytes(self.config.default_dynamic_length as usize),
-            )),
+            SymbolicVmCheatcode::CreateString => {
+                Ok(abi_bytes_return(state.fresh_printable_ascii_bytes(
+                    &mut self.cx,
+                    self.config.default_dynamic_length as usize,
+                )))
+            }
             SymbolicVmCheatcode::CreateStringSized => {
                 let len = read_abi_constrained_word_arg(
                     state,
@@ -2815,7 +2829,7 @@ impl SymbolicExecutor {
                     .ok()
                     .filter(|len| *len <= self.config.max_calldata_bytes as usize)
                     .ok_or(SymbolicError::Unsupported("symbolic svm.createString length"))?;
-                Ok(abi_bytes_return(state.fresh_printable_ascii_bytes(len)))
+                Ok(abi_bytes_return(state.fresh_printable_ascii_bytes(&mut self.cx, len)))
             }
             SymbolicVmCheatcode::CreateCalldata => {
                 let max = self.config.max_calldata_bytes as usize;
@@ -2824,7 +2838,7 @@ impl SymbolicExecutor {
                 } else {
                     (self.config.default_dynamic_length as usize).max(4).min(max)
                 };
-                Ok(abi_bytes_return(state.fresh_bytes(len)))
+                Ok(abi_bytes_return(state.fresh_bytes(&mut self.cx, len)))
             }
             SymbolicVmCheatcode::EnableSymbolicStorage => {
                 let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;

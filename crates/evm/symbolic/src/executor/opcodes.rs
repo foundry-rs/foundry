@@ -39,74 +39,76 @@ impl SymbolicExecutor {
             }
             opcode::STOP => return Ok(StepOutcome::Halt),
             opcode::ADD => {
-                state.bin_word(SymExprOp::Add)?;
+                state.bin_word(&mut self.cx, SymExprOp::Add)?;
             }
             opcode::SUB => {
-                state.bin_word(SymExprOp::Sub)?;
+                state.bin_word(&mut self.cx, SymExprOp::Sub)?;
             }
             opcode::MUL => {
-                state.bin_word(SymExprOp::Mul)?;
+                state.bin_word(&mut self.cx, SymExprOp::Mul)?;
             }
             opcode::EXP => {
-                state.exp_word()?;
+                state.exp_word(&mut self.cx)?;
             }
             opcode::DIV => {
-                state.bin_word_div_zero_guard(SymExprOp::UDiv)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymExprOp::UDiv)?;
             }
             opcode::SDIV => {
-                state.bin_word_div_zero_guard(SymExprOp::SDiv)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymExprOp::SDiv)?;
             }
             opcode::MOD => {
-                state.bin_word_div_zero_guard(SymExprOp::URem)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymExprOp::URem)?;
             }
             opcode::SMOD => {
-                state.bin_word_div_zero_guard(SymExprOp::SRem)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymExprOp::SRem)?;
             }
             opcode::ADDMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                state.stack.push(SymExpr::addmod(a, b, n))?;
+                state.stack.push(self.cx.addmod(a, b, n))?;
             }
             opcode::MULMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                state.stack.push(SymExpr::mulmod(a, b, n))?;
+                state.stack.push(self.cx.mulmod(a, b, n))?;
             }
             opcode::LT => {
-                state.cmp_word(SymBoolExprOp::Ult)?;
+                state.cmp_word(&mut self.cx, SymBoolExprOp::Ult)?;
             }
             opcode::GT => {
-                state.cmp_word(SymBoolExprOp::Ugt)?;
+                state.cmp_word(&mut self.cx, SymBoolExprOp::Ugt)?;
             }
             opcode::SLT => {
-                state.cmp_word(SymBoolExprOp::Slt)?;
+                state.cmp_word(&mut self.cx, SymBoolExprOp::Slt)?;
             }
             opcode::SGT => {
-                state.cmp_word(SymBoolExprOp::Sgt)?;
+                state.cmp_word(&mut self.cx, SymBoolExprOp::Sgt)?;
             }
             opcode::EQ => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
-                state.stack.push(SymExpr::from_bool(SymBoolExpr::eq(b, a)))?;
+                let condition = self.cx.eq(b, a);
+                let value = self.cx.bool_word(condition);
+                state.stack.push(value)?;
             }
             opcode::ISZERO => {
                 let value = state.stack.pop()?;
                 state.stack.push(SymExpr::from_bool(value.into_zero_bool()))?;
             }
             opcode::AND => {
-                state.bin_word(SymExprOp::And)?;
+                state.bin_word(&mut self.cx, SymExprOp::And)?;
             }
             opcode::OR => {
-                state.bin_word(SymExprOp::Or)?;
+                state.bin_word(&mut self.cx, SymExprOp::Or)?;
             }
             opcode::XOR => {
-                state.bin_word(SymExprOp::Xor)?;
+                state.bin_word(&mut self.cx, SymExprOp::Xor)?;
             }
             opcode::NOT => {
                 let value = state.stack.pop()?;
-                state.stack.push(SymExpr::not(value))?;
+                state.stack.push(self.cx.not(value))?;
             }
             opcode::SIGNEXTEND => {
                 let byte_index = state.stack.pop()?;
@@ -119,13 +121,13 @@ impl SymbolicExecutor {
                 state.stack.push(byte_word_dynamic(index, word))?;
             }
             opcode::SHL => {
-                state.shift_word(ShiftKind::Shl)?;
+                state.shift_word(&mut self.cx, ShiftKind::Shl)?;
             }
             opcode::SHR => {
-                state.shift_word(ShiftKind::Shr)?;
+                state.shift_word(&mut self.cx, ShiftKind::Shr)?;
             }
             opcode::SAR => {
-                state.shift_word(ShiftKind::Sar)?;
+                state.shift_word(&mut self.cx, ShiftKind::Sar)?;
             }
             opcode::KECCAK256 => {
                 let offset = state.stack.pop()?;
@@ -510,7 +512,7 @@ impl SymbolicExecutor {
                 state.stack.push(size)?;
             }
             opcode::GAS => {
-                let gas = state.fresh_gasleft();
+                let gas = state.fresh_gasleft(&mut self.cx);
                 state.stack.push(gas)?;
             }
             opcode::JUMPDEST => {}

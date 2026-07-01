@@ -229,7 +229,7 @@ impl PathState {
         expr.collect_eval_vars(&mut vars);
         let mut model = SymbolicModel::default();
         for var in vars {
-            let var_expr = SymExpr::var_symbol(var);
+            let var_expr = SymExpr::var_symbol(var.clone());
             let value = self.constraints.iter().find_map(|constraint| {
                 constraint.forces_expr_const_with_context(&var_expr, &self.constraints)
             })?;
@@ -370,35 +370,49 @@ impl PathState {
         self.constrained_word(&expr).ok_or(SymbolicError::Unsupported(reason))
     }
 
-    pub(crate) fn bin_word(&mut self, op: SymExprOp) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn bin_word(
+        &mut self,
+        cx: &mut SymCx,
+        op: SymExprOp,
+    ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        self.stack.push(SymExpr::op(op, a, b))?;
+        self.stack.push(cx.op(op, a, b))?;
         Ok(StepOutcome::Continue)
     }
 
     pub(crate) fn bin_word_div_zero_guard(
         &mut self,
+        cx: &mut SymCx,
         op: SymExprOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        self.stack.push(SymExpr::ite(
-            SymBoolExpr::eq(b.clone(), SymExpr::constant(U256::ZERO)),
-            SymExpr::constant(U256::ZERO),
-            SymExpr::op(op, a, b),
-        ))?;
+        let zero = cx.zero();
+        let condition = cx.eq(b.clone(), zero.clone());
+        let expr = cx.op(op, a, b);
+        self.stack.push(cx.ite(condition, zero, expr))?;
         Ok(StepOutcome::Continue)
     }
 
-    pub(crate) fn cmp_word(&mut self, op: SymBoolExprOp) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn cmp_word(
+        &mut self,
+        cx: &mut SymCx,
+        op: SymBoolExprOp,
+    ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        self.stack.push(SymExpr::from_bool(SymBoolExpr::cmp(op, a, b)))?;
+        let condition = cx.cmp(op, a, b);
+        let value = cx.bool_word(condition);
+        self.stack.push(value)?;
         Ok(StepOutcome::Continue)
     }
 
-    pub(crate) fn shift_word(&mut self, kind: ShiftKind) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn shift_word(
+        &mut self,
+        cx: &mut SymCx,
+        kind: ShiftKind,
+    ) -> Result<StepOutcome, SymbolicError> {
         let shift = self.stack.pop()?;
         let value = self.stack.pop()?;
         let result = if let (Some(value), Some(shift)) = (value.as_const(), shift.as_const()) {
@@ -416,30 +430,30 @@ impl PathState {
                     ShiftKind::Sar => sar(value, shift),
                 }
             };
-            SymExpr::constant(result)
+            cx.constant(result)
         } else {
             let expr = match kind {
-                ShiftKind::Shl => SymExpr::op(SymExprOp::Shl, value, shift),
-                ShiftKind::Shr => SymExpr::op(SymExprOp::Shr, value, shift),
-                ShiftKind::Sar => SymExpr::op(SymExprOp::Sar, value, shift),
+                ShiftKind::Shl => cx.op(SymExprOp::Shl, value, shift),
+                ShiftKind::Shr => cx.op(SymExprOp::Shr, value, shift),
+                ShiftKind::Sar => cx.op(SymExprOp::Sar, value, shift),
             };
-            expr.known_word().map(SymExpr::constant).unwrap_or(expr)
+            expr.known_word().map(|word| cx.constant(word)).unwrap_or(expr)
         };
         self.stack.push(result)?;
         Ok(StepOutcome::Continue)
     }
 
-    pub(crate) fn exp_word(&mut self) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn exp_word(&mut self, cx: &mut SymCx) -> Result<StepOutcome, SymbolicError> {
         let base = self.stack.pop()?;
         let exponent = self.stack.pop()?;
         let result = if let Some(exponent) = self.constrained_word(&exponent) {
             if let Some(base_value) = base.as_const() {
-                SymExpr::constant(pow_mod(base_value, exponent))
+                cx.constant(pow_mod(base_value, exponent))
             } else if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) {
-                exp_expr_for_concrete_exponent(
+                cx.intern_expr(exp_expr_for_concrete_exponent(
                     base,
                     usize::try_from(exponent).expect("checked symbolic exponent"),
-                )
+                ))
             } else {
                 return Err(SymbolicError::Unsupported("symbolic EXP base"));
             }
@@ -453,13 +467,12 @@ impl PathState {
                 .upper_bound_usize(&exponent)
                 .filter(|exponent| *exponent <= exponent_limit as usize)
                 .ok_or(SymbolicError::Unsupported("symbolic EXP exponent"))?;
-            let mut expr = SymExpr::constant(U256::ZERO);
+            let mut expr = cx.zero();
             for candidate in (0..=max_exponent).rev() {
-                expr = SymExpr::ite(
-                    SymBoolExpr::eq(exponent.clone(), SymExpr::constant(U256::from(candidate))),
-                    exp_expr_for_concrete_exponent(base.clone(), candidate),
-                    expr,
-                );
+                let candidate_expr = cx.constant(U256::from(candidate));
+                let condition = cx.eq(exponent.clone(), candidate_expr);
+                let value = cx.intern_expr(exp_expr_for_concrete_exponent(base.clone(), candidate));
+                expr = cx.ite(condition, value, expr);
             }
             expr
         };
@@ -524,45 +537,49 @@ impl PathState {
         self.world.resolve_address(&expr).unwrap_or_else(|| self.world.symbolic_address_slot(expr))
     }
 
-    pub(crate) fn fresh_word(&mut self, prefix: &'static str) -> SymExpr {
+    pub(crate) fn fresh_word(&mut self, cx: &mut SymCx, prefix: &'static str) -> SymExpr {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymExpr::var(&format!("{prefix}_{id}"))
+        cx.var(&format!("{prefix}_{id}"))
     }
 
-    pub(crate) fn fresh_gasleft(&mut self) -> SymExpr {
+    pub(crate) fn fresh_gasleft(&mut self, cx: &mut SymCx) -> SymExpr {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymExpr::gas_left(id)
+        cx.gas_left(id)
     }
 
-    pub(crate) fn fresh_bounded_uint(&mut self, bits: U256) -> SymExpr {
-        let value = self.fresh_word("symbolic");
+    pub(crate) fn fresh_bounded_uint(&mut self, cx: &mut SymCx, bits: U256) -> SymExpr {
+        let value = self.fresh_word(cx, "symbolic");
         if bits < U256::from(256) {
             let upper = if bits.is_zero() {
                 U256::ZERO
             } else {
                 U256::from(1) << usize::try_from(bits).expect("checked bit width")
             };
-            self.constraints.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ult, &value, upper));
+            self.constraints.push(cx.cmp_word_const(SymBoolExprOp::Ult, &value, upper));
         }
         value
     }
 
-    pub(crate) fn fresh_bytes(&mut self, len: usize) -> Vec<SymExpr> {
-        (0..len).map(|_| self.fresh_bounded_uint(U256::from(8))).collect()
+    pub(crate) fn fresh_bytes(&mut self, cx: &mut SymCx, len: usize) -> Vec<SymExpr> {
+        (0..len).map(|_| self.fresh_bounded_uint(cx, U256::from(8))).collect()
     }
 
-    pub(crate) fn fresh_printable_ascii_bytes(&mut self, len: usize) -> Vec<SymExpr> {
+    pub(crate) fn fresh_printable_ascii_bytes(
+        &mut self,
+        cx: &mut SymCx,
+        len: usize,
+    ) -> Vec<SymExpr> {
         (0..len)
             .map(|_| {
-                let byte = self.fresh_bounded_uint(U256::from(8));
-                self.constraints.push(SymBoolExpr::cmp_word_const(
+                let byte = self.fresh_bounded_uint(cx, U256::from(8));
+                self.constraints.push(cx.cmp_word_const(
                     SymBoolExprOp::Uge,
                     &byte,
                     U256::from(0x20),
                 ));
-                self.constraints.push(SymBoolExpr::cmp_word_const(
+                self.constraints.push(cx.cmp_word_const(
                     SymBoolExprOp::Ule,
                     &byte,
                     U256::from(0x7e),
@@ -572,20 +589,16 @@ impl PathState {
             .collect()
     }
 
-    pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymExpr {
-        let value = self.fresh_word("symbolic");
+    pub(crate) fn fresh_bounded_int(&mut self, cx: &mut SymCx, bits: U256) -> SymExpr {
+        let value = self.fresh_word(cx, "symbolic");
         if bits.is_zero() {
-            self.constraints.push(SymBoolExpr::eq_word_const(&value, U256::ZERO));
+            self.constraints.push(cx.eq_word_const(&value, U256::ZERO));
         } else if bits < U256::from(256) {
             let magnitude =
                 U256::from(1) << (usize::try_from(bits).expect("checked bit width") - 1);
             self.constraints.push(SymBoolExpr::or(vec![
-                SymBoolExpr::cmp_word_const(SymBoolExprOp::Ult, &value, magnitude),
-                SymBoolExpr::cmp_word_const(
-                    SymBoolExprOp::Uge,
-                    &value,
-                    U256::ZERO.wrapping_sub(magnitude),
-                ),
+                cx.cmp_word_const(SymBoolExprOp::Ult, &value, magnitude),
+                cx.cmp_word_const(SymBoolExprOp::Uge, &value, U256::ZERO.wrapping_sub(magnitude)),
             ]));
         }
         value

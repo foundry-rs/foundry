@@ -149,17 +149,9 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::Failure);
         }
 
-        let bounded = state.fresh_word("vmBoundUint");
-        state.constraints.push(SymBoolExpr::cmp_word_const(
-            SymBoolExprOp::Uge,
-            &bounded,
-            min_value,
-        ));
-        state.constraints.push(SymBoolExpr::cmp_word_const(
-            SymBoolExprOp::Ule,
-            &bounded,
-            max_value,
-        ));
+        let bounded = state.fresh_word(&mut self.cx, "vmBoundUint");
+        state.constraints.push(self.cx.cmp_word_const(SymBoolExprOp::Uge, &bounded, min_value));
+        state.constraints.push(self.cx.cmp_word_const(SymBoolExprOp::Ule, &bounded, max_value));
         state.constraints.push(SymBoolExpr::eq_word_expr(&bounded, value_expr).not());
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }
@@ -210,13 +202,13 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::Failure);
         }
 
-        let bounded = state.fresh_word("vmBoundInt");
+        let bounded = state.fresh_word(&mut self.cx, "vmBoundInt");
         state
             .constraints
-            .push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Slt, &bounded, min_value).not());
+            .push(self.cx.cmp_word_const(SymBoolExprOp::Slt, &bounded, min_value).not());
         state
             .constraints
-            .push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Sgt, &bounded, max_value).not());
+            .push(self.cx.cmp_word_const(SymBoolExprOp::Sgt, &bounded, max_value).not());
         state.constraints.push(SymBoolExpr::eq_word_expr(&bounded, value_expr).not());
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }

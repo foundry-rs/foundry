@@ -29,7 +29,7 @@ impl SymbolicExecutor {
     /// a fresh executor when a caller needs independent solver query accounting.
     pub fn new(config: SymbolicConfig) -> Self {
         let solver = SmtLibSubprocessSolver::from_config(&config);
-        Self { config, solver: Box::new(solver), deferred_incomplete: None }
+        Self { config, cx: SymCx::new(), solver: Box::new(solver), deferred_incomplete: None }
     }
 
     /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
@@ -109,6 +109,7 @@ impl SymbolicExecutor {
         input: SymbolicRunInput<'_, FEN>,
     ) -> SymbolicRunResult {
         self.deferred_incomplete = None;
+        self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
             return SymbolicRunResult::Incomplete {
                 kind: err.stop_reason(),
@@ -133,7 +134,8 @@ impl SymbolicExecutor {
         function: &Function,
         corpus_seeds: &[SymbolicConcreteInput],
     ) -> Result<Vec<usize>, SymbolicError> {
-        let variants = SymbolicCalldata::variants(function, config)?;
+        let mut cx = SymCx::new();
+        let variants = SymbolicCalldata::variants(function, config, &mut cx)?;
         let mut modeled = vec![false; corpus_seeds.len()];
         for calldata in &variants {
             for (idx, seed) in corpus_seeds.iter().enumerate() {
@@ -163,6 +165,7 @@ impl SymbolicExecutor {
         input: SymbolicInvariantRunInput<'_, FEN>,
     ) -> SymbolicInvariantRunResult {
         self.deferred_incomplete = None;
+        self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
             return SymbolicInvariantRunResult::Incomplete {
                 kind: err.stop_reason(),
@@ -195,7 +198,7 @@ impl SymbolicExecutor {
         let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
         let code = SymCode::from_bytecode(&bytecode);
         let mut roots = Vec::new();
-        for calldata in SymbolicCalldata::variants(input.function, &self.config)? {
+        for calldata in SymbolicCalldata::variants(input.function, &self.config, &mut self.cx)? {
             let corpus_seed_models = input
                 .corpus_seeds
                 .iter()
@@ -457,6 +460,7 @@ impl SymbolicExecutor {
                         let calldatas = SymbolicCalldata::variants_with_prefix(
                             &target.function,
                             &self.config,
+                            &mut self.cx,
                             &prefix,
                         )?;
                         for calldata in calldatas {

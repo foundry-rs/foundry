@@ -82,7 +82,7 @@ pub(crate) fn hard_arith_fallback_model(constraints: &[SymBoolExpr]) -> Option<S
         .iter()
         .map(|var| fallback_candidates_for_var(var.as_str(), constraints, &constants))
         .collect::<Option<Vec<_>>>()?;
-    let searched_vars = vars.iter().copied().collect::<SymbolicVars>();
+    let searched_vars = vars.iter().cloned().collect::<SymbolicVars>();
     let constraint_vars = constraints
         .iter()
         .map(|constraint| {
@@ -191,7 +191,7 @@ impl FallbackSearch<'_> {
         }
 
         for candidate in &self.candidates[index] {
-            model.insert(self.vars[index], *candidate);
+            model.insert(self.vars[index].clone(), *candidate);
             if fallback_partial_model_satisfies_known_constraints(
                 self.constraints,
                 self.constraint_vars,
@@ -225,7 +225,7 @@ fn fallback_partial_model_satisfies_known_constraints(
 ) -> bool {
     constraints.iter().zip(constraint_vars).all(|(constraint, vars)| {
         !vars.is_subset(searched_vars)
-            || !vars.iter().all(|var| model.contains_name(*var))
+            || !vars.iter().all(|var| model.contains_name(var.clone()))
             || constraint.eval_model(model).unwrap_or(false)
     })
 }
@@ -233,7 +233,7 @@ fn fallback_partial_model_satisfies_known_constraints(
 fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit_exprs(&mut |expr| {
         if let SymExprKind::Var(var) = expr.kind() {
-            vars.insert(*var);
+            vars.insert(var.clone());
         }
         ControlFlow::<()>::Continue(())
     });
@@ -250,7 +250,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     let mut constants = constants.into_iter().collect::<Vec<_>>();
     constants.sort_unstable();
 
-    let var = if vars.len() == 1 { *vars.iter().next()? } else { return None };
+    let var = if vars.len() == 1 { vars.iter().next()?.clone() } else { return None };
     let hints = MaskHints::for_var(var.as_str(), constraints);
     if (hints.one & hints.zero) != U256::ZERO {
         return None;
@@ -287,7 +287,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     candidates.sort_unstable();
     for candidate in candidates {
         let mut model = SymbolicModel::default();
-        model.insert(var, candidate);
+        model.insert(var.clone(), candidate);
         if constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(false)) {
             return Some(model);
         }

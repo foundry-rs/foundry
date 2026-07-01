@@ -10,6 +10,14 @@ fn empty_state() -> PathState {
     )
 }
 
+fn symbolic_calldata_variants(
+    function: &Function,
+    config: &SymbolicConfig,
+) -> Result<Vec<SymbolicCalldata>, SymbolicError> {
+    let mut cx = SymCx::new();
+    SymbolicCalldata::variants(function, config, &mut cx)
+}
+
 fn add_words(left: SymExpr, right: SymExpr) -> SymExpr {
     SymExpr::op(SymExprOp::Add, left, right)
 }
@@ -98,44 +106,48 @@ fn local_batches_respect_exploration_order() {
 
 #[test]
 fn binary_helpers_use_evm_operand_order() {
+    let mut cx = SymCx::new();
     let mut state = empty_state();
     state.stack.push(SymExpr::constant(U256::from(2))).unwrap();
     state.stack.push(SymExpr::constant(U256::from(10))).unwrap();
 
-    state.bin_word(SymExprOp::Sub).unwrap();
+    state.bin_word(&mut cx, SymExprOp::Sub).unwrap();
 
     assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(U256::from(8)));
 }
 
 #[test]
 fn comparison_helpers_use_evm_operand_order() {
+    let mut cx = SymCx::new();
     let mut state = empty_state();
     state.stack.push(SymExpr::constant(U256::from(2))).unwrap();
     state.stack.push(SymExpr::constant(U256::from(10))).unwrap();
 
-    state.cmp_word(SymBoolExprOp::Ult).unwrap();
+    state.cmp_word(&mut cx, SymBoolExprOp::Ult).unwrap();
 
     assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(U256::ZERO));
 }
 
 #[test]
 fn exp_helper_uses_evm_operand_order() {
+    let mut cx = SymCx::new();
     let mut state = empty_state();
     state.stack.push(SymExpr::constant(U256::ZERO)).unwrap();
     state.stack.push(SymExpr::constant(U256::from(0x100))).unwrap();
 
-    state.exp_word().unwrap();
+    state.exp_word(&mut cx).unwrap();
 
     assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(U256::from(1)));
 }
 
 #[test]
 fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
+    let mut cx = SymCx::new();
     let mut state = empty_state();
     state.stack.push(SymExpr::constant(U256::from(16))).unwrap();
     state.stack.push(SymExpr::var("base")).unwrap();
 
-    state.exp_word().unwrap();
+    state.exp_word(&mut cx).unwrap();
 
     let result = state.stack.pop().unwrap();
     assert_eq!(
@@ -146,6 +158,7 @@ fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
 
 #[test]
 fn exp_helper_expands_bounded_symbolic_exponent() {
+    let mut cx = SymCx::new();
     let mut state = empty_state();
     let exponent = SymExpr::var("exponent");
     state.constraints.push(SymBoolExpr::cmp(
@@ -156,7 +169,7 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
     state.stack.push(exponent).unwrap();
     state.stack.push(SymExpr::constant(U256::from(3))).unwrap();
 
-    state.exp_word().unwrap();
+    state.exp_word(&mut cx).unwrap();
 
     let result = state.stack.pop().unwrap();
     assert_eq!(
@@ -167,10 +180,11 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
 
 #[test]
 fn shift_helpers_accept_symbolic_amounts() {
+    let mut cx = SymCx::new();
     let mut shl = empty_state();
     shl.stack.push(SymExpr::constant(U256::from(1))).unwrap();
     shl.stack.push(SymExpr::var("shift")).unwrap();
-    shl.shift_word(ShiftKind::Shl).unwrap();
+    shl.shift_word(&mut cx, ShiftKind::Shl).unwrap();
     let shifted = shl.stack.pop().unwrap();
 
     assert_eq!(
@@ -185,7 +199,7 @@ fn shift_helpers_accept_symbolic_amounts() {
     let mut shr = empty_state();
     shr.stack.push(SymExpr::constant(U256::from(1) << 255)).unwrap();
     shr.stack.push(SymExpr::var("shift")).unwrap();
-    shr.shift_word(ShiftKind::Shr).unwrap();
+    shr.shift_word(&mut cx, ShiftKind::Shr).unwrap();
     let shifted = shr.stack.pop().unwrap();
 
     assert_eq!(
@@ -200,7 +214,7 @@ fn shift_helpers_accept_symbolic_amounts() {
     let mut sar = empty_state();
     sar.stack.push(SymExpr::constant(U256::MAX)).unwrap();
     sar.stack.push(SymExpr::var("shift")).unwrap();
-    sar.shift_word(ShiftKind::Sar).unwrap();
+    sar.shift_word(&mut cx, ShiftKind::Sar).unwrap();
     let shifted = sar.stack.pop().unwrap();
 
     assert_eq!(
@@ -211,11 +225,12 @@ fn shift_helpers_accept_symbolic_amounts() {
 
 #[test]
 fn symbolic_division_guards_zero_divisor() {
+    let mut cx = SymCx::new();
     let mut state = empty_state();
     state.stack.push(SymExpr::var("den")).unwrap();
     state.stack.push(SymExpr::var("num")).unwrap();
 
-    state.bin_word_div_zero_guard(SymExprOp::UDiv).unwrap();
+    state.bin_word_div_zero_guard(&mut cx, SymExprOp::UDiv).unwrap();
 
     assert_eq!(
         state.stack.pop().unwrap(),
@@ -353,7 +368,7 @@ fn selector_equality_folds_known_word_expressions() {
 fn calldata_selector_load_simplifies_to_concrete_word() {
     let function = Function::parse("check(bytes32)").unwrap();
     let calldata =
-        SymbolicCalldata::variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
+        symbolic_calldata_variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
     let selector = U256::from_be_slice(function.selector().as_slice());
     let loaded = calldata.call_data().load_word(SymExpr::zero()).unwrap();
     let selector_expr = SymExpr::op(SymExprOp::Shr, loaded, SymExpr::constant(U256::from(224)));
@@ -385,7 +400,7 @@ fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
 fn dynamic_calldata_encodes_bounded_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
-    let calldata = SymbolicCalldata::variants(&function, &config).unwrap().remove(0);
+    let calldata = symbolic_calldata_variants(&function, &config).unwrap().remove(0);
     let call_data = calldata.call_data();
 
     assert_eq!(call_data.size_word(), SymExpr::constant(U256::from(100)));
@@ -435,7 +450,7 @@ fn calldata_seed_model_round_trips_common_abi_values() {
         calldata: Bytes::from(function.abi_encode_input(&args).unwrap()),
         args: args.clone(),
     };
-    let calldata = SymbolicCalldata::variants(&function, &config).unwrap().remove(0);
+    let calldata = symbolic_calldata_variants(&function, &config).unwrap().remove(0);
     let model = calldata.seed_model(&seed).unwrap();
 
     assert_eq!(calldata.model_to_args(&model).unwrap(), args);
@@ -445,7 +460,7 @@ fn calldata_seed_model_round_trips_common_abi_values() {
 fn calldata_word_loads_preserve_structural_words() {
     let function = Function::parse("check(uint256,bool,address)").unwrap();
     let calldata =
-        SymbolicCalldata::variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
+        symbolic_calldata_variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
     let call_data = calldata.call_data();
 
     assert_eq!(call_data.load(4).unwrap(), SymExpr::var("calldata_0"));
@@ -457,7 +472,7 @@ fn calldata_word_loads_preserve_structural_words() {
 fn calldata_copy_to_memory_preserves_structural_words() {
     let function = Function::parse("check(uint256,uint256)").unwrap();
     let calldata =
-        SymbolicCalldata::variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
+        symbolic_calldata_variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
     let mut memory = SymMemory::default();
 
     memory
@@ -568,7 +583,7 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
 fn memory_copies_unaligned_symbolic_calldata_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
-    let calldata = SymbolicCalldata::variants(&function, &config).unwrap().remove(0);
+    let calldata = symbolic_calldata_variants(&function, &config).unwrap().remove(0);
     let mut memory = SymMemory::default();
 
     memory
@@ -860,7 +875,7 @@ fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
 fn nested_dynamic_calldata_uses_preorder_lengths() {
     let function = Function::parse("check((uint256[],bytes))").unwrap();
     let config = SymbolicConfig { array_lengths: vec![2, 3], ..Default::default() };
-    let calldata = SymbolicCalldata::variants(&function, &config).unwrap().remove(0);
+    let calldata = symbolic_calldata_variants(&function, &config).unwrap().remove(0);
     let call_data = calldata.call_data();
 
     assert_eq!(call_data.load(4).unwrap(), SymExpr::constant(U256::from(32)));
@@ -2006,7 +2021,7 @@ fn extra_dynamic_lengths_are_rejected() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![1, 2], ..Default::default() };
 
-    let err = SymbolicCalldata::variants(&function, &config).unwrap_err();
+    let err = symbolic_calldata_variants(&function, &config).unwrap_err();
 
     assert!(err.to_string().contains("symbolic.array_lengths has 2 entries"));
 }
@@ -2020,7 +2035,7 @@ fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
         ..Default::default()
     };
 
-    let variants = SymbolicCalldata::variants(&function, &config).unwrap();
+    let variants = symbolic_calldata_variants(&function, &config).unwrap();
 
     assert_eq!(variants.len(), 2);
     let element_counts = variants
@@ -2047,7 +2062,7 @@ fn extra_dynamic_lengths_are_rejected_after_expansion() {
         ..Default::default()
     };
 
-    let err = SymbolicCalldata::variants(&function, &config).unwrap_err();
+    let err = symbolic_calldata_variants(&function, &config).unwrap_err();
 
     assert!(err.to_string().contains("ABI used at most 2 positional dynamic leaves"));
 }
@@ -2062,7 +2077,7 @@ fn calldata_variant_expansion_respects_path_width() {
         ..Default::default()
     };
 
-    let err = SymbolicCalldata::variants(&function, &config).unwrap_err();
+    let err = symbolic_calldata_variants(&function, &config).unwrap_err();
 
     assert!(matches!(err, SymbolicError::CalldataVariantLimit(2)));
 }
