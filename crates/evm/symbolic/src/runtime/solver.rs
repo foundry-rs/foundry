@@ -378,6 +378,17 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.sat_cache.remove(&cache_key);
         }
 
+        if constraints_are_directly_unsat(&smt_constraints) {
+            trace!("model: direct contradiction");
+            self.cache_sat_result(cache_key, false);
+            return Err(SymbolicError::Solver("counterexample path became unsat".to_string()));
+        }
+        if product_monotonic_unsat_normalized(&smt_constraints) {
+            trace!("model: monotonic product contradiction");
+            self.cache_sat_result(cache_key, false);
+            return Err(SymbolicError::Solver("counterexample path became unsat".to_string()));
+        }
+
         self.reserve_query()?;
         self.record_query();
         let _span = trace_span!(
@@ -499,7 +510,7 @@ impl SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
-        if constraints_are_directly_unsat(cx, &smt_constraints) {
+        if constraints_are_directly_unsat(&smt_constraints) {
             trace!("is_sat: direct contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(false);

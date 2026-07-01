@@ -217,15 +217,52 @@ pub(super) fn constraint_cache_key(
 }
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
-pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
-    constraints.iter().any(|constraint| match constraint.kind() {
-        SymBoolExprKind::Const(false) => true,
-        SymBoolExprKind::Not(inner) => constraints.contains(inner),
-        _ => {
-            let negated = constraint.clone().not(cx);
-            constraints.contains(&negated)
+pub(super) fn constraints_are_directly_unsat(constraints: &[SymBoolExpr]) -> bool {
+    if constraints.len() <= 32 {
+        for (idx, constraint) in constraints.iter().enumerate() {
+            if constraint.as_const() == Some(false) {
+                return true;
+            }
+            if constraints[idx + 1..]
+                .iter()
+                .any(|other| bool_exprs_are_negations(constraint, other))
+            {
+                return true;
+            }
         }
-    })
+        return false;
+    }
+
+    let mut positive = HashSet::<&SymBoolExpr>::default();
+    let mut negative = HashSet::<&SymBoolExpr>::default();
+
+    for constraint in constraints {
+        match constraint.kind() {
+            SymBoolExprKind::Const(false) => return true,
+            SymBoolExprKind::Not(inner) => {
+                if positive.contains(inner) {
+                    return true;
+                }
+                negative.insert(inner);
+            }
+            _ => {
+                if negative.contains(constraint) {
+                    return true;
+                }
+                positive.insert(constraint);
+            }
+        }
+    }
+
+    false
+}
+
+fn bool_exprs_are_negations(left: &SymBoolExpr, right: &SymBoolExpr) -> bool {
+    match (left.kind(), right.kind()) {
+        (SymBoolExprKind::Not(inner), _) => inner == right,
+        (_, SymBoolExprKind::Not(inner)) => left == inner,
+        _ => false,
+    }
 }
 
 /// Returns whether every expression in `subset` appears in `superset`.
@@ -397,6 +434,19 @@ pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_contradiction_scan_finds_negated_pairs_in_either_order() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let one = SymExpr::constant(&mut cx, U256::from(1));
+        let constraint = SymBoolExpr::eq(&mut cx, x, one);
+        let negated = constraint.clone().not(&mut cx);
+
+        assert!(constraints_are_directly_unsat(&[constraint.clone(), negated.clone()]));
+        assert!(constraints_are_directly_unsat(&[negated, constraint]));
+        assert!(constraints_are_directly_unsat(&[SymBoolExpr::constant(&mut cx, false)]));
+    }
 
     #[test]
     fn write_smt_assertions_reuses_repeated_expr_binding() {

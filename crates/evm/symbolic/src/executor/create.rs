@@ -209,11 +209,14 @@ impl SymbolicExecutor {
             parents.push_back(parent);
         }
 
-        let Some(first) = self.pop_batch(&mut parents) else {
+        let Some(first) = (match self.config.exploration_order {
+            SymbolicExplorationOrder::Bfs => parents.pop_front(),
+            SymbolicExplorationOrder::Dfs => parents.pop_back(),
+        }) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        self.spill_batch(parents, worklist);
+        worklist.extend(parents);
         Ok(StepOutcome::Continue)
     }
 
@@ -229,7 +232,10 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = self.pop_batch(&mut worklist) {
+        while let Some(mut state) = match self.config.exploration_order {
+            SymbolicExplorationOrder::Bfs => worklist.pop_front(),
+            SymbolicExplorationOrder::Dfs => worklist.pop_back(),
+        } {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }

@@ -304,11 +304,14 @@ impl SymbolicExecutor {
             parents.push_back(parent);
         }
 
-        let Some(first) = self.pop_batch(&mut parents) else {
+        let Some(first) = (match self.config.exploration_order {
+            SymbolicExplorationOrder::Bfs => parents.pop_front(),
+            SymbolicExplorationOrder::Dfs => parents.pop_back(),
+        }) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        self.spill_batch(parents, worklist);
+        worklist.extend(parents);
         Ok(StepOutcome::Continue)
     }
 
@@ -413,11 +416,14 @@ impl SymbolicExecutor {
             branches.push_back(branch);
         }
 
-        let Some(first_branch) = self.pop_batch(&mut branches) else {
+        let Some(first_branch) = (match self.config.exploration_order {
+            SymbolicExplorationOrder::Bfs => branches.pop_front(),
+            SymbolicExplorationOrder::Dfs => branches.pop_back(),
+        }) else {
             return Ok(Some(StepOutcome::AssumeRejected));
         };
         *state = first_branch;
-        self.spill_batch(branches, worklist);
+        worklist.extend(branches);
         Ok(Some(StepOutcome::Continue))
     }
 

@@ -6,10 +6,6 @@ fn empty_state(cx: &mut SymCx) -> PathState {
     PathState::new(cx, Address::ZERO, Address::ZERO, U256::ZERO, calldata, false)
 }
 
-fn executor_with_exploration_order(order: SymbolicExplorationOrder) -> SymbolicExecutor {
-    SymbolicExecutor::new(SymbolicConfig { exploration_order: order, ..Default::default() })
-}
-
 fn symbolic_calldata_variants(
     cx: &mut SymCx,
     function: &Function,
@@ -57,38 +53,6 @@ fn precompile_number_respects_active_spec() {
 
     assert_eq!(precompile_number_for_spec(precompile_address(10), SpecId::ISTANBUL), None);
     assert_eq!(precompile_number_for_spec(precompile_address(10), SpecId::CANCUN), Some(10));
-}
-
-#[test]
-fn pop_worklist_respects_exploration_order() {
-    let bfs = executor_with_exploration_order(SymbolicExplorationOrder::Bfs);
-    let mut bfs_worklist = VecDeque::from([1, 2, 3]);
-    assert_eq!(bfs.pop_batch(&mut bfs_worklist), Some(1));
-    assert_eq!(bfs.pop_batch(&mut bfs_worklist), Some(2));
-
-    let dfs = executor_with_exploration_order(SymbolicExplorationOrder::Dfs);
-    let mut dfs_worklist = VecDeque::from([1, 2, 3]);
-    assert_eq!(dfs.pop_batch(&mut dfs_worklist), Some(3));
-    assert_eq!(dfs.pop_batch(&mut dfs_worklist), Some(2));
-}
-
-#[test]
-fn local_batches_respect_exploration_order() {
-    let bfs = executor_with_exploration_order(SymbolicExplorationOrder::Bfs);
-    let mut bfs_batch = VecDeque::from([1, 2, 3]);
-    let mut bfs_worklist = VecDeque::from([10]);
-    assert_eq!(bfs.pop_batch(&mut bfs_batch), Some(1));
-    bfs.spill_batch(bfs_batch, &mut bfs_worklist);
-    assert_eq!(bfs.pop_batch(&mut bfs_worklist), Some(10));
-    assert_eq!(bfs.pop_batch(&mut bfs_worklist), Some(2));
-
-    let dfs = executor_with_exploration_order(SymbolicExplorationOrder::Dfs);
-    let mut dfs_batch = VecDeque::from([1, 2, 3]);
-    let mut dfs_worklist = VecDeque::from([10]);
-    assert_eq!(dfs.pop_batch(&mut dfs_batch), Some(3));
-    dfs.spill_batch(dfs_batch, &mut dfs_worklist);
-    assert_eq!(dfs.pop_batch(&mut dfs_worklist), Some(2));
-    assert_eq!(dfs.pop_batch(&mut dfs_worklist), Some(1));
 }
 
 #[test]
@@ -3973,6 +3937,33 @@ fn direct_contradiction_is_sat_short_circuits_locally() {
     assert_eq!(stats.solver_queries, 1);
     assert_eq!(stats.smt_queries, 0);
     assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn direct_contradiction_model_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let constraint = SymBoolExpr::eq(&mut cx, x, one);
+    let constraints = vec![constraint.clone(), constraint.not(&mut cx)];
+
+    assert!(
+        matches!(solver.model(&mut cx, &constraints), Err(SymbolicError::Solver(message)) if message.contains("unsat"))
+    );
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 0);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.model_queries, 1);
+    assert_eq!(stats.sat_queries, 0);
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 0);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+    assert_eq!(stats.sat_cache_hits, 1);
 }
 
 #[cfg(unix)]
