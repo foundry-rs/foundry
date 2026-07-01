@@ -71,6 +71,16 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
         .iter()
         .map(|path| rebase_project_path(&config.root, temp_path, path))
         .collect();
+    temp_config.ignored_error_codes_from = config
+        .ignored_error_codes_from
+        .iter()
+        .map(|(path, codes)| (rebase_project_path(&config.root, temp_path, path), codes.clone()))
+        .collect();
+    temp_config.ignored_file_paths = config
+        .ignored_file_paths
+        .iter()
+        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .collect();
 
     if let Some(path) = &config.fuzz.failure_persist_dir {
         temp_config.fuzz.failure_persist_dir =
@@ -476,6 +486,20 @@ mod tests {
             libs: vec![root.join("vendor"), external.join("lib")],
             include_paths: vec![root.join("shared")],
             allow_paths: vec![root.join("fixtures"), external.join("fixtures")],
+            ignored_error_codes_from: vec![
+                (
+                    root.join("contracts"),
+                    vec![foundry_config::SolidityErrorCode::UnusedLocalVariable],
+                ),
+                (
+                    external.join("contracts"),
+                    vec![foundry_config::SolidityErrorCode::UnusedFunctionParameter],
+                ),
+            ],
+            ignored_file_paths: vec![
+                root.join("contracts/Ignored.sol"),
+                external.join("Ignored.sol"),
+            ],
             remappings: vec![
                 Remapping::from_str(&format!("@src/={}/", root.join("src").display()))
                     .unwrap()
@@ -521,6 +545,23 @@ mod tests {
         assert_eq!(
             temp_config.allow_paths,
             vec![workspace.join("fixtures"), external.join("fixtures")]
+        );
+        assert_eq!(
+            temp_config.ignored_error_codes_from,
+            vec![
+                (
+                    workspace.join("contracts"),
+                    vec![foundry_config::SolidityErrorCode::UnusedLocalVariable]
+                ),
+                (
+                    external.join("contracts"),
+                    vec![foundry_config::SolidityErrorCode::UnusedFunctionParameter]
+                )
+            ]
+        );
+        assert_eq!(
+            temp_config.ignored_file_paths,
+            vec![workspace.join("contracts/Ignored.sol"), external.join("Ignored.sol")]
         );
 
         let remappings =
