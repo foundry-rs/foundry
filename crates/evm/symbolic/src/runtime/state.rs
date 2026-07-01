@@ -302,6 +302,12 @@ impl PathState {
         self.branch_target_reached = true;
     }
 
+    pub(crate) fn inherit_branch_target_progress(&mut self, child: &Self) {
+        if self.branch_target == child.branch_target && child.branch_target_reached {
+            self.branch_target_reached = true;
+        }
+    }
+
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
         self.branch_target.is_none() || self.branch_target_reached
     }
