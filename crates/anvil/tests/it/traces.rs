@@ -1596,6 +1596,43 @@ async fn test_trace_replay_block_transactions_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_replay_transaction() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(12345);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let result: TraceResults = provider
+        .client()
+        .request(
+            "trace_replayTransaction",
+            (receipt.transaction_hash, vec![TraceType::Trace, TraceType::StateDiff]),
+        )
+        .await
+        .unwrap();
+
+    assert!(!result.trace.is_empty());
+    match &result.trace[0].action {
+        Action::Call(call) => {
+            assert_eq!(call.from, from);
+            assert_eq!(call.to, to);
+        }
+        _ => panic!("Expected Call action, got {:?}", result.trace[0].action),
+    }
+
+    let ChangedType::<U256> { from, to } =
+        result.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
+    assert_eq!(to.checked_sub(*from).unwrap(), amount);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_block_by_number() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

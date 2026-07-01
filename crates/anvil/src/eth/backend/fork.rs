@@ -365,6 +365,14 @@ impl<N: Network> ClientFork<N> {
         self.provider().raw_request("trace_replayBlockTransactions".into(), params).await
     }
 
+    pub async fn trace_replay_transaction(
+        &self,
+        hash: B256,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<TraceResults, TransportError> {
+        self.provider().raw_request("trace_replayTransaction".into(), (hash, trace_types)).await
+    }
+
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub async fn reset(
         &self,
