@@ -275,6 +275,14 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.is_persistent(acc)
     }
 
+    fn invalidate_fork_cache_account(&mut self, address: Address) {
+        self.backend.to_mut().invalidate_fork_cache_account(address)
+    }
+
+    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256) {
+        self.backend.to_mut().invalidate_fork_cache_storage(address, slot)
+    }
+
     fn remove_persistent_account(&mut self, account: &Address) -> bool {
         self.backend.to_mut().remove_persistent_account(account)
     }

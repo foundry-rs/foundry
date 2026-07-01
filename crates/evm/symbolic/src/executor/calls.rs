@@ -733,7 +733,7 @@ impl SymbolicExecutor {
             if in_size < 4 {
                 return Err(SymbolicError::Unsupported("short cheatcode CALL"));
             }
-            let in_offset = in_offset.into_usize("symbolic cheatcode CALL input offset")?;
+            let in_offset = in_offset.as_usize_or("symbolic cheatcode CALL input offset")?;
             if !self.assume_expr_at_least(state, &in_size_word, 4)? {
                 return Ok(StepOutcome::AssumeRejected);
             }

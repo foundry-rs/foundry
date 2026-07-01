@@ -344,7 +344,7 @@ pub(crate) fn recorded_logs_json_return_data(
         }
         push_ascii(&mut bytes, "],\"data\":\"0x");
 
-        let len = data_len.into_concrete("symbolic vm.getRecordedLogsJson data length").and_then(
+        let len = data_len.as_const_or("symbolic vm.getRecordedLogsJson data length").and_then(
             |len| {
                 usize::try_from(len).map_err(|_| {
                     SymbolicError::Unsupported("symbolic vm.getRecordedLogsJson data length")
@@ -454,7 +454,7 @@ pub(crate) fn read_abi_concrete_word_arg(
     index: usize,
     reason: &'static str,
 ) -> Result<U256, SymbolicError> {
-    read_abi_word_arg(memory, args_offset, index)?.into_concrete(reason)
+    read_abi_word_arg(memory, args_offset, index)?.as_const_or(reason)
 }
 
 pub(crate) fn read_abi_constrained_word_arg(
@@ -551,7 +551,7 @@ pub(crate) fn read_abi_dynamic_bytes_arg(
         .map_err(|_| SymbolicError::Unsupported(reason))?;
     let len_offset = args_offset.checked_add(offset).ok_or(SymbolicError::Unsupported(reason))?;
     let data_offset = len_offset.checked_add(32).ok_or(SymbolicError::Unsupported(reason))?;
-    let len = memory.load_word(len_offset)?.into_usize(reason)?;
+    let len = memory.load_word(len_offset)?.as_usize_or(reason)?;
     memory.read_concrete(data_offset, len)
 }
 
