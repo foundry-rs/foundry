@@ -540,7 +540,6 @@ fn hir_type_storage_info<'hir>(
             ElementaryType::UFixed(m, _) => (m.bytes() as u64, 0, "inplace"),
         },
         TypeKind::Array(arr) => {
-            let (_, elem_bytes, elem_slots, _) = hir_type_storage_info(gcx, &arr.element.kind);
             // Use Solar's constant evaluator to resolve the array size expression, including
             // non-literal sizes like `uint256 constant N = 5; uint256[N] arr`.
             let fixed_len: Option<u64> = arr.size.and_then(|size_expr| {
@@ -553,6 +552,8 @@ fn hir_type_storage_info<'hir>(
             });
             match fixed_len {
                 Some(n) => {
+                    let (_, elem_bytes, elem_slots, _) =
+                        hir_type_storage_info(gcx, &arr.element.kind);
                     if elem_slots == 0 {
                         // Packable element: compute tight packing.
                         // elements_per_slot = floor(32 / elem_bytes), minimum 1.

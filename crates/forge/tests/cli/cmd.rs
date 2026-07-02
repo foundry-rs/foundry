@@ -2338,6 +2338,90 @@ contract Recursive {
 "#]]);
 });
 
+// erc7201("test.recursive.dynarray") = 0x539c3f42a016558808fc037d9c7f266a766b5f0aab821e2a24b0d64653589200
+// Recursive struct type: Node references itself through a dynamic array element type.
+forgetest!(can_inspect_erc7201_recursive_struct_via_dynamic_array, |prj, cmd| {
+    prj.add_source(
+        "RecursiveArray.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract RecursiveArray {
+    struct Node {
+        Node[] children;
+        uint256 value;
+    }
+
+    /// @custom:storage-location erc7201:test.recursive.dynarray
+    struct NodeRegistry {
+        Node root;
+    }
+
+    function _storage() private pure returns (NodeRegistry storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.recursive.dynarray")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "RecursiveArray", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "RecursiveArray [erc7201:test.recursive.dynarray]",
+      "label": "root",
+      "offset": 0,
+      "slot": "0x539c3f42a016558808fc037d9c7f266a766b5f0aab821e2a24b0d64653589200",
+      "type": "struct RecursiveArray.Node"
+    }
+  ],
+  "types": {
+    "struct RecursiveArray.Node": {
+      "encoding": "inplace",
+      "label": "struct RecursiveArray.Node",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct RecursiveArray.Node",
+          "label": "children",
+          "offset": 0,
+          "slot": "0",
+          "type": "struct RecursiveArray.Node[]"
+        },
+        {
+          "astId": 0,
+          "contract": "struct RecursiveArray.Node",
+          "label": "value",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
+    },
+    "struct RecursiveArray.Node[]": {
+      "encoding": "dynamic_array",
+      "label": "struct RecursiveArray.Node[]",
+      "numberOfBytes": "32",
+      "base": "struct RecursiveArray.Node"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
 // erc7201("test.packedarray") = 0x...
 // Packed fixed arrays: uint8[4] fits in 1 slot so numberOfBytes should be "32", not "4".
 // The field after the array must start on a fresh slot (not offset into the array's slot).
