@@ -154,7 +154,7 @@ forge test --match-test test_hard_branch \
   --symbolic-use-fuzz-frontiers
 ```
 
-Forge imports up to `symbolic.frontier_limit` records (default 8), replays the
+Forge imports up to `symbolic.frontier_limit` records (default 256), replays the
 recorded one-call seed as a path-priority hint, constrains symbolic execution to
 flip the captured comparison result, and persists only candidates that replay
 with the expected concrete outcome.

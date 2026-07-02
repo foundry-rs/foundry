@@ -128,7 +128,7 @@ seed_corpus = false
 use_fuzz_corpus = false
 corpus_seed_limit = 32
 use_fuzz_frontiers = false
-frontier_limit = 8
+frontier_limit = 256
 solver = "z3"
 timeout = 30
 max_depth = 10000
@@ -1538,7 +1538,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "use_fuzz_corpus": false,
     "corpus_seed_limit": 32,
     "use_fuzz_frontiers": false,
-    "frontier_limit": 8,
+    "frontier_limit": 256,
     "solver": "z3",
     "timeout": 30,
     "max_depth": 10000,
