@@ -3463,6 +3463,51 @@ fn counted_solver_invocations(marker: &Path) -> usize {
 
 #[cfg(unix)]
 #[test]
+fn is_sat_uses_single_var_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("single-var-is-sat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let value = SymExpr::var(&mut cx, "calldata_0");
+    let limit = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value, limit)];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn model_uses_single_var_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("single-var-model");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let value = SymExpr::var(&mut cx, "calldata_0");
+    let zero = SymExpr::zero(&mut cx);
+    let not_zero = SymBoolExpr::eq(&mut cx, value.clone(), zero).not(&mut cx);
+    let limit = SymExpr::constant(&mut cx, U256::from(10));
+    let below_limit = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value, limit);
+    let constraints = vec![not_zero, below_limit];
+
+    let model = solver.model(&mut cx, &constraints).unwrap();
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.model_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("hard-arith-is-sat");
@@ -3629,10 +3674,13 @@ fn sat_cache_deduplicates_repeated_constraints() {
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
     let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let constraint = SymBoolExpr::eq(&mut cx, x, one);
-    let duplicated = vec![constraint.clone(), constraint.clone()];
-    let deduplicated = vec![constraint];
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let duplicated = vec![x_eq_one.clone(), y_eq_two.clone(), x_eq_one.clone()];
+    let deduplicated = vec![x_eq_one, y_eq_two];
 
     assert!(solver.is_sat(&mut cx, &duplicated).unwrap());
     assert!(solver.is_sat(&mut cx, &deduplicated).unwrap());
@@ -3653,11 +3701,16 @@ fn sat_cache_deduplicates_nested_repeated_constraints() {
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
     let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let constraint = SymBoolExpr::eq(&mut cx, x, one);
-    let duplicated =
-        vec![SymBoolExpr::raw_and(&mut cx, vec![constraint.clone(), constraint.clone()])];
-    let deduplicated = vec![constraint];
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let duplicated = vec![SymBoolExpr::raw_and(
+        &mut cx,
+        vec![x_eq_one.clone(), y_eq_two.clone(), x_eq_one.clone()],
+    )];
+    let deduplicated = vec![x_eq_one, y_eq_two];
 
     assert!(solver.is_sat(&mut cx, &duplicated).unwrap());
     assert!(solver.is_sat(&mut cx, &deduplicated).unwrap());
@@ -3740,15 +3793,23 @@ fn sat_cache_reuses_unsat_branch_complement() {
     let commands = vec![counted_solver_command_sequence(&marker, &["sat", "unsat"])];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
     let ten = SymExpr::constant(&mut cx, U256::from(10));
-    let base = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), ten);
+    let x_lt_ten = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), ten);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let base = vec![x_lt_ten, y_eq_two];
     let one = SymExpr::constant(&mut cx, U256::from(1));
     let condition = SymBoolExpr::eq(&mut cx, x, one);
     let not_condition = condition.clone().not(&mut cx);
+    let mut condition_path = base.clone();
+    condition_path.push(condition);
+    let mut complement_path = base.clone();
+    complement_path.push(not_condition);
 
-    assert!(solver.is_sat(&mut cx, std::slice::from_ref(&base)).unwrap());
-    assert!(!solver.is_sat_branch(&mut cx, &[base.clone(), condition]).unwrap());
-    assert!(solver.is_sat_branch(&mut cx, &[base, not_condition]).unwrap());
+    assert!(solver.is_sat(&mut cx, &base).unwrap());
+    assert!(!solver.is_sat_branch(&mut cx, &condition_path).unwrap());
+    assert!(solver.is_sat_branch(&mut cx, &complement_path).unwrap());
 
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 2);
@@ -3793,8 +3854,12 @@ fn sat_cache_does_not_cache_unknown_results() {
     let commands = vec![counted_solver_command(&marker, "unknown")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 4, false);
     let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let constraints = vec![SymBoolExpr::eq(&mut cx, x, one)];
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let constraints = vec![x_eq_one, y_eq_two];
 
     assert!(matches!(solver.is_sat(&mut cx, &constraints), Err(SymbolicError::SolverUnknown)));
     assert!(matches!(solver.is_sat(&mut cx, &constraints), Err(SymbolicError::SolverUnknown)));
@@ -3857,12 +3922,18 @@ fn model_query_populates_sat_cache() {
     let marker = portfolio_test_marker("model-cache-sat");
     let model_output = "sat\n\
         ((define-fun x () (_ BitVec 256) \
-        #x0000000000000000000000000000000000000000000000000000000000000001))";
+        #x0000000000000000000000000000000000000000000000000000000000000001)\n\
+        (define-fun y () (_ BitVec 256) \
+        #x0000000000000000000000000000000000000000000000000000000000000002))";
     let commands = vec![counted_solver_command(&marker, model_output)];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
     let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let constraints = vec![SymBoolExpr::eq(&mut cx, x, one)];
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let constraints = vec![x_eq_one, y_eq_two];
 
     assert_eq!(
         solver.model(&mut cx, &constraints).unwrap().get(&Symbol::intern("x")),
@@ -3910,9 +3981,13 @@ fn is_sat_reuses_cached_unsat_subset() {
     let y = SymExpr::var(&mut cx, "y");
     let two = SymExpr::constant(&mut cx, U256::from(2));
     let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let z = SymExpr::var(&mut cx, "z");
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let z_eq_three = SymBoolExpr::eq(&mut cx, z, three);
+    let unsat_subset = vec![x_eq_one.clone(), y_eq_two.clone()];
 
-    assert!(!solver.is_sat(&mut cx, std::slice::from_ref(&x_eq_one)).unwrap());
-    assert!(!solver.is_sat(&mut cx, &[x_eq_one, y_eq_two]).unwrap());
+    assert!(!solver.is_sat(&mut cx, &unsat_subset).unwrap());
+    assert!(!solver.is_sat(&mut cx, &[x_eq_one, y_eq_two, z_eq_three]).unwrap());
 
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
@@ -3938,10 +4013,14 @@ fn is_sat_does_not_reuse_cached_sat_subset() {
     let y = SymExpr::var(&mut cx, "y");
     let two = SymExpr::constant(&mut cx, U256::from(2));
     let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let z = SymExpr::var(&mut cx, "z");
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let z_eq_three = SymBoolExpr::eq(&mut cx, z, three);
+    let sat_subset = vec![x_eq_one.clone(), y_eq_two.clone()];
 
-    assert!(solver.is_sat(&mut cx, std::slice::from_ref(&x_eq_one)).unwrap());
+    assert!(solver.is_sat(&mut cx, &sat_subset).unwrap());
     assert!(matches!(
-        solver.is_sat(&mut cx, &[x_eq_one, y_eq_two]),
+        solver.is_sat(&mut cx, &[x_eq_one, y_eq_two, z_eq_three]),
         Err(SymbolicError::SolverQueryLimit(1))
     ));
 
@@ -3962,8 +4041,12 @@ fn model_short_circuits_when_sat_cache_proved_unsat() {
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
     let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let constraints = vec![SymBoolExpr::eq(&mut cx, x, one)];
+    let x_eq_one = SymBoolExpr::eq(&mut cx, x, one);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let y_eq_two = SymBoolExpr::eq(&mut cx, y, two);
+    let constraints = vec![x_eq_one, y_eq_two];
 
     assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
     assert!(
@@ -4062,10 +4145,15 @@ fn portfolio_scheduler_promotes_recent_sat_winner() {
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 2, false);
 
     let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let first = vec![SymBoolExpr::eq(&mut cx, x.clone(), one)];
+    let zero = SymExpr::zero(&mut cx);
+    let first = vec![
+        SymBoolExpr::eq(&mut cx, x.clone(), one),
+        SymBoolExpr::eq(&mut cx, y.clone(), zero.clone()),
+    ];
     let two = SymExpr::constant(&mut cx, U256::from(2));
-    let second = vec![SymBoolExpr::eq(&mut cx, x, two)];
+    let second = vec![SymBoolExpr::eq(&mut cx, x, two), SymBoolExpr::eq(&mut cx, y, zero)];
 
     assert!(solver.is_sat(&mut cx, &first).unwrap());
     assert!(marker.exists());
@@ -4104,10 +4192,15 @@ fn portfolio_scheduler_promotes_recent_unsat_winner() {
     solver.capture_diagnostics();
 
     let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let first = vec![SymBoolExpr::eq(&mut cx, x.clone(), one)];
+    let zero = SymExpr::zero(&mut cx);
+    let first = vec![
+        SymBoolExpr::eq(&mut cx, x.clone(), one),
+        SymBoolExpr::eq(&mut cx, y.clone(), zero.clone()),
+    ];
     let two = SymExpr::constant(&mut cx, U256::from(2));
-    let second = vec![SymBoolExpr::eq(&mut cx, x, two)];
+    let second = vec![SymBoolExpr::eq(&mut cx, x, two), SymBoolExpr::eq(&mut cx, y, zero)];
 
     assert!(!solver.is_sat(&mut cx, &first).unwrap());
     assert!(!solver.is_sat(&mut cx, &second).unwrap());
