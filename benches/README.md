@@ -86,6 +86,95 @@ foundry-bench --verbose
 foundry-bench --output-dir ./results --output-file LATEST_RESULTS.md
 ```
 
+## Branch vs master PR-body workflow
+
+Use this workflow when preparing performance numbers for a PR body. It keeps the
+baseline and candidate builds isolated and makes the final table easy to audit.
+
+### Command timing with foundry-bench
+
+Use `foundry-bench` when the performance claim is about elapsed time for a
+Foundry command on an existing Solidity repository. It answers questions like:
+
+- Did this branch make `forge build` faster or slower?
+- Did cached rebuilds change?
+- Did `forge test` or `forge test --isolate` change?
+- Did fuzz-test execution time change?
+- Did `forge coverage --ir-minimum` change?
+- Did focused symbolic test wall time or solver counters change?
+
+Do not use `foundry-bench` for long-running invariant campaign quality,
+throughput, corpus, showmap, or differential-coverage comparisons. Use
+`foundry-scfuzzbench` for those.
+
+Pick `BENCHMARKS` from the changed path:
+
+| Changed path | Suggested `BENCHMARKS` |
+| --- | --- |
+| Compiler, artifact caching, project graph, dependency resolution | `forge_build_no_cache,forge_build_with_cache` |
+| Test runner, EVM execution, cheatcodes, traces used by tests | `forge_test` |
+| Isolation semantics or per-test state reset | `forge_isolate_test` |
+| Fuzz runner execution overhead, fuzz fixtures, corpus replay behavior | `forge_fuzz_test` |
+| Coverage instrumentation or report generation | `forge_coverage` |
+| Symbolic executor or SMT solving | `forge_symbolic_test` |
+
+Pick `REPOS` so the external project actually exercises the changed path. Use a
+single focused repo first, then add more only if the result would otherwise be
+unconvincing. The workflow accepts the same repo syntax as normal
+`foundry-bench`: `org/repo[:rev][ <extra forge args>]`.
+
+Examples:
+
+```bash
+# Test-runner or EVM execution change.
+BENCHMARKS=forge_test
+REPOS="ithacaxyz/account:v0.5.7"
+
+# Build/cache change.
+BENCHMARKS=forge_build_no_cache,forge_build_with_cache
+REPOS="vectorized/solady:v0.1.26"
+
+# Coverage change.
+BENCHMARKS=forge_coverage
+REPOS="uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75"
+
+# Symbolic change with focused counters.
+BENCHMARKS=forge_symbolic_test
+REPOS="Vectorized/solady:v0.1.26"
+```
+
+Run the matched branch-vs-base timing comparison:
+
+```bash
+BASE_REF=origin/master \
+BENCHMARKS=forge_test \
+REPOS="ithacaxyz/account:v0.5.7,vectorized/solady:v0.1.26" \
+benches/scripts/pr-bench.sh
+```
+
+The script builds the `foundry-bench` harness from the current checkout once,
+then points it at each checked-out workspace with
+`FOUNDRY_BENCH_WORKSPACE_ROOT`. The `local` version builds and activates that
+workspace with `FOUNDRY_BENCH_LOCAL_BUILD_PROFILE=profiling` before each run.
+Keep `REPOS`, `BENCHMARKS`, and any per-repo extra arguments identical for
+`master` and `candidate`. Override `CANDIDATE_REF`, `RUN_ID`, or `BENCH_ROOT`
+when needed.
+
+For PR bodies, reduce the two JSON/Markdown outputs into a concise table:
+
+```md
+### Results
+
+| Benchmark | master | this PR | delta |
+| --- | ---: | ---: | ---: |
+| `forge_test/ithacaxyz-account` wall time | ... | ... | ... |
+```
+
+Include domain counters next to wall time when the benchmark produces them, for
+example symbolic solver queries, reported solver time, invariant throughput, or
+coverage relscore/relcov. If the delta is within noise, describe it as neutral
+or inconclusive.
+
 ## Running scfuzzbench Campaigns
 
 `foundry-scfuzzbench` runs a local scfuzzbench Foundry campaign, invokes the scfuzzbench
@@ -102,6 +191,28 @@ cargo run -p foundry-bench --bin foundry-scfuzzbench -- \
   --output-dir /tmp/foundry-scfuzzbench-aave \
   --foundry-bin "$(command -v forge)"
 ```
+
+To compare a feature branch against `master` locally, run two matched campaigns:
+one with a `forge` binary built from `master`, and one with a `forge` binary
+built from the candidate branch. The runner intentionally records each campaign
+separately; compare the resulting artifact bundles when drafting the PR body.
+
+```bash
+TARGET_REPO=https://github.com/Recon-Fuzz/aave-v4-scfuzzbench.git \
+TARGET_REF=v0.5.6-recon \
+BENCHMARK_TYPE=property \
+TIMEOUT_SECONDS=3600 \
+WORKERS=1 \
+benches/scripts/pr-scfuzzbench.sh
+```
+
+Use the same `TARGET_REPO`, `TARGET_REF`, `BENCHMARK_TYPE`,
+`TIMEOUT_SECONDS`, `WORKERS`, and `FOUNDRY_TEST_ARGS` for both runs. For
+optimization campaigns, pass the same `PROPERTIES_PATH` to both runs. Summarize
+the PR body from `llm_summary.md`, `REPORT.md`, `summary.csv`,
+`cumulative.csv`, and the differential coverage artifacts in each output
+directory. Override `BASE_REF`, `CANDIDATE_REF`, `RUN_ID`, or `BENCH_ROOT` when
+needed.
 
 By default the runner pins `https://github.com/tempoxyz/scfuzzbench.git@main`. Override that with
 `--scfuzzbench-repo` and `--scfuzzbench-ref` while the scfuzzbench changes are being upstreamed.
