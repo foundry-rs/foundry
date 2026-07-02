@@ -347,13 +347,17 @@ impl EdgeCovInspector {
         CTX: ContextTr,
     {
         let address = interp.input.target_address();
-        let depth = context.journal_ref().depth();
         let current_pc = interp.bytecode.pc();
 
         match interp.bytecode.opcode() {
             opcode::JUMP => {
                 // unconditional jump
                 if let Ok(jump_dest) = interp.stack.peek(0) {
+                    let depth = if self.config.include_call_depth {
+                        context.journal_ref().depth()
+                    } else {
+                        0
+                    };
                     self.store_hit(address, depth, current_pc, jump_dest);
                 }
             }
@@ -368,6 +372,11 @@ impl EdgeCovInspector {
                     };
 
                     if let Ok(jump_dest) = jump_dest {
+                        let depth = if self.config.include_call_depth {
+                            context.journal_ref().depth()
+                        } else {
+                            0
+                        };
                         self.store_hit(address, depth, current_pc, jump_dest);
                     }
                 }
