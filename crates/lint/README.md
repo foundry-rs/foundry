@@ -66,6 +66,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
+  - `unused-error`: Custom error declarations that are never referenced should be removed.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.
