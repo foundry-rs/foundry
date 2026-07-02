@@ -168,14 +168,332 @@ const fn expr_ternop_key(op: SymTernOp) -> u8 {
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
 pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
-    constraints.iter().any(|constraint| match constraint.kind() {
+    if constraints.iter().any(|constraint| match constraint.kind() {
         SymBoolExprKind::Const(false) => true,
         SymBoolExprKind::Not(inner) => constraints.contains(inner),
         _ => {
             let negated = constraint.clone().not(cx);
             constraints.contains(&negated)
         }
-    })
+    }) {
+        return true;
+    }
+
+    DirectUnsatFacts::new(constraints).is_unsat()
+}
+
+#[derive(Default)]
+struct DirectUnsatFacts<'a> {
+    impossible: bool,
+    ranges: HashMap<&'a SymExpr, UnsignedRange>,
+    non_zero: HashSet<&'a SymExpr>,
+    masked_inequalities: Vec<(&'a SymExpr, U256)>,
+    bool_word_inequalities: Vec<&'a SymExpr>,
+    add_wrap_inequalities: Vec<(&'a SymExpr, U256)>,
+    sub_wrap_inequalities: Vec<(&'a SymExpr, U256)>,
+    product_upper_inequalities: Vec<(&'a SymExpr, U256, U256)>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct UnsignedRange {
+    lower: Option<U256>,
+    upper: Option<U256>,
+}
+
+impl UnsignedRange {
+    fn is_empty(&self) -> bool {
+        matches!((self.lower, self.upper), (Some(lower), Some(upper)) if lower > upper)
+    }
+}
+
+impl<'a> DirectUnsatFacts<'a> {
+    fn new(constraints: &'a [SymBoolExpr]) -> Self {
+        let mut facts = Self::default();
+        for constraint in constraints {
+            facts.collect_bool(constraint);
+        }
+        facts
+    }
+
+    fn collect_bool(&mut self, expr: &'a SymBoolExpr) {
+        match expr.kind() {
+            SymBoolExprKind::And(values) => {
+                for value in values.iter() {
+                    self.collect_bool(value);
+                }
+            }
+            SymBoolExprKind::Not(value) => {
+                self.collect_unsigned_range(value, false);
+                if let Some(expr) = zero_equality_expr(value) {
+                    self.non_zero.insert(expr);
+                }
+                if let Some(masked) = masked_equality_expr(value) {
+                    self.masked_inequalities.push(masked);
+                }
+                if let Some(expr) = bool_word_equality_expr(value) {
+                    self.bool_word_inequalities.push(expr);
+                }
+            }
+            _ => {
+                self.collect_unsigned_range(expr, true);
+                if let Some(inequality) = add_wrap_inequality(expr) {
+                    self.add_wrap_inequalities.push(inequality);
+                }
+                if let Some(inequality) = sub_wrap_inequality(expr) {
+                    self.sub_wrap_inequalities.push(inequality);
+                }
+                if let Some(inequality) = product_upper_inequality(expr) {
+                    self.product_upper_inequalities.push(inequality);
+                }
+            }
+        }
+    }
+
+    fn collect_unsigned_range(&mut self, expr: &'a SymBoolExpr, asserted: bool) {
+        let SymBoolExprKind::Cmp(op, left, right) = expr.kind() else { return };
+        match *op {
+            SymCmpOp::Eq if asserted => {
+                if let Some(value) = right.as_const() {
+                    self.record_exact(left, value);
+                }
+                if let Some(value) = left.as_const() {
+                    self.record_exact(right, value);
+                }
+            }
+            SymCmpOp::Ult => self.collect_unsigned_less_than(left, right, asserted),
+            SymCmpOp::Ugt => self.collect_unsigned_less_than(right, left, asserted),
+            SymCmpOp::Ule => self.collect_unsigned_less_or_equal(left, right, asserted),
+            SymCmpOp::Uge => self.collect_unsigned_less_or_equal(right, left, asserted),
+            SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => {}
+        }
+    }
+
+    fn collect_unsigned_less_than(
+        &mut self,
+        left: &'a SymExpr,
+        right: &'a SymExpr,
+        asserted: bool,
+    ) {
+        match (asserted, left.as_const(), right.as_const()) {
+            (true, _, Some(bound)) => {
+                if bound.is_zero() {
+                    self.impossible = true;
+                } else {
+                    self.record_upper(left, bound - U256::from(1));
+                }
+            }
+            (true, Some(bound), _) => {
+                if bound == U256::MAX {
+                    self.impossible = true;
+                } else {
+                    self.record_lower(right, bound + U256::from(1));
+                }
+            }
+            (false, _, Some(bound)) => self.record_lower(left, bound),
+            (false, Some(bound), _) => self.record_upper(right, bound),
+            _ => {}
+        }
+    }
+
+    fn collect_unsigned_less_or_equal(
+        &mut self,
+        left: &'a SymExpr,
+        right: &'a SymExpr,
+        asserted: bool,
+    ) {
+        match (asserted, left.as_const(), right.as_const()) {
+            (true, _, Some(bound)) => self.record_upper(left, bound),
+            (true, Some(bound), _) => self.record_lower(right, bound),
+            (false, _, Some(bound)) => {
+                if bound == U256::MAX {
+                    self.impossible = true;
+                } else {
+                    self.record_lower(left, bound + U256::from(1));
+                }
+            }
+            (false, Some(bound), _) => {
+                if bound.is_zero() {
+                    self.impossible = true;
+                } else {
+                    self.record_upper(right, bound - U256::from(1));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn record_exact(&mut self, expr: &'a SymExpr, value: U256) {
+        self.record_lower(expr, value);
+        self.record_upper(expr, value);
+    }
+
+    fn record_lower(&mut self, expr: &'a SymExpr, lower: U256) {
+        if let Some(value) = expr.as_const() {
+            self.impossible |= value < lower;
+            return;
+        }
+        let range = self.ranges.entry(expr).or_default();
+        range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
+        self.impossible |= range.is_empty();
+    }
+
+    fn record_upper(&mut self, expr: &'a SymExpr, upper: U256) {
+        if let Some(value) = expr.as_const() {
+            self.impossible |= value > upper;
+            return;
+        }
+        let range = self.ranges.entry(expr).or_default();
+        range.upper = Some(range.upper.map_or(upper, |current| current.min(upper)));
+        self.impossible |= range.is_empty();
+    }
+
+    fn upper_bound(&self, expr: &SymExpr) -> Option<U256> {
+        expr.as_const().or_else(|| self.ranges.get(expr).and_then(|range| range.upper))
+    }
+
+    fn is_unsat(&self) -> bool {
+        self.impossible
+            || self.ranges.values().any(UnsignedRange::is_empty)
+            || self
+                .non_zero
+                .iter()
+                .any(|expr| self.upper_bound(expr).is_some_and(|upper| upper.is_zero()))
+            || self.masked_inequalities.iter().any(|(expr, mask)| {
+                self.upper_bound(expr).is_some_and(|upper| mask_covers_upper_bound(*mask, upper))
+            })
+            || self
+                .bool_word_inequalities
+                .iter()
+                .any(|expr| self.upper_bound(expr).is_some_and(|upper| upper <= U256::from(1)))
+            || self
+                .add_wrap_inequalities
+                .iter()
+                .any(|(expr, constant)| add_wrap_is_unsat(self.upper_bound(expr), *constant))
+            || self.sub_wrap_inequalities.iter().any(|(expr, constant)| {
+                self.upper_bound(expr).is_some_and(|upper| upper <= *constant)
+            })
+            || self.product_upper_inequalities.iter().any(|(expr, factor, limit)| {
+                product_upper_is_unsat(self.upper_bound(expr), *factor, *limit)
+            })
+    }
+}
+
+fn zero_equality_expr(expr: &SymBoolExpr) -> Option<&SymExpr> {
+    let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = expr.kind() else { return None };
+    zero_pair_expr(left, right).or_else(|| zero_pair_expr(right, left))
+}
+
+fn zero_pair_expr<'a>(zero: &SymExpr, expr: &'a SymExpr) -> Option<&'a SymExpr> {
+    zero.as_const().is_some_and(|value| value.is_zero()).then_some(expr)
+}
+
+fn masked_equality_expr(expr: &SymBoolExpr) -> Option<(&SymExpr, U256)> {
+    let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = expr.kind() else { return None };
+    masked_pair_expr(left, right).or_else(|| masked_pair_expr(right, left))
+}
+
+fn masked_pair_expr<'a>(expr: &'a SymExpr, masked: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
+    let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else { return None };
+    match (left.kind(), right.kind()) {
+        (SymExprKind::Const(mask), _) if right == expr => Some((expr, *mask)),
+        (_, SymExprKind::Const(mask)) if left == expr => Some((expr, *mask)),
+        _ => None,
+    }
+}
+
+fn bool_word_equality_expr(expr: &SymBoolExpr) -> Option<&SymExpr> {
+    let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = expr.kind() else { return None };
+    bool_word_pair(left, right).or_else(|| bool_word_pair(right, left))
+}
+
+fn bool_word_pair<'a>(expr: &'a SymExpr, bool_word: &'a SymExpr) -> Option<&'a SymExpr> {
+    let condition_expr = bool_word_of_nonzero_expr(bool_word)?;
+    (condition_expr == expr).then_some(expr)
+}
+
+fn bool_word_of_nonzero_expr(expr: &SymExpr) -> Option<&SymExpr> {
+    let SymExprKind::Ite(condition, then_expr, else_expr) = expr.kind() else { return None };
+    if then_expr.as_const() != Some(U256::from(1))
+        || !else_expr.as_const().is_some_and(|value| value.is_zero())
+    {
+        return None;
+    }
+    let SymBoolExprKind::Not(condition) = condition.kind() else { return None };
+    zero_equality_expr(condition)
+}
+
+fn add_wrap_inequality(expr: &SymBoolExpr) -> Option<(&SymExpr, U256)> {
+    match expr.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => add_wrap_pair(left, right),
+        SymBoolExprKind::Cmp(SymCmpOp::Ugt, left, right) => add_wrap_pair(right, left),
+        _ => None,
+    }
+}
+
+fn add_wrap_pair<'a>(sum: &'a SymExpr, limit: &SymExpr) -> Option<(&'a SymExpr, U256)> {
+    let limit = limit.as_const()?;
+    let SymExprKind::BinOp(SymBinOp::Add, left, right) = sum.kind() else { return None };
+    match (left.as_const(), right.as_const()) {
+        (Some(constant), _) if constant == limit => Some((right, constant)),
+        (_, Some(constant)) if constant == limit => Some((left, constant)),
+        _ => None,
+    }
+}
+
+fn add_wrap_is_unsat(upper: Option<U256>, constant: U256) -> bool {
+    constant.is_zero() || upper.is_some_and(|upper| upper <= U256::MAX - constant)
+}
+
+fn sub_wrap_inequality(expr: &SymBoolExpr) -> Option<(&SymExpr, U256)> {
+    match expr.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => sub_wrap_pair(left, right),
+        SymBoolExprKind::Cmp(SymCmpOp::Ugt, left, right) => sub_wrap_pair(right, left),
+        _ => None,
+    }
+}
+
+fn sub_wrap_pair<'a>(limit: &SymExpr, difference: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
+    let limit = limit.as_const()?;
+    let SymExprKind::BinOp(SymBinOp::Sub, left, right) = difference.kind() else { return None };
+    (left.as_const() == Some(limit)).then_some((right, limit))
+}
+
+fn product_upper_inequality(expr: &SymBoolExpr) -> Option<(&SymExpr, U256, U256)> {
+    match expr.kind() {
+        SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right) => product_upper_pair(left, right),
+        SymBoolExprKind::Cmp(SymCmpOp::Ugt, left, right) => product_upper_pair(right, left),
+        _ => None,
+    }
+}
+
+fn product_upper_pair<'a>(
+    limit: &SymExpr,
+    product: &'a SymExpr,
+) -> Option<(&'a SymExpr, U256, U256)> {
+    let limit = limit.as_const()?;
+    let (expr, factor) = mul_const_operand(product)?;
+    Some((expr, factor, limit))
+}
+
+fn mul_const_operand(expr: &SymExpr) -> Option<(&SymExpr, U256)> {
+    let SymExprKind::BinOp(SymBinOp::Mul, left, right) = expr.kind() else { return None };
+    match (left.as_const(), right.as_const()) {
+        (Some(factor), _) => Some((right, factor)),
+        (_, Some(factor)) => Some((left, factor)),
+        _ => None,
+    }
+}
+
+fn product_upper_is_unsat(upper: Option<U256>, factor: U256, limit: U256) -> bool {
+    factor.is_zero() || upper.is_some_and(|upper| upper <= limit / factor)
+}
+
+fn mask_covers_upper_bound(mask: U256, upper_bound: U256) -> bool {
+    if mask == U256::MAX {
+        return true;
+    }
+    let limit = mask.wrapping_add(U256::from(1));
+    !limit.is_zero() && (limit & (limit - U256::from(1))).is_zero() && upper_bound <= mask
 }
 
 /// Returns whether every expression in `subset` appears in `superset`.

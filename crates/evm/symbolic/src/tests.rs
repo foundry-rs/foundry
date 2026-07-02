@@ -3827,11 +3827,9 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = SymExpr::var(&mut cx, "x");
-    let two = SymExpr::constant(&mut cx, U256::from(2));
     let one = SymExpr::constant(&mut cx, U256::from(1));
-    let lower = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x.clone(), two);
-    let upper = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x.clone(), one.clone());
-    let base = SymBoolExpr::and(&mut cx, vec![lower, upper]);
+    let incremented = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), one.clone());
+    let base = SymBoolExpr::eq(&mut cx, incremented, x.clone());
     let condition = SymBoolExpr::eq(&mut cx, x, one);
 
     assert!(!solver.is_sat_branch(&mut cx, &[base.clone(), condition.clone()]).unwrap());
@@ -3959,6 +3957,147 @@ fn direct_contradiction_is_sat_short_circuits_locally() {
     let one = SymExpr::constant(&mut cx, U256::from(1));
     let constraint = SymBoolExpr::eq(&mut cx, x, one);
     let constraints = vec![constraint.clone(), constraint.not(&mut cx)];
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn unsigned_zero_contradiction_is_sat_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let zero = SymExpr::zero(&mut cx);
+    let positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, zero.clone(), x.clone());
+    let non_zero = SymBoolExpr::eq(&mut cx, x, zero).not(&mut cx);
+    let constraints = vec![positive.not(&mut cx), non_zero];
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn masked_upper_bound_contradiction_is_sat_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let mask = SymExpr::constant(&mut cx, U256::from(0xffff));
+    let masked = SymExpr::binop(&mut cx, SymBinOp::And, x.clone(), mask);
+    let mask_changes_x = SymBoolExpr::eq(&mut cx, x.clone(), masked).not(&mut cx);
+    let limit = SymExpr::constant(&mut cx, U256::from(0x1_0000));
+    let below_limit = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, limit);
+    let constraints = vec![mask_changes_x, below_limit];
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn unsigned_range_contradiction_is_sat_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let limit = SymExpr::constant(&mut cx, U256::from(100));
+    let at_most_limit =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, limit.clone(), x.clone()).not(&mut cx);
+    let above_limit = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x, limit).not(&mut cx);
+    let constraints = vec![at_most_limit, above_limit];
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn bool_word_range_contradiction_is_sat_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let is_nonzero = SymBoolExpr::eq(&mut cx, x.clone(), zero).not(&mut cx);
+    let zero = SymExpr::zero(&mut cx);
+    let bool_word = SymExpr::ite(&mut cx, is_nonzero, one, zero);
+    let not_bool_word = SymBoolExpr::eq(&mut cx, x.clone(), bool_word).not(&mut cx);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let below_two = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, two);
+    let constraints = vec![not_bool_word, below_two];
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn bounded_add_wrap_contradiction_is_sat_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let bound = SymExpr::constant(&mut cx, U256::from(1000));
+    let at_most_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, bound, x.clone()).not(&mut cx);
+    let base = SymExpr::constant(&mut cx, U256::from(1_000_000));
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, base.clone(), x);
+    let wrapped = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum, base);
+    let constraints = vec![at_most_bound, wrapped];
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn bounded_sub_wrap_contradiction_is_sat_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let limit = SymExpr::constant(&mut cx, U256::from(200));
+    let at_most_limit =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, limit.clone(), x.clone()).not(&mut cx);
+    let difference = SymExpr::binop(&mut cx, SymBinOp::Sub, limit.clone(), x);
+    let underflowed = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, limit, difference);
+    let constraints = vec![at_most_limit, underflowed];
+
+    assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
+#[test]
+fn bounded_product_contradiction_is_sat_short_circuits_locally() {
+    let mut cx = SymCx::new();
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let x = SymExpr::var(&mut cx, "x");
+    let bound = SymExpr::constant(&mut cx, U256::from(800));
+    let at_most_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, bound, x.clone()).not(&mut cx);
+    let factor = SymExpr::constant(&mut cx, U256::from(100));
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, factor, x);
+    let product_limit = SymExpr::constant(&mut cx, U256::from(80_000));
+    let above_product_limit = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product_limit, product);
+    let constraints = vec![at_most_bound, above_product_limit];
 
     assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
 
@@ -4390,8 +4529,11 @@ fn solver_smt_dump_shares_repeated_subterms() {
     let shifted = SymExpr::binop(&mut cx, SymBinOp::Shl, byte, shift);
     let zero = SymExpr::zero(&mut cx);
     let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero.clone());
-    let shifted_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, shifted, zero);
-    let constraints = vec![shifted_zero, shifted_positive];
+    let one = SymExpr::one(&mut cx);
+    let shifted_at_most_one = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, shifted, one);
+    let other = SymExpr::var(&mut cx, "calldata_1");
+    let other_zero = SymBoolExpr::eq(&mut cx, other, zero);
+    let constraints = vec![shifted_zero, shifted_at_most_one, other_zero];
 
     solver.capture_diagnostics();
 
