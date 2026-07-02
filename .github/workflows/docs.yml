@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-07-01
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
       - name: Build documentation
         run: cargo doc --workspace --all-features --no-deps --document-private-items --locked

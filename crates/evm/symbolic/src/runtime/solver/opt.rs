@@ -47,16 +47,6 @@ fn bool_structural_key(expr: &SymBoolExpr) -> String {
     key
 }
 
-fn expr_structural_key(expr: &SymExpr) -> String {
-    let mut key = String::new();
-    write_expr_structural_key(&mut key, expr);
-    key
-}
-
-fn expr_should_swap(left: &SymExpr, right: &SymExpr) -> bool {
-    expr_structural_key(right) < expr_structural_key(left)
-}
-
 fn write_bool_structural_key(out: &mut String, expr: &SymBoolExpr) {
     match expr.kind() {
         SymBoolExprKind::Const(value) => {
@@ -73,14 +63,8 @@ fn write_bool_structural_key(out: &mut String, expr: &SymBoolExpr) {
                 out.push(';');
             }
         }
-        SymBoolExprKind::Eq(left, right) => {
-            out.push_str("3:");
-            write_expr_structural_key(out, left);
-            out.push(':');
-            write_expr_structural_key(out, right);
-        }
         SymBoolExprKind::Cmp(op, left, right) => {
-            let _ = write!(out, "4:{}:", bool_op_key(*op));
+            let _ = write!(out, "3:{}:", cmp_op_key(*op));
             write_expr_structural_key(out, left);
             out.push(':');
             write_expr_structural_key(out, right);
@@ -112,22 +96,14 @@ fn write_expr_structural_key(out: &mut String, expr: &SymExpr) {
             out.push_str("5:");
             write_expr_structural_key(out, value);
         }
-        SymExprKind::Op(op, left, right) => {
-            let _ = write!(out, "6:{}:", expr_op_key(*op));
+        SymExprKind::BinOp(op, left, right) => {
+            let _ = write!(out, "6:{}:", expr_binop_key(*op));
             write_expr_structural_key(out, left);
             out.push(':');
             write_expr_structural_key(out, right);
         }
-        SymExprKind::AddMod { left, right, modulus } => {
-            out.push_str("7:");
-            write_expr_structural_key(out, left);
-            out.push(':');
-            write_expr_structural_key(out, right);
-            out.push(':');
-            write_expr_structural_key(out, modulus);
-        }
-        SymExprKind::MulMod { left, right, modulus } => {
-            out.push_str("8:");
+        SymExprKind::TernOp(op, left, right, modulus) => {
+            let _ = write!(out, "7:{}:", expr_ternop_key(*op));
             write_expr_structural_key(out, left);
             out.push(':');
             write_expr_structural_key(out, right);
@@ -153,46 +129,41 @@ fn write_exprs_structural_key(out: &mut String, exprs: &[SymExpr]) {
     }
 }
 
-const fn bool_op_key(op: SymBoolExprOp) -> u8 {
+const fn cmp_op_key(op: SymCmpOp) -> u8 {
     match op {
-        SymBoolExprOp::Ult => 0,
-        SymBoolExprOp::Ugt => 1,
-        SymBoolExprOp::Ule => 2,
-        SymBoolExprOp::Uge => 3,
-        SymBoolExprOp::Slt => 4,
-        SymBoolExprOp::Sgt => 5,
+        SymCmpOp::Eq => 0,
+        SymCmpOp::Ult => 1,
+        SymCmpOp::Ugt => 2,
+        SymCmpOp::Ule => 3,
+        SymCmpOp::Uge => 4,
+        SymCmpOp::Slt => 5,
+        SymCmpOp::Sgt => 6,
     }
 }
 
-const fn expr_op_key(op: SymExprOp) -> u8 {
+const fn expr_binop_key(op: SymBinOp) -> u8 {
     match op {
-        SymExprOp::Add => 0,
-        SymExprOp::Sub => 1,
-        SymExprOp::Mul => 2,
-        SymExprOp::UDiv => 3,
-        SymExprOp::URem => 4,
-        SymExprOp::SDiv => 5,
-        SymExprOp::SRem => 6,
-        SymExprOp::And => 7,
-        SymExprOp::Or => 8,
-        SymExprOp::Xor => 9,
-        SymExprOp::Shl => 10,
-        SymExprOp::Shr => 11,
-        SymExprOp::Sar => 12,
+        SymBinOp::Add => 0,
+        SymBinOp::Sub => 1,
+        SymBinOp::Mul => 2,
+        SymBinOp::UDiv => 3,
+        SymBinOp::URem => 4,
+        SymBinOp::SDiv => 5,
+        SymBinOp::SRem => 6,
+        SymBinOp::And => 7,
+        SymBinOp::Or => 8,
+        SymBinOp::Xor => 9,
+        SymBinOp::Shl => 10,
+        SymBinOp::Shr => 11,
+        SymBinOp::Sar => 12,
     }
 }
 
-/// Returns a structural key for normalized solver cache lookups.
-pub(super) fn constraint_cache_key(
-    cx: &mut SymCx,
-    constraints: &[SymBoolExpr],
-) -> Vec<SymBoolExpr> {
-    let mut key = Vec::with_capacity(constraints.len());
-    for constraint in constraints.iter().cloned() {
-        constraint.cache_key(cx).push_cache_key_conjuncts(&mut key);
+const fn expr_ternop_key(op: SymTernOp) -> u8 {
+    match op {
+        SymTernOp::AddMod => 0,
+        SymTernOp::MulMod => 1,
     }
-    sort_dedup_bool_exprs(&mut key);
-    key
 }
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
@@ -226,62 +197,6 @@ pub(crate) fn normalize_bool_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> Sy
 }
 
 impl SymBoolExpr {
-    fn cache_key(self, cx: &mut SymCx) -> Self {
-        self.fold(cx, &mut Self::cache_key_node)
-    }
-
-    fn cache_key_node(cx: &mut SymCx, expr: Self) -> Self {
-        match expr.kind() {
-            SymBoolExprKind::Not(value) => value.clone().not(cx),
-            SymBoolExprKind::And(values) => {
-                let mut conjuncts = Vec::new();
-                for value in values.iter().cloned() {
-                    value.push_cache_key_conjuncts(&mut conjuncts);
-                }
-                sort_dedup_bool_exprs(&mut conjuncts);
-                Self::and(cx, conjuncts)
-            }
-            SymBoolExprKind::Eq(left, right) => {
-                let left = left.clone().cache_key(cx);
-                let right = right.clone().cache_key(cx);
-                if expr_should_swap(&left, &right) {
-                    Self::eq(cx, right, left)
-                } else {
-                    Self::eq(cx, left, right)
-                }
-            }
-            SymBoolExprKind::Cmp(op, left, right) => {
-                let left = left.clone().cache_key(cx);
-                let right = right.clone().cache_key(cx);
-                Self::cache_key_cmp(cx, *op, left, right)
-            }
-            SymBoolExprKind::Const(value) => Self::constant(cx, *value),
-        }
-    }
-
-    fn push_cache_key_conjuncts(self, out: &mut Vec<Self>) {
-        match self.kind() {
-            SymBoolExprKind::Const(true) => {}
-            SymBoolExprKind::And(values) => {
-                for value in values.iter().cloned() {
-                    value.push_cache_key_conjuncts(out);
-                }
-            }
-            _ => out.push(self),
-        }
-    }
-
-    fn cache_key_cmp(cx: &mut SymCx, op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> Self {
-        match op {
-            SymBoolExprOp::Ugt => Self::cmp(cx, SymBoolExprOp::Ult, right, left),
-            SymBoolExprOp::Uge => Self::cmp(cx, SymBoolExprOp::Ule, right, left),
-            SymBoolExprOp::Sgt => Self::cmp(cx, SymBoolExprOp::Slt, right, left),
-            SymBoolExprOp::Ult | SymBoolExprOp::Ule | SymBoolExprOp::Slt => {
-                Self::cmp(cx, op, left, right)
-            }
-        }
-    }
-
     fn push_normalized_conjuncts(self, out: &mut Vec<Self>) {
         match self.kind() {
             SymBoolExprKind::Const(true) => {}
@@ -292,49 +207,6 @@ impl SymBoolExpr {
             }
             _ => out.push(self),
         }
-    }
-}
-
-impl SymExpr {
-    fn cache_key(self, cx: &mut SymCx) -> Self {
-        self.fold(cx, &mut Self::cache_key_node)
-    }
-
-    fn cache_key_node(cx: &mut SymCx, expr: Self) -> Self {
-        match expr.kind() {
-            SymExprKind::Op(op, left, right) if op.is_commutative() => {
-                if expr_should_swap(left, right) {
-                    Self::op(cx, *op, right.clone(), left.clone())
-                } else {
-                    expr
-                }
-            }
-            SymExprKind::AddMod { left, right, modulus } => {
-                if expr_should_swap(left, right) {
-                    Self::addmod(cx, right.clone(), left.clone(), modulus.clone())
-                } else {
-                    expr
-                }
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                if expr_should_swap(left, right) {
-                    Self::mulmod(cx, right.clone(), left.clone(), modulus.clone())
-                } else {
-                    expr
-                }
-            }
-            SymExprKind::Ite(cond, left, right) => {
-                let cond = cond.clone().cache_key(cx);
-                Self::ite(cx, cond, left.clone(), right.clone())
-            }
-            _ => expr,
-        }
-    }
-}
-
-impl SymExprOp {
-    const fn is_commutative(self) -> bool {
-        matches!(self, Self::Add | Self::Mul | Self::And | Self::Or | Self::Xor)
     }
 }
 
@@ -378,6 +250,7 @@ pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]
 struct SmtCseVisit {
     count: usize,
     binding: Option<usize>,
+    collected: bool,
 }
 
 struct SmtCsePlan {
@@ -403,7 +276,11 @@ impl SmtCsePlan {
     }
 
     fn count_expr(&mut self, expr: &SymExpr) {
-        self.expr_visits.entry(expr.clone()).or_default().count += 1;
+        let visit = self.expr_visits.entry(expr.clone()).or_default();
+        visit.count += 1;
+        if visit.count != 1 {
+            return;
+        }
         match expr.kind() {
             SymExprKind::Const(_)
             | SymExprKind::Var(_)
@@ -411,12 +288,11 @@ impl SmtCsePlan {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => {}
             SymExprKind::Not(value) => self.count_expr(value),
-            SymExprKind::Op(_, left, right) => {
+            SymExprKind::BinOp(_, left, right) => {
                 self.count_expr(left);
                 self.count_expr(right);
             }
-            SymExprKind::AddMod { left, right, modulus }
-            | SymExprKind::MulMod { left, right, modulus } => {
+            SymExprKind::TernOp(_, left, right, modulus) => {
                 self.count_expr(modulus);
                 self.count_expr(left);
                 self.count_expr(right);
@@ -431,7 +307,11 @@ impl SmtCsePlan {
     }
 
     fn count_bool(&mut self, expr: &SymBoolExpr) {
-        self.bool_visits.entry(expr.clone()).or_default().count += 1;
+        let visit = self.bool_visits.entry(expr.clone()).or_default();
+        visit.count += 1;
+        if visit.count != 1 {
+            return;
+        }
         match expr.kind() {
             SymBoolExprKind::Const(_) => {}
             SymBoolExprKind::Not(value) => self.count_bool(value),
@@ -440,7 +320,7 @@ impl SmtCsePlan {
                     self.count_bool(value);
                 }
             }
-            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
+            SymBoolExprKind::Cmp(_, left, right) => {
                 self.count_expr(left);
                 self.count_expr(right);
             }
@@ -448,6 +328,13 @@ impl SmtCsePlan {
     }
 
     fn collect_expr_binding(&mut self, expr: &SymExpr) {
+        {
+            let Some(visit) = self.expr_visits.get_mut(expr) else { return };
+            if visit.collected {
+                return;
+            }
+            visit.collected = true;
+        }
         match expr.kind() {
             SymExprKind::Const(_)
             | SymExprKind::Var(_)
@@ -455,12 +342,11 @@ impl SmtCsePlan {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => {}
             SymExprKind::Not(value) => self.collect_expr_binding(value),
-            SymExprKind::Op(_, left, right) => {
+            SymExprKind::BinOp(_, left, right) => {
                 self.collect_expr_binding(left);
                 self.collect_expr_binding(right);
             }
-            SymExprKind::AddMod { left, right, modulus }
-            | SymExprKind::MulMod { left, right, modulus } => {
+            SymExprKind::TernOp(_, left, right, modulus) => {
                 self.collect_expr_binding(modulus);
                 self.collect_expr_binding(left);
                 self.collect_expr_binding(right);
@@ -475,6 +361,13 @@ impl SmtCsePlan {
     }
 
     fn collect_bool_binding(&mut self, expr: &SymBoolExpr) {
+        {
+            let Some(visit) = self.bool_visits.get_mut(expr) else { return };
+            if visit.collected {
+                return;
+            }
+            visit.collected = true;
+        }
         match expr.kind() {
             SymBoolExprKind::Const(_) => {}
             SymBoolExprKind::Not(value) => self.collect_bool_binding(value),
@@ -483,7 +376,7 @@ impl SmtCsePlan {
                     self.collect_bool_binding(value);
                 }
             }
-            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
+            SymBoolExprKind::Cmp(_, left, right) => {
                 self.collect_expr_binding(left);
                 self.collect_expr_binding(right);
             }
@@ -597,18 +490,15 @@ impl SmtCseWriter<'_> {
                 self.write_expr(out, value, skip_expr, skip_bool);
                 out.push(')');
             }
-            SymExprKind::Op(op, left, right) => {
+            SymExprKind::BinOp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 self.write_expr(out, left, skip_expr, skip_bool);
                 out.push(' ');
                 self.write_expr(out, right, skip_expr, skip_bool);
                 out.push(')');
             }
-            SymExprKind::AddMod { left, right, modulus } => {
-                self.write_wide_modular_arithmetic(out, "bvadd", left, right, modulus);
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                self.write_wide_modular_arithmetic(out, "bvmul", left, right, modulus);
+            SymExprKind::TernOp(op, left, right, modulus) => {
+                self.write_wide_modular_arithmetic(out, op.smt(), left, right, modulus);
             }
             SymExprKind::Ite(cond, left, right) => {
                 out.push_str("(ite ");
@@ -676,13 +566,6 @@ impl SmtCseWriter<'_> {
                 }
                 out.push(')');
             }
-            SymBoolExprKind::Eq(left, right) => {
-                out.push_str("(= ");
-                self.write_expr(out, left, skip_expr, skip_bool);
-                out.push(' ');
-                self.write_expr(out, right, skip_expr, skip_bool);
-                out.push(')');
-            }
             SymBoolExprKind::Cmp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 self.write_expr(out, left, skip_expr, skip_bool);
@@ -700,21 +583,32 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
     }
 
     match expr.kind() {
-        SymBoolExprKind::Not(value) => value.clone().not(cx),
-        SymBoolExprKind::And(values) => SymBoolExpr::and(cx, values.iter().cloned().collect()),
-        SymBoolExprKind::Eq(left, right) => {
-            let left = normalize_expr_for_solver(cx, left.clone());
-            let right = normalize_expr_for_solver(cx, right.clone());
-            let normalized = SymBoolExpr::eq(cx, left, right);
-            normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
-        }
         SymBoolExprKind::Cmp(op, left, right) => {
             let left = normalize_expr_for_solver(cx, left.clone());
             let right = normalize_expr_for_solver(cx, right.clone());
-            let normalized = SymBoolExpr::cmp(cx, *op, left, right);
+            let normalized = normalize_cmp_for_solver(cx, *op, left, right);
             normalized.normalize_udiv_for_solver(cx).unwrap_or(normalized)
         }
-        SymBoolExprKind::Const(value) => SymBoolExpr::constant(cx, *value),
+        _ => expr,
+    }
+}
+
+fn normalize_cmp_for_solver(
+    cx: &mut SymCx,
+    op: SymCmpOp,
+    left: SymExpr,
+    right: SymExpr,
+) -> SymBoolExpr {
+    match op {
+        // `a > b => b < a`.
+        SymCmpOp::Ugt => SymBoolExpr::cmp(cx, SymCmpOp::Ult, right, left),
+        // `a >= b => b <= a`.
+        SymCmpOp::Uge => SymBoolExpr::cmp(cx, SymCmpOp::Ule, right, left),
+        // `a >s b => b <s a`.
+        SymCmpOp::Sgt => SymBoolExpr::cmp(cx, SymCmpOp::Slt, right, left),
+        SymCmpOp::Eq | SymCmpOp::Ult | SymCmpOp::Ule | SymCmpOp::Slt => {
+            SymBoolExpr::cmp(cx, op, left, right)
+        }
     }
 }
 
@@ -743,6 +637,7 @@ impl ConstraintContext {
                 .zero_check_operand()
                 .is_some_and(|left| self.word_bool_always_true(cx, left)) =>
             {
+                // `always_true_word == 0 => false`.
                 SymBoolExpr::constant(cx, false)
             }
             SymBoolExprKind::Not(value)
@@ -750,6 +645,7 @@ impl ConstraintContext {
                     .zero_check_operand()
                     .is_some_and(|left| self.word_bool_always_true(cx, left)) =>
             {
+                // `always_true_word != 0 => true`.
                 SymBoolExpr::constant(cx, true)
             }
             _ => expr,
@@ -774,38 +670,54 @@ impl ConstraintContext {
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
         match constraint.kind() {
-            SymBoolExprKind::Eq(left, right) => match (left.as_const(), right.as_const()) {
-                (_, Some(value)) => Some((left, value)),
-                (Some(value), _) => Some((right, value)),
-                _ => None,
-            },
-            SymBoolExprKind::Cmp(op, left, right) => {
-                match (*op, left.as_const(), right.as_const()) {
-                    (SymBoolExprOp::Ult, _, Some(bound)) => {
-                        (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
-                    }
-                    (SymBoolExprOp::Ule, _, Some(bound)) => Some((left, bound)),
-                    (SymBoolExprOp::Ugt, Some(bound), _) => {
-                        (!bound.is_zero()).then(|| (right, bound - U256::from(1)))
-                    }
-                    (SymBoolExprOp::Uge, Some(bound), _) => Some((right, bound)),
+            SymBoolExprKind::Cmp(op, left, right) => match *op {
+                SymCmpOp::Eq => match (left.as_const(), right.as_const()) {
+                    (_, Some(value)) => Some((left, value)),
+                    (Some(value), _) => Some((right, value)),
                     _ => None,
-                }
-            }
+                },
+                SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
+                    (_, Some(bound)) => (!bound.is_zero()).then(|| (left, bound - U256::from(1))),
+                    _ => None,
+                },
+                SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
+                    (_, Some(bound)) => Some((left, bound)),
+                    _ => None,
+                },
+                SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
+                    (Some(bound), _) => (!bound.is_zero()).then(|| (right, bound - U256::from(1))),
+                    _ => None,
+                },
+                SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
+                    (Some(bound), _) => Some((right, bound)),
+                    _ => None,
+                },
+                SymCmpOp::Slt | SymCmpOp::Sgt => None,
+            },
             SymBoolExprKind::Not(value) => match value.kind() {
-                SymBoolExprKind::Cmp(op, left, right) => {
-                    match (*op, left.as_const(), right.as_const()) {
-                        (SymBoolExprOp::Ugt, _, Some(bound)) => Some((left, bound)),
-                        (SymBoolExprOp::Uge, _, Some(bound)) => {
+                SymBoolExprKind::Cmp(op, left, right) => match *op {
+                    SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
+                        (_, Some(bound)) => Some((left, bound)),
+                        _ => None,
+                    },
+                    SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
+                        (_, Some(bound)) => {
                             (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
                         }
-                        (SymBoolExprOp::Ult, Some(bound), _) => Some((right, bound)),
-                        (SymBoolExprOp::Ule, Some(bound), _) => {
+                        _ => None,
+                    },
+                    SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
+                        (Some(bound), _) => Some((right, bound)),
+                        _ => None,
+                    },
+                    SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
+                        (Some(bound), _) => {
                             (!bound.is_zero()).then(|| (right, bound - U256::from(1)))
                         }
                         _ => None,
-                    }
-                }
+                    },
+                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
+                },
                 _ => None,
             },
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => None,
@@ -815,49 +727,14 @@ impl ConstraintContext {
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_expr_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
+    if !expr.contains_ite() {
+        return expr;
+    }
     expr.fold(cx, &mut normalize_expr_node_for_solver)
 }
 
 fn normalize_expr_node_for_solver(cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-    if let Some(rebuilt) = expr.rebuild_from_extracted_byte_terms()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(cx, rebuilt);
-    }
-    if let Some(rebuilt) = expr.rebuild_from_shifted_word_fragments()
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(cx, rebuilt);
-    }
-    if let Some(rebuilt) = expr.normalize_masked_shift_for_solver(cx)
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(cx, rebuilt);
-    }
-    if let Some(rebuilt) = expr.normalize_masked_or_for_solver(cx)
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(cx, rebuilt);
-    }
-    if let Some(rebuilt) = expr.normalize_shift_right_for_solver(cx)
-        && rebuilt != expr
-    {
-        return normalize_expr_for_solver(cx, rebuilt);
-    }
-
     match expr.kind() {
-        SymExprKind::Op(
-            op
-            @ (SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor),
-            left,
-            right,
-        ) => {
-            if expr_should_swap(left, right) {
-                SymExpr::op(cx, *op, right.clone(), left.clone())
-            } else {
-                expr
-            }
-        }
         SymExprKind::Ite(cond, left, right) => {
             normalize_ite_expr_for_solver(cx, cond.clone(), left.clone(), right.clone())
         }
@@ -873,257 +750,25 @@ fn normalize_ite_expr_for_solver(
 ) -> SymExpr {
     let cond = normalize_bool_for_solver(cx, cond);
     if left == right {
+        // `ite(c, a, a) => a`.
         return left;
-    }
-    if let Some(condition) = guarded_self_div_word_condition(cx, &cond, &left, &right) {
-        return SymExpr::bool_word(cx, condition);
     }
     if left.as_const() == Some(U256::from(1))
         && right.normalized_bool_word_condition(cx).as_ref() == Some(&cond)
     {
+        // `ite(c, 1, bool_word(c)) => bool_word(c)`.
         return right;
     }
     if right.as_const().is_some_and(|value| value.is_zero())
         && left.normalized_bool_word_condition(cx).as_ref() == Some(&cond)
     {
+        // `ite(c, bool_word(c), 0) => bool_word(c)`.
         return left;
     }
     SymExpr::ite(cx, cond, left, right)
 }
 
-/// Returns the boolean represented by `a == 0 ? 0 : a / a`.
-fn guarded_self_div_word_condition(
-    cx: &mut SymCx,
-    cond: &SymBoolExpr,
-    left: &SymExpr,
-    right: &SymExpr,
-) -> Option<SymBoolExpr> {
-    if left.as_const().is_some_and(|value| value.is_zero())
-        && self_div_expr_matches_zero_check(cond, right)
-    {
-        return Some(cond.clone().not(cx));
-    }
-    None
-}
-
-/// Returns whether `expr` is `a / a` for the operand guarded by `cond`.
-fn self_div_expr_matches_zero_check(cond: &SymBoolExpr, expr: &SymExpr) -> bool {
-    let Some(zero_operand) = cond.zero_check_operand() else { return false };
-    let Some((numerator, denominator)) = expr.udiv_operands() else { return false };
-    numerator == zero_operand && denominator == zero_operand
-}
-
 impl SymExpr {
-    fn rebuild_from_extracted_byte_terms(&self) -> Option<Self> {
-        let mut terms = Vec::new();
-        self.push_or_terms(&mut terms);
-        if terms.len() <= 1 {
-            return None;
-        }
-
-        let mut source = None;
-        let mut seen = [false; 32];
-        for term in terms {
-            if term.as_const().is_some_and(|value| value.is_zero()) {
-                continue;
-            }
-            let (term_source, index) = term.extracted_shifted_byte_term()?;
-            match &source {
-                Some(source) if source != &term_source => return None,
-                Some(_) => {}
-                None => source = Some(term_source),
-            }
-            seen[index] = true;
-        }
-
-        let source = source?;
-        for (index, seen) in seen.into_iter().enumerate() {
-            if !seen && source.known_byte(index) != Some(0) {
-                return None;
-            }
-        }
-        Some(source)
-    }
-
-    fn push_or_terms<'a>(&'a self, terms: &mut Vec<&'a Self>) {
-        match self.kind() {
-            SymExprKind::Op(SymExprOp::Or, left, right) => {
-                left.push_or_terms(terms);
-                right.push_or_terms(terms);
-            }
-            _ => terms.push(self),
-        }
-    }
-
-    fn extracted_shifted_byte_term(&self) -> Option<(Self, usize)> {
-        match self.kind() {
-            SymExprKind::Op(SymExprOp::Shl, byte, shift) => {
-                let shift = shift.as_const()?;
-                let Ok(shift) = usize::try_from(shift) else { return None };
-                if shift % 8 != 0 || shift > 248 {
-                    return None;
-                }
-                let index = 31 - shift / 8;
-                let source = byte.extracted_unshifted_byte_source(index)?;
-                Some((source, index))
-            }
-            _ => self.extracted_unshifted_byte_source(31).map(|source| (source, 31)),
-        }
-    }
-
-    fn extracted_unshifted_byte_source(&self, index: usize) -> Option<Self> {
-        let expr = self.strip_low_byte_mask();
-        if index == 31 {
-            return Some(expr.clone());
-        }
-        let SymExprKind::Op(SymExprOp::Shr, source, shift) = expr.kind() else { return None };
-        let shift = shift.as_const()?;
-        (shift == U256::from((31 - index) * 8)).then(|| source.clone())
-    }
-
-    fn rebuild_from_shifted_word_fragments(&self) -> Option<Self> {
-        let mut terms = Vec::new();
-        self.push_or_terms(&mut terms);
-        if terms.len() != 2 {
-            return None;
-        }
-
-        let left_low = terms[0].low_word_fragment();
-        let right_low = terms[1].low_word_fragment();
-        let left_high = terms[0].shifted_high_word_fragment();
-        let right_high = terms[1].shifted_high_word_fragment();
-        match (left_low, right_low, left_high, right_high) {
-            (Some((low_source, low_bits)), None, None, Some((high_source, high_bits)))
-            | (None, Some((low_source, low_bits)), Some((high_source, high_bits)), None)
-                if low_source == high_source && low_bits == high_bits =>
-            {
-                Some(low_source)
-            }
-            _ => None,
-        }
-    }
-
-    fn low_word_fragment(&self) -> Option<(Self, usize)> {
-        let SymExprKind::Op(SymExprOp::And, left, right) = self.kind() else { return None };
-        if let Some(mask) = right.as_const() {
-            return mask_low_bits(mask).map(|bits| (left.clone(), bits));
-        }
-        let mask = left.as_const()?;
-        mask_low_bits(mask).map(|bits| (right.clone(), bits))
-    }
-
-    fn shifted_high_word_fragment(&self) -> Option<(Self, usize)> {
-        let SymExprKind::Op(SymExprOp::Shl, value, shift) = self.kind() else { return None };
-        let bits = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
-        if bits == 0 || bits >= 256 {
-            return None;
-        }
-
-        let (source, source_shift, width) = value.shifted_low_fragment_source()?;
-        (source_shift == bits && width == 256 - bits).then_some((source, bits))
-    }
-
-    fn shifted_low_fragment_source(&self) -> Option<(Self, usize, usize)> {
-        let SymExprKind::Op(SymExprOp::And, left, right) = self.kind() else { return None };
-        if let Some(mask) = right.as_const() {
-            return Self::shifted_low_fragment_source_with_mask(left, mask);
-        }
-        let mask = left.as_const()?;
-        Self::shifted_low_fragment_source_with_mask(right, mask)
-    }
-
-    fn shifted_low_fragment_source_with_mask(
-        value: &Self,
-        mask: U256,
-    ) -> Option<(Self, usize, usize)> {
-        let width = mask_low_bits(mask)?;
-        match value.kind() {
-            SymExprKind::Op(SymExprOp::Shr, source, shift) => {
-                let shift = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
-                Some((source.clone(), shift, width))
-            }
-            _ => Some((value.clone(), 0, width)),
-        }
-    }
-
-    fn normalize_masked_shift_for_solver(&self, cx: &mut SymCx) -> Option<Self> {
-        let SymExprKind::Op(SymExprOp::And, left, right) = self.kind() else { return None };
-        let (value, mask) = if let Some(mask) = right.as_const() {
-            (left, mask)
-        } else {
-            (right, left.as_const()?)
-        };
-        let mask_bits = mask_low_bits(mask)?;
-        let SymExprKind::Op(SymExprOp::Shl, _, shift) = value.kind() else { return None };
-        let shift = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
-        (mask_bits <= shift).then(|| Self::zero(cx))
-    }
-
-    fn normalize_masked_or_for_solver(&self, cx: &mut SymCx) -> Option<Self> {
-        let SymExprKind::Op(SymExprOp::And, left, right) = self.kind() else { return None };
-        let (value, mask) = if let Some(mask) = right.as_const() {
-            (left, mask)
-        } else {
-            (right, left.as_const()?)
-        };
-        let SymExprKind::Op(SymExprOp::Or, or_left, or_right) = value.kind() else { return None };
-
-        let mask_expr = Self::constant(cx, mask);
-        let left = Self::op(cx, SymExprOp::And, or_left.clone(), mask_expr);
-        let left = normalize_expr_for_solver(cx, left);
-        if left.as_const().is_some_and(|value| value.is_zero()) {
-            let mask_expr = Self::constant(cx, mask);
-            let right = Self::op(cx, SymExprOp::And, or_right.clone(), mask_expr);
-            return Some(normalize_expr_for_solver(cx, right));
-        }
-
-        let mask_expr = Self::constant(cx, mask);
-        let right = Self::op(cx, SymExprOp::And, or_right.clone(), mask_expr);
-        let right = normalize_expr_for_solver(cx, right);
-        if right.as_const().is_some_and(|value| value.is_zero()) {
-            return Some(left);
-        }
-
-        None
-    }
-
-    fn normalize_shift_right_for_solver(&self, cx: &mut SymCx) -> Option<Self> {
-        let SymExprKind::Op(SymExprOp::Shr, value, shift) = self.kind() else { return None };
-        let shift = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
-        if shift == 0 || shift >= 256 {
-            return None;
-        }
-        if value.unsigned_bits() <= shift {
-            return Some(Self::zero(cx));
-        }
-
-        if let SymExprKind::Op(SymExprOp::Shl, inner, left_shift) = value.kind()
-            && left_shift.as_const() == Some(U256::from(shift))
-            && inner.unsigned_bits() <= 256 - shift
-        {
-            return Some(inner.clone());
-        }
-
-        let SymExprKind::Op(SymExprOp::Or, left, right) = value.kind() else { return None };
-        let shift_expr = Self::constant(cx, U256::from(shift));
-        let left = Self::op(cx, SymExprOp::Shr, left.clone(), shift_expr);
-        let left = normalize_expr_for_solver(cx, left);
-        if left.as_const().is_some_and(|value| value.is_zero()) {
-            let shift_expr = Self::constant(cx, U256::from(shift));
-            let right = Self::op(cx, SymExprOp::Shr, right.clone(), shift_expr);
-            return Some(normalize_expr_for_solver(cx, right));
-        }
-
-        let shift_expr = Self::constant(cx, U256::from(shift));
-        let right = Self::op(cx, SymExprOp::Shr, right.clone(), shift_expr);
-        let right = normalize_expr_for_solver(cx, right);
-        if right.as_const().is_some_and(|value| value.is_zero()) {
-            return Some(left);
-        }
-
-        None
-    }
-
     fn add_cannot_overflow_256(&self, right: &Self) -> bool {
         self.unsigned_bits().max(right.unsigned_bits()).saturating_add(1) <= 256
     }
@@ -1135,48 +780,17 @@ impl SymExpr {
     pub(crate) fn mul_cannot_overflow_256(&self, right: &Self) -> bool {
         self.unsigned_bits().saturating_add(right.unsigned_bits()) <= 256
     }
-
-    fn unsigned_bits(&self) -> usize {
-        match self.kind() {
-            SymExprKind::Const(value) => value.bit_len().max(1),
-            SymExprKind::Op(SymExprOp::And, left, right) => {
-                if let Some(mask) = right.as_const() {
-                    left.unsigned_bits().min(mask.bit_len())
-                } else if let Some(mask) = left.as_const() {
-                    right.unsigned_bits().min(mask.bit_len())
-                } else {
-                    256
-                }
-            }
-            SymExprKind::Op(SymExprOp::Add, left, right) => {
-                left.unsigned_bits().max(right.unsigned_bits()).saturating_add(1).min(256)
-            }
-            SymExprKind::Op(SymExprOp::Mul, left, right) => {
-                left.unsigned_bits().saturating_add(right.unsigned_bits()).min(256)
-            }
-            SymExprKind::Op(SymExprOp::UDiv, left, _) => left.unsigned_bits(),
-            SymExprKind::AddMod { modulus, .. } | SymExprKind::MulMod { modulus, .. } => {
-                modulus.unsigned_bits()
-            }
-            SymExprKind::Ite(_, left, right) => left.unsigned_bits().max(right.unsigned_bits()),
-            _ => 256,
-        }
-    }
-}
-
-fn mask_low_bits(mask: U256) -> Option<usize> {
-    let bits = mask.bit_len();
-    (mask == mask_bits(U256::MAX, bits)).then_some(bits)
 }
 
 impl SymBoolExpr {
     fn normalize_udiv_for_solver(&self, cx: &mut SymCx) -> Option<Self> {
         match self.kind() {
-            SymBoolExprKind::Eq(left, right)
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if right.as_const().is_some_and(|value| value.is_zero()) =>
             {
                 left.normalized_bool_word_condition(cx).map(|value| value.not(cx)).or_else(|| {
                     if left.word_bool_always_true(cx) {
+                        // `always_true_word == 0 => false`.
                         Some(Self::constant(cx, false))
                     } else {
                         let zero = SymExpr::zero(cx);
@@ -1184,11 +798,12 @@ impl SymBoolExpr {
                     }
                 })
             }
-            SymBoolExprKind::Eq(left, right)
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if left.as_const().is_some_and(|value| value.is_zero()) =>
             {
                 right.normalized_bool_word_condition(cx).map(|value| value.not(cx)).or_else(|| {
                     if right.word_bool_always_true(cx) {
+                        // `0 == always_true_word => false`.
                         Some(Self::constant(cx, false))
                     } else {
                         let zero = SymExpr::zero(cx);
@@ -1196,13 +811,44 @@ impl SymBoolExpr {
                     }
                 })
             }
-            SymBoolExprKind::Eq(left, right) if right.as_const() == Some(U256::from(1)) => {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                if right.as_const() == Some(U256::from(1)) =>
+            {
+                // `bool_word(c) == 1 => c`.
                 left.normalized_bool_word_condition(cx)
             }
-            SymBoolExprKind::Eq(left, right) if left.as_const() == Some(U256::from(1)) => {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                if left.as_const() == Some(U256::from(1)) =>
+            {
+                // `1 == bool_word(c) => c`.
                 right.normalized_bool_word_condition(cx)
             }
             SymBoolExprKind::Not(value) => match value.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                    if right.as_const().is_some_and(|value| value.is_zero()) =>
+                {
+                    if left.word_bool_always_true(cx) {
+                        // `always_true_word != 0 => true`.
+                        Some(Self::constant(cx, true))
+                    } else {
+                        let zero = SymExpr::zero(cx);
+                        Self::normalize_udiv_eq_zero(cx, left, &zero).map(|value| value.not(cx))
+                    }
+                }
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                    if left.as_const().is_some_and(|value| value.is_zero()) =>
+                {
+                    if right.word_bool_always_true(cx) {
+                        // `0 != always_true_word => true`.
+                        Some(Self::constant(cx, true))
+                    } else {
+                        let zero = SymExpr::zero(cx);
+                        Self::normalize_udiv_eq_zero(cx, &zero, right).map(|value| value.not(cx))
+                    }
+                }
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                    Self::normalize_udiv_eq_zero(cx, left, right).map(|value| value.not(cx))
+                }
                 SymBoolExprKind::Cmp(op, left, right) => {
                     Self::normalize_add_overflow_cmp(cx, *op, left, right)
                         .map(|value| value.not(cx))
@@ -1211,32 +857,11 @@ impl SymBoolExpr {
                                 .map(|value| value.not(cx))
                         })
                 }
-                SymBoolExprKind::Eq(left, right)
-                    if right.as_const().is_some_and(|value| value.is_zero()) =>
-                {
-                    if left.word_bool_always_true(cx) {
-                        Some(Self::constant(cx, true))
-                    } else {
-                        let zero = SymExpr::zero(cx);
-                        Self::normalize_udiv_eq_zero(cx, left, &zero).map(|value| value.not(cx))
-                    }
-                }
-                SymBoolExprKind::Eq(left, right)
-                    if left.as_const().is_some_and(|value| value.is_zero()) =>
-                {
-                    if right.word_bool_always_true(cx) {
-                        Some(Self::constant(cx, true))
-                    } else {
-                        let zero = SymExpr::zero(cx);
-                        Self::normalize_udiv_eq_zero(cx, &zero, right).map(|value| value.not(cx))
-                    }
-                }
-                SymBoolExprKind::Eq(left, right) => {
-                    Self::normalize_udiv_eq_zero(cx, left, right).map(|value| value.not(cx))
-                }
                 _ => None,
             },
-            SymBoolExprKind::Eq(left, right) => Self::normalize_udiv_eq_zero(cx, left, right),
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                Self::normalize_udiv_eq_zero(cx, left, right)
+            }
             SymBoolExprKind::Cmp(op, left, right) => {
                 Self::normalize_add_overflow_cmp(cx, *op, left, right)
                     .or_else(|| Self::normalize_udiv_cmp(cx, *op, left, right))
@@ -1245,31 +870,17 @@ impl SymBoolExpr {
         }
     }
 
-    fn zero_check_operand(&self) -> Option<&SymExpr> {
-        match self.kind() {
-            SymBoolExprKind::Eq(left, right)
-                if right.as_const().is_some_and(|value| value.is_zero()) =>
-            {
-                Some(left)
-            }
-            SymBoolExprKind::Eq(left, right)
-                if left.as_const().is_some_and(|value| value.is_zero()) =>
-            {
-                Some(right)
-            }
-            _ => None,
-        }
-    }
-
     fn normalize_add_overflow_cmp(
         cx: &mut SymCx,
-        op: SymBoolExprOp,
+        op: SymCmpOp,
         left: &SymExpr,
         right: &SymExpr,
     ) -> Option<Self> {
         match op {
-            SymBoolExprOp::Ugt if left.add_overflow_check(right) => Some(Self::constant(cx, false)),
-            SymBoolExprOp::Ult if right.add_overflow_check(left) => Some(Self::constant(cx, false)),
+            // `a + b > a => false` when `a + b` cannot overflow.
+            SymCmpOp::Ugt if left.add_overflow_check(right) => Some(Self::constant(cx, false)),
+            // `a < a + b => false` when `a + b` cannot overflow.
+            SymCmpOp::Ult if right.add_overflow_check(left) => Some(Self::constant(cx, false)),
             _ => None,
         }
     }
@@ -1278,11 +889,13 @@ impl SymBoolExpr {
         if right.as_const().is_some_and(|value| value.is_zero())
             && let Some(condition) = left.normalize_eq_zero_for_solver(cx)
         {
+            // `word_bool(c) == 0 => !c`.
             return Some(condition);
         }
         if left.as_const().is_some_and(|value| value.is_zero())
             && let Some(condition) = right.normalize_eq_zero_for_solver(cx)
         {
+            // `0 == word_bool(c) => !c`.
             return Some(condition);
         }
         None
@@ -1290,36 +903,44 @@ impl SymBoolExpr {
 
     fn normalize_udiv_cmp(
         cx: &mut SymCx,
-        op: SymBoolExprOp,
+        op: SymCmpOp,
         left: &SymExpr,
         right: &SymExpr,
     ) -> Option<Self> {
-        match (op, left.as_const(), right.as_const()) {
-            (SymBoolExprOp::Ugt, _, Some(value)) if value.is_zero() => {
-                left.normalize_ne_zero_for_solver(cx)
-            }
-            (SymBoolExprOp::Uge, _, Some(value)) if value == U256::from(1) => {
-                left.normalize_ne_zero_for_solver(cx)
-            }
-            (SymBoolExprOp::Ule, _, Some(value)) if value.is_zero() => {
-                left.normalize_eq_zero_for_solver(cx)
-            }
-            (SymBoolExprOp::Ult, _, Some(value)) if value == U256::from(1) => {
-                left.normalize_eq_zero_for_solver(cx)
-            }
-            (SymBoolExprOp::Ult, Some(value), _) if value.is_zero() => {
-                right.normalize_ne_zero_for_solver(cx)
-            }
-            (SymBoolExprOp::Ule, Some(value), _) if value == U256::from(1) => {
-                right.normalize_ne_zero_for_solver(cx)
-            }
-            (SymBoolExprOp::Uge, Some(value), _) if value.is_zero() => {
-                right.normalize_eq_zero_for_solver(cx)
-            }
-            (SymBoolExprOp::Ugt, Some(value), _) if value == U256::from(1) => {
-                right.normalize_eq_zero_for_solver(cx)
-            }
-            _ => None,
+        match op {
+            SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
+                // `a > 0 => a != 0`.
+                (_, Some(value)) if value.is_zero() => left.normalize_ne_zero_for_solver(cx),
+                // `1 > a => a == 0`.
+                (Some(value), _) if value == U256::from(1) => {
+                    right.normalize_eq_zero_for_solver(cx)
+                }
+                _ => None,
+            },
+            SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
+                // `a >= 1 => a != 0`.
+                (_, Some(value)) if value == U256::from(1) => left.normalize_ne_zero_for_solver(cx),
+                // `0 >= a => a == 0`.
+                (Some(value), _) if value.is_zero() => right.normalize_eq_zero_for_solver(cx),
+                _ => None,
+            },
+            SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
+                // `a <= 0 => a == 0`.
+                (_, Some(value)) if value.is_zero() => left.normalize_eq_zero_for_solver(cx),
+                // `1 <= a => a != 0`.
+                (Some(value), _) if value == U256::from(1) => {
+                    right.normalize_ne_zero_for_solver(cx)
+                }
+                _ => None,
+            },
+            SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
+                // `a < 1 => a == 0`.
+                (_, Some(value)) if value == U256::from(1) => left.normalize_eq_zero_for_solver(cx),
+                // `0 < a => a != 0`.
+                (Some(value), _) if value.is_zero() => right.normalize_ne_zero_for_solver(cx),
+                _ => None,
+            },
+            SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
         }
     }
 }
@@ -1337,7 +958,7 @@ impl SymExpr {
     }
 
     fn add_with_operand<'a>(&'a self, operand: &Self) -> Option<(&'a Self, &'a Self)> {
-        let SymExprKind::Op(SymExprOp::Add, left, right) = self.kind() else { return None };
+        let SymExprKind::BinOp(SymBinOp::Add, left, right) = self.kind() else { return None };
         if left == operand {
             Some((left, right))
         } else if right == operand {
@@ -1349,6 +970,7 @@ impl SymExpr {
 
     fn normalize_eq_zero_for_solver(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         if let Some((numerator, denominator)) = self.udiv_operands() {
+            // `a / b == 0 => b == 0 || a < b`.
             return Some(Self::udiv_zero_condition(cx, numerator, denominator));
         }
         if let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() {
@@ -1371,6 +993,7 @@ impl SymExpr {
             if then_zero.contains_udiv() || else_zero.contains_udiv() {
                 return None;
             }
+            // `ite(c, a, b) == 0 => (c && a == 0) || (!c && b == 0)`.
             let condition = normalize_bool_for_solver(cx, condition.clone());
             let then_condition = SymBoolExpr::and(cx, vec![condition.clone(), then_zero]);
             let not_condition = condition.not(cx);
@@ -1382,6 +1005,7 @@ impl SymExpr {
 
     fn normalize_ne_zero_for_solver(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
         if let Some((numerator, denominator)) = self.udiv_operands() {
+            // `a / b != 0 => b != 0 && a >= b`.
             return Some(Self::udiv_nonzero_condition(cx, numerator, denominator));
         }
         if let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() {
@@ -1404,6 +1028,7 @@ impl SymExpr {
             if then_nonzero.contains_udiv() || else_nonzero.contains_udiv() {
                 return None;
             }
+            // `ite(c, a, b) != 0 => (c && a != 0) || (!c && b != 0)`.
             let condition = normalize_bool_for_solver(cx, condition.clone());
             let then_condition = SymBoolExpr::and(cx, vec![condition.clone(), then_nonzero]);
             let not_condition = condition.not(cx);
@@ -1413,21 +1038,12 @@ impl SymExpr {
         None
     }
 
-    fn udiv_operands(&self) -> Option<(&Self, &Self)> {
-        match self.kind() {
-            SymExprKind::Op(SymExprOp::UDiv, numerator, denominator) => {
-                Some((numerator, denominator))
-            }
-            _ => None,
-        }
-    }
-
     fn udiv_zero_condition(cx: &mut SymCx, numerator: &Self, denominator: &Self) -> SymBoolExpr {
         let numerator = normalize_expr_for_solver(cx, numerator.clone());
         let denominator = normalize_expr_for_solver(cx, denominator.clone());
         let zero = Self::zero(cx);
         let denominator_zero = SymBoolExpr::eq(cx, denominator.clone(), zero);
-        let below_denominator = SymBoolExpr::cmp(cx, SymBoolExprOp::Ult, numerator, denominator);
+        let below_denominator = SymBoolExpr::cmp(cx, SymCmpOp::Ult, numerator, denominator);
         SymBoolExpr::or(cx, vec![denominator_zero, below_denominator])
     }
 
@@ -1436,7 +1052,7 @@ impl SymExpr {
         let denominator = normalize_expr_for_solver(cx, denominator.clone());
         let zero = Self::zero(cx);
         let denominator_nonzero = SymBoolExpr::eq(cx, denominator.clone(), zero).not(cx);
-        let at_least_denominator = SymBoolExpr::cmp(cx, SymBoolExprOp::Uge, numerator, denominator);
+        let at_least_denominator = SymBoolExpr::cmp(cx, SymCmpOp::Uge, numerator, denominator);
         SymBoolExpr::and(cx, vec![denominator_nonzero, at_least_denominator])
     }
 }
@@ -1457,12 +1073,14 @@ impl ConstraintContext {
             let negated = term.clone().not(cx);
             bool_terms.contains(&negated)
         }) {
+            // `c || !c => true`.
             return true;
         }
         for zero_term in &bool_terms {
             let Some(zero_operand) = zero_term.zero_check_operand() else { continue };
             if bool_terms.iter().any(|term| self.checked_mul_guard_for_operand(term, zero_operand))
             {
+                // `a == 0 || guarded_mul_div(a) => true`.
                 return true;
             }
         }
@@ -1470,7 +1088,9 @@ impl ConstraintContext {
     }
 
     fn checked_mul_guard_for_operand(&self, expr: &SymBoolExpr, zero_operand: &SymExpr) -> bool {
-        let SymBoolExprKind::Eq(left, right) = expr.kind() else { return false };
+        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = expr.kind() else {
+            return false;
+        };
         self.checked_mul_guard_side(left, right, zero_operand)
             || self.checked_mul_guard_side(right, left, zero_operand)
     }
@@ -1494,7 +1114,7 @@ impl ConstraintContext {
         if denominator != zero_operand {
             return false;
         }
-        let SymExprKind::Op(SymExprOp::Mul, left, right) = numerator.kind() else {
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
             return false;
         };
         let other = if left == zero_operand {
@@ -1519,7 +1139,7 @@ impl ConstraintContext {
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. }
             | SymExprKind::Not(_) => expr.unsigned_bits(),
-            SymExprKind::Op(SymExprOp::And, left, right) => {
+            SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
                     self.unsigned_bits(left).min(mask.bit_len())
                 } else if let Some(mask) = left.as_const() {
@@ -1528,13 +1148,13 @@ impl ConstraintContext {
                     256
                 }
             }
-            SymExprKind::Op(SymExprOp::Add, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
                 self.unsigned_bits(left).max(self.unsigned_bits(right)).saturating_add(1).min(256)
             }
-            SymExprKind::Op(SymExprOp::Mul, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
                 self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)).min(256)
             }
-            SymExprKind::Op(SymExprOp::UDiv, left, _) => self.unsigned_bits(left),
+            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => self.unsigned_bits(left),
             SymExprKind::Ite(_, left, right) => {
                 self.unsigned_bits(left).max(self.unsigned_bits(right))
             }

@@ -9,6 +9,13 @@ ignore = [
     "RUSTSEC-2024-0436",
     # https://rustsec.org/advisories/RUSTSEC-2026-0173 proc-macro-error2 is unmaintained
     "RUSTSEC-2026-0173",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0194 quick-xml duplicate
+    # attribute checking is quadratic.
+    "RUSTSEC-2026-0194",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0195 quick-xml namespace
+    # declaration handling can allocate without a bound. No fixed quick-junit,
+    # inferno, or soldeer release is available for either advisory yet.
+    "RUSTSEC-2026-0195",
 ]
 
 # This section is considered when running `cargo deny check bans`.

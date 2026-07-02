@@ -187,7 +187,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                 let word = self.fresh_word(&name);
                 state.constraints.push(SymBoolExpr::cmp_word_const(
                     self.cx,
-                    SymBoolExprOp::Ult,
+                    SymCmpOp::Ult,
                     &word,
                     U256::from(2),
                 ));
@@ -456,20 +456,20 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         let word = self.fresh_word(name);
         state.constraints.push(SymBoolExpr::cmp_word_const(
             self.cx,
-            SymBoolExprOp::Ult,
+            SymCmpOp::Ult,
             &word,
             U256::from(256),
         ));
         if printable {
             state.constraints.push(SymBoolExpr::cmp_word_const(
                 self.cx,
-                SymBoolExprOp::Uge,
+                SymCmpOp::Uge,
                 &word,
                 U256::from(0x20),
             ));
             state.constraints.push(SymBoolExpr::cmp_word_const(
                 self.cx,
-                SymBoolExprOp::Ule,
+                SymCmpOp::Ule,
                 &word,
                 U256::from(0x7e),
             ));
@@ -540,7 +540,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
         if bits < 256 {
             state.constraints.push(SymBoolExpr::cmp_word_const(
                 self.cx,
-                SymBoolExprOp::Ult,
+                SymCmpOp::Ult,
                 word,
                 U256::from(1) << bits,
             ));
