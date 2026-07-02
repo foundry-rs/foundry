@@ -183,7 +183,10 @@ use std::{
     io::{Read, Write},
     ops::{Mul, Not},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    },
     time::Duration,
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
@@ -1356,6 +1359,7 @@ impl<N: Network> Backend<N> {
         pool_transactions: &[Arc<PoolTransaction<FoundryTxEnvelope>>],
         gas_config: &PoolTxGasConfig,
         inspector_tx_config: &InspectorTxConfig,
+        state_hook: Option<Box<dyn alloy_evm::block::OnStateHook>>,
         validator: &dyn Fn(
             &PendingTransaction<FoundryTxEnvelope>,
             &AccountInfo,
@@ -1370,6 +1374,7 @@ impl<N: Network> Backend<N> {
             ($evm:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut());
                 let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
+                executor.set_state_hook(state_hook);
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
                 let pool_result = execute_pool_transactions(
                     &mut executor,
@@ -2889,6 +2894,7 @@ where
                     &pool_transactions,
                     &gas_config,
                     &inspector_tx_config,
+                    None,
                     &|pending, account| {
                         self.validate_pool_transaction_for(pending, account, &evm_env)
                     },
@@ -3087,6 +3093,7 @@ where
             &pool_transactions,
             &gas_config,
             &inspector_tx_config,
+            None,
             &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
         );
 
@@ -3324,6 +3331,7 @@ where
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
+                None,
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
             );
 
@@ -3719,6 +3727,7 @@ where
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
+                None,
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
             );
 
@@ -4008,6 +4017,8 @@ where
             let spec_id = *evm_env.spec_id();
             let inspector_tx_config = self.inspector_tx_config();
             let gas_config = self.pool_tx_gas_config(&evm_env);
+            let target_storage_changed = Arc::new(AtomicBool::new(false));
+            let target_storage_changed_hook = target_storage_changed.clone();
 
             self.execute_with_block_executor(
                 &mut replay_db,
@@ -4017,6 +4028,14 @@ where
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
+                Some(Box::new(move |state: revm::state::EvmState| {
+                    if state
+                        .get(&address)
+                        .is_some_and(|account| account.changed_storage_slots().next().is_some())
+                    {
+                        target_storage_changed_hook.store(true, AtomicOrdering::Relaxed);
+                    }
+                })),
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
             );
 
@@ -4026,10 +4045,16 @@ where
                 return Ok(None);
             };
 
+            let parent_storage = parent_state
+                .maybe_as_full_db()
+                .and_then(|db| db.get(&address))
+                .map(|account| &account.storage);
             let storage_root = if let Some(fork_account) = fork_account
                 && fork_account.storage_root != alloy_trie::EMPTY_ROOT_HASH
             {
-                if account.storage.is_empty() {
+                if target_storage_changed.load(AtomicOrdering::Relaxed) {
+                    return Err(BlockchainError::DataUnavailable);
+                } else if parent_storage.is_none_or(|storage| storage.is_empty()) {
                     fork_account.storage_root
                 } else {
                     return Err(BlockchainError::DataUnavailable);

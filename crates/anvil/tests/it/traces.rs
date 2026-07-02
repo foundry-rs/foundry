@@ -275,6 +275,91 @@ async fn test_debug_account_at_local_block_on_fork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_debug_account_at_local_block_on_fork_after_storage_write_unavailable() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let origin_signer: EthereumWallet = origin_accounts[0].clone().into();
+    let origin_provider = http_provider_with_signer(&origin_handle.http_endpoint(), origin_signer);
+    let storage = SimpleStorage::deploy(&origin_provider, "init value".to_string()).await.unwrap();
+    let fork_account = *storage.address();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+    let forked_storage = SimpleStorage::new(fork_account, &provider);
+    forked_storage
+        .setValue("changed".to_string())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let tx = TransactionRequest::default()
+        .to(accounts[1].address())
+        .value(U256::from(1000))
+        .from(accounts[0].address());
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let result: Result<Option<Account>, _> = provider
+        .raw_request(
+            "debug_accountAt".into(),
+            (BlockId::number(receipt.block_number.unwrap()), Index::from(0), fork_account),
+        )
+        .await;
+    assert!(result.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_account_at_local_block_on_fork_after_storage_read() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let origin_signer: EthereumWallet = origin_accounts[0].clone().into();
+    let origin_provider = http_provider_with_signer(&origin_handle.http_endpoint(), origin_signer);
+    let storage = SimpleStorage::deploy(&origin_provider, "init value".to_string()).await.unwrap();
+    let fork_account = *storage.address();
+    let fork_account_expected = origin_provider.get_account(fork_account).await.unwrap();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let provider = handle.http_provider();
+    let get_value = storage.getValue();
+    let tx = TransactionRequest::default()
+        .from(accounts[0].address())
+        .to(fork_account)
+        .with_input(get_value.calldata().to_owned());
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let account: Option<Account> = provider
+        .raw_request(
+            "debug_accountAt".into(),
+            (BlockId::number(receipt.block_number.unwrap()), Index::from(0), fork_account),
+        )
+        .await
+        .unwrap();
+    let account = account.unwrap();
+
+    assert_eq!(account.storage_root, fork_account_expected.storage_root);
+    assert_ne!(account.storage_root, EMPTY_ROOT_HASH);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_account_at_delegates_pre_fork_block() {
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_provider = origin_handle.http_provider();
