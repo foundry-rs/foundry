@@ -770,7 +770,9 @@ fn stddev(values: &[f64]) -> Option<f64> {
 /// The workspace root, embedded at compile time.
 /// `benches/` is one level below the workspace root.
 const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
-const LOCAL_BUILD_PROFILE: &str = "dist";
+const WORKSPACE_ROOT_ENV: &str = "FOUNDRY_BENCH_WORKSPACE_ROOT";
+const LOCAL_BUILD_PROFILE_ENV: &str = "FOUNDRY_BENCH_LOCAL_BUILD_PROFILE";
+const DEFAULT_LOCAL_BUILD_PROFILE: &str = "dist";
 const FOUNDRY_BINS: [&str; 4] = ["forge", "cast", "anvil", "chisel"];
 
 /// Switch to a specific foundry version.
@@ -804,20 +806,20 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build and activate the local workspace using the release distribution profile.
-/// Builds only the shipped Foundry binaries to match the profile of the
-/// downloaded release artifacts without linking unused workspace binaries.
+/// Build and activate the local workspace.
+/// Builds only the shipped Foundry binaries without linking unused workspace binaries.
 #[allow(unused_must_use)]
 pub fn install_local_version() -> Result<()> {
-    let workspace =
-        std::fs::canonicalize(WORKSPACE_ROOT).wrap_err("Failed to resolve workspace root")?;
+    let workspace = workspace_root()?;
+    let profile = local_build_profile();
     sh_println!(
-        "  Building local workspace at {} with {LOCAL_BUILD_PROFILE} profile",
-        workspace.display()
+        "  Building local workspace at {} with {} profile",
+        workspace.display(),
+        profile.to_string_lossy()
     );
 
     let mut cmd = Command::new("cargo");
-    cmd.current_dir(&workspace).args(["build", "--locked", "--profile", LOCAL_BUILD_PROFILE]);
+    cmd.current_dir(&workspace).args(["build", "--locked", "--profile"]).arg(&profile);
     for bin in FOUNDRY_BINS {
         cmd.args(["--bin", bin]);
     }
@@ -828,18 +830,32 @@ pub fn install_local_version() -> Result<()> {
         eyre::bail!("local Foundry build failed");
     }
 
-    activate_local_binaries(&workspace)?;
-    sh_println!("  Successfully activated local {LOCAL_BUILD_PROFILE} build");
+    activate_local_binaries(&workspace, &profile)?;
+    sh_println!("  Successfully activated local {} build", profile.to_string_lossy());
     Ok(())
 }
 
-fn activate_local_binaries(workspace: &Path) -> Result<()> {
+fn workspace_root() -> Result<PathBuf> {
+    let workspace = env::var_os(WORKSPACE_ROOT_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(WORKSPACE_ROOT));
+    std::fs::canonicalize(&workspace)
+        .wrap_err_with(|| format!("Failed to resolve workspace root {}", workspace.display()))
+}
+
+fn local_build_profile() -> std::ffi::OsString {
+    env::var_os(LOCAL_BUILD_PROFILE_ENV)
+        .filter(|profile| !profile.is_empty())
+        .unwrap_or_else(|| DEFAULT_LOCAL_BUILD_PROFILE.into())
+}
+
+fn activate_local_binaries(workspace: &Path, profile: &std::ffi::OsStr) -> Result<()> {
     let bin_dir = foundry_bin_dir()?;
     fs::create_dir_all(&bin_dir).wrap_err_with(|| {
         format!("Failed to create Foundry bin directory at {}", bin_dir.display())
     })?;
 
-    let local_bin_dir = workspace.join("target").join(LOCAL_BUILD_PROFILE);
+    let local_bin_dir = workspace.join("target").join(profile);
     for bin in FOUNDRY_BINS {
         let bin_name = format!("{bin}{}", env::consts::EXE_SUFFIX);
         let source = local_bin_dir.join(&bin_name);

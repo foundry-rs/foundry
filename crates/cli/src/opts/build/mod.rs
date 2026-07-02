@@ -33,13 +33,19 @@ pub struct CompilerOpts {
     #[serde(skip)]
     pub optimize: Option<bool>,
 
-    /// Enable Solidity's experimental mode.
-    ///
-    /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
-    /// experimental features.
+    /// The number of runs specifies roughly how often each opcode of the deployed code will be
+    /// executed across the life-time of the contract. This means it is a trade-off parameter
+    /// between code size (deploy cost) and code execution cost (cost after deployment).
+    /// An `optimizer_runs` parameter of `1` will produce short but expensive code. In contrast, a
+    /// larger `optimizer_runs` parameter will produce longer but more gas efficient code.
+    #[arg(long, value_name = "RUNS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optimizer_runs: Option<usize>,
+
+    /// Use the Yul intermediate representation compilation pipeline.
     #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
-    pub experimental: bool,
+    pub via_ir: bool,
 
     /// Turn on SSA CFG-based code generation via the IR (experimental).
     ///
@@ -49,14 +55,13 @@ pub struct CompilerOpts {
     #[serde(skip)]
     pub via_ssa_cfg: bool,
 
-    /// The number of runs specifies roughly how often each opcode of the deployed code will be
-    /// executed across the life-time of the contract. This means it is a trade-off parameter
-    /// between code size (deploy cost) and code execution cost (cost after deployment).
-    /// An `optimizer_runs` parameter of `1` will produce short but expensive code. In contrast, a
-    /// larger `optimizer_runs` parameter will produce longer but more gas efficient code.
-    #[arg(long, value_name = "RUNS")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub optimizer_runs: Option<usize>,
+    /// Enable Solidity's experimental mode.
+    ///
+    /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
+    /// experimental features.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub experimental: bool,
 
     /// Extra output to include in the contract's artifact.
     ///
