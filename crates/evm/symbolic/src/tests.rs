@@ -56,58 +56,6 @@ fn precompile_number_respects_active_spec() {
 }
 
 #[test]
-fn pop_worklist_respects_exploration_order() {
-    let mut bfs_worklist = VecDeque::from([1, 2, 3]);
-    assert_eq!(
-        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
-        Some(1)
-    );
-    assert_eq!(
-        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
-        Some(2)
-    );
-
-    let mut dfs_worklist = VecDeque::from([1, 2, 3]);
-    assert_eq!(
-        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
-        Some(3)
-    );
-    assert_eq!(
-        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
-        Some(2)
-    );
-}
-
-#[test]
-fn local_batches_respect_exploration_order() {
-    let mut bfs_batch = VecDeque::from([1, 2, 3]);
-    let mut bfs_worklist = VecDeque::from([10]);
-    assert_eq!(super::executor::pop_batch(&mut bfs_batch, SymbolicExplorationOrder::Bfs), Some(1));
-    super::executor::spill_batch(bfs_batch, &mut bfs_worklist, SymbolicExplorationOrder::Bfs);
-    assert_eq!(
-        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
-        Some(10)
-    );
-    assert_eq!(
-        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
-        Some(2)
-    );
-
-    let mut dfs_batch = VecDeque::from([1, 2, 3]);
-    let mut dfs_worklist = VecDeque::from([10]);
-    assert_eq!(super::executor::pop_batch(&mut dfs_batch, SymbolicExplorationOrder::Dfs), Some(3));
-    super::executor::spill_batch(dfs_batch, &mut dfs_worklist, SymbolicExplorationOrder::Dfs);
-    assert_eq!(
-        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
-        Some(2)
-    );
-    assert_eq!(
-        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
-        Some(1)
-    );
-}
-
-#[test]
 fn binary_helpers_use_evm_operand_order() {
     let mut cx = SymCx::new();
     let mut state = empty_state(&mut cx);
@@ -1722,6 +1670,52 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
     state.constraints.push(constraint);
 
     assert_eq!(state.upper_bound_usize(&mut cx, &size), Some(4));
+}
+
+#[test]
+fn path_state_child_replaces_frame_and_resets_local_loop_state() {
+    let mut cx = SymCx::new();
+    let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+    state.call_depth = 2;
+    state.next_symbol = 7;
+    state.loop_jumps.insert(3, 4);
+
+    let parent_stack = SymExpr::constant(&mut cx, U256::from(0xab));
+    state.stack.push(parent_stack).unwrap();
+
+    let constrained = SymExpr::var(&mut cx, "constrained");
+    let seven = SymExpr::constant(&mut cx, U256::from(7));
+    let constraint = SymBoolExpr::eq(&mut cx, constrained, seven);
+    state.constraints.push(constraint.clone());
+
+    let cached = Address::from([0x22; 20]);
+    state.world.set_nonce(cached, 9);
+
+    let calldata_bytes = SymBytes::empty(&mut cx);
+    let calldata = SymCalldata::from_bytes(&mut cx, calldata_bytes);
+    let callvalue = SymExpr::zero(&mut cx);
+    let child_address = Address::from([0x11; 20]);
+    let frame = CallFrame::new(
+        &mut cx,
+        child_address,
+        child_address,
+        child_address,
+        Address::ZERO,
+        callvalue,
+        false,
+        calldata,
+    );
+
+    let child = state.child(frame);
+
+    assert_eq!(child.call_depth, 3);
+    assert_eq!(child.next_symbol, 7);
+    assert_eq!(child.constraints, vec![constraint]);
+    assert_eq!(child.world.cached_nonce(cached), Some(9));
+    assert_eq!(child.address, child_address);
+    assert!(child.loop_jumps.is_empty());
+    assert_eq!(state.loop_jumps.get(&3), Some(&4));
+    assert!(child.stack.peek(0).is_err());
 }
 
 #[test]

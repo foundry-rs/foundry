@@ -140,11 +140,35 @@ impl PathState {
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
-        let mut child = self.clone();
-        child.call_depth += 1;
-        child.frame = frame;
-        child.loop_jumps = HashMap::default();
-        child
+        Self {
+            depth: self.depth,
+            call_depth: self.call_depth + 1,
+            origin: self.origin,
+            origin_word: self.origin_word.clone(),
+            gas_price: self.gas_price.clone(),
+            ffi_enabled: self.ffi_enabled,
+            block: self.block.clone(),
+            frame,
+            world: self.world.clone(),
+            prank: self.prank.clone(),
+            constraints: self.constraints.clone(),
+            next_symbol: self.next_symbol,
+            recorded_logs: self.recorded_logs.clone(),
+            access_record: self.access_record.clone(),
+            root_calldata: self.root_calldata.clone(),
+            corpus_seed_models: self.corpus_seed_models.clone(),
+            loop_jumps: HashMap::default(),
+            expected_revert: self.expected_revert.clone(),
+            assume_no_revert_next_call: self.assume_no_revert_next_call.clone(),
+            expected_emit: self.expected_emit.clone(),
+            expected_calls: self.expected_calls.clone(),
+            expected_creates: self.expected_creates.clone(),
+            call_mocks: self.call_mocks.clone(),
+            function_mocks: self.function_mocks.clone(),
+            persistent_accounts: self.persistent_accounts.clone(),
+            wallets: self.wallets.clone(),
+            labels: self.labels.clone(),
+        }
     }
 
     pub(crate) fn copy_call_output_offset(
