@@ -304,10 +304,7 @@ impl SymbolicExecutor {
             parents.push_back(parent);
         }
 
-        let Some(first) = (match self.config.exploration_order {
-            SymbolicExplorationOrder::Bfs => parents.pop_front(),
-            SymbolicExplorationOrder::Dfs => parents.pop_back(),
-        }) else {
+        let Some(first) = self.pop_next_path(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
@@ -416,10 +413,7 @@ impl SymbolicExecutor {
             branches.push_back(branch);
         }
 
-        let Some(first_branch) = (match self.config.exploration_order {
-            SymbolicExplorationOrder::Bfs => branches.pop_front(),
-            SymbolicExplorationOrder::Dfs => branches.pop_back(),
-        }) else {
+        let Some(first_branch) = self.pop_next_path(&mut branches) else {
             return Ok(Some(StepOutcome::AssumeRejected));
         };
         *state = first_branch;
