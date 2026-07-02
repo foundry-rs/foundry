@@ -240,7 +240,6 @@ fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     });
 }
 
-#[cfg(test)]
 pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
     let mut vars = SymbolicVars::default();
     let mut constants = HashSet::<U256>::default();
