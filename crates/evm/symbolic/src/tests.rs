@@ -519,6 +519,30 @@ fn byte_concat_concrete_bytes_flattens_slices_with_padding() {
 }
 
 #[test]
+fn byte_concat_materialize_flattens_slices_with_padding() {
+    let mut cx = SymCx::new();
+    let left_a = SymExpr::var(&mut cx, "left_a");
+    let left_b = SymExpr::var(&mut cx, "left_b");
+    let right = SymExpr::var(&mut cx, "right");
+    let left = SymBytes::exprs(&mut cx, vec![left_a, left_b.clone()]);
+    let middle = SymBytes::concrete(&mut cx, vec![3]);
+    let right_bytes = SymBytes::exprs(&mut cx, vec![right.clone()]);
+    let bytes =
+        SymBytes::concat(&mut cx, [left, middle, right_bytes]).slice_concrete(&mut cx, 1, 5);
+
+    assert_eq!(
+        bytes.materialize(&mut cx),
+        vec![
+            left_b,
+            SymExpr::constant(&mut cx, U256::from(3)),
+            right,
+            SymExpr::zero(&mut cx),
+            SymExpr::zero(&mut cx),
+        ]
+    );
+}
+
+#[test]
 fn calldata_load_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let calldata_bytes =

@@ -430,7 +430,9 @@ impl SymBytes {
     }
 
     pub(crate) fn materialize(&self, cx: &mut SymCx) -> Vec<SymExpr> {
-        (0..self.len()).map(|idx| self.byte(cx, idx)).collect()
+        let mut out = Vec::with_capacity(self.len());
+        self.append_expr_range(cx, 0, self.len(), &mut out);
+        out
     }
 
     pub(crate) fn same_bytes(&self, cx: &mut SymCx, other: &Self) -> bool {
@@ -571,4 +573,111 @@ impl SymBytes {
             }
         }
     }
+
+    fn append_expr_range(
+        &self,
+        cx: &mut SymCx,
+        mut offset: usize,
+        mut len: usize,
+        out: &mut Vec<SymExpr>,
+    ) {
+        if len == 0 {
+            return;
+        }
+
+        match self.kind() {
+            SymBytesKind::Concrete(bytes) => {
+                if offset >= bytes.len() {
+                    append_zero_exprs(cx, out, len);
+                    return;
+                }
+
+                let take = (bytes.len() - offset).min(len);
+                out.extend(
+                    bytes[offset..offset + take]
+                        .iter()
+                        .copied()
+                        .map(|byte| SymExpr::constant(cx, U256::from(byte))),
+                );
+                if len > take {
+                    append_zero_exprs(cx, out, len - take);
+                }
+            }
+            SymBytesKind::Exprs(bytes) => {
+                if offset >= bytes.len() {
+                    append_zero_exprs(cx, out, len);
+                    return;
+                }
+
+                let take = (bytes.len() - offset).min(len);
+                out.extend(bytes[offset..offset + take].iter().cloned());
+                if len > take {
+                    append_zero_exprs(cx, out, len - take);
+                }
+            }
+            SymBytesKind::Concat(values) => {
+                for bytes in values {
+                    if len == 0 {
+                        break;
+                    }
+
+                    let bytes_len = bytes.len();
+                    if offset >= bytes_len {
+                        offset -= bytes_len;
+                        continue;
+                    }
+
+                    let take = (bytes_len - offset).min(len);
+                    bytes.append_expr_range(cx, offset, take, out);
+                    len -= take;
+                    offset = 0;
+                }
+
+                if len != 0 {
+                    append_zero_exprs(cx, out, len);
+                }
+            }
+            SymBytesKind::Slice { bytes, offset: base_offset, len: slice_len } => {
+                if offset >= *slice_len {
+                    append_zero_exprs(cx, out, len);
+                    return;
+                }
+
+                let take = (*slice_len - offset).min(len);
+                if let Some(base_offset) = base_offset.eval()
+                    && let Ok(base_offset) = usize::try_from(base_offset)
+                    && let Some(offset) = base_offset.checked_add(offset)
+                {
+                    bytes.append_expr_range(cx, offset, take, out);
+                    if len > take {
+                        append_zero_exprs(cx, out, len - take);
+                    }
+                } else {
+                    append_byte_range(cx, self, offset, len, out);
+                }
+            }
+            SymBytesKind::Word(_) | SymBytesKind::Sized { .. } => {
+                append_byte_range(cx, self, offset, len, out);
+            }
+        }
+    }
+}
+
+fn append_zero_exprs(cx: &mut SymCx, out: &mut Vec<SymExpr>, len: usize) {
+    out.extend((0..len).map(|_| SymExpr::zero(cx)));
+}
+
+fn append_byte_range(
+    cx: &mut SymCx,
+    bytes: &SymBytes,
+    offset: usize,
+    len: usize,
+    out: &mut Vec<SymExpr>,
+) {
+    out.extend((0..len).map(|idx| {
+        offset
+            .checked_add(idx)
+            .map(|offset| bytes.byte(cx, offset))
+            .unwrap_or_else(|| SymExpr::zero(cx))
+    }));
 }
