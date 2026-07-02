@@ -43,7 +43,8 @@ pub struct CompilerOpts {
 
     /// Turn on SSA CFG-based code generation via the IR (experimental).
     ///
-    /// This passes `--via-ssa-cfg` to solc. Implies `--via-ir`. This is false by default.
+    /// This passes `--via-ssa-cfg` to solc. Implies `--via-ir`. Requires `--experimental` to be
+    /// set (as of Solidity 0.8.35+). This is false by default.
     #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
     pub via_ssa_cfg: bool,
