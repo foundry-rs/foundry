@@ -3951,7 +3951,12 @@ where
         address: Address,
     ) -> Result<Option<TrieAccount>, BlockchainError> {
         if let Some((block, _)) = self.get_block_with_hash(block_id) {
-            return self.mined_debug_account_at(&block, tx_index, address);
+            let fork_account = if let Some(fork) = self.get_fork() {
+                Some(fork.get_account(address, fork.block_number()).await?)
+            } else {
+                None
+            };
+            return self.mined_debug_account_at(&block, tx_index, address, fork_account);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -3969,6 +3974,7 @@ where
         block: &Block,
         tx_index: Index,
         address: Address,
+        fork_account: Option<TrieAccount>,
     ) -> Result<Option<TrieAccount>, BlockchainError> {
         let tx_index = tx_index.0;
         let transaction_count = block.body.transactions.len();
@@ -4020,7 +4026,17 @@ where
                 return Ok(None);
             };
 
-            let storage_root = storage_root(&account.storage);
+            let storage_root = if let Some(fork_account) = fork_account
+                && fork_account.storage_root != alloy_trie::EMPTY_ROOT_HASH
+            {
+                if account.storage.is_empty() {
+                    fork_account.storage_root
+                } else {
+                    return Err(BlockchainError::DataUnavailable);
+                }
+            } else {
+                storage_root(&account.storage)
+            };
             let code_hash = account.info.code_hash;
             let balance = account.info.balance;
             let nonce = account.info.nonce;

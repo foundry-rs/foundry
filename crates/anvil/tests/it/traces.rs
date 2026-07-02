@@ -232,8 +232,15 @@ async fn test_debug_account_at_local_block_on_fork() {
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_provider = origin_handle.http_provider();
     let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
-    let fork_account = origin_accounts[2].address();
-    let fork_account_balance = origin_provider.get_balance(fork_account).await.unwrap();
+    let origin_signer: EthereumWallet = origin_accounts[0].clone().into();
+    let origin_provider_with_signer =
+        http_provider_with_signer(&origin_handle.http_endpoint(), origin_signer);
+    let storage = SimpleStorage::deploy(&origin_provider_with_signer, "init value".to_string())
+        .await
+        .unwrap();
+    let fork_account = *storage.address();
+    let fork_account = fork_account.into();
+    let fork_account_expected = origin_provider.get_account(fork_account).await.unwrap();
 
     let (_api, handle) =
         spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
@@ -261,10 +268,11 @@ async fn test_debug_account_at_local_block_on_fork() {
         .unwrap();
     let account = account.unwrap();
 
-    assert_eq!(account.balance, fork_account_balance);
-    assert_eq!(account.nonce, 0);
-    assert_eq!(account.code_hash, KECCAK256_EMPTY);
-    assert_eq!(account.storage_root, EMPTY_ROOT_HASH);
+    assert_eq!(account.balance, fork_account_expected.balance);
+    assert_eq!(account.nonce, fork_account_expected.nonce);
+    assert_eq!(account.code_hash, fork_account_expected.code_hash);
+    assert_eq!(account.storage_root, fork_account_expected.storage_root);
+    assert_ne!(account.storage_root, EMPTY_ROOT_HASH);
 }
 
 #[tokio::test(flavor = "multi_thread")]
