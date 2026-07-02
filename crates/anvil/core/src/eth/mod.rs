@@ -6,6 +6,7 @@ use alloy_primitives::{
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Bundle, Filter, Index, StateContext,
     anvil::{Forking, MineOptions},
+    erc4337::TransactionConditional,
     pubsub::{Params as SubscriptionParams, SubscriptionKind},
     request::TransactionRequest,
     simulate::SimulatePayload,
@@ -205,7 +206,7 @@ pub enum EthRequest {
     EthSendRawTransactionSync(Bytes, #[serde(default)] Option<u64>),
 
     #[serde(rename = "eth_sendRawTransactionConditional")]
-    EthSendRawTransactionConditional(Bytes, serde_json::Value),
+    EthSendRawTransactionConditional(Bytes, TransactionConditional),
 
     #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
     AnvilClassifyTransaction(Bytes),
