@@ -239,7 +239,6 @@ async fn test_debug_account_at_local_block_on_fork() {
         .await
         .unwrap();
     let fork_account = *storage.address();
-    let fork_account = fork_account.into();
     let fork_account_expected = origin_provider.get_account(fork_account).await.unwrap();
 
     let (_api, handle) =
