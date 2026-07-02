@@ -209,10 +209,7 @@ impl SymbolicExecutor {
             parents.push_back(parent);
         }
 
-        let Some(first) = (match self.config.exploration_order {
-            SymbolicExplorationOrder::Bfs => parents.pop_front(),
-            SymbolicExplorationOrder::Dfs => parents.pop_back(),
-        }) else {
+        let Some(first) = self.pop_next_path(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
