@@ -541,6 +541,19 @@ fn calldata_load_accepts_symbolic_offsets() {
 }
 
 #[test]
+fn memory_read_concrete_handles_overlapping_ranges() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let first = SymBytes::concrete(&mut cx, vec![1, 2, 3, 4]);
+    let second = SymBytes::concrete(&mut cx, vec![9, 10]);
+
+    memory.store_bytes(&mut cx, 2, first);
+    memory.store_bytes(&mut cx, 4, second);
+
+    assert_eq!(memory.read_concrete(&mut cx, 0, 8).unwrap(), vec![0, 0, 1, 2, 9, 10, 0, 0]);
+}
+
+#[test]
 fn calldata_preserves_symbolic_size_for_call_frames() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
