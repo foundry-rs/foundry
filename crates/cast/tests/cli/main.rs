@@ -4339,7 +4339,7 @@ casttest!(cast_call_debug_trace_call_renders_revert, async |_prj, cmd| {
         .stdout_eq(str![[r#"
 Traces:
   [21160] 0x00000000000000000000000000000000000000dd::run()
-    └─ ← [Revert] EvmError: Revert
+    └─ ← [Revert] execution reverted
 
 
 [GAS]
