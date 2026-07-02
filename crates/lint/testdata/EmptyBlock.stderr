@@ -1,0 +1,88 @@
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │ function freeEmpty() pure {}
+   │                           ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function libEmpty(uint256 x) internal pure {}
+   │                                                ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function emptyPublic() public {}
+   │                                   ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function emptyExternal() external {}
+   │                                       ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function emptyInternal() internal {}
+   │                                       ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function emptyPrivate() private {}
+   │                                     ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function emptyView() external view {}
+   │                                        ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function emptyPure() external pure {}
+   │                                        ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function commentOnly() public { /* nothing to do */ }
+   │                                   ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function toImplement() external override {}
+   │                                              ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
+LL │     function withModifier() public noop {}
+   │                                         ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
