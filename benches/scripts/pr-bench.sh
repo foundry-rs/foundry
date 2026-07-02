@@ -7,13 +7,17 @@ BENCHMARKS="${BENCHMARKS:-forge_test}"
 REPOS="${REPOS:-ithacaxyz/account:v0.5.7}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
 BENCH_ROOT="${BENCH_ROOT:-/tmp/foundry-pr-bench-${RUN_ID}}"
-RUNNER_TARGET_DIR="${BENCH_ROOT}/runner-target"
-RUNNER_BIN="${RUNNER_TARGET_DIR}/release/foundry-bench"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${REPO_ROOT}"
+
+if [[ "${BENCH_ROOT}" != /* ]]; then
+  BENCH_ROOT="${REPO_ROOT}/${BENCH_ROOT}"
+fi
+RUNNER_TARGET_DIR="${BENCH_ROOT}/runner-target"
+RUNNER_BIN="${RUNNER_TARGET_DIR}/release/foundry-bench"
 
 if [[ -n "$(git status --porcelain)" ]]; then
   printf 'error: working directory is dirty; commit or stash changes before benchmarking\n' >&2
