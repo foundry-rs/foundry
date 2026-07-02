@@ -6016,6 +6016,39 @@ casttest!(curl_call_debug_trace_call, |_prj, cmd| {
     assert!(!output.contains("eth_call"), "unexpected eth_call request:\n{output}");
 });
 
+// tests that `--debug-trace-call --curl` forwards state and block overrides in the request,
+// like the non-curl path does, so the printed request traces the same state
+casttest!(curl_call_debug_trace_call_forwards_overrides, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--rpc-url",
+            rpc,
+            "--debug-trace-call",
+            "--override-code",
+            "0x00000000000000000000000000000000000000aa:0x60005460005260206000f3",
+            "--block.number",
+            "1234",
+            "--curl",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
+    assert!(output.contains("stateOverrides"), "expected state overrides in params:\n{output}");
+    assert!(
+        output.contains("0x60005460005260206000f3"),
+        "expected the override code in params:\n{output}"
+    );
+    assert!(output.contains("blockOverrides"), "expected block overrides in params:\n{output}");
+});
+
 // tests that the --jwt-secret flag outputs a valid curl command with Authorization header
 casttest!(curl_rpc_with_jwt, |_prj, cmd| {
     let rpc = "https://eth.example.com";

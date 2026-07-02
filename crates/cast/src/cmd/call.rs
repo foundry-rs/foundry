@@ -631,17 +631,22 @@ impl CallArgs {
             .unwrap_or(serde_json::json!("latest"));
 
         // `--debug-trace-call` fetches a callTracer trace of the call instead of executing it,
-        // so the curl payload must target `debug_traceCall` with the same tracer options as the
-        // non-curl path.
+        // so the curl payload must target `debug_traceCall` with the same third param as the
+        // non-curl path: the tracer options plus any state / block overrides, so the printed
+        // request traces the same state as the command it represents.
         let (method, params) = if self.debug_trace_call {
-            (
-                "debug_traceCall",
-                serde_json::json!([
-                    call_object,
-                    block_param,
-                    { "tracer": "callTracer", "tracerConfig": { "withLog": true } }
-                ]),
-            )
+            let mut call_options = GethDebugTracingCallOptions::default().with_tracing_options(
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+                    .with_call_config(CallConfig::default().with_log()),
+            );
+            if let Some(state_overrides) = self.get_state_overrides()? {
+                call_options = call_options.with_state_overrides(state_overrides);
+            }
+            if let Some(block_overrides) = self.get_block_overrides()? {
+                call_options = call_options.with_block_overrides(block_overrides);
+            }
+            ("debug_traceCall", serde_json::json!([call_object, block_param, call_options]))
         } else {
             ("eth_call", serde_json::json!([call_object, block_param]))
         };
