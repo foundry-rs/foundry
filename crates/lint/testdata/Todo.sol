@@ -23,6 +23,17 @@ contract Todo {
     // a perfectly normal comment, no markers
     function clean() public {}
 
+    /*
+        TODO: this is a block comment with a marker, should be detected
+    */
+    function blockComment() public {}
+
+    /// @notice This function does something important
+    /// @dev TODO: implement the actual logic here
+    function natSpec() public pure returns (uint256) {
+        return 42;
+    }
+
     function noFalsePositiveInStrings() public pure returns (string memory) {
         // The marker below is inside a string literal, must NOT fire:
         return "this TODO is just data, not a comment";

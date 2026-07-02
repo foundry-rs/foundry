@@ -1,32 +1,66 @@
-note[todo]: unresolved `TODO` comment
+note[todo]: unresolved `ToDo` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
-LL │     // TODO: implement access control
+LL │     // ToDo: implement access control
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/todo
 
-note[todo]: unresolved `FIXME` comment
+note[todo]: unresolved `FixMe` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
-LL │     // FIXME this is broken
+LL │     // FixMe this is broken
    │     ━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/todo
 
-note[todo]: unresolved `TODO` comment
+note[todo]: unresolved `fixme` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
-LL │     /* TODO: revisit this math */
+LL │     // fixme this is broken too
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+
+note[todo]: unresolved `ToDo` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     /* ToDo: revisit this math */
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+
+note[todo]: unresolved `ToDo` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     /// ToDo: document this properly
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+
+note[todo]: unresolved `FIXME, TODO, fixme` comments
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     // FIXME first, TODO second, and fixme third
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/todo
 
 note[todo]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
-LL │     /// TODO: document this properly
-   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LL │ ┏     /*
+LL │ ┃         TODO: this is a block comment with a marker, should be detected
+LL │ ┃     */
+   │ ┗━━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+
+note[todo]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     /// @dev TODO: implement the actual logic here
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/todo
 

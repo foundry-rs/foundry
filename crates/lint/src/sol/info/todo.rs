@@ -31,17 +31,24 @@ impl<'ast> EarlyLintPass<'ast> for Todo {
         let comments = Comments::new(file, _ctx.session().source_map(), false, false, None);
 
         for comment in comments.iter() {
+            let mut found = Vec::new();
             for line in &comment.lines {
                 for word in line.split(|c: char| !c.is_alphanumeric()) {
-                    if MARKERS.iter().any(|m| word.eq_ignore_ascii_case(m)) {
-                        _ctx.emit_with_msg(
-                            &TODO,
-                            comment.span,
-                            format!("unresolved `{word}` comment"),
-                        );
+                    if MARKERS.iter().any(|m| word.eq_ignore_ascii_case(m))
+                        && !found.contains(&word)
+                    {
+                        found.push(word);
                     }
                 }
             }
+
+            if found.is_empty() {
+                continue;
+            }
+
+            let markers = found.iter().map(|s| s.to_string()).collect::<Vec<String>>().join(", ");
+            let noun = if found.len() > 1 { "comments" } else { "comment" };
+            _ctx.emit_with_msg(&TODO, comment.span, format!("unresolved `{markers}` {noun}"));
         }
     }
 }

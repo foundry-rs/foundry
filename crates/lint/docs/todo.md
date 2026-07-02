@@ -9,8 +9,13 @@ bugs that have not been resolved before the code reached production.
 ## What it does
 
 Scans every comment in the source file (single-line `//`, block `/* */`, and NatSpec `///`)
-and reports any comment whose text contains the literal string `TODO` or `FIXME`. Markers
-inside string literals are not flagged.
+and reports any comment containing a `TODO` or `FIXME` word, matched case-insensitively
+(e.g. `todo`, `ToDo`, `FixMe` all match). Matching is done on whole words, so a marker
+must appear as its own word rather than as part of another word (e.g. `autodoc` does not
+match). Markers inside string literals are not flagged.
+
+A comment is reported once, even if it contains multiple markers; the diagnostic lists
+each marker using the exact casing written in the source.
 
 ## Why is this bad?
 
