@@ -1,0 +1,32 @@
+note[todo]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     // TODO: implement access control
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+
+note[todo]: unresolved `FIXME` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     // FIXME this is broken
+   │     ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+
+note[todo]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     /* TODO: revisit this math */
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+
+note[todo]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     /// TODO: document this properly
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+

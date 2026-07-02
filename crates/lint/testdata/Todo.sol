@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Todo {
+    // ToDo: implement access control
+    function unfinished() public {}
+
+    // FixMe this is broken
+    function buggy() public {}
+
+    // fixme this is broken too
+    function buggy2() public {}
+
+    /* ToDo: revisit this math */
+    function math() public {}
+
+    /// ToDo: document this properly
+    function documented() public {}
+
+    // FIXME first, TODO second, and fixme third
+    function combined() public {}
+
+    // a perfectly normal comment, no markers
+    function clean() public {}
+
+    function noFalsePositiveInStrings() public pure returns (string memory) {
+        // The marker below is inside a string literal, must NOT fire:
+        return "this TODO is just data, not a comment";
+    }
+}

@@ -1,0 +1,45 @@
+# TODO/FIXME comments
+
+**Severity**: `Info`
+**ID**: `todo`
+
+Flags `TODO` and `FIXME` markers left in comments, which signal unfinished work or known
+bugs that have not been resolved before the code reached production.
+
+## What it does
+
+Scans every comment in the source file (single-line `//`, block `/* */`, and NatSpec `///`)
+and reports any comment whose text contains the literal string `TODO` or `FIXME`. Markers
+inside string literals are not flagged.
+
+## Why is this bad?
+
+`TODO` and `FIXME` comments are development notes. Shipping them into production contracts signals incomplete work.
+
+## Example
+
+### Bad
+
+```solidity
+contract Vault {
+    // TODO: implement access control
+    function withdraw() public {}
+
+    // FIXME this check is wrong
+    function deposit(uint256 amount) public {
+        require(amount > 0);
+    }
+}
+```
+
+### Good
+
+```solidity
+contract Vault {
+    function withdraw() public onlyOwner {}
+
+    function deposit(uint256 amount) public {
+        require(amount > 0, "zero amount");
+    }
+}
+```
