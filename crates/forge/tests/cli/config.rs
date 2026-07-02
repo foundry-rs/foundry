@@ -99,6 +99,7 @@ names = false
 sizes = false
 via_ir = false
 experimental = false
+via_ssa_cfg = false
 ast = false
 no_storage_caching = false
 no_rpc_rate_limit = false
@@ -476,6 +477,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         legacy_assertions: false,
         extra_args: vec![],
         experimental: false,
+        via_ssa_cfg: false,
         networks: Default::default(),
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
@@ -701,9 +703,11 @@ forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
     prj.initialize_default_contracts();
-    let config = prj.config_from_output(["--via-ir", "--experimental", "--no-metadata"]);
+    let config =
+        prj.config_from_output(["--via-ir", "--experimental", "--via-ssa-cfg", "--no-metadata"]);
     assert!(config.via_ir);
     assert!(config.experimental);
+    assert!(config.via_ssa_cfg);
     assert_eq!(config.cbor_metadata, false);
     assert_eq!(config.bytecode_hash, BytecodeHash::None);
 });
@@ -1594,6 +1598,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "sizes": false,
   "via_ir": false,
   "experimental": false,
+  "via_ssa_cfg": false,
   "ast": false,
   "rpc_storage_caching": {
     "chains": "all",
