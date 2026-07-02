@@ -14,7 +14,7 @@ use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, Transac
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    AccountInfo, BlockId, BlockNumberOrTag,
+    AccountInfo, BlockId, BlockNumberOrTag, Index,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
@@ -136,6 +136,63 @@ async fn test_fork_debug_get_raw_receipts() {
         let decoded = FoundryReceiptEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
         assert_eq!(decoded.status(), rpc.status());
     }
+}
+
+// `debug_accountInfoAt` must delegate pre-fork blocks to the upstream and resolve block tags
+// against the fork's frozen head, not the upstream's advancing head.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_account_info_at() {
+    // Use a local anvil node as the upstream so we can advance it deterministically.
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+
+    let account = origin_handle.dev_wallets().next().unwrap().address();
+    let to = Address::random();
+    let amount = U256::from(1_000u64);
+
+    // Mine one block on the upstream containing a single transfer to `to`.
+    let tx = TransactionRequest::default().from(account).to(to).value(amount);
+    let tx = WithOtherFields::new(tx);
+    let receipt = origin_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let fork_block = receipt.block_number.unwrap();
+
+    // Fork from the upstream at its current head.
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork_provider = fork_handle.http_provider();
+
+    // Pre-fork block delegated by number and by hash returns the fork-point balance.
+    let by_number: Option<AccountInfo> = fork_provider
+        .raw_request(
+            "debug_accountInfoAt".into(),
+            (BlockId::number(fork_block), Index::from(0), to),
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_number.unwrap().balance, amount);
+
+    // Query via the `latest` tag: on the frozen fork this must resolve to `fork_block`.
+    let by_tag: Option<AccountInfo> = fork_provider
+        .raw_request("debug_accountInfoAt".into(), (BlockId::latest(), Index::from(0), to))
+        .await
+        .unwrap();
+    assert_eq!(by_tag.unwrap().balance, amount);
+
+    // Advance the upstream with more transfers to `to` so its `latest` head drifts ahead.
+    for _ in 0..3 {
+        let tx = TransactionRequest::default().from(account).to(to).value(amount);
+        let tx = WithOtherFields::new(tx);
+        origin_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    }
+    assert!(origin_api.block_number().unwrap() > U256::from(fork_block));
+
+    // The fork never advanced, so `latest` must still resolve to `fork_block` and return the
+    // fork-point balance rather than drifting with the upstream head.
+    let by_tag_after: Option<AccountInfo> = fork_provider
+        .raw_request("debug_accountInfoAt".into(), (BlockId::latest(), Index::from(0), to))
+        .await
+        .unwrap();
+    assert_eq!(by_tag_after.unwrap().balance, amount);
 }
 
 #[tokio::test(flavor = "multi_thread")]
