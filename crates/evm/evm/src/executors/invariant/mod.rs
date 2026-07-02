@@ -2200,23 +2200,32 @@ pub fn execute_tx<FEN: FoundryEvmNetwork>(
     let roll = tx.roll.unwrap_or_default();
 
     if warp > 0 || roll > 0 {
+        let needs_cheatcode_block = executor
+            .inspector()
+            .cheatcodes
+            .as_ref()
+            .is_some_and(|cheatcodes| cheatcodes.block.is_none());
+
         // Apply pre-call block adjustments to the executor's env.
-        let ts = executor.evm_env().block_env.timestamp();
-        let num = executor.evm_env().block_env.number();
-        executor.evm_env_mut().block_env.set_timestamp(ts + warp);
-        executor.evm_env_mut().block_env.set_number(num + roll);
+        let block_env = {
+            let block_env = &mut executor.evm_env_mut().block_env;
+            let ts = block_env.timestamp();
+            let num = block_env.number();
+            block_env.set_timestamp(ts + warp);
+            block_env.set_number(num + roll);
+            needs_cheatcode_block.then(|| block_env.clone())
+        };
 
         // Also update the inspector's cheatcodes.block if set.
         // The inspector's block may override the env during interpreter initialization,
         // so we need to add our warp/roll on top of any existing cheatcode-set values.
-        let block_env = executor.evm_env().block_env.clone();
         if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
             if let Some(block) = cheatcodes.block.as_mut() {
                 let bts = block.timestamp();
                 let bnum = block.number();
                 block.set_timestamp(bts + warp);
                 block.set_number(bnum + roll);
-            } else {
+            } else if let Some(block_env) = block_env {
                 cheatcodes.block = Some(block_env);
             }
         }
