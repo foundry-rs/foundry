@@ -9,6 +9,14 @@ LL │ error UnusedFileLevel();
 note[unused-error]: custom error is never used
    ╭▸ ROOT/testdata/UnusedError.sol:LL:CC
    │
+LL │ error Hidden();
+   │ ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-error
+
+note[unused-error]: custom error is never used
+   ╭▸ ROOT/testdata/UnusedError.sol:LL:CC
+   │
 LL │     error UnusedInLibrary();
    │     ━━━━━━━━━━━━━━━━━━━━━━━━
    │

@@ -9,10 +9,19 @@ pragma solidity ^0.8.27;
 // they are ABI surface for implementers and off-chain consumers.
 
 import "./UnusedError.sol" as Self;
+import "./auxiliary/UnusedErrorReexport.sol" as R;
+import "./auxiliary/UnusedErrorHidden.sol" as H;
 
 error UnusedFileLevel(); //~NOTE: custom error is never used
 
 error UsedFileLevel(uint256 value);
+
+// used only through the alias re-export chain `R.Written.selector`
+error UsedViaAliasReexport();
+
+// shares its name with the library in the hidden-import fixture: the raw transitive walk
+// used to mark it used through `H.Hidden.id()`, the resolved scope must not mark it used
+error Hidden(); //~NOTE: custom error is never used
 
 library Errors {
     error UnusedInLibrary(); //~NOTE: custom error is never used
@@ -60,7 +69,11 @@ contract Vault is BaseVault {
         bytes4 q = Errors.UsedViaQualifiedSelector.selector;
         // member chain through a module alias
         bytes4 c = Self.Errors.UsedViaChainedSelector.selector;
+        // alias re-export chain through a module namespace
+        bytes4 a = R.Written.selector;
+        // `H.Hidden` is the library bound in that namespace, not the file-level error
+        uint256 one = H.Hidden.id();
         data = abi.encodeWithSelector(UsedViaEncodeWithSelector.selector, x);
-        data = bytes.concat(data, s, q, c);
+        data = bytes.concat(data, s, q, c, a, bytes32(one));
     }
 }
