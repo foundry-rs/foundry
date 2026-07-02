@@ -1027,6 +1027,7 @@ impl SymbolicExecutor {
             let mut parent = state.clone();
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
+            parent.inherit_branch_target_progress(&outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
@@ -1112,11 +1113,11 @@ impl SymbolicExecutor {
             parents.push_back(parent);
         }
 
-        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
+        let Some(first) = self.pop_next_path(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        spill_batch(parents, worklist, self.config.exploration_order);
+        worklist.extend(parents);
         Ok(StepOutcome::Continue)
     }
 
@@ -1261,7 +1262,7 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
-        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Uge, balance, value);
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
@@ -1320,7 +1321,7 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
-        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Uge, balance, value);
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
@@ -1468,18 +1469,18 @@ impl SymbolicExecutor {
             )? {
                 StepOutcome::Continue => {
                     parents.push_back(branch);
-                    spill_batch(branch_worklist, &mut parents, self.config.exploration_order);
+                    parents.extend(branch_worklist);
                 }
                 StepOutcome::AssumeRejected => {}
                 outcome => return Ok(outcome),
             }
         }
 
-        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
+        let Some(first) = self.pop_next_path(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        spill_batch(parents, worklist, self.config.exploration_order);
+        worklist.extend(parents);
         Ok(StepOutcome::Continue)
     }
 }

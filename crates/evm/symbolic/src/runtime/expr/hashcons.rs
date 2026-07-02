@@ -22,7 +22,7 @@ struct HashConsedInner<T> {
 }
 
 impl<T> HashConsed<T> {
-    fn cached_hash(&self) -> u64 {
+    pub(in crate::runtime) fn cached_hash(&self) -> u64 {
         self.inner.hash
     }
 

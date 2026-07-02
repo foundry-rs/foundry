@@ -5390,7 +5390,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=7610c7e6f88429caa400ec35606afd28270ecf9f#7610c7e6f88429caa400ec35606afd28270ecf9f"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=3e01874cb1e7f43d2554dc05fb1823687bdc3ab8#3e01874cb1e7f43d2554dc05fb1823687bdc3ab8"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5421,7 +5421,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=7610c7e6f88429caa400ec35606afd28270ecf9f#7610c7e6f88429caa400ec35606afd28270ecf9f"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=3e01874cb1e7f43d2554dc05fb1823687bdc3ab8#3e01874cb1e7f43d2554dc05fb1823687bdc3ab8"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5430,7 +5430,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=7610c7e6f88429caa400ec35606afd28270ecf9f#7610c7e6f88429caa400ec35606afd28270ecf9f"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=3e01874cb1e7f43d2554dc05fb1823687bdc3ab8#3e01874cb1e7f43d2554dc05fb1823687bdc3ab8"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5450,7 +5450,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=7610c7e6f88429caa400ec35606afd28270ecf9f#7610c7e6f88429caa400ec35606afd28270ecf9f"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=3e01874cb1e7f43d2554dc05fb1823687bdc3ab8#3e01874cb1e7f43d2554dc05fb1823687bdc3ab8"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5463,7 +5463,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=7610c7e6f88429caa400ec35606afd28270ecf9f#7610c7e6f88429caa400ec35606afd28270ecf9f"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=3e01874cb1e7f43d2554dc05fb1823687bdc3ab8#3e01874cb1e7f43d2554dc05fb1823687bdc3ab8"
 dependencies = [
  "alloy-primitives",
  "dunce",

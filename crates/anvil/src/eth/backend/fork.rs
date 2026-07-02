@@ -30,7 +30,7 @@ use alloy_rpc_types::{
         },
     },
 };
-use alloy_rpc_types_eth::{Bundle, EthCallResponse, StateContext};
+use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
@@ -318,6 +318,17 @@ impl<N: Network> ClientFork<N> {
         block_id: Option<BlockId>,
     ) -> Result<Option<Bytes>, TransportError> {
         self.provider().debug_code_by_hash(code_hash, block_id).await
+    }
+
+    pub async fn debug_account_info_at(
+        &self,
+        block_id: BlockId,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, TransportError> {
+        self.provider()
+            .raw_request("debug_accountInfoAt".into(), (block_id, tx_index, address))
+            .await
     }
 
     pub async fn debug_trace_block_by_hash(

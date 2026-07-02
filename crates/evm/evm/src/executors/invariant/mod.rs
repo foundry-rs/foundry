@@ -899,12 +899,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         corpus_replay_executor.inspector_mut().collect_evm_cmp_log(
             invariant_worker_collects_evm_cmp_log(&self.config, 0, actual_worker_count),
         );
+        let dynamic = self.dynamic_target_ctx();
         let corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
             Some(&corpus_replay_executor),
-            None,
-            Some(&replay_targets),
-            Some(self.dynamic_target_ctx()),
+            ReplayTarget {
+                stateless: None,
+                fuzzed_contracts: Some(&replay_targets),
+                dynamic: Some(&dynamic),
+            },
         )?;
         let corpus_persistence = if actual_worker_count > 1 {
             InvariantCorpusPersistence::Deferred
@@ -1031,7 +1034,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 corpus_entries,
                 &self.executor,
                 ReplayTarget {
-                    fuzzed_function: None,
+                    stateless: None,
                     fuzzed_contracts: Some(&replay_targets),
                     dynamic: Some(&dynamic_target_ctx),
                 },

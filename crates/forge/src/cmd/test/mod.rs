@@ -4,7 +4,8 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{
-        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
+        FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, MultiNetworkConfig,
+        ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
@@ -55,7 +56,7 @@ use foundry_evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     executors::ShowmapDomain,
-    fuzz::CounterExample,
+    fuzz::{BasicTxDetails, CounterExample},
     hardforks::TempoHardfork,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
@@ -67,7 +68,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc::channel},
+    sync::{Arc, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
 use yansi::Paint;
@@ -75,7 +76,11 @@ use yansi::Paint;
 mod evm_profile_server;
 mod filter;
 mod summary;
-use crate::{result::TestKind, traces::render_trace_arena_inner};
+use crate::{
+    result::TestKind,
+    runner::{count_runnable_invariant_campaign_anchors, function_matches_network_pass},
+    traces::render_trace_arena_inner,
+};
 pub use filter::{FilterArgs, ProjectPathsAwareFilter};
 use filter::{RerunFailure, RerunFailures};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
@@ -104,6 +109,145 @@ fn validate_showmap_name(kind: &str, name: &str) -> Result<()> {
 fn validate_showmap_config(showmap: &ShowmapConfig) -> Result<()> {
     validate_showmap_name("showmap approach", &showmap.approach)?;
     validate_showmap_name("showmap trial", &showmap.trial)
+}
+
+pub(crate) struct FuzzMinimizeReplaySession {
+    filter: ProjectPathsAwareFilter,
+    passes: Vec<FuzzMinimizeReplayPass>,
+}
+
+type FuzzMinimizeReplay = Box<dyn Fn(&ProjectPathsAwareFilter, FuzzMinimizeConfig) -> Result<()>>;
+
+struct FuzzMinimizeReplayPass {
+    target_count: usize,
+    replay: FuzzMinimizeReplay,
+}
+
+impl FuzzMinimizeReplaySession {
+    pub(crate) fn replay(
+        &self,
+        sequence: Vec<BasicTxDetails>,
+        evm_edge_indices: FuzzMinimizeEdgeIndices,
+    ) -> Result<Vec<FuzzMinimizeObservation>> {
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let fuzz_minimize = FuzzMinimizeConfig {
+            input: sequence.into(),
+            evm_edge_indices,
+            observations: observations.clone(),
+        };
+
+        for pass in &self.passes {
+            if pass.target_count == 0 {
+                continue;
+            }
+            (pass.replay)(&self.filter, fuzz_minimize.clone())?;
+        }
+
+        let observations = observations
+            .lock()
+            .map_err(|_| eyre::eyre!("minimize observations lock poisoned"))?
+            .clone();
+        if observations.is_empty() {
+            bail!("fuzz minimization replay produced no observation for the matched test");
+        }
+        Ok(observations)
+    }
+}
+
+fn replay_with_runner<FEN: FoundryEvmNetwork>(
+    runner: &MultiContractRunner<FEN>,
+    filter: &ProjectPathsAwareFilter,
+    fuzz_minimize: FuzzMinimizeConfig,
+) -> Result<()> {
+    let mut runner = runner.clone();
+    runner.tcfg.fuzz_minimize = Some(fuzz_minimize);
+    let results = runner.test_collect(filter)?;
+    for (suite, suite_result) in results {
+        for (test, test_result) in suite_result.test_results {
+            if test_result.status == TestStatus::Failure {
+                bail!(
+                    "fuzz minimization replay failed for {suite}::{test}: {}",
+                    test_result.reason.as_deref().unwrap_or("unknown error")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn fuzz_minimize_replay<FEN: FoundryEvmNetwork>(
+    runner: MultiContractRunner<FEN>,
+    filter: &ProjectPathsAwareFilter,
+) -> FuzzMinimizeReplayPass {
+    let target_count = count_fuzz_minimize_targets(&runner, filter);
+    FuzzMinimizeReplayPass {
+        target_count,
+        replay: Box::new(move |filter, fuzz_minimize| {
+            replay_with_runner(&runner, filter, fuzz_minimize)
+        }),
+    }
+}
+
+fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
+    runner: &MultiContractRunner<FEN>,
+    filter: &dyn TestFilter,
+) -> usize {
+    runner
+        .matching_contracts(filter)
+        .map(|(id, contract)| {
+            let contract_name = id.identifier();
+            let fuzz_targets = contract
+                .abi
+                .functions()
+                .filter(|func| func.is_fuzz_test())
+                .filter(|func| filter.matches_test_function_in_contract(&contract_name, func))
+                .filter(|func| {
+                    function_matches_network_pass(
+                        &runner.tcfg.multi_network.all_override_networks,
+                        runner.tcfg.multi_network.pass_network.as_ref(),
+                        runner.tcfg.inline_config.network_for(
+                            &runner.tcfg.config.profile,
+                            &contract_name,
+                            &func.name,
+                        ),
+                    )
+                })
+                .count();
+            let invariant_targets = count_runnable_invariant_campaign_anchors(
+                &contract.abi,
+                filter,
+                crate::runner::InvariantCampaignScope {
+                    config: &runner.tcfg.config,
+                    inline_config: &runner.tcfg.inline_config,
+                    contract_name: &contract_name,
+                    all_override_networks: &runner.tcfg.multi_network.all_override_networks,
+                    pass_network: runner.tcfg.multi_network.pass_network.as_ref(),
+                },
+            );
+            fuzz_targets + invariant_targets
+        })
+        .sum()
+}
+
+#[derive(Clone, Copy)]
+enum NetworkDispatchKind {
+    Tempo,
+    #[cfg(feature = "optimism")]
+    Optimism,
+    Eth,
+}
+
+const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
+    if evm_opts.networks.is_tempo() {
+        return NetworkDispatchKind::Tempo;
+    }
+
+    #[cfg(feature = "optimism")]
+    if evm_opts.networks.is_optimism() {
+        return NetworkDispatchKind::Optimism;
+    }
+
+    NetworkDispatchKind::Eth
 }
 
 /// Output format for EVM execution profiles.
@@ -176,6 +320,12 @@ impl TestExecutionOptions {
     pub(crate) fn coverage(inline_config: Arc<InlineConfig>) -> Self {
         Self { coverage: true, ..Self::default_run(inline_config) }
     }
+}
+
+#[derive(Clone)]
+struct FuzzMinimizeNetworkPassOptions {
+    inline_config: Arc<InlineConfig>,
+    multi_network: MultiNetworkConfig,
 }
 
 fn sources_to_compile_from_artifacts(
@@ -532,6 +682,14 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CORPUS_SEED_LIMIT", value_name = "COUNT")]
     pub symbolic_corpus_seed_limit: Option<usize>,
 
+    /// Run targeted symbolic solving from existing fuzz branch frontier artifacts.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_USE_FUZZ_FRONTIERS")]
+    pub symbolic_use_fuzz_frontiers: bool,
+
+    /// Maximum number of fuzz branch frontiers to try for one symbolic test.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_LIMIT", value_name = "COUNT")]
+    pub symbolic_frontier_limit: Option<usize>,
+
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
     pub symbolic_solver: Option<String>,
@@ -790,6 +948,20 @@ impl TestArgs {
         self.showmap_override = Some(showmap);
     }
 
+    /// Sets replay-critical options for internal fuzz minimizer callers.
+    pub(crate) fn set_fuzz_minimize_replay_options(
+        &mut self,
+        global: GlobalArgs,
+        evm: EvmArgs,
+        build: BuildOpts,
+        filter: FilterArgs,
+    ) {
+        self.global = global;
+        self.evm = evm;
+        self.build = build;
+        self.filter = filter;
+    }
+
     /// Replays persisted fuzz failures without running a new fuzz campaign.
     pub(crate) const fn enable_fuzz_failure_replay(&mut self) {
         self.fuzz_failure_replay = true;
@@ -1046,6 +1218,102 @@ impl TestArgs {
             inline_config,
             replay_symbolic_artifact,
         ))
+    }
+
+    pub(crate) async fn prepare_fuzz_minimize_replay(
+        &mut self,
+        corpus_dir: &Path,
+    ) -> Result<FuzzMinimizeReplaySession> {
+        let (_, mut config, mut evm_opts, output, filter, inline_config, _) =
+            self.compile_project().await?;
+
+        if config.fuzz.run == Some(0) {
+            bail!("`fuzz.run` must be greater than 0");
+        }
+
+        if self.gas_report {
+            evm_opts.isolate = true;
+        } else {
+            config.fuzz.gas_report_samples = 0;
+            config.invariant.gas_report_samples = 0;
+        }
+        if config.fuzz.corpus.corpus_dir.is_none() {
+            config.fuzz.corpus.corpus_dir = Some(corpus_dir.to_path_buf());
+        }
+        if config.invariant.corpus.corpus_dir.is_none() {
+            config.invariant.corpus.corpus_dir = Some(corpus_dir.to_path_buf());
+        }
+
+        config.fuzz.seed = config.fuzz.seed.or(Some(U256::ZERO));
+
+        evm_opts.infer_network_from_fork().await;
+
+        let override_networks = inline_config.referenced_override_networks(&config.profile);
+        let mut passes = Vec::new();
+
+        if override_networks.is_empty() {
+            passes.push(
+                self.dispatch_fuzz_minimize_network(
+                    &evm_opts,
+                    config,
+                    evm_opts.clone(),
+                    &output,
+                    FuzzMinimizeNetworkPassOptions {
+                        inline_config: inline_config.clone(),
+                        multi_network: MultiNetworkConfig::default(),
+                    },
+                    &filter,
+                )
+                .await?,
+            );
+        } else {
+            let all_override_networks = override_networks.clone();
+            passes.push(
+                self.dispatch_fuzz_minimize_network(
+                    &evm_opts,
+                    config.clone(),
+                    evm_opts.clone(),
+                    &output,
+                    FuzzMinimizeNetworkPassOptions {
+                        inline_config: inline_config.clone(),
+                        multi_network: MultiNetworkConfig {
+                            all_override_networks: all_override_networks.clone(),
+                            pass_network: None,
+                        },
+                    },
+                    &filter,
+                )
+                .await?,
+            );
+
+            for &network in &override_networks {
+                let mut pass_evm_opts = evm_opts.clone();
+                pass_evm_opts.networks = network.into();
+                passes.push(
+                    self.dispatch_fuzz_minimize_network(
+                        &pass_evm_opts,
+                        config.clone(),
+                        pass_evm_opts.clone(),
+                        &output,
+                        FuzzMinimizeNetworkPassOptions {
+                            inline_config: inline_config.clone(),
+                            multi_network: MultiNetworkConfig {
+                                all_override_networks: all_override_networks.clone(),
+                                pass_network: Some(network),
+                            },
+                        },
+                        &filter,
+                    )
+                    .await?,
+                );
+            }
+        }
+
+        if passes.iter().all(|pass| pass.target_count == 0) {
+            bail!("fuzz minimization requires at least one matched fuzz or invariant test");
+        }
+
+        Ok(FuzzMinimizeReplaySession { filter, passes })
     }
 
     /// Executes all the tests in the project.
@@ -1709,6 +1977,29 @@ impl TestArgs {
         Ok((libraries, outcome))
     }
 
+    async fn build_fuzz_minimize_runner<FEN: FoundryEvmNetwork>(
+        &self,
+        config: Config,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        options: FuzzMinimizeNetworkPassOptions,
+    ) -> eyre::Result<MultiContractRunner<FEN>> {
+        let (evm_env, tx_env, fork_block) =
+            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+
+        let config = Arc::new(config);
+        MultiContractRunnerBuilder::new(config.clone(), options.inline_config)
+            .initial_balance(evm_opts.initial_balance)
+            .sender(evm_opts.sender)
+            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .enable_isolation(evm_opts.isolate)
+            .fail_fast(self.fail_fast)
+            .with_multi_network(options.multi_network)
+            .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_failure_replay(self.fuzz_failure_replay)
+            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
+    }
+
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
     async fn dispatch_network(
         &self,
@@ -1719,20 +2010,52 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
-        if dispatch_opts.networks.is_tempo() {
-            self.build_and_run_tests::<TempoEvmNetwork>(config, evm_opts, output, filter, execution)
+        match network_dispatch_kind(dispatch_opts) {
+            NetworkDispatchKind::Tempo => {
+                self.build_and_run_tests::<TempoEvmNetwork>(
+                    config, evm_opts, output, filter, execution,
+                )
                 .await
-        } else {
-            #[cfg(feature = "optimism")]
-            if dispatch_opts.networks.is_optimism() {
-                return self
-                    .build_and_run_tests::<OpEvmNetwork>(
-                        config, evm_opts, output, filter, execution,
-                    )
-                    .await;
             }
-            self.build_and_run_tests::<EthEvmNetwork>(config, evm_opts, output, filter, execution)
+            #[cfg(feature = "optimism")]
+            NetworkDispatchKind::Optimism => {
+                self.build_and_run_tests::<OpEvmNetwork>(
+                    config, evm_opts, output, filter, execution,
+                )
                 .await
+            }
+            NetworkDispatchKind::Eth => {
+                self.build_and_run_tests::<EthEvmNetwork>(
+                    config, evm_opts, output, filter, execution,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn dispatch_fuzz_minimize_network(
+        &self,
+        dispatch_opts: &EvmOpts,
+        config: Config,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        options: FuzzMinimizeNetworkPassOptions,
+        filter: &ProjectPathsAwareFilter,
+    ) -> eyre::Result<FuzzMinimizeReplayPass> {
+        match network_dispatch_kind(dispatch_opts) {
+            NetworkDispatchKind::Tempo => self
+                .build_fuzz_minimize_runner::<TempoEvmNetwork>(config, evm_opts, output, options)
+                .await
+                .map(|runner| fuzz_minimize_replay(runner, filter)),
+            #[cfg(feature = "optimism")]
+            NetworkDispatchKind::Optimism => self
+                .build_fuzz_minimize_runner::<OpEvmNetwork>(config, evm_opts, output, options)
+                .await
+                .map(|runner| fuzz_minimize_replay(runner, filter)),
+            NetworkDispatchKind::Eth => self
+                .build_fuzz_minimize_runner::<EthEvmNetwork>(config, evm_opts, output, options)
+                .await
+                .map(|runner| fuzz_minimize_replay(runner, filter)),
         }
     }
 
@@ -2475,6 +2798,12 @@ impl Provider for TestArgs {
         if let Some(corpus_seed_limit) = self.symbolic_corpus_seed_limit {
             symbolic_dict.insert("corpus_seed_limit".to_string(), corpus_seed_limit.into());
         }
+        if self.symbolic_use_fuzz_frontiers {
+            symbolic_dict.insert("use_fuzz_frontiers".to_string(), true.into());
+        }
+        if let Some(frontier_limit) = self.symbolic_frontier_limit {
+            symbolic_dict.insert("frontier_limit".to_string(), frontier_limit.into());
+        }
         if let Some(solver) = self.symbolic_solver.clone() {
             symbolic_dict.insert("solver".to_string(), solver.into());
         }
@@ -3150,6 +3479,9 @@ mod tests {
             "3",
             "--fuzz-mutation-weight-cmp",
             "5",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "3",
             "--invariant-depth",
             "300",
             "--invariant-min-depth",
@@ -3204,6 +3536,8 @@ mod tests {
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_cmp").unwrap(), 5);
+        assert!(figment.extract_inner::<bool>("symbolic.use_fuzz_frontiers").unwrap());
+        assert_eq!(figment.extract_inner::<usize>("symbolic.frontier_limit").unwrap(), 3);
         assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 300);
         assert_eq!(figment.extract_inner::<u32>("invariant.min_depth").unwrap(), 20);
         assert_eq!(
@@ -3248,6 +3582,8 @@ mod tests {
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_cmp, 5);
+        assert!(config.symbolic.use_fuzz_frontiers);
+        assert_eq!(config.symbolic.frontier_limit, 3);
         assert_eq!(config.invariant.depth, 300);
         assert_eq!(config.invariant.min_depth, 20);
         assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
