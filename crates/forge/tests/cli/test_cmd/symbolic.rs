@@ -2104,10 +2104,7 @@ contract SymbolicFuzzDeployCodeFrontier is Test {
         "testFuzz_deployCode",
         "testFuzz_deployCode(uint256)",
     );
-    assert!(
-        values.contains(&U256::ZERO),
-        "target_frontier={target_frontier}, values={values:?}"
-    );
+    assert!(values.contains(&U256::ZERO), "target_frontier={target_frontier}, values={values:?}");
 });
 
 forgetest_init!(symbolic_fuzz_frontier_seeding_keeps_callee_target_progress, |prj, cmd| {
