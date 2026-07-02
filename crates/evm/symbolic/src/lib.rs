@@ -58,7 +58,7 @@ mod abi;
 mod executor;
 mod runtime;
 
-pub use runtime::{PortfolioDiagnostics, SymbolicError, SymbolicRunInput};
+pub use runtime::{PortfolioDiagnostics, SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
 
 /// Returns whether `solver` is one of Foundry's semantic symbolic solver names.
 pub fn symbolic_solver_is_builtin(solver: &str) -> bool {

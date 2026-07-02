@@ -37,6 +37,33 @@ pub(crate) use solver::{
 pub(crate) use state::*;
 pub(crate) use symbols::*;
 
+/// One comparison site from a fuzz branch frontier to target during symbolic execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SymbolicBranchTarget {
+    /// Contract address where the comparison executed.
+    address: Address,
+    /// Program counter of the comparison opcode.
+    pc: usize,
+    /// Comparison opcode.
+    opcode: u8,
+    /// Concrete result observed by fuzzing. Symbolic execution targets the opposite result.
+    result: bool,
+}
+
+impl SymbolicBranchTarget {
+    pub const fn new(address: Address, pc: usize, opcode: u8, result: bool) -> Self {
+        Self { address, pc, opcode, result }
+    }
+
+    pub(crate) const fn result(self) -> bool {
+        self.result
+    }
+
+    pub(crate) fn matches(self, address: Address, pc: usize, opcode: u8) -> bool {
+        self.address == address && self.pc == pc && self.opcode == opcode
+    }
+}
+
 pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
     pub executor: &'a Executor<FEN>,
@@ -54,6 +81,8 @@ pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     pub collect_success_input: bool,
     /// Concrete fuzz corpus entries used as path-priority hints.
     pub corpus_seeds: Vec<SymbolicConcreteInput>,
+    /// Optional comparison site whose opposite branch should be solved.
+    pub branch_target: Option<SymbolicBranchTarget>,
 }
 
 /// Error returned by the internal symbolic executor.
