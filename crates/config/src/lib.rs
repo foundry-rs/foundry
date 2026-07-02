@@ -478,15 +478,15 @@ pub struct Config {
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
     pub via_ir: bool,
+    /// Whether to turn on SSA CFG-based code generation via the IR.
+    /// This is an experimental feature (as of 0.8.35) that requires `experimental` to be enabled.
+    /// Enabling this option will also enable `via_ir` if it is not already enabled.
+    pub via_ssa_cfg: bool,
     /// Whether to enable Solidity's experimental mode.
     ///
     /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
     /// experimental features.
     pub experimental: bool,
-    /// Whether to turn on SSA CFG-based code generation via the IR (experimental).
-    ///
-    /// This passes `--via-ssa-cfg` to solc. Implies `via_ir`. This is false by default.
-    pub via_ssa_cfg: bool,
     /// Whether to include the AST as JSON in the compiler output.
     pub ast: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
@@ -1890,9 +1890,10 @@ impl Config {
                 debug_info: Vec::new(),
             }),
             model_checker,
-            via_ir: Some(self.via_ir),
-            experimental: Some(self.experimental),
+            // via_ssa_cfg implies via_ir only when via_ir is omitted, so we need to set both flags to true if via_ssa_cfg is enabled.
+            via_ir: Some(self.via_ir || self.via_ssa_cfg),
             via_ssa_cfg: Some(self.via_ssa_cfg),
+            experimental: Some(self.experimental),
             // Not used.
             stop_after: None,
             // Set in project paths.
@@ -2818,8 +2819,8 @@ impl Default for Config {
             deny: DenyLevel::Never,
             deny_warnings: false,
             via_ir: false,
-            experimental: false,
             via_ssa_cfg: false,
+            experimental: false,
             ast: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
