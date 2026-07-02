@@ -1,0 +1,32 @@
+note[unused-error]: custom error is never used
+   ╭▸ ROOT/testdata/UnusedError.sol:LL:CC
+   │
+LL │ error UnusedFileLevel();
+   │ ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-error
+
+note[unused-error]: custom error is never used
+   ╭▸ ROOT/testdata/UnusedError.sol:LL:CC
+   │
+LL │     error UnusedInLibrary();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-error
+
+note[unused-error]: custom error is never used
+   ╭▸ ROOT/testdata/UnusedError.sol:LL:CC
+   │
+LL │     error UnusedInContract();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-error
+
+note[unused-error]: custom error is never used
+   ╭▸ ROOT/testdata/UnusedError.sol:LL:CC
+   │
+LL │     error AlsoUnused(uint256 balance);
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-error
+
