@@ -79,13 +79,14 @@ mod sancov;
 mod showmap;
 mod trace;
 
-pub use corpus::{DynamicTargetCtx, persist_corpus_seed};
+pub use corpus::{DynamicTargetCtx, StatelessReplayTarget, persist_corpus_seed};
 pub use corpus_io::{
     CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
 };
 pub use showmap::{
-    InvariantReplayOptions, ReplayFailure, ShowmapDomain, ShowmapOpts, ShowmapReplayTarget,
-    ShowmapStats, replay_corpus_to_showmap,
+    InvariantReplayOptions, MinimizationReplayInput, ReplayFailure, ReplayObservation,
+    ShowmapDomain, ShowmapOpts, ShowmapReplayTarget, ShowmapStats, replay_corpus_to_showmap,
+    replay_sequence_for_minimization,
 };
 pub use trace::TracingExecutor;
 
