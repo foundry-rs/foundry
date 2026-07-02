@@ -168,7 +168,7 @@ impl SymbolicExecutor {
                     break;
                 };
 
-                let _step_span = trace_span!("symbolic_step", pc = state.pc - 1, op).entered();
+                let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
                 match self.step(
                     executor,
                     &code,

@@ -144,6 +144,21 @@ configured record limit, and a `frontiers` array. Each frontier contains:
 Frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default 256).
 It reuses the fuzzer's comparison-operand inspector and does not store traces.
 
+Symbolic execution can consume those artifacts to solve the opposite side of
+captured comparisons and write replay-confirmed inputs into the fuzz corpus:
+
+```sh
+forge test --match-test test_hard_branch \
+  --fuzz-frontier-dir fuzz_frontiers \
+  --fuzz-corpus-dir fuzz_corpus \
+  --symbolic-use-fuzz-frontiers
+```
+
+Forge imports up to `symbolic.frontier_limit` records (default 8), replays the
+recorded one-call seed as a path-priority hint, constrains symbolic execution to
+flip the captured comparison result, and persists only candidates that replay
+with the expected concrete outcome.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled

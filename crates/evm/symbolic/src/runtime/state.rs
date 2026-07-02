@@ -18,6 +18,8 @@ pub(crate) struct PathState {
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
     corpus_seed_models: Vec<Arc<SymbolicModel>>,
+    branch_target: Option<SymbolicBranchTarget>,
+    branch_target_reached: bool,
     pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
@@ -65,6 +67,8 @@ impl PathState {
             access_record: None,
             root_calldata: Some(calldata),
             corpus_seed_models: Vec::new(),
+            branch_target: None,
+            branch_target_reached: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -110,6 +114,8 @@ impl PathState {
             access_record: None,
             root_calldata: None,
             corpus_seed_models: Vec::new(),
+            branch_target: None,
+            branch_target_reached: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -157,6 +163,8 @@ impl PathState {
             access_record: self.access_record.clone(),
             root_calldata: self.root_calldata.clone(),
             corpus_seed_models: self.corpus_seed_models.clone(),
+            branch_target: self.branch_target,
+            branch_target_reached: self.branch_target_reached,
             loop_jumps: HashMap::default(),
             expected_revert: self.expected_revert.clone(),
             assume_no_revert_next_call: self.assume_no_revert_next_call.clone(),
@@ -307,6 +315,29 @@ impl PathState {
         self.corpus_seed_models.len()
     }
 
+    pub(crate) const fn set_branch_target(&mut self, target: Option<SymbolicBranchTarget>) {
+        self.branch_target = target;
+        self.branch_target_reached = false;
+    }
+
+    pub(crate) const fn branch_target(&self) -> Option<SymbolicBranchTarget> {
+        self.branch_target
+    }
+
+    pub(crate) const fn mark_branch_target_reached(&mut self) {
+        self.branch_target_reached = true;
+    }
+
+    pub(crate) fn inherit_branch_target_progress(&mut self, child: &Self) {
+        if self.branch_target == child.branch_target && child.branch_target_reached {
+            self.branch_target_reached = true;
+        }
+    }
+
+    pub(crate) const fn satisfies_branch_target(&self) -> bool {
+        self.branch_target.is_none() || self.branch_target_reached
+    }
+
     pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
         if let Some(value) = expr.eval() {
             return usize::try_from(value).ok();
@@ -434,17 +465,26 @@ impl PathState {
         Ok(StepOutcome::Continue)
     }
 
+    #[cfg(test)]
     pub(crate) fn cmp_word(
         &mut self,
         cx: &mut SymCx,
         op: SymCmpOp,
     ) -> Result<StepOutcome, SymbolicError> {
-        let a = self.stack.pop()?;
-        let b = self.stack.pop()?;
-        let condition = SymBoolExpr::cmp(cx, op, a, b);
+        let condition = self.cmp_word_condition(cx, op)?;
         let value = SymExpr::bool_word(cx, condition);
         self.stack.push(value)?;
         Ok(StepOutcome::Continue)
+    }
+
+    pub(crate) fn cmp_word_condition(
+        &mut self,
+        cx: &mut SymCx,
+        op: SymCmpOp,
+    ) -> Result<SymBoolExpr, SymbolicError> {
+        let a = self.stack.pop()?;
+        let b = self.stack.pop()?;
+        Ok(SymBoolExpr::cmp(cx, op, a, b))
     }
 
     pub(crate) fn shift_word(

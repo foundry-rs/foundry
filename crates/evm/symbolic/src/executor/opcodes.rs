@@ -1,6 +1,50 @@
 use super::*;
 
 impl SymbolicExecutor {
+    fn push_comparison_result(
+        &mut self,
+        state: &mut PathState,
+        op_pc: usize,
+        opcode: u8,
+        condition: SymBoolExpr,
+    ) -> Result<StepOutcome, SymbolicError> {
+        if !self.apply_branch_target_constraint(state, op_pc, opcode, &condition)? {
+            return Ok(StepOutcome::AssumeRejected);
+        }
+        let value = SymExpr::bool_word(&mut self.cx, condition);
+        state.stack.push(value)?;
+        Ok(StepOutcome::Continue)
+    }
+
+    fn apply_branch_target_constraint(
+        &mut self,
+        state: &mut PathState,
+        op_pc: usize,
+        opcode: u8,
+        condition: &SymBoolExpr,
+    ) -> Result<bool, SymbolicError> {
+        let Some(target) = state.branch_target() else {
+            return Ok(true);
+        };
+        if state.satisfies_branch_target() {
+            return Ok(true);
+        }
+        if !target.matches(state.address, op_pc, opcode) {
+            return Ok(true);
+        }
+
+        let desired =
+            if target.result() { condition.clone().not(&mut self.cx) } else { condition.clone() };
+        let mut constraints = state.constraints.clone();
+        constraints.push(desired);
+        if !self.branch_is_sat_or_defer(&constraints)? {
+            return Ok(false);
+        }
+        state.constraints = constraints;
+        state.mark_branch_target_reached();
+        Ok(true)
+    }
+
     #[expect(clippy::too_many_arguments)]
     pub(super) fn step<FEN: FoundryEvmNetwork>(
         &mut self,
@@ -75,28 +119,37 @@ impl SymbolicExecutor {
                 state.stack.push(SymExpr::ternop(&mut self.cx, SymTernOp::MulMod, a, b, n))?;
             }
             opcode::LT => {
-                state.cmp_word(&mut self.cx, SymCmpOp::Ult)?;
+                let op_pc = state.pc - 1;
+                let condition = state.cmp_word_condition(&mut self.cx, SymCmpOp::Ult)?;
+                return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::GT => {
-                state.cmp_word(&mut self.cx, SymCmpOp::Ugt)?;
+                let op_pc = state.pc - 1;
+                let condition = state.cmp_word_condition(&mut self.cx, SymCmpOp::Ugt)?;
+                return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::SLT => {
-                state.cmp_word(&mut self.cx, SymCmpOp::Slt)?;
+                let op_pc = state.pc - 1;
+                let condition = state.cmp_word_condition(&mut self.cx, SymCmpOp::Slt)?;
+                return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::SGT => {
-                state.cmp_word(&mut self.cx, SymCmpOp::Sgt)?;
+                let op_pc = state.pc - 1;
+                let condition = state.cmp_word_condition(&mut self.cx, SymCmpOp::Sgt)?;
+                return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::EQ => {
+                let op_pc = state.pc - 1;
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let condition = SymBoolExpr::eq(&mut self.cx, b, a);
-                let value = SymExpr::bool_word(&mut self.cx, condition);
-                state.stack.push(value)?;
+                return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::ISZERO => {
+                let op_pc = state.pc - 1;
                 let value = state.stack.pop()?;
                 let value = value.into_zero_bool(&mut self.cx);
-                state.stack.push(SymExpr::bool_word(&mut self.cx, value))?;
+                return self.push_comparison_result(state, op_pc, op, value);
             }
             opcode::AND => {
                 state.bin_word(&mut self.cx, SymBinOp::And)?;
@@ -851,5 +904,38 @@ impl SymbolicExecutor {
         } else {
             StepOutcome::Revert
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_state(executor: &mut SymbolicExecutor) -> PathState {
+        let calldata =
+            SymbolicCalldata::selector_only(&mut executor.cx, &Function::parse("empty()").unwrap())
+                .unwrap();
+        PathState::new(&mut executor.cx, Address::ZERO, Address::ZERO, U256::ZERO, calldata, false)
+    }
+
+    #[test]
+    fn branch_target_constraint_is_one_shot_after_target_reached() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        let mut state = empty_state(&mut executor);
+        state.set_branch_target(Some(SymbolicBranchTarget::new(
+            Address::ZERO,
+            0,
+            opcode::EQ,
+            false,
+        )));
+        state.mark_branch_target_reached();
+
+        let condition = SymBoolExpr::constant(&mut executor.cx, false);
+        let accepted =
+            executor.apply_branch_target_constraint(&mut state, 0, opcode::EQ, &condition).unwrap();
+
+        assert!(accepted);
+        assert!(state.constraints.is_empty());
+        assert!(state.satisfies_branch_target());
     }
 }
