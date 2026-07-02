@@ -805,7 +805,8 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
 }
 
 /// Build and activate the local workspace using the release distribution profile.
-/// Uses cargo's incremental compilation so re-runs are fast.
+/// Builds only the shipped Foundry binaries to match the profile of the
+/// downloaded release artifacts without linking unused workspace binaries.
 #[allow(unused_must_use)]
 pub fn install_local_version() -> Result<()> {
     let workspace =
@@ -815,11 +816,13 @@ pub fn install_local_version() -> Result<()> {
         workspace.display()
     );
 
-    let status = Command::new("cargo")
-        .current_dir(&workspace)
-        .args(["build", "--locked", "--bins", "--profile", LOCAL_BUILD_PROFILE])
-        .status()
-        .wrap_err("Failed to build local Foundry workspace")?;
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(&workspace).args(["build", "--locked", "--profile", LOCAL_BUILD_PROFILE]);
+    for bin in FOUNDRY_BINS {
+        cmd.args(["--bin", bin]);
+    }
+
+    let status = cmd.status().wrap_err("Failed to build local Foundry workspace")?;
 
     if !status.success() {
         eyre::bail!("local Foundry build failed");
