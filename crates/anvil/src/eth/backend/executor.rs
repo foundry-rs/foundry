@@ -149,6 +149,11 @@ impl<E> AnvilBlockExecutor<E> {
             state_hook: None,
         }
     }
+
+    /// Sets a hook that receives state changes before they are committed.
+    pub fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
+        self.state_hook = hook;
+    }
 }
 
 impl<E> BlockExecutor for AnvilBlockExecutor<E>
