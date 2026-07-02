@@ -694,6 +694,19 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_IDS", value_name = "IDS", value_delimiter = ',')]
     pub symbolic_frontier_ids: Option<Vec<u64>>,
 
+    /// Comma-separated fuzz branch frontier comparison PCs to try.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_PCS", value_name = "PCS", value_delimiter = ',')]
+    pub symbolic_frontier_pcs: Option<Vec<usize>>,
+
+    /// Comma-separated fuzz branch frontier calldata selectors to try.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_FRONTIER_SELECTORS",
+        value_name = "SELECTORS",
+        value_delimiter = ','
+    )]
+    pub symbolic_frontier_selectors: Option<Vec<String>>,
+
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
     pub symbolic_solver: Option<String>,
@@ -2811,6 +2824,12 @@ impl Provider for TestArgs {
         if let Some(frontier_ids) = self.symbolic_frontier_ids.clone() {
             symbolic_dict.insert("frontier_ids".to_string(), frontier_ids.into());
         }
+        if let Some(frontier_pcs) = self.symbolic_frontier_pcs.clone() {
+            symbolic_dict.insert("frontier_pcs".to_string(), frontier_pcs.into());
+        }
+        if let Some(frontier_selectors) = self.symbolic_frontier_selectors.clone() {
+            symbolic_dict.insert("frontier_selectors".to_string(), frontier_selectors.into());
+        }
         if let Some(solver) = self.symbolic_solver.clone() {
             symbolic_dict.insert("solver".to_string(), solver.into());
         }
@@ -3491,6 +3510,10 @@ mod tests {
             "3",
             "--symbolic-frontier-ids",
             "4,9",
+            "--symbolic-frontier-pcs",
+            "123,456",
+            "--symbolic-frontier-selectors",
+            "0x12345678,deadbeef",
             "--invariant-depth",
             "300",
             "--invariant-min-depth",
@@ -3548,6 +3571,14 @@ mod tests {
         assert!(figment.extract_inner::<bool>("symbolic.use_fuzz_frontiers").unwrap());
         assert_eq!(figment.extract_inner::<usize>("symbolic.frontier_limit").unwrap(), 3);
         assert_eq!(figment.extract_inner::<Vec<u64>>("symbolic.frontier_ids").unwrap(), vec![4, 9]);
+        assert_eq!(
+            figment.extract_inner::<Vec<usize>>("symbolic.frontier_pcs").unwrap(),
+            vec![123, 456]
+        );
+        assert_eq!(
+            figment.extract_inner::<Vec<String>>("symbolic.frontier_selectors").unwrap(),
+            vec!["0x12345678", "deadbeef"]
+        );
         assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 300);
         assert_eq!(figment.extract_inner::<u32>("invariant.min_depth").unwrap(), 20);
         assert_eq!(
@@ -3595,6 +3626,8 @@ mod tests {
         assert!(config.symbolic.use_fuzz_frontiers);
         assert_eq!(config.symbolic.frontier_limit, 3);
         assert_eq!(config.symbolic.frontier_ids, vec![4, 9]);
+        assert_eq!(config.symbolic.frontier_pcs, vec![123, 456]);
+        assert_eq!(config.symbolic.frontier_selectors, vec!["0x12345678", "deadbeef"]);
         assert_eq!(config.invariant.depth, 300);
         assert_eq!(config.invariant.min_depth, 20);
         assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);

@@ -376,6 +376,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             use_fuzz_frontiers: true,
             frontier_limit: 11,
             frontier_ids: vec![4, 9],
+            frontier_pcs: vec![123, 456],
+            frontier_selectors: vec!["0x12345678".to_string(), "deadbeef".to_string()],
             solver: "custom-z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),

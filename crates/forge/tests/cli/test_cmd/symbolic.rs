@@ -1880,6 +1880,9 @@ contract SymbolicFuzzFrontierSeed {
         },
     );
     let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+    let target_frontier_pc = target_frontier["site"]["pc"].as_u64().unwrap().to_string();
+    let target_frontier_selector =
+        target_frontier["sequence"][0]["calldata"].as_str().unwrap()[..10].to_string();
 
     let output = cmd
         .forge_fuse()
@@ -1902,11 +1905,21 @@ contract SymbolicFuzzFrontierSeed {
             "1",
             "--symbolic-frontier-ids",
             &target_frontier_id,
+            "--symbolic-frontier-pcs",
+            &target_frontier_pc,
+            "--symbolic-frontier-selectors",
+            &target_frontier_selector,
         ])
         .assert_success()
         .get_output()
-        .stdout_lossy();
-    assert!(output.contains("testFuzz_frontier(uint64,uint256)"), "{output}");
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(stdout.contains("testFuzz_frontier(uint64,uint256)"), "{stdout}");
+    assert!(
+        stderr.contains("Symbolic frontier selection for testFuzz_frontier(uint64,uint256)"),
+        "{stderr}"
+    );
 
     let corpus_dir = prj
         .root()

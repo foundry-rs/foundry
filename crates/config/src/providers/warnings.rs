@@ -55,6 +55,8 @@ const SYMBOLIC_KEYS: &[&str] = &[
     "use_fuzz_frontiers",
     "frontier_limit",
     "frontier_ids",
+    "frontier_pcs",
+    "frontier_selectors",
     "solver",
     "solver_command",
     "solver_portfolio",
