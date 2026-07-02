@@ -1,12 +1,7 @@
 //! Uncategorised utilities.
 
 use alloy_primitives::{B256, Bytes, U256, hex, keccak256};
-use foundry_compilers::{
-    Project,
-    artifacts::{BytecodeObject, SolcLanguage},
-    error::SolcError,
-    flatten::{Flattener, FlattenerError},
-};
+use foundry_compilers::{Project, artifacts::BytecodeObject};
 use regex::Regex;
 use std::{path::Path, sync::LazyLock};
 
@@ -90,20 +85,16 @@ pub fn strip_bytecode_placeholders(bytecode: &BytecodeObject) -> Option<Bytes> {
     }
 }
 
-/// Flattens the given target of the project. Falls back to the old flattening implementation
-/// if the target cannot be compiled successfully. This would be the case if the target has invalid
-/// syntax. (e.g. Solang)
+/// Flattens the given target of the project using Solar-based parsing.
+///
+/// This resolves imports via the dependency graph, strips duplicate pragmas and SPDX license
+/// identifiers, and concatenates the sources in dependency order.
 pub fn flatten(project: Project, target_path: &Path) -> eyre::Result<String> {
-    // Save paths for fallback before Flattener::new takes ownership
-    let paths = project.paths.clone();
-    let flattened = match Flattener::new(project, target_path) {
-        Ok(flattener) => Ok(flattener.flatten()),
-        Err(FlattenerError::Compilation(_)) => {
-            paths.with_language::<SolcLanguage>().flatten(target_path)
-        }
-        Err(FlattenerError::Other(err)) => Err(err),
-    }
-    .map_err(|err: SolcError| eyre::eyre!("Failed to flatten: {err}"))?;
+    use foundry_compilers::artifacts::SolcLanguage;
 
-    Ok(flattened)
+    project
+        .paths
+        .with_language::<SolcLanguage>()
+        .flatten(target_path)
+        .map_err(|err| eyre::eyre!("Failed to flatten: {err}"))
 }
