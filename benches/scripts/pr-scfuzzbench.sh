@@ -12,6 +12,8 @@ FOUNDRY_TEST_ARGS="${FOUNDRY_TEST_ARGS:-}"
 PROPERTIES_PATH="${PROPERTIES_PATH:-}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
 BENCH_ROOT="${BENCH_ROOT:-/tmp/foundry-scfuzzbench-${RUN_ID}}"
+RUNNER_TARGET_DIR="${BENCH_ROOT}/runner-target"
+RUNNER_BIN="${RUNNER_TARGET_DIR}/release/foundry-scfuzzbench"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -31,13 +33,15 @@ git worktree add --detach "${BENCH_ROOT}/candidate" "${CANDIDATE_REF}"
 
 (
   cd "${REPO_ROOT}"
-  cargo build --locked --release --bin foundry-scfuzzbench
+  CARGO_TARGET_DIR="${RUNNER_TARGET_DIR}" cargo build --locked --release --bin foundry-scfuzzbench
 )
 
 for label in master candidate; do
+  foundry_target_dir="${BENCH_ROOT}/${label}-target"
+
   (
     cd "${BENCH_ROOT}/${label}"
-    cargo build --locked --profile profiling --bin forge
+    CARGO_TARGET_DIR="${foundry_target_dir}" cargo build --locked --profile profiling --bin forge
   )
 
   args=(
@@ -47,7 +51,7 @@ for label in master candidate; do
     --timeout-seconds "${TIMEOUT_SECONDS}"
     --workers "${WORKERS}"
     --output-dir "${BENCH_ROOT}/${label}-artifacts"
-    --foundry-bin "${BENCH_ROOT}/${label}/target/profiling/forge"
+    --foundry-bin "${foundry_target_dir}/profiling/forge"
   )
 
   if [[ -n "${FOUNDRY_TEST_ARGS}" ]]; then
@@ -58,7 +62,7 @@ for label in master candidate; do
     args+=(--properties-path "${PROPERTIES_PATH}")
   fi
 
-  "${REPO_ROOT}/target/release/foundry-scfuzzbench" "${args[@]}"
+  "${RUNNER_BIN}" "${args[@]}"
 done
 
 printf 'scfuzzbench artifacts written under %s\n' "${BENCH_ROOT}"

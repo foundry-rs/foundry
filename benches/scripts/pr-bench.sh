@@ -7,6 +7,8 @@ BENCHMARKS="${BENCHMARKS:-forge_test}"
 REPOS="${REPOS:-ithacaxyz/account:v0.5.7}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
 BENCH_ROOT="${BENCH_ROOT:-/tmp/foundry-pr-bench-${RUN_ID}}"
+RUNNER_TARGET_DIR="${BENCH_ROOT}/runner-target"
+RUNNER_BIN="${RUNNER_TARGET_DIR}/release/foundry-bench"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -24,16 +26,17 @@ mkdir -p "${BENCH_ROOT}/results"
 git worktree add --detach "${BENCH_ROOT}/master" "${BASE_REF}"
 git worktree add --detach "${BENCH_ROOT}/candidate" "${CANDIDATE_REF}"
 
-cargo build --locked --release --bin foundry-bench
+CARGO_TARGET_DIR="${RUNNER_TARGET_DIR}" cargo build --locked --release --bin foundry-bench
 
 for label in master candidate; do
   (
+    unset CARGO_TARGET_DIR
     foundry_dir="${BENCH_ROOT}/${label}/.foundry"
     FOUNDRY_BENCH_WORKSPACE_ROOT="${BENCH_ROOT}/${label}" \
       FOUNDRY_BENCH_LOCAL_BUILD_PROFILE=profiling \
       FOUNDRY_DIR="${foundry_dir}" \
       PATH="${foundry_dir}/bin:${PATH}" \
-      "${REPO_ROOT}/target/release/foundry-bench" \
+      "${RUNNER_BIN}" \
         --versions local \
         --repos "${REPOS}" \
         --benchmarks "${BENCHMARKS}" \
