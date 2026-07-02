@@ -7,7 +7,7 @@ Flags an assignment whose `=` is fused to a unary operator (`=-`, `=~`), which p
 
 ## What it does
 
-Reports `x =- y` and `x =~ y` when the source writes `=` directly against the unary operator, with no space. `x =- 1` lexes as `x` `=` `-` `1` and parses as `x = -1`, identical to the intentional spaced form, but it is a common typo for the compound `x -= 1`. The spaced forms (`x = -1`, `x = ~y`) and the real compound operators (`x -= 1`) are left alone. This mirrors Slither's `dangerous-unary-expression`.
+Reports `x =- y` and `x =~ y` when the source writes `=` directly against the unary operator, with no space. `x =- 1` lexes as `x` `=` `-` `1` and parses as `x = -1`, identical to the intentional spaced form, but it is a common typo for the compound `x -= 1`. The fused unary is also reported when it only leads a larger right-hand side: `x =- a + 1` parses as `x = (-a) + 1`, still a plain assignment rather than the `x -= a + 1` it resembles. The spaced forms (`x = -1`, `x = ~y`) and the real compound operators (`x -= 1`) are left alone. This mirrors Slither's `incorrect-unary` (Dangerous unary expressions).
 
 `=+` is not reported: unary `+` was removed in Solidity 0.5.0, so `x =+ 1` is a parse error and never reaches the linter.
 

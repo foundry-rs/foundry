@@ -22,3 +22,27 @@ LL │         c =-x;
    │
    ╰ help: https://getfoundry.sh/forge/linting/dangerous-unary-operator
 
+warning[dangerous-unary-operator]: unary operator fused to `=`: `x =- 1` parses as `x = -1`, not `x -= 1`
+   ╭▸ ROOT/testdata/DangerousUnaryOperator.sol:LL:CC
+   │
+LL │         d =- x + 1;
+   │         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dangerous-unary-operator
+
+warning[dangerous-unary-operator]: unary operator fused to `=`: `x =- 1` parses as `x = -1`, not `x -= 1`
+   ╭▸ ROOT/testdata/DangerousUnaryOperator.sol:LL:CC
+   │
+LL │         e =- x * 2;
+   │         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dangerous-unary-operator
+
+warning[dangerous-unary-operator]: unary operator fused to `=`: `x =- 1` parses as `x = -1`, not `x -= 1`
+   ╭▸ ROOT/testdata/DangerousUnaryOperator.sol:LL:CC
+   │
+LL │         f /* note */=- 1;
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dangerous-unary-operator
+
