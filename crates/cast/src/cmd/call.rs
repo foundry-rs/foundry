@@ -1,17 +1,22 @@
-use super::run::fetch_contracts_bytecode_from_trace;
+use super::run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc};
 use crate::{
     Cast,
     debug::handle_traces,
+    rpc_trace::call_frame_to_arena,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
     state::{StateOverride, StateOverridesBuilder},
+    trace::geth::{
+        CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
+        GethDebugTracingOptions, GethTrace,
+    },
 };
 use clap::Parser;
 use eyre::Result;
@@ -42,7 +47,7 @@ use foundry_evm::{
     },
     executors::TracingExecutor,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceRequirements},
+    traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
 use foundry_wallets::WalletOpts;
 use regex::Regex;
@@ -97,6 +102,21 @@ pub struct CallArgs {
     /// Forks the remote rpc, executes the transaction locally and prints a trace
     #[arg(long, default_value_t = false)]
     trace: bool,
+
+    /// Fetch the call trace from the node via `debug_traceCall` (callTracer) and render it,
+    /// instead of re-executing the call locally like `--trace`.
+    ///
+    /// This is a call-tree view: nested calls, value, gas, emitted logs and revert data. It does
+    /// not provide the opcode / struct-log level detail of a local `--trace` / `--debug` run.
+    ///
+    /// The local-execution-only trace flags (`--debug`, `--decode-internal`, `--evm-version`) do
+    /// not apply, since the trace comes from the node rather than a local run.
+    #[arg(
+        long = "debug-trace-call",
+        default_value_t = false,
+        conflicts_with_all = ["trace", "debug", "decode_internal", "evm_version"]
+    )]
+    debug_trace_call: bool,
 
     /// Disables the labels in the traces.
     /// Can only be set with `--trace`.
@@ -310,6 +330,107 @@ impl CallArgs {
             .raw()
             .build(sender)
             .await?;
+
+        if self.debug_trace_call {
+            let block = self.block.unwrap_or(BlockId::latest());
+            let mut call_options = GethDebugTracingCallOptions::default().with_tracing_options(
+                GethDebugTracingOptions::default()
+                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+                    .with_call_config(CallConfig::default().with_log()),
+            );
+            // Honour the same state / block overrides as the local `--trace` path.
+            if let Some(state_overrides) = state_overrides {
+                call_options = call_options.with_state_overrides(state_overrides);
+            }
+            if let Some(block_overrides) = block_overrides {
+                call_options = call_options.with_block_overrides(block_overrides);
+            }
+
+            let geth_trace = provider
+                .debug_trace_call(tx, block, call_options)
+                .await
+                .map_err(|err| -> eyre::Report {
+                    // Two RPC rejections deserve an actionable hint instead of the raw transport
+                    // error, and they need different fixes:
+                    // - `debug` namespace disabled: rejected with JSON-RPC -32601 (method not found).
+                    // - missing historical state: an archive-depth error, usually with a generic
+                    //   code (-32000) distinguishable only by message, hit whenever `--block`
+                    //   targets a block a full node has pruned.
+                    let is_method_not_found =
+                        err.as_error_resp().is_some_and(|resp| resp.code == -32601);
+                    let message = err
+                        .as_error_resp()
+                        .map(|resp| resp.message.to_ascii_lowercase())
+                        .unwrap_or_else(|| err.to_string().to_ascii_lowercase());
+                    let is_missing_state = [
+                        "missing trie node",
+                        "required historical state",
+                        "historical state",
+                        "header not found",
+                        "missing state",
+                    ]
+                    .iter()
+                    .any(|needle| message.contains(*needle));
+
+                    if is_method_not_found {
+                        eyre::eyre!(
+                            "the RPC endpoint does not support `debug_traceCall` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or drop `--debug-trace-call` to run the call locally with `--trace`"
+                        )
+                    } else if is_missing_state {
+                        eyre::eyre!(
+                            "the RPC endpoint does not have the historical state for the requested block; use an archive endpoint, or target a more recent block with `--block`"
+                        )
+                    } else {
+                        err.into()
+                    }
+                })?;
+            let GethTrace::CallTracer(frame) = geth_trace else {
+                eyre::bail!(
+                    "`debug_traceCall` did not return a callTracer frame; the RPC endpoint may not \
+                     support the `callTracer`"
+                );
+            };
+
+            let success = frame.error.is_none() && frame.revert_reason.is_none();
+            let gas_used = frame.gas_used.saturating_to();
+            let arena = SparsedTraceArena {
+                arena: call_frame_to_arena(&frame),
+                ignored: Default::default(),
+            };
+            let result = TraceResult {
+                success,
+                traces: Some(vec![(TraceKind::Execution, arena)]),
+                gas_used,
+            };
+
+            // Local-artifact labeling matches deployed runtime bytecode against the
+            // project artifacts. There is no local executor on this path, so fetch the code
+            // over RPC for the addresses in the trace. Skip the extra round-trips unless
+            // local artifacts were requested.
+            let contracts_bytecode = if with_local_artifacts {
+                fetch_contracts_bytecode_via_rpc(&provider, &result, block).await?
+            } else {
+                Default::default()
+            };
+
+            let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
+            handle_traces(
+                result,
+                &config,
+                chain,
+                &contracts_bytecode,
+                labels,
+                with_local_artifacts,
+                false,
+                false,
+                disable_labels,
+                None,
+                None,
+            )
+            .await?;
+
+            return Ok(());
+        }
 
         if trace {
             if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
@@ -846,5 +967,33 @@ mod tests {
         assert_eq!(args.tx.nonce, Some(U64::from(42)));
         assert_eq!(args.tx.value, Some(U256::from(1000000000000000000u64)));
         assert_eq!(args.tx.blob_gas_price, Some(U256::from(10000000000u64)));
+    }
+
+    #[test]
+    fn debug_trace_call_conflicts_with_trace() {
+        let result = CallArgs::try_parse_from(["foundry-cli", "--trace", "--debug-trace-call"]);
+        assert!(result.is_err(), "--trace and --debug-trace-call must be mutually exclusive");
+    }
+
+    #[test]
+    fn debug_trace_call_rejects_local_trace_flags() {
+        for flag in ["--debug", "--decode-internal"] {
+            let result = CallArgs::try_parse_from([
+                "foundry-cli",
+                "--debug-trace-call",
+                "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
+                flag,
+            ]);
+            assert!(result.is_err(), "--debug-trace-call must reject {flag}");
+        }
+        // --evm-version takes a value, so it is checked separately from the boolean flags above.
+        let result = CallArgs::try_parse_from([
+            "foundry-cli",
+            "--debug-trace-call",
+            "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
+            "--evm-version",
+            "shanghai",
+        ]);
+        assert!(result.is_err(), "--debug-trace-call must reject --evm-version");
     }
 }
