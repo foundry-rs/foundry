@@ -49,6 +49,28 @@ fn keep_only_matching_frontier(
     target_frontier
 }
 
+fn matching_frontier(
+    root: &Path,
+    contract: &str,
+    test: &str,
+    missing: &str,
+    mut matches: impl FnMut(&Value) -> bool,
+) -> Value {
+    let frontier_path = frontier_artifact_path(root, contract, test);
+    let artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| matches(frontier))
+        .cloned()
+        .unwrap_or_else(|| panic!("missing {missing} frontier in {artifact}"))
+}
+
 fn single_uint_corpus_values(
     root: &Path,
     contract: &str,
@@ -1847,6 +1869,18 @@ contract SymbolicFuzzFrontierSeed {
         ])
         .assert_success();
 
+    let target_frontier = matching_frontier(
+        prj.root(),
+        "SymbolicFuzzFrontierSeed",
+        "testFuzz_frontier",
+        "missed fee multiplier",
+        |frontier| {
+            frontier["site"]["opcode_name"] == "LT"
+                && (frontier["operands"]["lhs"] == "0x64" || frontier["operands"]["rhs"] == "0x64")
+        },
+    );
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
     let output = cmd
         .forge_fuse()
         .args([
@@ -1865,7 +1899,9 @@ contract SymbolicFuzzFrontierSeed {
             "fuzz_corpus",
             "--symbolic-use-fuzz-frontiers",
             "--symbolic-frontier-limit",
-            "8",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
         ])
         .assert_success()
         .get_output()

@@ -1880,10 +1880,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Vec::new();
         }
 
+        let requested_ids = &self.config.symbolic.frontier_ids;
+        let select_frontier_ids = !requested_ids.is_empty();
+        let mut skipped_by_selection = 0usize;
+        let mut imported_ids = Vec::new();
         let mut imported = Vec::with_capacity(limit.min(artifact.frontiers.len()));
         for frontier in artifact.frontiers {
             if imported.len() == limit {
                 break;
+            }
+            if select_frontier_ids && !requested_ids.contains(&frontier.id) {
+                skipped_by_selection += 1;
+                continue;
             }
             if !is_symbolic_frontier_opcode(frontier.site.opcode) {
                 debug!(
@@ -1921,6 +1929,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ),
                 input,
             });
+            imported_ids.push(frontier.id);
+        }
+
+        if select_frontier_ids {
+            for id in requested_ids {
+                if !imported_ids.contains(id) {
+                    warn!(
+                        id,
+                        test = %signature,
+                        path = %frontier_path.display(),
+                        "requested fuzz branch frontier was not imported"
+                    );
+                }
+            }
         }
 
         debug!(
@@ -1928,6 +1950,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             path = %frontier_path.display(),
             imported = imported.len(),
             limit,
+            skipped_by_selection,
+            requested_ids = ?requested_ids,
             "imported fuzz branch frontiers for targeted symbolic seeding"
         );
         imported

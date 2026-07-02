@@ -54,6 +54,7 @@ const SYMBOLIC_KEYS: &[&str] = &[
     "corpus_seed_limit",
     "use_fuzz_frontiers",
     "frontier_limit",
+    "frontier_ids",
     "solver",
     "solver_command",
     "solver_portfolio",

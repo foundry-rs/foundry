@@ -42,6 +42,9 @@ pub struct SymbolicConfig {
     pub use_fuzz_frontiers: bool,
     /// Maximum number of fuzz branch frontiers to try for one symbolic run.
     pub frontier_limit: usize,
+    /// Fuzz branch frontier artifact IDs to import. Empty imports by artifact order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frontier_ids: Vec<u64>,
     /// Solver executable to invoke.
     pub solver: String,
     /// Exact solver command to invoke. When set, this overrides `solver`.
@@ -106,6 +109,7 @@ impl Default for SymbolicConfig {
             corpus_seed_limit: 32,
             use_fuzz_frontiers: false,
             frontier_limit: 256,
+            frontier_ids: Vec::new(),
             solver: "z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
@@ -163,6 +167,7 @@ mod tests {
             "corpus_seed_limit": 32,
             "use_fuzz_frontiers": false,
             "frontier_limit": 256,
+            "frontier_ids": [],
             "solver": "z3",
             "timeout": 30,
             "max_depth": 10000,

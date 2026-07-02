@@ -159,6 +159,20 @@ recorded one-call seed as a path-priority hint, constrains symbolic execution to
 flip the captured comparison result, and persists only candidates that replay
 with the expected concrete outcome.
 
+To focus solver time on specific captured sites, pass frontier artifact IDs:
+
+```sh
+forge test --match-test test_hard_branch \
+  --fuzz-frontier-dir fuzz_frontiers \
+  --fuzz-corpus-dir fuzz_corpus \
+  --symbolic-use-fuzz-frontiers \
+  --symbolic-frontier-ids 3,7
+```
+
+`symbolic.frontier_ids` defaults to `[]`, which preserves artifact-order import.
+When set, Forge only imports matching frontier IDs and warns if a requested ID
+cannot be imported.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
@@ -319,6 +333,7 @@ default_array_lengths = []
 default_bytes_lengths = []
 max_calldata_bytes = 4096
 invariant_depth = 10
+frontier_ids = []
 symbolic_call_targets = false
 dump_smt = false
 storage_layout = "solidity"

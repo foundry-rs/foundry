@@ -375,6 +375,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             corpus_seed_limit: 17,
             use_fuzz_frontiers: true,
             frontier_limit: 11,
+            frontier_ids: vec![4, 9],
             solver: "custom-z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
