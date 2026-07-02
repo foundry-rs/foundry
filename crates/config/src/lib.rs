@@ -1890,7 +1890,8 @@ impl Config {
                 debug_info: Vec::new(),
             }),
             model_checker,
-            // via_ssa_cfg implies via_ir only when via_ir is omitted, so we need to set both flags to true if via_ssa_cfg is enabled.
+            // via_ssa_cfg implies via_ir only when via_ir is omitted, so we need to set both flags
+            // to true if via_ssa_cfg is enabled.
             via_ir: Some(self.via_ir || self.via_ssa_cfg),
             via_ssa_cfg: Some(self.via_ssa_cfg),
             experimental: Some(self.experimental),
