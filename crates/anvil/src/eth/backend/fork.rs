@@ -22,7 +22,7 @@ use alloy_rpc_types::{
     simulate::{SimulatePayload, SimulatedBlock},
     state::StateOverride,
     trace::{
-        geth::{GethDebugTracingOptions, GethTrace, TraceResult},
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{
             LocalizedTransactionTrace as Trace, TraceResults, TraceResultsWithTransactionHash,
@@ -30,7 +30,7 @@ use alloy_rpc_types::{
         },
     },
 };
-use alloy_rpc_types_eth::{Bundle, EthCallResponse, StateContext};
+use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
@@ -303,12 +303,32 @@ impl<N: Network> ClientFork<N> {
         Ok(trace)
     }
 
+    pub async fn debug_trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        block_id: BlockId,
+        opts: GethDebugTracingCallOptions,
+    ) -> Result<GethTrace, TransportError> {
+        self.provider().raw_request("debug_traceCall".into(), (request, block_id, opts)).await
+    }
+
     pub async fn debug_code_by_hash(
         &self,
         code_hash: B256,
         block_id: Option<BlockId>,
     ) -> Result<Option<Bytes>, TransportError> {
         self.provider().debug_code_by_hash(code_hash, block_id).await
+    }
+
+    pub async fn debug_account_info_at(
+        &self,
+        block_id: BlockId,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, TransportError> {
+        self.provider()
+            .raw_request("debug_accountInfoAt".into(), (block_id, tx_index, address))
+            .await
     }
 
     pub async fn debug_trace_block_by_hash(

@@ -397,6 +397,10 @@ pub enum EthRequest {
     #[serde(rename = "debug_freeOSMemory", with = "empty_params")]
     DebugFreeOsMemory(()),
 
+    /// reth's `debug_accountInfoAt` endpoint.
+    #[serde(rename = "debug_accountInfoAt")]
+    DebugAccountInfoAt(BlockId, Index, Address),
+
     /// geth's `debug_traceBlock` endpoint.
     #[serde(rename = "debug_traceBlock")]
     DebugTraceBlock(Bytes, #[serde(default)] GethDebugTracingOptions),
@@ -1829,6 +1833,17 @@ true}]}"#;
     }
 
     #[test]
+    fn test_serde_debug_account_info_at() {
+        let s = r#"{"method": "debug_accountInfoAt", "params": ["0x1", "0x0", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_accountInfoAt", "params": [{"blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"}, 0, "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_serde_trace_transaction_opcode_gas() {
         let s = r#"{"method": "trace_transactionOpcodeGas", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
@@ -1885,6 +1900,14 @@ true}]}"#;
         let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }, {"disableStorage": true}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_traceCall", "params": [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x1" }, {"txIndex": "0x0"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::DebugTraceCall(_, _, opts) => assert_eq!(opts.tx_index, Some(0)),
+            _ => panic!("expected debug_traceCall"),
+        }
     }
 
     #[test]

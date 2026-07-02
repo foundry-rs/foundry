@@ -1,10 +1,11 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{U256, hex};
+use foundry_config::fs_permissions::PathPermission;
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
 use serde_json::Value;
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 const DEFAULT_SENDER: &str = "0x0000000000000000000000000000000000000001";
 const DEFAULT_TEST_TARGET: &str = "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496";
@@ -56,6 +57,40 @@ fn has_regular_file(root: &Path) -> bool {
             let path = entry.unwrap().path();
             path.is_file() || (path.is_dir() && has_regular_file(&path))
         })
+}
+
+fn regular_file_count(root: &Path) -> usize {
+    if !root.exists() {
+        return 0;
+    }
+    std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .map(|path| if path.is_dir() { regular_file_count(&path) } else { 1 })
+        .sum()
+}
+
+fn showmap_edge_ids(root: &Path) -> BTreeSet<String> {
+    fn visit(path: &Path, out: &mut BTreeSet<String>) {
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path).unwrap() {
+                visit(&entry.unwrap().path(), out);
+            }
+            return;
+        }
+        if path.extension().is_none_or(|extension| extension != "txt") {
+            return;
+        }
+        let body = std::fs::read_to_string(path).unwrap();
+        for line in body.lines() {
+            let (id, _) = line.split_once(':').unwrap_or_else(|| panic!("malformed {line}"));
+            out.insert(id.to_string());
+        }
+    }
+
+    let mut edges = BTreeSet::new();
+    visit(root, &mut edges);
+    edges
 }
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
@@ -142,6 +177,44 @@ Suite result: ok. 1 passed; 0 failed; 1 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 1 skipped (2 total tests)
 
 "#]]);
+});
+
+forgetest_init!(does_not_evaluate_unused_fuzz_fixtures_for_unit_test_filter, |prj, cmd| {
+    let marker = prj.root().join("fixture-called.txt");
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::write(prj.root())));
+    prj.add_test(
+        "UnusedFuzzFixtures.t.sol",
+        r#"
+interface Vm {
+    function projectRoot() external view returns (string memory path);
+    function writeFile(string calldata path, string calldata data) external;
+}
+
+contract UnusedFuzzFixturesTest {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function fixtureAmount() public returns (uint256[] memory values) {
+        vm.writeFile(string.concat(vm.projectRoot(), "/fixture-called.txt"), "called");
+        values = new uint256[](1);
+        values[0] = 1;
+    }
+
+    function testUnit() public pure {}
+
+    /// forge-config: default.fuzz.runs = 1
+    function testFuzzUsesFixture(uint256 amount) public pure {
+        amount;
+    }
+}
+    "#,
+    );
+
+    cmd.args(["test", "--match-test", "testUnit", "-q"]).assert_success();
+    assert!(!marker.exists(), "unit-only run evaluated fuzz fixture");
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--match-test", "testFuzzUsesFixture", "-q"]).assert_success();
+    assert!(marker.exists(), "fuzz run did not evaluate fuzz fixture");
 });
 
 forgetest_init!(forge_fuzz_skips_unit_only_failing_setup, |prj, cmd| {
@@ -460,6 +533,35 @@ forgetest_init!(forge_fuzz_rejects_watch, |prj, cmd| {
     assert!(stderr.contains("`--watch` is not supported for `forge fuzz replay`"), "{stderr}");
 });
 
+forgetest_init!(forge_fuzz_list_only_shows_runnable_tests, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzList.t.sol",
+        r#"
+contract ForgeFuzzListTest {
+    function test_unit() public {}
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+    function invariant_ok() public pure {}
+    function table_row() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--list", "--mc", "ForgeFuzzListTest"]).assert_success().stdout_eq(
+        str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+test/ForgeFuzzList.t.sol
+  ForgeFuzzListTest
+    invariant_ok
+    testFuzz_value
+
+
+"#]],
+    );
+});
+
 forgetest_init!(forge_showmap_skips_symbolic_tests, |prj, cmd| {
     prj.add_test(
         "ForgeShowmapSymbolic.t.sol",
@@ -527,6 +629,617 @@ corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
         .assert_success();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[PASS] testFuzz_setNumber(uint256) (replay: 2 entries"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_cmin_keeps_coverage_adding_entries, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminTarget.t.sol",
+        r#"
+contract ForgeFuzzCminTargetTest {
+    uint256 value;
+
+    function testFuzz_branch(uint256 input) public {
+        if (input == 1) {
+            value = 1;
+        }
+        if (input == 2) {
+            value = 2;
+        }
+        if (input == 3) {
+            revert("boom");
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzCminTarget.t.sol/ForgeFuzzCminTargetTest.json");
+    let one = calldata_for(&abi, "testFuzz_branch", 1);
+    let two = calldata_for(&abi, "testFuzz_branch", 2);
+    let three = calldata_for(&abi, "testFuzz_branch", 3);
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000003-3.json", &two);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000004-4.json", &three);
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000005-5.json"), "[]").unwrap();
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminTargetTest",
+            "--mt",
+            "testFuzz_branch",
+            "corpus",
+            "--corpus-out",
+            "min-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stdout.contains("minimized corpus: kept 2/5 entries in min-corpus"), "{stdout}");
+    assert!(stderr.contains("skipped 2 entries or txs"), "{stderr}");
+    assert_eq!(regular_file_count(&prj.root().join("min-corpus")), 2);
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminTargetTest",
+            "--mt",
+            "testFuzz_branch",
+            "corpus",
+            "--corpus-out",
+            "min-corpus",
+        ])
+        .assert_failure();
+
+    let preserve_corpus = prj.root().join("preserve-corpus");
+    std::fs::create_dir_all(&preserve_corpus).unwrap();
+    write_corpus_entry(&preserve_corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+    write_corpus_entry(&preserve_corpus, "00000000-0000-0000-0000-000000000002-2.json", &one);
+    write_corpus_entry(&preserve_corpus, "00000000-0000-0000-0000-000000000003-3.json", &two);
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ForgeFuzzCminTargetTest",
+            "--mt",
+            "testFuzz_branch",
+            "--showmap-out",
+            "showmap-before-cmin",
+            "--showmap-corpus-dir",
+            "preserve-corpus",
+            "--showmap-trial",
+            "t",
+        ])
+        .assert_success();
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminTargetTest",
+            "--mt",
+            "testFuzz_branch",
+            "preserve-corpus",
+            "--corpus-out",
+            "min-preserve-corpus",
+        ])
+        .assert_success();
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ForgeFuzzCminTargetTest",
+            "--mt",
+            "testFuzz_branch",
+            "--showmap-out",
+            "showmap-after-cmin",
+            "--showmap-corpus-dir",
+            "min-preserve-corpus",
+            "--showmap-trial",
+            "t",
+        ])
+        .assert_success();
+    assert_eq!(
+        showmap_edge_ids(&prj.root().join("showmap-before-cmin")),
+        showmap_edge_ids(&prj.root().join("showmap-after-cmin"))
+    );
+});
+
+forgetest_init!(forge_fuzz_cmin_keeps_hit_count_bucket_increases, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminBucketTarget.t.sol",
+        r#"
+contract ForgeFuzzCminBucketTargetTest {
+    uint256 value;
+
+    function testFuzz_reps(uint256 input) public {
+        uint256 n = input % 5;
+        for (uint256 i = 0; i < n; i++) {
+            value = value + i + 1;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminBucketTarget.t.sol/ForgeFuzzCminBucketTargetTest.json",
+    );
+    let one = calldata_for(&abi, "testFuzz_reps", 1);
+    let four = calldata_for(&abi, "testFuzz_reps", 4);
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", &four);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminBucketTargetTest",
+            "--mt",
+            "testFuzz_reps",
+            "corpus",
+            "--corpus-out",
+            "min-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("minimized corpus: kept 2/2 entries in min-corpus"), "{stdout}");
+    assert_eq!(regular_file_count(&prj.root().join("min-corpus")), 2);
+});
+
+forgetest_init!(forge_fuzz_cmin_handles_multiple_matched_targets, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminMultiTarget.t.sol",
+        r#"
+contract ForgeFuzzCminMultiTargetTest {
+    uint256 left;
+    uint256 right;
+
+    function testFuzz_left(uint256 input) public {
+        if (input == 1) {
+            left = 1;
+        }
+    }
+
+    function testFuzz_right(uint256 input) public {
+        if (input == 2) {
+            right = 2;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminMultiTarget.t.sol/ForgeFuzzCminMultiTargetTest.json",
+    );
+    let left = calldata_for(&abi, "testFuzz_left", 1);
+    let right = calldata_for(&abi, "testFuzz_right", 2);
+    let corpus = prj.root().join("multi-target-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &left);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", &right);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminMultiTargetTest",
+            "multi-target-corpus",
+            "--corpus-out",
+            "min-multi-target-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("minimized corpus: kept 2/2 entries in min-multi-target-corpus"),
+        "{stdout}"
+    );
+    assert_eq!(regular_file_count(&prj.root().join("min-multi-target-corpus")), 2);
+});
+
+forgetest_init!(forge_fuzz_cmin_namespaces_coverage_by_matched_target, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminNamespacedTargets.t.sol",
+        r#"
+contract ForgeFuzzCminNamespacedAlphaTest {
+    uint256 value;
+
+    function testFuzz_shared(uint256 input) public {
+        if (input == 1) {
+            value = 1;
+        }
+    }
+}
+
+contract ForgeFuzzCminNamespacedBetaTest {
+    uint256 value;
+
+    function testFuzz_shared(uint256 input) public {
+        if (input == 2) {
+            value = 2;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminNamespacedTargets.t.sol/ForgeFuzzCminNamespacedAlphaTest.json",
+    );
+    let one = calldata_for(&abi, "testFuzz_shared", 1);
+    let two = calldata_for(&abi, "testFuzz_shared", 2);
+    let corpus = prj.root().join("namespaced-target-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", &two);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminNamespaced(Alpha|Beta)Test",
+            "--mt",
+            "testFuzz_shared",
+            "namespaced-target-corpus",
+            "--corpus-out",
+            "min-namespaced-target-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("minimized corpus: kept 2/2 entries in min-namespaced-target-corpus"),
+        "{stdout}"
+    );
+    assert_eq!(regular_file_count(&prj.root().join("min-namespaced-target-corpus")), 2);
+});
+
+forgetest_init!(forge_fuzz_cmin_keeps_entry_when_one_target_fails, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminTargetFailure.t.sol",
+        r#"
+contract ForgeFuzzCminTargetFailureAlphaTest {
+    uint256 value;
+
+    function testFuzz_shared(uint256 input) public {
+        if (input == 1) {
+            value = 1;
+        }
+    }
+}
+
+contract ForgeFuzzCminTargetFailureBetaTest {
+    function testFuzz_shared(uint256 input) public pure {
+        if (input == 1) {
+            revert("beta rejects");
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminTargetFailure.t.sol/ForgeFuzzCminTargetFailureAlphaTest.json",
+    );
+    let one = calldata_for(&abi, "testFuzz_shared", 1);
+    let corpus = prj.root().join("target-failure-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminTargetFailure(Alpha|Beta)Test",
+            "--mt",
+            "testFuzz_shared",
+            "target-failure-corpus",
+            "--corpus-out",
+            "min-target-failure-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("minimized corpus: kept 1/1 entries in min-target-failure-corpus"),
+        "{stdout}"
+    );
+    assert_eq!(regular_file_count(&prj.root().join("min-target-failure-corpus")), 1);
+});
+
+forgetest_init!(forge_fuzz_cmin_counts_zero_replay_entries_once_per_corpus_entry, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminZeroReplayMultiTarget.t.sol",
+        r#"
+contract ForgeFuzzCminZeroReplayAlphaTest {
+    function testFuzz_shared(uint256 input) public pure {
+        if (input == 1) {
+            revert("alpha rejects");
+        }
+    }
+}
+
+contract ForgeFuzzCminZeroReplayBetaTest {
+    function testFuzz_shared(uint256 input) public pure {
+        if (input == 1) {
+            revert("beta rejects");
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminZeroReplayMultiTarget.t.sol/ForgeFuzzCminZeroReplayAlphaTest.json",
+    );
+    let one = calldata_for(&abi, "testFuzz_shared", 1);
+    let corpus = prj.root().join("zero-replay-multi-target-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminZeroReplay(Alpha|Beta)Test",
+            "--mt",
+            "testFuzz_shared",
+            "zero-replay-multi-target-corpus",
+            "--corpus-out",
+            "min-zero-replay-multi-target-corpus",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("1 corpus entries failed during replay"), "{stderr}");
+    assert!(!stderr.contains("2 corpus entries failed during replay"), "{stderr}");
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminZeroReplay(Alpha|Beta)Test",
+            "--mt",
+            "testFuzz_shared",
+            "--sender",
+            "0x000000000000000000000000000000000000dEaD",
+            "zero-replay-multi-target-corpus",
+            "--corpus-out",
+            "min-zero-replay-stale-multi-target-corpus",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("1 transactions did not match the test"), "{stderr}");
+    assert!(!stderr.contains("2 transactions did not match the test"), "{stderr}");
+});
+
+forgetest_init!(forge_fuzz_cmin_rejects_stale_stateless_target, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminStaleTarget.t.sol",
+        r#"
+contract ForgeFuzzCminStaleTargetTest {
+    uint256 value;
+
+    function testFuzz_branch(uint256 input) public {
+        if (input == 1) {
+            value = 1;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminStaleTarget.t.sol/ForgeFuzzCminStaleTargetTest.json",
+    );
+    let one = calldata_for(&abi, "testFuzz_branch", 1);
+    let corpus = prj.root().join("stale-target-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminStaleTargetTest",
+            "--mt",
+            "testFuzz_branch",
+            "stale-target-corpus",
+            "--corpus-out",
+            "min-stale-target-corpus",
+        ])
+        .assert_success();
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminStaleTargetTest",
+            "--mt",
+            "testFuzz_branch",
+            "--sender",
+            "0x000000000000000000000000000000000000dEaD",
+            "stale-target-corpus",
+            "--corpus-out",
+            "min-wrong-sender-corpus",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("replayed 0 transactions from stale-target-corpus"), "{stderr}");
+    assert!(stderr.contains("replay-critical options"), "{stderr}");
+    assert!(!prj.root().join("min-wrong-sender-corpus").exists());
+});
+
+forgetest_init!(forge_fuzz_cmin_reports_zero_replay_reasons, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminZeroReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzCminZeroReplayTest is Test {
+    function testFuzz_assumeAlways(uint256 input) public {
+        input;
+        vm.assume(false);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminZeroReplay.t.sol/ForgeFuzzCminZeroReplayTest.json",
+    );
+    let assume = calldata_for(&abi, "testFuzz_assumeAlways", 1);
+    let assume_corpus = prj.root().join("assume-corpus");
+    std::fs::create_dir_all(&assume_corpus).unwrap();
+    write_corpus_entry(&assume_corpus, "00000000-0000-0000-0000-000000000001-1.json", &assume);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminZeroReplayTest",
+            "--mt",
+            "testFuzz_assumeAlways",
+            "assume-corpus",
+            "--corpus-out",
+            "min-assume-corpus",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("1 transactions were rejected by vm.assume or vm.skip"), "{stderr}");
+    assert!(!stderr.contains("replay-critical options"), "{stderr}");
+    assert!(!prj.root().join("min-assume-corpus").exists());
+
+    let empty_corpus = prj.root().join("empty-corpus");
+    std::fs::create_dir_all(&empty_corpus).unwrap();
+    std::fs::write(empty_corpus.join("00000000-0000-0000-0000-000000000002-2.json"), "[]").unwrap();
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminZeroReplayTest",
+            "--mt",
+            "testFuzz_assumeAlways",
+            "empty-corpus",
+            "--corpus-out",
+            "min-empty-corpus",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("corpus entries were empty"), "{stderr}");
+    assert!(!stderr.contains("replay-critical options"), "{stderr}");
+    assert!(!prj.root().join("min-empty-corpus").exists());
+});
+
+forgetest_init!(forge_fuzz_cmin_minimizes_invariant_corpus, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminInvariantTarget.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzCminInvariantTargetTest is Test {
+    uint256 value;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = this.touch.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function touch(uint256 input) external {
+        if (input == 1) {
+            value = 1;
+        }
+        if (input == 2) {
+            value = 2;
+        }
+    }
+
+    function invariant_ok() public view {
+        assertTrue(value <= 2);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminInvariantTarget.t.sol/ForgeFuzzCminInvariantTargetTest.json",
+    );
+    let one = calldata_for(&abi, "touch", 1);
+    let two = calldata_for(&abi, "touch", 2);
+    let corpus = prj.root().join("invariant-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000003-3.json", &two);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminInvariantTargetTest",
+            "--mt",
+            "invariant_ok",
+            "invariant-corpus",
+            "--corpus-out",
+            "min-invariant-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("minimized corpus: kept 2/3 entries in min-invariant-corpus"),
+        "{stdout}"
+    );
+    assert_eq!(regular_file_count(&prj.root().join("min-invariant-corpus")), 2);
 });
 
 forgetest_init!(forge_fuzz_replay_invariant_fail_on_revert, |prj, cmd| {
@@ -1048,6 +1761,118 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
         ["invariant_corpus", "ForgeFuzzGeneratedCorpusTest", "worker0", "corpus"]
             .join(std::path::MAIN_SEPARATOR_STR);
     assert!(invariant_stdout.contains(&invariant_corpus_path), "{invariant_stdout}");
+});
+
+forgetest_init!(fuzz_branch_frontiers_capture_comparison_for_symbolic_followup, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzFrontier.t.sol",
+        r#"
+contract ForgeFuzzFrontierTest {
+    function testFuzz_frontier(uint64 amount, uint256 feeMultiplier) public pure {
+        uint256 credited;
+        unchecked {
+            credited = uint256(amount) + (feeMultiplier - 100);
+        }
+
+        if (feeMultiplier < 100) {
+            assert(credited <= amount);
+        }
+    }
+}
+   "#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_frontier",
+            "--fuzz-runs",
+            "8",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let assert_frontier_artifact = |frontier_dir: &str, expect_new_coverage: bool| {
+        let frontier_path = prj
+            .root()
+            .join(frontier_dir)
+            .join("ForgeFuzzFrontierTest")
+            .join("testFuzz_frontier")
+            .join("branch-frontiers.json");
+        let artifact: Value = serde_json::from_slice(
+            &std::fs::read(&frontier_path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+        )
+        .unwrap();
+        assert_eq!(artifact["schema"], "foundry:fuzz.branch-frontiers@v1");
+        assert_eq!(artifact["version"], 1);
+        assert_eq!(artifact["test"], "testFuzz_frontier(uint64,uint256)");
+        assert_eq!(artifact["limit"], 256);
+
+        let frontiers = artifact["frontiers"].as_array().unwrap();
+        let frontier = frontiers
+            .iter()
+            .find(|frontier| {
+                frontier["site"]["opcode_name"] == "LT"
+                    && frontier["operands"]["lhs"] == "0x64"
+                    && frontier["operands"]["rhs"] == "0x64"
+                    && frontier["operands"]["result"] == false
+            })
+            .unwrap_or_else(|| panic!("missing missed fee multiplier frontier in {artifact:#}"));
+        assert!(frontier["id"].as_u64().is_some(), "{frontier:#}");
+        assert_eq!(frontier["call_index"], 0);
+        assert_eq!(frontier["site"]["opcode_name"], "LT");
+        assert!(frontier["site"]["pc"].as_u64().is_some(), "{frontier:#}");
+        assert_eq!(frontier["operands"]["operand_delta"], "0x0");
+        assert_eq!(frontier["operands"]["result"], false);
+
+        // `new_coverage` is only recorded when edge coverage is collected; frontier-only capture
+        // omits it rather than reporting an always-false value.
+        if expect_new_coverage {
+            assert!(frontier["new_coverage"].is_boolean(), "{frontier:#}");
+        } else {
+            assert!(frontier.get("new_coverage").is_none(), "{frontier:#}");
+        }
+
+        let sequence = frontier["sequence"].as_array().unwrap();
+        assert_eq!(sequence.len(), 1);
+        assert!(
+            sequence[0]["target"].as_str().unwrap().eq_ignore_ascii_case(DEFAULT_TEST_TARGET),
+            "{frontier:#}"
+        );
+        let calldata = sequence[0]["calldata"].as_str().unwrap();
+        let expected_selector =
+            hex::encode(&alloy_primitives::keccak256(b"testFuzz_frontier(uint64,uint256)")[..4]);
+        assert!(calldata.starts_with(&format!("0x{expected_selector}")), "{calldata}");
+        assert!(calldata.ends_with(&format!("{:064x}{:064x}", 100u64, 100u64)), "{calldata}");
+    };
+    assert_frontier_artifact("fuzz_frontiers", false);
+
+    prj.update_config(|config| {
+        config.fuzz.corpus.sancov_edges = true;
+    });
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_frontier",
+            "--fuzz-runs",
+            "8",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "sancov_fuzz_frontiers",
+        ])
+        .assert_success();
+    assert_frontier_artifact("sancov_fuzz_frontiers", true);
 });
 
 forgetest_init!(forge_fuzz_replay_scopes_generated_corpus_root_to_target, |prj, cmd| {

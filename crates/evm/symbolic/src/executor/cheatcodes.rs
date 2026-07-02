@@ -8,7 +8,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         pass: SymBoolExpr,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
-        let fail = pass.clone().not();
+        let fail = pass.clone().not(&mut self.cx);
         match fail.as_const() {
             Some(true) => return Ok(CheatcodeOutcome::Failure),
             Some(false) => return Ok(CheatcodeOutcome::Continue(Vec::new())),
@@ -21,7 +21,7 @@ impl SymbolicExecutor {
 
         let mut fail_constraints = state.constraints.clone();
         fail_constraints.push(fail);
-        if self.solver.is_sat(&fail_constraints)? {
+        if self.solver.is_sat(&mut self.cx, &fail_constraints)? {
             state.constraints = fail_constraints;
             return Ok(CheatcodeOutcome::Failure);
         }
@@ -92,13 +92,24 @@ impl SymbolicExecutor {
     ) -> Result<Option<StepOutcome>, SymbolicError> {
         let args_offset = in_offset + 4;
         let (artifact, constructor_args) = if selector == deployCode_0Call::SELECTOR {
-            let artifact =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deployCode")?;
+            let artifact = read_abi_string_arg(
+                &mut self.cx,
+                &state.memory,
+                args_offset,
+                0,
+                "symbolic vm.deployCode",
+            )?;
             (artifact, Vec::new())
         } else if selector == deployCode_1Call::SELECTOR {
-            let artifact =
-                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deployCode")?;
+            let artifact = read_abi_string_arg(
+                &mut self.cx,
+                &state.memory,
+                args_offset,
+                0,
+                "symbolic vm.deployCode",
+            )?;
             let args = read_abi_dynamic_bytes_arg(
+                &mut self.cx,
                 &state.memory,
                 args_offset,
                 1,
@@ -135,39 +146,40 @@ impl SymbolicExecutor {
         out_size: &BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
-            state.return_data = SymReturnData::default();
+            state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::Revert);
         }
 
         let mut initcode = artifact_code(&artifact, false)?;
         initcode.extend_from_slice(&constructor_args);
-        let initcode = SymCode::concrete(initcode);
+        let initcode = SymCode::concrete(&mut self.cx, initcode);
 
         let nonce = state.world.nonce(executor, state.address)?;
         let created = state.address.create(nonce);
-        let created_word = SymExpr::constant(address_word(created));
+        let created_word = SymExpr::constant(&mut self.cx, address_word(created));
 
         let mut failure_world = state.world.clone();
         failure_world.increment_nonce(executor, state.address)?;
-        if failure_world.has_code_or_nonce(executor, created)? {
+        if failure_world.has_code_or_nonce(&mut self.cx, executor, created)? {
             state.world = failure_world;
-            complete_cheatcode_call(
-                state,
-                out_offset,
-                out_size,
-                SymReturnData::from_words(vec![SymExpr::zero()]),
-            )?;
+            let zero = SymExpr::zero(&mut self.cx);
+            let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
+            complete_cheatcode_call(&mut self.cx, state, out_offset, out_size, return_data)?;
             return Ok(StepOutcome::Continue);
         }
 
+        let zero = SymExpr::zero(&mut self.cx);
+        let calldata = SymBytes::empty(&mut self.cx);
+        let calldata = SymCalldata::from_bytes(&mut self.cx, calldata);
         let mut frame = CallFrame::new(
+            &mut self.cx,
             created,
             created,
             created,
             state.address,
-            SymExpr::zero(),
+            zero,
             false,
-            SymCalldata::from_bytes(SymBytes::default()),
+            calldata,
         );
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
@@ -229,11 +241,14 @@ impl SymbolicExecutor {
                         parent.call_mocks = outcome.state.call_mocks.clone();
                         parent.function_mocks = outcome.state.function_mocks.clone();
                         parent.world = failure_world.clone();
+                        let zero = SymExpr::zero(&mut self.cx);
+                        let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
                         complete_cheatcode_call(
+                            &mut self.cx,
                             &mut parent,
                             out_offset.clone(),
                             out_size,
-                            SymReturnData::from_words(vec![SymExpr::zero()]),
+                            return_data,
                         )?;
                         parents.push_back(parent);
                         continue;
@@ -259,21 +274,26 @@ impl SymbolicExecutor {
                         &outcome.return_data,
                     )?;
                     if !parent.world.is_destroyed(created) {
-                        parent.world.install_code(created, outcome.return_data.to_code()?);
+                        parent
+                            .world
+                            .install_code(created, outcome.return_data.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
+                    let return_data =
+                        SymReturnData::from_words(&mut self.cx, vec![created_word.clone()]);
                     complete_cheatcode_call(
+                        &mut self.cx,
                         &mut parent,
                         out_offset.clone(),
                         out_size,
-                        SymReturnData::from_words(vec![created_word.clone()]),
+                        return_data,
                     )?;
                 }
                 TopLevelCallStatus::Revert => {
                     parent.world = failure_world.clone();
                     parent.return_data = outcome.return_data.clone();
-                    parent.copy_call_output_offset(out_offset.clone(), out_size)?;
-                    parent.stack.push(SymExpr::zero())?;
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), out_size)?;
+                    parent.stack.push(SymExpr::zero(&mut self.cx))?;
                 }
                 TopLevelCallStatus::Failure => {
                     *state = parent;
@@ -284,11 +304,11 @@ impl SymbolicExecutor {
             parents.push_back(parent);
         }
 
-        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
+        let Some(first) = self.pop_next_path(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        spill_batch(parents, worklist, self.config.exploration_order);
+        worklist.extend(parents);
         Ok(StepOutcome::Continue)
     }
 
@@ -302,18 +322,22 @@ impl SymbolicExecutor {
         if state.expected_creates.is_empty() {
             return Ok(());
         }
-        let bytecode = runtime.read_concrete("symbolic expected create bytecode")?;
+        let bytecode = runtime.read_concrete(&mut self.cx, "symbolic expected create bytecode")?;
         let mut mismatch_constraints = None;
         for idx in 0..state.expected_creates.len() {
-            let Some(condition) =
-                state.expected_creates[idx].match_condition(deployer, kind, &bytecode)
-            else {
+            let Some(condition) = state.expected_creates[idx].match_condition(
+                &mut self.cx,
+                deployer,
+                kind,
+                &bytecode,
+            ) else {
                 continue;
             };
             let (match_constraints, match_sat) =
                 self.constraints_with_condition(state, condition.clone())?;
+            let mismatch_condition = condition.not(&mut self.cx);
             let (candidate_mismatch_constraints, mismatch_sat) =
-                self.constraints_with_condition(state, condition.not())?;
+                self.constraints_with_condition(state, mismatch_condition)?;
 
             if match_sat && !mismatch_sat {
                 state.constraints = match_constraints;
@@ -348,7 +372,7 @@ impl SymbolicExecutor {
         let Some(record) = state.access_record.clone() else {
             return Ok(None);
         };
-        let target = read_abi_word_arg(&state.memory, in_offset + 4, 0)?;
+        let target = read_abi_word_arg(&mut self.cx, &state.memory, in_offset + 4, 0)?;
         if target.as_const().is_some() {
             return Ok(None);
         }
@@ -361,40 +385,39 @@ impl SymbolicExecutor {
         let mut branches = VecDeque::new();
         let mut matched_conditions = Vec::new();
         for address in addresses {
-            let condition = target.address_match_condition(address);
+            let condition = target.address_match_condition(&mut self.cx, address);
             matched_conditions.push(condition.clone());
             if let Some(constraints) = self.constraints_for_condition(state, condition)? {
                 let mut branch = state.clone();
                 branch.constraints = constraints;
+                let return_data = accesses_return_data(&mut self.cx, Some(&record), address);
                 complete_cheatcode_call(
+                    &mut self.cx,
                     &mut branch,
                     out_offset.clone(),
                     out_size,
-                    accesses_return_data(Some(&record), address),
+                    return_data,
                 )?;
                 branches.push_back(branch);
             }
         }
 
-        let unmatched_condition =
-            SymBoolExpr::and(matched_conditions.into_iter().map(SymBoolExpr::not).collect());
+        let unmatched_conditions =
+            matched_conditions.into_iter().map(|condition| condition.not(&mut self.cx)).collect();
+        let unmatched_condition = SymBoolExpr::and(&mut self.cx, unmatched_conditions);
         if let Some(constraints) = self.constraints_for_condition(state, unmatched_condition)? {
             let mut branch = state.clone();
             branch.constraints = constraints;
-            complete_cheatcode_call(
-                &mut branch,
-                out_offset,
-                out_size,
-                accesses_return_data(Some(&record), Address::ZERO),
-            )?;
+            let return_data = accesses_return_data(&mut self.cx, Some(&record), Address::ZERO);
+            complete_cheatcode_call(&mut self.cx, &mut branch, out_offset, out_size, return_data)?;
             branches.push_back(branch);
         }
 
-        let Some(first_branch) = pop_batch(&mut branches, self.config.exploration_order) else {
+        let Some(first_branch) = self.pop_next_path(&mut branches) else {
             return Ok(Some(StepOutcome::AssumeRejected));
         };
         *state = first_branch;
-        spill_batch(branches, worklist, self.config.exploration_order);
+        worklist.extend(branches);
         Ok(Some(StepOutcome::Continue))
     }
 
@@ -404,28 +427,29 @@ impl SymbolicExecutor {
         target: SymExpr,
     ) -> Result<SymReturnData, SymbolicError> {
         let Some(record) = state.access_record.clone() else {
-            return Ok(accesses_return_data(None, Address::ZERO));
+            return Ok(accesses_return_data(&mut self.cx, None, Address::ZERO));
         };
 
         if let Some(target) = target.as_const() {
-            return Ok(accesses_return_data(Some(&record), word_to_address(target)));
+            return Ok(accesses_return_data(&mut self.cx, Some(&record), word_to_address(target)));
         }
 
         let addresses = record.addresses();
         if addresses.is_empty() {
-            return Ok(accesses_return_data(Some(&record), Address::ZERO));
+            return Ok(accesses_return_data(&mut self.cx, Some(&record), Address::ZERO));
         }
 
         for address in addresses {
-            let condition = target.address_match_condition(address);
+            let condition = target.address_match_condition(&mut self.cx, address);
             let (match_constraints, match_sat) =
                 self.constraints_with_condition(state, condition.clone())?;
-            let (_, mismatch_sat) = self.constraints_with_condition(state, condition.not())?;
+            let mismatch_condition = condition.not(&mut self.cx);
+            let (_, mismatch_sat) = self.constraints_with_condition(state, mismatch_condition)?;
 
             match (match_sat, mismatch_sat) {
                 (true, false) => {
                     state.constraints = match_constraints;
-                    return Ok(accesses_return_data(Some(&record), address));
+                    return Ok(accesses_return_data(&mut self.cx, Some(&record), address));
                 }
                 (true, true) => {
                     return Err(SymbolicError::Unsupported("symbolic vm.accesses address"));
@@ -434,7 +458,7 @@ impl SymbolicExecutor {
             }
         }
 
-        Ok(accesses_return_data(Some(&record), Address::ZERO))
+        Ok(accesses_return_data(&mut self.cx, Some(&record), Address::ZERO))
     }
 
     pub(super) fn add_call_mock(
@@ -457,8 +481,10 @@ impl SymbolicExecutor {
         target: Address,
         data: SymBytes,
     ) -> CheatcodeOutcome {
-        if let Some(mock) =
-            state.function_mocks.iter_mut().find(|mock| mock.matches_definition(&callee, &data))
+        if let Some(mock) = state
+            .function_mocks
+            .iter_mut()
+            .find(|mock| mock.matches_definition(&mut self.cx, &callee, &data))
         {
             mock.set_target(target);
         } else {
@@ -492,6 +518,7 @@ impl SymbolicExecutor {
                     return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
                 }
                 let mut values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -505,7 +532,10 @@ impl SymbolicExecutor {
                     .pop()
                     .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
                 state.assume_no_revert_next_call =
-                    Some(AssumeNoRevert::Filtered(vec![dyn_potential_revert(&value)?]));
+                    Some(AssumeNoRevert::Filtered(vec![dyn_potential_revert(
+                        &mut self.cx,
+                        &value,
+                    )?]));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             assumeNoRevert_2Call::SELECTOR => {
@@ -513,6 +543,7 @@ impl SymbolicExecutor {
                     return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert overlap"));
                 }
                 let mut values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -526,7 +557,7 @@ impl SymbolicExecutor {
                     .pop()
                     .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
                 state.assume_no_revert_next_call =
-                    Some(AssumeNoRevert::Filtered(dyn_potential_reverts(&value)?));
+                    Some(AssumeNoRevert::Filtered(dyn_potential_reverts(&mut self.cx, &value)?));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             skip_0Call::SELECTOR | skip_1Call::SELECTOR => {
@@ -545,48 +576,58 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             accessesCall::SELECTOR => {
-                let target = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let target = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 return Ok(CheatcodeOutcome::ContinueData(
                     self.accesses_return_data_for_target(state, target)?,
                 ));
             }
             getRecordedLogsCall::SELECTOR => {
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
-                return Ok(CheatcodeOutcome::ContinueData(recorded_logs_return_data(logs)));
+                return Ok(CheatcodeOutcome::ContinueData(recorded_logs_return_data(
+                    &mut self.cx,
+                    logs,
+                )));
             }
             getRecordedLogsJsonCall::SELECTOR => {
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();
-                return Ok(CheatcodeOutcome::ContinueData(recorded_logs_json_return_data(logs)?));
+                return Ok(CheatcodeOutcome::ContinueData(recorded_logs_json_return_data(
+                    &mut self.cx,
+                    logs,
+                )?));
             }
             expectRevert_0Call::SELECTOR => {
                 return Ok(self.set_expected_revert(state, ExpectedRevertData::Any, None, 1));
             }
             expectRevert_1Call::SELECTOR => {
-                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
+                let selector =
+                    read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     None,
                     1,
                 ));
             }
             expectRevert_2Call::SELECTOR => {
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectRevert",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::exact(SymBytes::exprs(data)),
+                    ExpectedRevertData::exact(data),
                     None,
                     1,
                 ));
             }
             expectRevert_3Call::SELECTOR => {
-                let reverter = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 return Ok(self.set_expected_revert(
                     state,
                     ExpectedRevertData::Any,
@@ -595,68 +636,96 @@ impl SymbolicExecutor {
                 ));
             }
             expectRevert_4Call::SELECTOR => {
-                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let selector =
+                    read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
+                let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     Some(reverter),
                     1,
                 ));
             }
             expectRevert_5Call::SELECTOR => {
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectRevert",
                 )?;
-                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::exact(SymBytes::exprs(data)),
+                    ExpectedRevertData::exact(data),
                     Some(reverter),
                     1,
                 ));
             }
             expectRevert_6Call::SELECTOR => {
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 0, "symbolic vm.expectRevert")?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.expectRevert",
+                )?;
                 return Ok(self.set_expected_revert(state, ExpectedRevertData::Any, None, count));
             }
             expectRevert_7Call::SELECTOR => {
-                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
+                let selector =
+                    read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectRevert",
+                )?;
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     None,
                     count,
                 ));
             }
             expectRevert_8Call::SELECTOR => {
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectRevert",
                 )?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectRevert",
+                )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::exact(SymBytes::exprs(data)),
+                    ExpectedRevertData::exact(data),
                     None,
                     count,
                 ));
             }
             expectRevert_9Call::SELECTOR => {
-                let reverter = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
+                let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectRevert",
+                )?;
                 return Ok(self.set_expected_revert(
                     state,
                     ExpectedRevertData::Any,
@@ -665,50 +734,68 @@ impl SymbolicExecutor {
                 ));
             }
             expectRevert_10Call::SELECTOR => {
-                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectRevert")?;
+                let selector =
+                    read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
+                let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.expectRevert",
+                )?;
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     Some(reverter),
                     count,
                 ));
             }
             expectRevert_11Call::SELECTOR => {
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectRevert",
                 )?;
-                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectRevert")?;
+                let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.expectRevert",
+                )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::exact(SymBytes::exprs(data)),
+                    ExpectedRevertData::exact(data),
                     Some(reverter),
                     count,
                 ));
             }
             expectPartialRevert_0Call::SELECTOR => {
-                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
+                let selector =
+                    read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     None,
                     1,
                 ));
             }
             expectPartialRevert_1Call::SELECTOR => {
-                let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
-                let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let selector =
+                    read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 0);
+                let reverter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let data = SymBytes::exprs(&mut self.cx, selector);
                 return Ok(self.set_expected_revert(
                     state,
-                    ExpectedRevertData::prefix(SymBytes::exprs(selector)),
+                    ExpectedRevertData::prefix(data),
                     Some(reverter),
                     1,
                 ));
@@ -722,7 +809,7 @@ impl SymbolicExecutor {
                 ));
             }
             expectEmit_3Call::SELECTOR => {
-                let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 return Ok(self.set_expected_emit(
                     state,
                     ExpectedEmitChecks::default_non_anonymous(),
@@ -731,8 +818,13 @@ impl SymbolicExecutor {
                 ));
             }
             expectEmit_6Call::SELECTOR => {
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 0, "symbolic vm.expectEmit")?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.expectEmit",
+                )?;
                 return Ok(self.set_expected_emit(
                     state,
                     ExpectedEmitChecks::default_non_anonymous(),
@@ -741,9 +833,14 @@ impl SymbolicExecutor {
                 ));
             }
             expectEmit_7Call::SELECTOR => {
-                let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectEmit")?;
+                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.expectEmit",
+                )?;
                 return Ok(self.set_expected_emit(
                     state,
                     ExpectedEmitChecks::default_non_anonymous(),
@@ -752,29 +849,51 @@ impl SymbolicExecutor {
                 ));
             }
             expectEmit_0Call::SELECTOR => {
-                let checks =
-                    ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
+                let checks = ExpectedEmitChecks::from_non_anonymous_args(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                )?;
                 return Ok(self.set_expected_emit(state, checks, None, 1));
             }
             expectEmit_1Call::SELECTOR => {
-                let checks =
-                    ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
-                let emitter = read_abi_word_arg(&state.memory, args_offset, 4)?;
+                let checks = ExpectedEmitChecks::from_non_anonymous_args(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                )?;
+                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 4)?;
                 return Ok(self.set_expected_emit(state, checks, Some(emitter), 1));
             }
             expectEmit_4Call::SELECTOR => {
-                let checks =
-                    ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectEmit")?;
+                let checks = ExpectedEmitChecks::from_non_anonymous_args(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                )?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    4,
+                    "symbolic vm.expectEmit",
+                )?;
                 return Ok(self.set_expected_emit(state, checks, None, count));
             }
             expectEmit_5Call::SELECTOR => {
-                let checks =
-                    ExpectedEmitChecks::from_non_anonymous_args(&state.memory, args_offset)?;
-                let emitter = read_abi_word_arg(&state.memory, args_offset, 4)?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 5, "symbolic vm.expectEmit")?;
+                let checks = ExpectedEmitChecks::from_non_anonymous_args(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                )?;
+                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 4)?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    5,
+                    "symbolic vm.expectEmit",
+                )?;
                 return Ok(self.set_expected_emit(state, checks, Some(emitter), count));
             }
             expectEmitAnonymous_2Call::SELECTOR => {
@@ -786,7 +905,7 @@ impl SymbolicExecutor {
                 ));
             }
             expectEmitAnonymous_3Call::SELECTOR => {
-                let emitter = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 return Ok(self.set_expected_emit(
                     state,
                     ExpectedEmitChecks::default_anonymous(),
@@ -795,226 +914,289 @@ impl SymbolicExecutor {
                 ));
             }
             expectEmitAnonymous_0Call::SELECTOR => {
-                let checks = ExpectedEmitChecks::from_anonymous_args(&state.memory, args_offset)?;
+                let checks = ExpectedEmitChecks::from_anonymous_args(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                )?;
                 return Ok(self.set_expected_emit(state, checks, None, 1));
             }
             expectEmitAnonymous_1Call::SELECTOR => {
-                let checks = ExpectedEmitChecks::from_anonymous_args(&state.memory, args_offset)?;
-                let emitter = read_abi_word_arg(&state.memory, args_offset, 5)?;
+                let checks = ExpectedEmitChecks::from_anonymous_args(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                )?;
+                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 5)?;
                 return Ok(self.set_expected_emit(state, checks, Some(emitter), 1));
             }
             expectCall_0Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     1,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
-                return Ok(self.set_expected_call(
-                    state,
-                    callee,
-                    None,
-                    None,
-                    None,
-                    SymBytes::exprs(data),
-                    None,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.set_expected_call(state, callee, None, None, None, data, None));
             }
             expectCall_1Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     1,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.expectCall",
+                )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     None,
                     None,
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     Some(count),
                 ));
             }
             expectCall_2Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.expectCall",
                 )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     None,
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     None,
                 ));
             }
             expectCall_3Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.expectCall",
                 )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 3, "symbolic vm.expectCall")?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    3,
+                    "symbolic vm.expectCall",
+                )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     None,
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     Some(count),
                 ));
             }
             expectCall_4Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.expectCall",
                 )?;
-                let gas =
-                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let gas = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.expectCall",
+                )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     3,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     Some(gas),
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     None,
                 ));
             }
             expectCall_5Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.expectCall",
                 )?;
-                let gas =
-                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let gas = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.expectCall",
+                )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     3,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectCall")?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    4,
+                    "symbolic vm.expectCall",
+                )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     Some(gas),
                     None,
-                    SymBytes::exprs(data),
+                    data,
                     Some(count),
                 ));
             }
             expectCallMinGas_0Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.expectCall",
                 )?;
-                let min_gas =
-                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let min_gas = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.expectCall",
+                )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     3,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     None,
                     Some(min_gas),
-                    SymBytes::exprs(data),
+                    data,
                     None,
                 ));
             }
             expectCallMinGas_1Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.expectCall",
                 )?;
-                let min_gas =
-                    read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
+                let min_gas = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.expectCall",
+                )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     3,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.expectCall",
                 )?;
-                let count =
-                    read_abi_u64_arg(&state.memory, args_offset, 4, "symbolic vm.expectCall")?;
+                let count = read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    4,
+                    "symbolic vm.expectCall",
+                )?;
+                let data = SymBytes::exprs(&mut self.cx, data);
                 return Ok(self.set_expected_call(
                     state,
                     callee,
                     Some(value),
                     None,
                     Some(min_gas),
-                    SymBytes::exprs(data),
+                    data,
                     Some(count),
                 ));
             }
             expectCreateCall::SELECTOR | expectCreate2Call::SELECTOR => {
                 let bytecode = read_abi_dynamic_bytes_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     0,
                     "symbolic vm.expectCreate bytecode",
                 )?;
-                let deployer = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let deployer = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 let kind = if selector == expectCreateCall::SELECTOR {
                     CreateKind::Create
                 } else {
@@ -1027,8 +1209,9 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             mockCall_0Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     1,
@@ -1036,30 +1219,27 @@ impl SymbolicExecutor {
                     "symbolic vm.mockCall",
                 )?;
                 let ret = read_abi_dynamic_return_data_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCall",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    None,
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], false));
             }
             mockCall_1Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.mockCall",
                 )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
@@ -1067,69 +1247,56 @@ impl SymbolicExecutor {
                     "symbolic vm.mockCall",
                 )?;
                 let ret = read_abi_dynamic_return_data_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     3,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCall",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    Some(value),
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], false));
             }
             mockCall_2Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 1);
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let data = read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 1);
                 let ret = read_abi_dynamic_return_data_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCall",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    None,
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], false));
             }
             mockCall_3Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.mockCall",
                 )?;
-                let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 2);
+                let data = read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 2);
                 let ret = read_abi_dynamic_return_data_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     3,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCall",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    Some(value),
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], false));
             }
             mockCalls_0Call::SELECTOR | mockCalls_1Call::SELECTOR => {
                 let has_value = selector == mockCalls_1Call::SELECTOR;
                 let (value, data_idx, ret_idx) = if has_value {
                     let value = read_abi_concrete_word_arg(
+                        &mut self.cx,
                         &state.memory,
                         args_offset,
                         1,
@@ -1139,8 +1306,9 @@ impl SymbolicExecutor {
                 } else {
                     (None, 1, 2)
                 };
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     data_idx,
@@ -1148,24 +1316,20 @@ impl SymbolicExecutor {
                     "symbolic vm.mockCalls data",
                 )?;
                 let returns = read_abi_symbolic_dynamic_bytes_array_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     ret_idx,
                     self.config.max_dynamic_length as usize,
                     self.config.max_calldata_bytes as usize,
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    value,
-                    SymBytes::exprs(data),
-                    returns,
-                    false,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, value, data, returns, false));
             }
             mockCallRevert_0Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     1,
@@ -1173,30 +1337,27 @@ impl SymbolicExecutor {
                     "symbolic vm.mockCallRevert",
                 )?;
                 let ret = read_abi_dynamic_return_data_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCallRevert",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    None,
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    true,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], true));
             }
             mockCallRevert_1Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.mockCallRevert",
                 )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
@@ -1204,143 +1365,212 @@ impl SymbolicExecutor {
                     "symbolic vm.mockCallRevert",
                 )?;
                 let ret = read_abi_dynamic_return_data_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     3,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCallRevert",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    Some(value),
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    true,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], true));
             }
             mockCallRevert_2Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 1);
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let data = read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 1);
                 let ret = read_abi_dynamic_return_data_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCallRevert",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    None,
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    true,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, None, data, vec![ret], true));
             }
             mockCallRevert_3Call::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.mockCallRevert",
                 )?;
-                let data = read_abi_bytes4_words_arg(&state.memory, args_offset, 2);
+                let data = read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, 2);
                 let ret = read_abi_dynamic_return_data_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     3,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockCallRevert",
                 )?;
-                return Ok(self.add_call_mock(
-                    state,
-                    callee,
-                    Some(value),
-                    SymBytes::exprs(data),
-                    vec![ret],
-                    true,
-                ));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.add_call_mock(state, callee, Some(value), data, vec![ret], true));
             }
             mockFunctionCall::SELECTOR => {
-                let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let target = read_abi_address_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     1,
                     "symbolic vm.mockFunction",
                 )?;
                 let data = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     2,
                     self.config.max_calldata_bytes as usize,
                     "symbolic vm.mockFunction",
                 )?;
-                return Ok(self.set_function_mock(state, callee, target, SymBytes::exprs(data)));
+                let data = SymBytes::exprs(&mut self.cx, data);
+                return Ok(self.set_function_mock(state, callee, target, data));
             }
             prank_0Call::SELECTOR => {
-                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
                 state.prank.set_next(caller, None);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             prank_1Call::SELECTOR => {
-                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let origin = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
+                let origin = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    1,
+                )?;
                 state.prank.set_next(caller, Some(origin));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             prank_2Call::SELECTOR => {
-                let delegate_call =
-                    read_abi_bool_arg(&state.memory, args_offset, 1, "symbolic vm.prank")?;
+                let delegate_call = read_abi_bool_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.prank",
+                )?;
                 if delegate_call {
                     return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
                 }
-                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
                 state.prank.set_next(caller, None);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             prank_3Call::SELECTOR => {
-                let delegate_call =
-                    read_abi_bool_arg(&state.memory, args_offset, 2, "symbolic vm.prank")?;
+                let delegate_call = read_abi_bool_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.prank",
+                )?;
                 if delegate_call {
                     return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
                 }
-                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let origin = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
+                let origin = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    1,
+                )?;
                 state.prank.set_next(caller, Some(origin));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             startPrank_0Call::SELECTOR => {
-                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
                 state.prank.set_persistent(caller, None);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             startPrank_1Call::SELECTOR => {
-                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let origin = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
+                let origin = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    1,
+                )?;
                 state.prank.set_persistent(caller, Some(origin));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             startPrank_2Call::SELECTOR => {
-                let delegate_call =
-                    read_abi_bool_arg(&state.memory, args_offset, 1, "symbolic vm.startPrank")?;
+                let delegate_call = read_abi_bool_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.startPrank",
+                )?;
                 if delegate_call {
                     return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
                 }
-                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
                 state.prank.set_persistent(caller, None);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             startPrank_3Call::SELECTOR => {
-                let delegate_call =
-                    read_abi_bool_arg(&state.memory, args_offset, 2, "symbolic vm.startPrank")?;
+                let delegate_call = read_abi_bool_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.startPrank",
+                )?;
                 if delegate_call {
                     return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
                 }
-                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let origin = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                )?;
+                let origin = read_abi_address_word_or_symbolic_slot_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    1,
+                )?;
                 state.prank.set_persistent(caller, Some(origin));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
@@ -1349,93 +1579,179 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             readCallersCall::SELECTOR => {
-                return Ok(CheatcodeOutcome::Continue(state.read_callers_words()));
+                return Ok(CheatcodeOutcome::Continue(state.read_callers_words(&mut self.cx)));
             }
             addrCall::SELECTOR => {
-                let private_key =
-                    read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.addr")?;
+                let private_key = read_abi_constrained_word_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.addr",
+                )?;
                 let address = private_key_address(private_key)?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(address_word(
-                    address,
-                ))]));
+                let address = SymExpr::constant(&mut self.cx, address_word(address));
+                return Ok(CheatcodeOutcome::Continue(vec![address]));
             }
             sign_1Call::SELECTOR => {
-                let private_key =
-                    read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.sign")?;
-                let digest =
-                    read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.sign")?;
-                return Ok(CheatcodeOutcome::Continue(sign_hash_words(private_key, digest)?));
+                let private_key = read_abi_constrained_word_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic vm.sign",
+                )?;
+                let digest = read_abi_constrained_word_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    1,
+                    "symbolic vm.sign",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(sign_hash_words(
+                    &mut self.cx,
+                    private_key,
+                    digest,
+                )?));
             }
             signCompact_1Call::SELECTOR => {
                 let private_key = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     "symbolic vm.signCompact",
                 )?;
                 let digest = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     1,
                     "symbolic vm.signCompact",
                 )?;
                 return Ok(CheatcodeOutcome::Continue(sign_compact_hash_words(
+                    &mut self.cx,
                     private_key,
                     digest,
                 )?));
             }
             deriveKey_0Call::SELECTOR => {
-                let mnemonic =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
-                let index =
-                    read_abi_u32_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
+                let mnemonic = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.deriveKey",
+                )?;
+                let index = read_abi_u32_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.deriveKey",
+                )?;
                 let private_key = derive_private_key::<English>(
                     &mnemonic,
                     DEFAULT_DERIVATION_PATH_PREFIX,
                     index,
                 )?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(private_key)]));
+                let private_key = SymExpr::constant(&mut self.cx, private_key);
+                return Ok(CheatcodeOutcome::Continue(vec![private_key]));
             }
             deriveKey_1Call::SELECTOR => {
-                let mnemonic =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
-                let path =
-                    read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
-                let index =
-                    read_abi_u32_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
+                let mnemonic = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.deriveKey",
+                )?;
+                let path = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.deriveKey",
+                )?;
+                let index = read_abi_u32_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.deriveKey",
+                )?;
                 let private_key = derive_private_key::<English>(&mnemonic, &path, index)?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(private_key)]));
+                let private_key = SymExpr::constant(&mut self.cx, private_key);
+                return Ok(CheatcodeOutcome::Continue(vec![private_key]));
             }
             deriveKey_2Call::SELECTOR => {
-                let mnemonic =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
-                let index =
-                    read_abi_u32_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
-                let language =
-                    read_abi_string_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
+                let mnemonic = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.deriveKey",
+                )?;
+                let index = read_abi_u32_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.deriveKey",
+                )?;
+                let language = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.deriveKey",
+                )?;
                 let private_key = derive_private_key_with_language(
                     &mnemonic,
                     DEFAULT_DERIVATION_PATH_PREFIX,
                     index,
                     &language,
                 )?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(private_key)]));
+                let private_key = SymExpr::constant(&mut self.cx, private_key);
+                return Ok(CheatcodeOutcome::Continue(vec![private_key]));
             }
             deriveKey_3Call::SELECTOR => {
-                let mnemonic =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deriveKey")?;
-                let path =
-                    read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
-                let index =
-                    read_abi_u32_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
-                let language =
-                    read_abi_string_arg(&state.memory, args_offset, 3, "symbolic vm.deriveKey")?;
+                let mnemonic = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.deriveKey",
+                )?;
+                let path = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.deriveKey",
+                )?;
+                let index = read_abi_u32_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    2,
+                    "symbolic vm.deriveKey",
+                )?;
+                let language = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    3,
+                    "symbolic vm.deriveKey",
+                )?;
                 let private_key =
                     derive_private_key_with_language(&mnemonic, &path, index, &language)?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(private_key)]));
+                let private_key = SymExpr::constant(&mut self.cx, private_key);
+                return Ok(CheatcodeOutcome::Continue(vec![private_key]));
             }
             rememberKeyCall::SELECTOR => {
                 let private_key = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
@@ -1443,18 +1759,28 @@ impl SymbolicExecutor {
                 )?;
                 let address = private_key_address(private_key)?;
                 state.wallets.insert(address);
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(address_word(
-                    address,
-                ))]));
+                let address = SymExpr::constant(&mut self.cx, address_word(address));
+                return Ok(CheatcodeOutcome::Continue(vec![address]));
             }
             rememberKeys_0Call::SELECTOR | rememberKeys_1Call::SELECTOR => {
-                let mnemonic =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.rememberKeys")?;
-                let path =
-                    read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.rememberKeys")?;
+                let mnemonic = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.rememberKeys",
+                )?;
+                let path = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.rememberKeys",
+                )?;
                 let (language, count_index) = if selector == rememberKeys_1Call::SELECTOR {
                     (
                         Some(read_abi_string_arg(
+                            &mut self.cx,
                             &state.memory,
                             args_offset,
                             2,
@@ -1466,6 +1792,7 @@ impl SymbolicExecutor {
                     (None, 2)
                 };
                 let count = read_abi_u32_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     count_index,
@@ -1486,6 +1813,7 @@ impl SymbolicExecutor {
                     addresses.push(DynSolValue::Address(address));
                 }
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
+                    &mut self.cx,
                     DynSolValue::Array(addresses),
                 )));
             }
@@ -1493,89 +1821,128 @@ impl SymbolicExecutor {
                 let wallets = DynSolValue::Array(
                     state.wallets.iter().copied().map(DynSolValue::Address).collect(),
                 );
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(wallets)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
+                    &mut self.cx,
+                    wallets,
+                )));
             }
             storeCall::SELECTOR => {
-                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let slot = state.memory.load_word(in_offset + 36)?;
-                let value = state.memory.load_word(in_offset + 68)?;
-                if target == CHEATCODE_ADDRESS
-                    && slot == SymExpr::constant(failed_slot())
-                    && value == SymExpr::constant(U256::from(1))
-                {
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let slot = state.memory.load_word(&mut self.cx, in_offset + 36)?;
+                let value = state.memory.load_word(&mut self.cx, in_offset + 68)?;
+                let failed_slot = SymExpr::constant(&mut self.cx, failed_slot());
+                let one = SymExpr::one(&mut self.cx);
+                if target == CHEATCODE_ADDRESS && slot == failed_slot && value == one {
                     return Ok(CheatcodeOutcome::Failure);
                 }
                 state.world.sstore(target, slot, value);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             loadCall::SELECTOR => {
-                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let slot = state.memory.load_word(in_offset + 36)?;
-                let concrete_slot = state.constrained_word(&slot);
-                let value = state.world.sload(executor, target, slot, concrete_slot)?;
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let slot = state.memory.load_word(&mut self.cx, in_offset + 36)?;
+                let concrete_slot = state.constrained_word(&mut self.cx, &slot);
+                let value =
+                    state.world.sload(&mut self.cx, executor, target, slot, concrete_slot)?;
                 return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             getNonce_0Call::SELECTOR => {
-                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 let nonce = state.world.nonce(executor, target)?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(nonce))]));
+                let nonce = SymExpr::constant(&mut self.cx, U256::from(nonce));
+                return Ok(CheatcodeOutcome::Continue(vec![nonce]));
             }
             computeCreateAddressCall::SELECTOR => {
-                let deployer = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let nonce = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                let address = compute_create_address_word(state, deployer, nonce)?;
+                let deployer = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let nonce = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let address = compute_create_address_word(&mut self.cx, state, deployer, nonce)?;
                 return Ok(CheatcodeOutcome::Continue(vec![address]));
             }
             computeCreate2Address_0Call::SELECTOR => {
-                let salt = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let init_code_hash = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                let deployer = read_abi_word_arg(&state.memory, args_offset, 2)?;
-                let address = compute_create2_address_word(state, deployer, salt, init_code_hash)?;
+                let salt = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let init_code_hash =
+                    read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let deployer = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 2)?;
+                let address = compute_create2_address_word(
+                    &mut self.cx,
+                    state,
+                    deployer,
+                    salt,
+                    init_code_hash,
+                )?;
                 return Ok(CheatcodeOutcome::Continue(vec![address]));
             }
             computeCreate2Address_1Call::SELECTOR => {
-                let salt = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let init_code_hash = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let salt = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let init_code_hash =
+                    read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let deployer =
+                    SymExpr::constant(&mut self.cx, address_word(DEFAULT_CREATE2_DEPLOYER));
                 let address = compute_create2_address_word(
+                    &mut self.cx,
                     state,
-                    SymExpr::constant(address_word(DEFAULT_CREATE2_DEPLOYER)),
+                    deployer,
                     salt,
                     init_code_hash,
                 )?;
                 return Ok(CheatcodeOutcome::Continue(vec![address]));
             }
             etchCall::SELECTOR => {
-                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 let code = read_abi_symbolic_dynamic_byte_exprs_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     1,
                     self.config.max_dynamic_length as usize,
                     "symbolic vm.etch",
                 )?;
-                state.world.install_code(target, SymCode::from_byte_exprs(code));
+                let code = SymCode::from_byte_exprs(&mut self.cx, code);
+                state.world.install_code(target, code);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getCodeCall::SELECTOR | getDeployedCodeCall::SELECTOR => {
-                let artifact =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.getCode")?;
+                let artifact = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.getCode",
+                )?;
                 let code = artifact_code(&artifact, selector == getDeployedCodeCall::SELECTOR)?;
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&code)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
+                    &code,
+                )));
             }
             dealCall::SELECTOR => {
-                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let value = read_abi_word_arg(&state.memory, args_offset, 1)?;
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let value = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
                 if value.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
-                let value = state.constrained_word(&value).map(SymExpr::constant).unwrap_or(value);
+                let value = state
+                    .constrained_word(&mut self.cx, &value)
+                    .map(|value| SymExpr::constant(&mut self.cx, value))
+                    .unwrap_or(value);
                 state.world.set_balance_word(target, value);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             setNonceCall::SELECTOR | setNonceUnsafeCall::SELECTOR => {
-                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let nonce =
-                    read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.setNonce")?;
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let nonce = read_abi_constrained_word_arg(
+                    &mut self.cx,
+                    state,
+                    args_offset,
+                    1,
+                    "symbolic vm.setNonce",
+                )?;
                 let Ok(nonce) = u64::try_from(nonce) else {
                     return Err(SymbolicError::Unsupported("symbolic vm.setNonce nonce"));
                 };
@@ -1588,8 +1955,13 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             resetNonceCall::SELECTOR => {
-                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let nonce = if state.world.extcode(executor, target)?.is_empty() { 0 } else { 1 };
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let nonce = if state.world.extcode(&mut self.cx, executor, target)?.is_empty() {
+                    0
+                } else {
+                    1
+                };
                 state.world.set_nonce(target, nonce);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
@@ -1597,21 +1969,27 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             makePersistent_0Call::SELECTOR => {
-                let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let account =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 state.persistent_accounts.insert(account);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             makePersistent_1Call::SELECTOR => {
-                let account0 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let account1 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 1)?;
+                let account0 =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let account1 =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 1)?;
                 state.persistent_accounts.insert(account0);
                 state.persistent_accounts.insert(account1);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             makePersistent_2Call::SELECTOR => {
-                let account0 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let account1 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 1)?;
-                let account2 = read_abi_address_or_symbolic_slot_arg(state, args_offset, 2)?;
+                let account0 =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let account1 =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 1)?;
+                let account2 =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 2)?;
                 state.persistent_accounts.insert(account0);
                 state.persistent_accounts.insert(account1);
                 state.persistent_accounts.insert(account2);
@@ -1619,6 +1997,7 @@ impl SymbolicExecutor {
             }
             makePersistent_3Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -1630,12 +2009,14 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             revokePersistent_0Call::SELECTOR => {
-                let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let account =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 state.persistent_accounts.remove(&account);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             revokePersistent_1Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -1647,19 +2028,24 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             isPersistentCall::SELECTOR => {
-                let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    state.persistent_accounts.contains(&account),
-                ))]));
+                let account =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let exists = SymExpr::constant(
+                    &mut self.cx,
+                    U256::from(state.persistent_accounts.contains(&account)),
+                );
+                return Ok(CheatcodeOutcome::Continue(vec![exists]));
             }
             activeForkCall::SELECTOR => {
                 let id = executor.backend().active_fork_id().ok_or(SymbolicError::Unsupported(
                     "symbolic vm.activeFork requires an active forked executor",
                 ))?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(id)]));
+                let id = SymExpr::constant(&mut self.cx, id);
+                return Ok(CheatcodeOutcome::Continue(vec![id]));
             }
             selectForkCall::SELECTOR => {
                 let id = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
@@ -1674,6 +2060,7 @@ impl SymbolicExecutor {
             }
             rollFork_0Call::SELECTOR => {
                 let block_number = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
@@ -1690,12 +2077,14 @@ impl SymbolicExecutor {
             }
             rollFork_2Call::SELECTOR => {
                 let id = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     "symbolic vm.rollFork id",
                 )?;
                 let block_number = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     1,
@@ -1724,13 +2113,15 @@ impl SymbolicExecutor {
             }
             snapshotCall::SELECTOR | snapshotStateCall::SELECTOR => {
                 let id = state.world.snapshot_state();
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(id)]));
+                let id = SymExpr::constant(&mut self.cx, id);
+                return Ok(CheatcodeOutcome::Continue(vec![id]));
             }
             revertToCall::SELECTOR
             | revertToStateCall::SELECTOR
             | revertToAndDeleteCall::SELECTOR
             | revertToStateAndDeleteCall::SELECTOR => {
                 let id = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
@@ -1743,51 +2134,52 @@ impl SymbolicExecutor {
                 {
                     state.world.delete_snapshot(id);
                 }
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    success,
-                ))]));
+                let success = SymExpr::constant(&mut self.cx, U256::from(success));
+                return Ok(CheatcodeOutcome::Continue(vec![success]));
             }
             deleteSnapshotCall::SELECTOR | deleteStateSnapshotCall::SELECTOR => {
                 let id = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     "symbolic vm.deleteStateSnapshot snapshot",
                 )?;
                 let success = state.world.delete_snapshot(id);
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    success,
-                ))]));
+                let success = SymExpr::constant(&mut self.cx, U256::from(success));
+                return Ok(CheatcodeOutcome::Continue(vec![success]));
             }
             deleteSnapshotsCall::SELECTOR | deleteStateSnapshotsCall::SELECTOR => {
                 state.world.delete_snapshots();
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             warpCall::SELECTOR => {
-                state.block.timestamp = state.memory.load_word(in_offset + 4)?;
+                state.block.timestamp = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             rollCall::SELECTOR => {
-                state.block.number = state.memory.load_word(in_offset + 4)?;
+                state.block.number = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             setBlockhashCall::SELECTOR => {
                 let block_number = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     "symbolic vm.setBlockhash block number",
                 )?;
-                let block_hash = state.memory.load_word(in_offset + 36)?;
+                let block_hash = state.memory.load_word(&mut self.cx, in_offset + 36)?;
                 state.block.set_block_hash(block_number, block_hash)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             prevrandao_0Call::SELECTOR | prevrandao_1Call::SELECTOR => {
-                state.block.difficulty = state.memory.load_word(in_offset + 4)?;
+                state.block.difficulty = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             blobhashesCall::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -1806,32 +2198,36 @@ impl SymbolicExecutor {
                         .map(|hash| DynSolValue::FixedBytes(hash, 32))
                         .collect(),
                 );
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
+                    &mut self.cx,
+                    value,
+                )));
             }
             feeCall::SELECTOR => {
-                state.block.basefee = state.memory.load_word(in_offset + 4)?;
+                state.block.basefee = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             blobBaseFeeCall::SELECTOR => {
-                state.block.blob_basefee = state.memory.load_word(in_offset + 4)?;
+                state.block.blob_basefee = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getBlobBaseFeeCall::SELECTOR => {
                 return Ok(CheatcodeOutcome::Continue(vec![state.block.blob_basefee.clone()]));
             }
             chainIdCall::SELECTOR => {
-                state.block.chain_id = state.memory.load_word(in_offset + 4)?;
+                state.block.chain_id = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getChainIdCall::SELECTOR => {
                 return Ok(CheatcodeOutcome::Continue(vec![state.block.chain_id.clone()]));
             }
             difficultyCall::SELECTOR => {
-                state.block.difficulty = state.memory.load_word(in_offset + 4)?;
+                state.block.difficulty = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             coinbaseCall::SELECTOR => {
                 let coinbase = read_abi_constrained_address_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
@@ -1844,7 +2240,7 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(vec![state.block.number.clone()]));
             }
             txGasPriceCall::SELECTOR => {
-                state.gas_price = state.memory.load_word(in_offset + 4)?;
+                state.gas_price = state.memory.load_word(&mut self.cx, in_offset + 4)?;
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getBlockTimestampCall::SELECTOR => {
@@ -1852,6 +2248,7 @@ impl SymbolicExecutor {
             }
             labelCall::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -1863,14 +2260,20 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getLabelCall::SELECTOR => {
-                let account =
-                    read_abi_address_arg(&state.memory, args_offset, 0, "symbolic vm.getLabel")?;
+                let account = read_abi_address_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.getLabel",
+                )?;
                 let label = state
                     .labels
                     .get(&account)
                     .cloned()
                     .unwrap_or_else(|| format!("unlabeled:{account}"));
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     label.as_bytes(),
                 )));
             }
@@ -1933,6 +2336,7 @@ impl SymbolicExecutor {
             }
             getFoundryVersionCall::SELECTOR => {
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     env!("CARGO_PKG_VERSION").as_bytes(),
                 )));
             }
@@ -1940,6 +2344,7 @@ impl SymbolicExecutor {
                 let root = std::env::current_dir()
                     .map_err(|_| SymbolicError::Unsupported("symbolic vm.projectRoot"))?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     root.display().to_string().as_bytes(),
                 )));
             }
@@ -1950,7 +2355,8 @@ impl SymbolicExecutor {
                     .as_millis();
                 let value = U256::try_from(milliseconds)
                     .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(value)]));
+                let value = SymExpr::constant(&mut self.cx, value);
+                return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             isIsolateModeCall::SELECTOR => {
                 let isolate = executor
@@ -1958,123 +2364,187 @@ impl SymbolicExecutor {
                     .cheatcodes
                     .as_ref()
                     .is_some_and(|cheats| cheats.config.isolate);
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    isolate,
-                ))]));
+                let isolate = SymExpr::constant(&mut self.cx, U256::from(isolate));
+                return Ok(CheatcodeOutcome::Continue(vec![isolate]));
             }
             isContextCall::SELECTOR => {
                 let context = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     0,
                     "symbolic vm.isContext",
                 )?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    context == U256::ZERO || context == U256::from(1),
-                ))]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    U256::from(context == U256::ZERO || context == U256::from(1)),
+                )]));
             }
             toString_0Call::SELECTOR => {
-                let address =
-                    read_abi_address_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
+                let address = read_abi_address_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.toString",
+                )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     format!("{address:?}").as_bytes(),
                 )));
             }
             toString_1Call::SELECTOR => {
                 let bytes = read_abi_dynamic_bytes_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     0,
                     "symbolic vm.toString",
                 )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     format!("0x{}", hex::encode(bytes)).as_bytes(),
                 )));
             }
             toString_2Call::SELECTOR => {
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     0,
                     "symbolic vm.toString",
                 )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     format!("0x{}", hex::encode(value.to_be_bytes::<32>())).as_bytes(),
                 )));
             }
             toString_3Call::SELECTOR => {
-                let value =
-                    read_abi_bool_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
+                let value = read_abi_bool_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.toString",
+                )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     if value { "true" } else { "false" }.as_bytes(),
                 )));
             }
             toString_4Call::SELECTOR => {
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     0,
                     "symbolic vm.toString",
                 )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     value.to_string().as_bytes(),
                 )));
             }
             toString_5Call::SELECTOR => {
                 let value = read_abi_concrete_word_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     0,
                     "symbolic vm.toString",
                 )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     I256::from_raw(value).to_string().as_bytes(),
                 )));
             }
             parseBytesCall::SELECTOR => {
-                let value =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBytes")?;
+                let value = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.parseBytes",
+                )?;
                 let bytes = parse_env_bytes(&value)?;
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&bytes)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
+                    &bytes,
+                )));
             }
             parseAddressCall::SELECTOR => {
-                let value =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseAddress")?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(address_word(
-                    parse_env_address(&value)?,
-                ))]));
+                let value = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.parseAddress",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    address_word(parse_env_address(&value)?),
+                )]));
             }
             parseUintCall::SELECTOR => {
-                let value =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseUint")?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(parse_env_uint(
-                    &value,
-                )?)]));
+                let value = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.parseUint",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    parse_env_uint(&value)?,
+                )]));
             }
             parseIntCall::SELECTOR => {
-                let value =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseInt")?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(parse_env_int(
-                    &value,
-                )?)]));
+                let value = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.parseInt",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    parse_env_int(&value)?,
+                )]));
             }
             parseBytes32Call::SELECTOR => {
-                let value =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBytes32")?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(parse_env_bytes32(
-                    &value,
-                )?)]));
+                let value = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.parseBytes32",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    parse_env_bytes32(&value)?,
+                )]));
             }
             parseBoolCall::SELECTOR => {
-                let value =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBool")?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    parse_env_bool(&value)?,
-                ))]));
+                let value = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.parseBool",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    U256::from(parse_env_bool(&value)?),
+                )]));
             }
             toLowercaseCall::SELECTOR | toUppercaseCall::SELECTOR | trimCall::SELECTOR => {
-                let value =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.string")?;
+                let value = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.string",
+                )?;
                 let output = if selector == toLowercaseCall::SELECTOR {
                     value.to_lowercase()
                 } else if selector == toUppercaseCall::SELECTOR {
@@ -2083,11 +2553,13 @@ impl SymbolicExecutor {
                     value.trim().to_string()
                 };
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     output.as_bytes(),
                 )));
             }
             replaceCall::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2096,11 +2568,13 @@ impl SymbolicExecutor {
                 let output = dyn_string(&values[0])?
                     .replace(&dyn_string(&values[1])?, &dyn_string(&values[2])?);
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     output.as_bytes(),
                 )));
             }
             splitCall::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2117,11 +2591,13 @@ impl SymbolicExecutor {
                         .collect()
                 };
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
+                    &mut self.cx,
                     DynSolValue::Array(parts),
                 )));
             }
             indexOfCall::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2130,25 +2606,31 @@ impl SymbolicExecutor {
                 let input = dyn_string(&values[0])?;
                 let needle = dyn_string(&values[1])?;
                 let index = input.find(&needle).map(U256::from).unwrap_or(U256::MAX);
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(index)]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    index,
+                )]));
             }
             containsCall::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
                     vec![DynSolType::String, DynSolType::String],
                 )?;
                 let contains = dyn_string(&values[0])?.contains(&dyn_string(&values[1])?);
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    contains,
-                ))]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    U256::from(contains),
+                )]));
             }
             toBase64_0Call::SELECTOR
             | toBase64_1Call::SELECTOR
             | toBase64URL_0Call::SELECTOR
             | toBase64URL_1Call::SELECTOR => {
                 let data = read_abi_dynamic_bytes_arg(
+                    &mut self.cx,
                     &state.memory,
                     args_offset,
                     0,
@@ -2162,6 +2644,7 @@ impl SymbolicExecutor {
                     BASE64_STANDARD.encode(data)
                 };
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     encoded.as_bytes(),
                 )));
             }
@@ -2172,74 +2655,124 @@ impl SymbolicExecutor {
                 return self.handle_bound_int(state, args_offset);
             }
             envExistsCall::SELECTOR => {
-                let name =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envExists")?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    std::env::var_os(name).is_some(),
-                ))]));
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envExists",
+                )?;
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    U256::from(std::env::var_os(name).is_some()),
+                )]));
             }
             envBool_0Call::SELECTOR => {
-                let name =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBool")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envBool",
+                )?;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(U256::from(
-                    parse_env_bool(&value)?,
-                ))]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    U256::from(parse_env_bool(&value)?),
+                )]));
             }
             envUint_0Call::SELECTOR => {
-                let name =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envUint")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envUint",
+                )?;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(parse_env_uint(
-                    &value,
-                )?)]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    parse_env_uint(&value)?,
+                )]));
             }
             envInt_0Call::SELECTOR => {
-                let name =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envInt")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envInt",
+                )?;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(parse_env_int(
-                    &value,
-                )?)]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    parse_env_int(&value)?,
+                )]));
             }
             envAddress_0Call::SELECTOR => {
-                let name =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envAddress")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envAddress",
+                )?;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 let address = parse_env_address(&value)?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(address_word(
-                    address,
-                ))]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    address_word(address),
+                )]));
             }
             envBytes32_0Call::SELECTOR => {
-                let name =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBytes32")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envBytes32",
+                )?;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(parse_env_bytes32(
-                    &value,
-                )?)]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    parse_env_bytes32(&value)?,
+                )]));
             }
             envString_0Call::SELECTOR => {
-                let name =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envString")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envString",
+                )?;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     value.as_bytes(),
                 )));
             }
             envBytes_0Call::SELECTOR => {
-                let name =
-                    read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBytes")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envBytes",
+                )?;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 let bytes = parse_env_bytes(&value)?;
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&bytes)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
+                    &bytes,
+                )));
             }
             envBool_1Call::SELECTOR
             | envUint_1Call::SELECTOR
@@ -2249,6 +2782,7 @@ impl SymbolicExecutor {
             | envString_1Call::SELECTOR
             | envBytes_1Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2273,28 +2807,52 @@ impl SymbolicExecutor {
                 } else {
                     parse_env_array(&value, &delimiter, parse_env_bytes_value)?
                 };
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
+                    &mut self.cx,
+                    value,
+                )));
             }
             envOr_0Call::SELECTOR => {
-                let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envOr")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envOr",
+                )?;
                 let value = match std::env::var(name) {
                     Ok(value) => U256::from(parse_env_bool(&value)?),
                     Err(_) => read_abi_concrete_word_arg(
+                        &mut self.cx,
                         &state.memory,
                         args_offset,
                         1,
                         "symbolic vm.envOr",
                     )?,
                 };
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(value)]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    value,
+                )]));
             }
             envOr_1Call::SELECTOR
             | envOr_2Call::SELECTOR
             | envOr_3Call::SELECTOR
             | envOr_4Call::SELECTOR => {
-                let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envOr")?;
-                let default =
-                    read_abi_concrete_word_arg(&state.memory, args_offset, 1, "symbolic vm.envOr")?;
+                let name = read_abi_string_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic vm.envOr",
+                )?;
+                let default = read_abi_concrete_word_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.envOr",
+                )?;
                 let value = match std::env::var(name) {
                     Ok(value) if selector == envOr_1Call::SELECTOR => parse_env_uint(&value)?,
                     Ok(value) if selector == envOr_2Call::SELECTOR => parse_env_int(&value)?,
@@ -2304,10 +2862,14 @@ impl SymbolicExecutor {
                     Ok(value) => parse_env_bytes32(&value)?,
                     Err(_) => default,
                 };
-                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(value)]));
+                return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
+                    &mut self.cx,
+                    value,
+                )]));
             }
             envOr_5Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2316,11 +2878,13 @@ impl SymbolicExecutor {
                 let name = dyn_string(&values[0])?;
                 let value = std::env::var(name).unwrap_or(dyn_string(&values[1])?);
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
                     value.as_bytes(),
                 )));
             }
             envOr_6Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2331,7 +2895,10 @@ impl SymbolicExecutor {
                     Ok(value) => parse_env_bytes(&value)?,
                     Err(_) => dyn_bytes(&values[1])?,
                 };
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&value)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
+                    &value,
+                )));
             }
             envOr_7Call::SELECTOR
             | envOr_8Call::SELECTOR
@@ -2356,6 +2923,7 @@ impl SymbolicExecutor {
                     DynSolType::Bytes
                 };
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2389,13 +2957,17 @@ impl SymbolicExecutor {
                     Ok(value) => parse_env_array(&value, &delimiter, parse_env_bytes_value)?,
                     Err(_) => values[2].clone(),
                 };
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(value)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
+                    &mut self.cx,
+                    value,
+                )));
             }
             ffiCall::SELECTOR => {
                 if !state.ffi_enabled {
                     return Err(SymbolicError::Unsupported("symbolic ffi disabled"));
                 }
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2416,14 +2988,19 @@ impl SymbolicExecutor {
                     .map_err(|_| SymbolicError::Unsupported("symbolic ffi stdout"))?;
                 let trimmed = stdout.trim();
                 let bytes = hex::decode(trimmed).unwrap_or_else(|_| trimmed.as_bytes().to_vec());
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&bytes)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
+                    &mut self.cx,
+                    &bytes,
+                )));
             }
             assertTrue_0Call::SELECTOR | assertTrue_1Call::SELECTOR => {
-                let condition = read_abi_word_arg(&state.memory, args_offset, 0)?.nonzero_bool();
+                let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let condition = word.nonzero_bool(&mut self.cx);
                 return self.handle_assertion(state, condition);
             }
             assertFalse_0Call::SELECTOR | assertFalse_1Call::SELECTOR => {
-                let condition = read_abi_word_arg(&state.memory, args_offset, 0)?.into_zero_bool();
+                let word = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let condition = word.into_zero_bool(&mut self.cx);
                 return self.handle_assertion(state, condition);
             }
             assertEq_2Call::SELECTOR
@@ -2436,12 +3013,14 @@ impl SymbolicExecutor {
             | assertEq_9Call::SELECTOR
             | assertEq_0Call::SELECTOR
             | assertEq_1Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, SymBoolExpr::eq(left, right));
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::eq(&mut self.cx, left, right);
+                return self.handle_assertion(state, condition);
             }
             assertEq_10Call::SELECTOR | assertEq_11Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2451,13 +3030,15 @@ impl SymbolicExecutor {
                         vec![DynSolType::String, DynSolType::String, DynSolType::String]
                     },
                 )?;
-                return self.handle_assertion(
-                    state,
-                    SymBoolExpr::constant(dyn_string(&values[0])? == dyn_string(&values[1])?),
+                let condition = SymBoolExpr::constant(
+                    &mut self.cx,
+                    dyn_string(&values[0])? == dyn_string(&values[1])?,
                 );
+                return self.handle_assertion(state, condition);
             }
             assertEq_12Call::SELECTOR | assertEq_13Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2467,10 +3048,11 @@ impl SymbolicExecutor {
                         vec![DynSolType::Bytes, DynSolType::Bytes, DynSolType::String]
                     },
                 )?;
-                return self.handle_assertion(
-                    state,
-                    SymBoolExpr::constant(dyn_bytes(&values[0])? == dyn_bytes(&values[1])?),
+                let condition = SymBoolExpr::constant(
+                    &mut self.cx,
+                    dyn_bytes(&values[0])? == dyn_bytes(&values[1])?,
                 );
+                return self.handle_assertion(state, condition);
             }
             assertEq_14Call::SELECTOR
             | assertEq_15Call::SELECTOR
@@ -2488,6 +3070,7 @@ impl SymbolicExecutor {
             | assertEq_27Call::SELECTOR => {
                 let element_ty = array_assertion_element_type(selector)?;
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2504,15 +3087,17 @@ impl SymbolicExecutor {
                         ]
                     },
                 )?;
-                return self.handle_assertion(state, SymBoolExpr::constant(values[0] == values[1]));
+                let condition = SymBoolExpr::constant(&mut self.cx, values[0] == values[1]);
+                return self.handle_assertion(state, condition);
             }
             assertEqDecimal_0Call::SELECTOR
             | assertEqDecimal_1Call::SELECTOR
             | assertEqDecimal_2Call::SELECTOR
             | assertEqDecimal_3Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, SymBoolExpr::eq(left, right));
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::eq(&mut self.cx, left, right);
+                return self.handle_assertion(state, condition);
             }
             assertNotEq_2Call::SELECTOR
             | assertNotEq_3Call::SELECTOR
@@ -2524,12 +3109,15 @@ impl SymbolicExecutor {
             | assertNotEq_9Call::SELECTOR
             | assertNotEq_0Call::SELECTOR
             | assertNotEq_1Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, SymBoolExpr::eq(left, right).not());
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::eq(&mut self.cx, left, right);
+                let condition = condition.not(&mut self.cx);
+                return self.handle_assertion(state, condition);
             }
             assertNotEq_10Call::SELECTOR | assertNotEq_11Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2539,13 +3127,15 @@ impl SymbolicExecutor {
                         vec![DynSolType::String, DynSolType::String, DynSolType::String]
                     },
                 )?;
-                return self.handle_assertion(
-                    state,
-                    SymBoolExpr::constant(dyn_string(&values[0])? != dyn_string(&values[1])?),
+                let condition = SymBoolExpr::constant(
+                    &mut self.cx,
+                    dyn_string(&values[0])? != dyn_string(&values[1])?,
                 );
+                return self.handle_assertion(state, condition);
             }
             assertNotEq_12Call::SELECTOR | assertNotEq_13Call::SELECTOR => {
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2555,10 +3145,11 @@ impl SymbolicExecutor {
                         vec![DynSolType::Bytes, DynSolType::Bytes, DynSolType::String]
                     },
                 )?;
-                return self.handle_assertion(
-                    state,
-                    SymBoolExpr::constant(dyn_bytes(&values[0])? != dyn_bytes(&values[1])?),
+                let condition = SymBoolExpr::constant(
+                    &mut self.cx,
+                    dyn_bytes(&values[0])? != dyn_bytes(&values[1])?,
                 );
+                return self.handle_assertion(state, condition);
             }
             assertNotEq_14Call::SELECTOR
             | assertNotEq_15Call::SELECTOR
@@ -2576,6 +3167,7 @@ impl SymbolicExecutor {
             | assertNotEq_27Call::SELECTOR => {
                 let element_ty = array_assertion_element_type(selector)?;
                 let values = decode_cheatcode_args(
+                    &mut self.cx,
                     state,
                     in_offset,
                     in_size,
@@ -2592,107 +3184,126 @@ impl SymbolicExecutor {
                         ]
                     },
                 )?;
-                return self.handle_assertion(state, SymBoolExpr::constant(values[0] != values[1]));
+                let condition = SymBoolExpr::constant(&mut self.cx, values[0] != values[1]);
+                return self.handle_assertion(state, condition);
             }
             assertLt_0Call::SELECTOR | assertLt_1Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self
-                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Ult, left, right));
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ult, left, right);
+                return self.handle_assertion(state, condition);
             }
             assertLe_0Call::SELECTOR | assertLe_1Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self
-                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Ule, left, right));
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, left, right);
+                return self.handle_assertion(state, condition);
             }
             assertGt_0Call::SELECTOR | assertGt_1Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self
-                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Ugt, left, right));
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ugt, left, right);
+                return self.handle_assertion(state, condition);
             }
             assertGe_0Call::SELECTOR | assertGe_1Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self
-                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Uge, left, right));
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, left, right);
+                return self.handle_assertion(state, condition);
             }
             assertLt_2Call::SELECTOR | assertLt_3Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self
-                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Slt, left, right));
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Slt, left, right);
+                return self.handle_assertion(state, condition);
             }
             assertGt_2Call::SELECTOR | assertGt_3Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self
-                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Sgt, left, right));
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Sgt, left, right);
+                return self.handle_assertion(state, condition);
             }
             assertLe_2Call::SELECTOR | assertLe_3Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(
-                    state,
-                    SymBoolExpr::cmp(SymBoolExprOp::Sgt, left, right).not(),
-                );
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Sgt, left, right);
+                let condition = condition.not(&mut self.cx);
+                return self.handle_assertion(state, condition);
             }
             assertGe_2Call::SELECTOR | assertGe_3Call::SELECTOR => {
-                let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(
-                    state,
-                    SymBoolExpr::cmp(SymBoolExprOp::Slt, left, right).not(),
-                );
+                let left = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+                let right = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+                let condition = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Slt, left, right);
+                let condition = condition.not(&mut self.cx);
+                return self.handle_assertion(state, condition);
             }
             randomUint_0Call::SELECTOR => {
-                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomUint")]));
+                return Ok(CheatcodeOutcome::Continue(vec![
+                    state.fresh_word(&mut self.cx, "vmRandomUint"),
+                ]));
             }
             randomUint_2Call::SELECTOR => {
                 let bits = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     "symbolic randomUint bits",
                 )?;
                 Self::validate_symbolic_integer_bits(bits, "symbolic randomUint bits")?;
-                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_uint(bits)]));
+                return Ok(CheatcodeOutcome::Continue(vec![
+                    state.fresh_bounded_uint(&mut self.cx, bits),
+                ]));
             }
             randomUint_1Call::SELECTOR => {
-                let min = state.memory.load_word(in_offset + 4)?;
-                let max = state.memory.load_word(in_offset + 36)?;
-                let value = state.fresh_word("vmRandomUintRange");
-                state.constraints.push(SymBoolExpr::cmp_word_expr(SymBoolExprOp::Uge, &value, min));
-                state.constraints.push(SymBoolExpr::cmp_word_expr(SymBoolExprOp::Ule, &value, max));
+                let min = state.memory.load_word(&mut self.cx, in_offset + 4)?;
+                let max = state.memory.load_word(&mut self.cx, in_offset + 36)?;
+                let value = state.fresh_word(&mut self.cx, "vmRandomUintRange");
+                state.constraints.push(SymBoolExpr::cmp_word_expr(
+                    &mut self.cx,
+                    SymCmpOp::Uge,
+                    &value,
+                    min,
+                ));
+                state.constraints.push(SymBoolExpr::cmp_word_expr(
+                    &mut self.cx,
+                    SymCmpOp::Ule,
+                    &value,
+                    max,
+                ));
                 return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             randomInt_0Call::SELECTOR => {
-                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomInt")]));
+                return Ok(CheatcodeOutcome::Continue(vec![
+                    state.fresh_word(&mut self.cx, "vmRandomInt"),
+                ]));
             }
             randomInt_1Call::SELECTOR => {
                 let bits = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     "symbolic randomInt bits",
                 )?;
                 Self::validate_symbolic_integer_bits(bits, "symbolic randomInt bits")?;
-                return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_int(bits)]));
+                return Ok(CheatcodeOutcome::Continue(vec![
+                    state.fresh_bounded_int(&mut self.cx, bits),
+                ]));
             }
             randomAddressCall::SELECTOR => {
-                let value = state.fresh_bounded_uint(U256::from(160));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(160));
                 return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             randomBoolCall::SELECTOR => {
-                let value = state.fresh_bounded_uint(U256::from(1));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(1));
                 return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             randomBytesCall::SELECTOR => {
-                let len = read_abi_word_arg(&state.memory, args_offset, 0)?;
+                let len = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let max_limit = self.config.max_dynamic_length as usize;
                 let max_len = state
-                    .upper_bound_usize(&len)
+                    .upper_bound_usize(&mut self.cx, &len)
                     .filter(|len| *len <= max_limit)
                     .map(Ok)
                     .unwrap_or_else(|| {
@@ -2703,18 +3314,20 @@ impl SymbolicExecutor {
                             "symbolic randomBytes length",
                         )
                     })?;
+                let bytes = state.fresh_bytes(&mut self.cx, max_len);
                 return Ok(CheatcodeOutcome::ContinueData(abi_bytes_return_with_len(
+                    &mut self.cx,
                     len,
-                    state.fresh_bytes(max_len),
+                    bytes,
                 )));
             }
             randomBytes4Call::SELECTOR => {
-                let value = state.fresh_bounded_uint(U256::from(32));
-                return Ok(CheatcodeOutcome::Continue(vec![shift_left(value, 224)]));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(32));
+                return Ok(CheatcodeOutcome::Continue(vec![shift_left(&mut self.cx, value, 224)]));
             }
             randomBytes8Call::SELECTOR => {
-                let value = state.fresh_bounded_uint(U256::from(64));
-                return Ok(CheatcodeOutcome::Continue(vec![shift_left(value, 192)]));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(64));
+                return Ok(CheatcodeOutcome::Continue(vec![shift_left(&mut self.cx, value, 192)]));
             }
 
             _ => {}
@@ -2737,59 +3350,69 @@ impl SymbolicExecutor {
         match cheatcode {
             SymbolicVmCheatcode::CreateUintBits(bits) => {
                 let value = if bits == 256 {
-                    state.fresh_word("svm")
+                    state.fresh_word(&mut self.cx, "svm")
                 } else {
-                    state.fresh_bounded_uint(U256::from(bits))
+                    state.fresh_bounded_uint(&mut self.cx, U256::from(bits))
                 };
-                Ok(SymReturnData::from_words(vec![value]))
+                Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateIntBits(bits) => {
                 let value = if bits == 256 {
-                    state.fresh_word("svm")
+                    state.fresh_word(&mut self.cx, "svm")
                 } else {
-                    state.fresh_bounded_int(U256::from(bits))
+                    state.fresh_bounded_int(&mut self.cx, U256::from(bits))
                 };
-                Ok(SymReturnData::from_words(vec![value]))
+                Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateBytesFixed(bytes) => {
                 let value = if bytes == 32 {
-                    state.fresh_word("svm")
+                    state.fresh_word(&mut self.cx, "svm")
                 } else {
-                    shift_left(state.fresh_bounded_uint(U256::from(bytes * 8)), (32 - bytes) * 8)
+                    let value = state.fresh_bounded_uint(&mut self.cx, U256::from(bytes * 8));
+                    shift_left(&mut self.cx, value, (32 - bytes) * 8)
                 };
-                Ok(SymReturnData::from_words(vec![value]))
+                Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateUint => {
                 let bits = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     "symbolic svm.create integer bits",
                 )?;
                 Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
-                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(bits)]))
+                let value = state.fresh_bounded_uint(&mut self.cx, bits);
+                Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateInt => {
                 let bits = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
                     "symbolic svm.create integer bits",
                 )?;
                 Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
-                Ok(SymReturnData::from_words(vec![state.fresh_bounded_int(bits)]))
+                let value = state.fresh_bounded_int(&mut self.cx, bits);
+                Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateAddress => {
-                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(160))]))
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(160));
+                Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateBool => {
-                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(1))]))
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(1));
+                Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateBytes => {
-                Ok(abi_bytes_return(state.fresh_bytes(self.config.default_dynamic_length as usize)))
+                let bytes =
+                    state.fresh_bytes(&mut self.cx, self.config.default_dynamic_length as usize);
+                Ok(abi_bytes_return(&mut self.cx, bytes))
             }
             SymbolicVmCheatcode::CreateBytesSized => {
                 let len = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
@@ -2799,13 +3422,19 @@ impl SymbolicExecutor {
                     .ok()
                     .filter(|len| *len <= self.config.max_calldata_bytes as usize)
                     .ok_or(SymbolicError::Unsupported("symbolic svm.createBytes length"))?;
-                Ok(abi_bytes_return(state.fresh_bytes(len)))
+                let bytes = state.fresh_bytes(&mut self.cx, len);
+                Ok(abi_bytes_return(&mut self.cx, bytes))
             }
-            SymbolicVmCheatcode::CreateString => Ok(abi_bytes_return(
-                state.fresh_printable_ascii_bytes(self.config.default_dynamic_length as usize),
-            )),
+            SymbolicVmCheatcode::CreateString => {
+                let bytes = state.fresh_printable_ascii_bytes(
+                    &mut self.cx,
+                    self.config.default_dynamic_length as usize,
+                );
+                Ok(abi_bytes_return(&mut self.cx, bytes))
+            }
             SymbolicVmCheatcode::CreateStringSized => {
                 let len = read_abi_constrained_word_arg(
+                    &mut self.cx,
                     state,
                     args_offset,
                     0,
@@ -2815,7 +3444,8 @@ impl SymbolicExecutor {
                     .ok()
                     .filter(|len| *len <= self.config.max_calldata_bytes as usize)
                     .ok_or(SymbolicError::Unsupported("symbolic svm.createString length"))?;
-                Ok(abi_bytes_return(state.fresh_printable_ascii_bytes(len)))
+                let bytes = state.fresh_printable_ascii_bytes(&mut self.cx, len);
+                Ok(abi_bytes_return(&mut self.cx, bytes))
             }
             SymbolicVmCheatcode::CreateCalldata => {
                 let max = self.config.max_calldata_bytes as usize;
@@ -2824,21 +3454,26 @@ impl SymbolicExecutor {
                 } else {
                     (self.config.default_dynamic_length as usize).max(4).min(max)
                 };
-                Ok(abi_bytes_return(state.fresh_bytes(len)))
+                let bytes = state.fresh_bytes(&mut self.cx, len);
+                Ok(abi_bytes_return(&mut self.cx, bytes))
             }
             SymbolicVmCheatcode::EnableSymbolicStorage => {
-                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 state.world.enable_arbitrary_storage(target);
-                Ok(SymReturnData::default())
+                Ok(SymReturnData::empty(&mut self.cx))
             }
             SymbolicVmCheatcode::SnapshotStorage => {
-                let _target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let _target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 let id = state.world.snapshot_state();
-                Ok(SymReturnData::from_words(vec![SymExpr::constant(id)]))
+                let id = SymExpr::constant(&mut self.cx, id);
+                Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }
             SymbolicVmCheatcode::SnapshotState => {
                 let id = state.world.snapshot_state();
-                Ok(SymReturnData::from_words(vec![SymExpr::constant(id)]))
+                let id = SymExpr::constant(&mut self.cx, id);
+                Ok(SymReturnData::from_words(&mut self.cx, vec![id]))
             }
         }
     }
