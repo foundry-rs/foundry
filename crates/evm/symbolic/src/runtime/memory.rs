@@ -200,6 +200,10 @@ impl SymMemory {
         offset: usize,
         size: usize,
     ) -> Result<Vec<u8>, SymbolicError> {
+        if let Some(bytes) = self.read_stored_bytes(cx, offset, size) {
+            return bytes.concrete_bytes(cx, "symbolic memory read");
+        }
+
         let mut out = vec![0u8; size];
         for (idx, byte) in out.iter_mut().enumerate() {
             if let Some(value) = self.byte(cx, offset + idx).as_const() {
