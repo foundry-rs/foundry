@@ -39,7 +39,9 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod frontier;
 mod types;
+use frontier::{FuzzBranchFrontier, FuzzBranchFrontierArtifact, FuzzFrontierRecorder};
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Corpus syncs across workers every `SYNC_INTERVAL` runs.
@@ -84,6 +86,8 @@ struct WorkerState<FEN: FoundryEvmNetwork> {
     last_run_timestamp: u128,
     /// Failed corpus replays
     failed_corpus_replays: usize,
+    /// Branch frontiers captured for symbolic follow-up.
+    frontiers: Vec<FuzzBranchFrontier>,
 }
 
 impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
@@ -104,6 +108,7 @@ impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
             failure_run: None,
             last_run_timestamp: 0,
             failed_corpus_replays: 0,
+            frontiers: Vec::new(),
         }
     }
 }
@@ -369,12 +374,26 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
+        frontier_recorder: &mut FuzzFrontierRecorder,
+        fuzz_run: Option<&FuzzRunMetadata>,
     ) -> Result<FuzzOutcome<FEN>, TestCaseError> {
         let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
         let cmp_values = call.evm_cmp_values.take().unwrap_or_default();
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+        // `new_coverage` is only meaningful when edge coverage is collected; otherwise
+        // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
+        let frontier_new_coverage =
+            self.config.corpus.collect_edge_coverage().then_some(new_coverage);
+        frontier_recorder.capture_stateless_call(
+            fuzz_run,
+            self.sender,
+            address,
+            &calldata,
+            &cmp_values,
+            frontier_new_coverage,
+        );
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
                 warp: None,
@@ -439,6 +458,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         func: &Function,
         shared_state: &SharedFuzzState,
     ) -> FuzzTestResult {
+        self.write_branch_frontiers(&mut workers, func);
+
         let mut result = FuzzTestResult::default();
         if workers.is_empty() {
             result.success = true;
@@ -536,6 +557,29 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         result
     }
 
+    fn write_branch_frontiers(&self, workers: &mut [WorkerState<FEN>], func: &Function) {
+        let Some(frontier_dir) = &self.config.corpus.frontier_dir else {
+            return;
+        };
+        let limit = self.config.corpus.frontier_limit;
+        if limit == 0 {
+            return;
+        }
+
+        let frontiers = frontier::merge_frontiers(
+            limit,
+            workers.iter_mut().flat_map(|worker| worker.frontiers.drain(..)),
+        );
+        if frontiers.is_empty() {
+            return;
+        }
+
+        let artifact = FuzzBranchFrontierArtifact::new(func, limit, frontiers);
+        if let Err(err) = frontier::write_frontier_artifact(frontier_dir, &artifact) {
+            warn!(%err, path = ?frontier_dir, "failed to write fuzz branch frontier artifact");
+        }
+    }
+
     /// Runs a single fuzz worker
     #[allow(clippy::too_many_arguments)]
     fn run_worker(
@@ -579,6 +623,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             None, // dynamic target ctx (invariant-only)
         )?;
         let mut executor = self.executor_f.clone();
+        let frontier_limit = if self.config.corpus.capture_branch_frontiers() {
+            self.config.corpus.frontier_limit
+        } else {
+            0
+        };
+        let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
 
         let mut worker = WorkerState::new(worker_id);
         // We want to collect at least one trace which will be displayed to user.
@@ -709,7 +759,14 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             };
 
             worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            match self.single_fuzz(&executor, address, input, &mut corpus) {
+            match self.single_fuzz(
+                &executor,
+                address,
+                input,
+                &mut corpus,
+                &mut frontier_recorder,
+                fuzz_run.as_ref(),
+            ) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
                         let total_runs = inc_runs();
@@ -820,6 +877,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         if worker_id == 0 {
             worker.failed_corpus_replays = corpus.failed_replays;
         }
+        worker.frontiers = frontier_recorder.into_frontiers();
 
         // Logs stats
         trace!("worker {worker_id} fuzz stats");

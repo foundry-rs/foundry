@@ -11,11 +11,15 @@ impl SymbolicCalldata {
     pub(super) fn variants(
         function: &Function,
         config: &SymbolicConfig,
+        cx: &mut SymCx,
     ) -> Result<Vec<Self>, SymbolicError> {
-        Self::variants_with_prefix(function, config, "calldata")
+        Self::variants_with_prefix(function, config, cx, "calldata")
     }
 
-    pub(super) fn selector_only(function: &Function) -> Result<Self, SymbolicError> {
+    pub(super) fn selector_only(
+        cx: &mut SymCx,
+        function: &Function,
+    ) -> Result<Self, SymbolicError> {
         if !function.inputs.is_empty() {
             return Err(SymbolicError::UnsupportedAbi(format!(
                 "symbolic invariant `{}` must take no parameters",
@@ -23,7 +27,7 @@ impl SymbolicCalldata {
             )));
         }
         Ok(Self {
-            bytes: SymBytes::concrete(function.selector().to_vec()),
+            bytes: SymBytes::concrete(cx, function.selector().to_vec()),
             inputs: Vec::new(),
             constraints: Vec::new(),
         })
@@ -32,16 +36,19 @@ impl SymbolicCalldata {
     pub(super) fn variants_with_prefix(
         function: &Function,
         config: &SymbolicConfig,
+        cx: &mut SymCx,
         prefix: &str,
     ) -> Result<Vec<Self>, SymbolicError> {
         let variant_limit = calldata_variant_limit(config);
-        let mut variants = vec![(SymbolicAbiBuilder::new(config), Vec::new())];
+        let mut builder = SymbolicAbiBuilder::new(config, cx);
+        let mut variants = vec![(SymbolicAbiState::default(), Vec::new())];
         for (idx, input) in function.inputs.iter().enumerate() {
             let ty = input.selector_type();
             let mut next_variants = Vec::new();
-            for (builder, inputs) in variants {
-                for (builder, input) in SymbolicInput::variants(
-                    builder,
+            for (state, inputs) in variants {
+                for (state, input) in SymbolicInput::variants(
+                    &mut builder,
+                    state,
                     prefix,
                     idx,
                     Some(input.name.as_str()),
@@ -49,7 +56,7 @@ impl SymbolicCalldata {
                 )? {
                     let mut inputs = inputs.clone();
                     inputs.push(input);
-                    push_variant(&mut next_variants, (builder, inputs), variant_limit)?;
+                    push_variant(&mut next_variants, (state, inputs), variant_limit)?;
                 }
             }
             variants = next_variants;
@@ -57,29 +64,27 @@ impl SymbolicCalldata {
 
         validate_positional_dynamic_lengths(
             config,
-            variants.iter().map(|(builder, _)| builder.positional_dynamic_index).max().unwrap_or(0),
+            variants.iter().map(|(state, _)| state.positional_dynamic_index).max().unwrap_or(0),
         )?;
 
-        variants
-            .into_iter()
-            .map(|(builder, inputs)| {
-                let bytes = SymBytes::concat([
-                    SymBytes::concrete(function.selector().to_vec()),
-                    encode_sequence(inputs.iter().map(|input| &input.value)),
-                ]);
-                if bytes.len() > config.max_calldata_bytes as usize {
-                    return Err(SymbolicError::Unsupported(
-                        "symbolic calldata size exceeds configured max",
-                    ));
-                }
+        let mut out = Vec::with_capacity(variants.len());
+        for (state, inputs) in variants {
+            let selector = SymBytes::concrete(builder.cx, function.selector().to_vec());
+            let encoded = builder.encode_sequence(inputs.iter().map(|input| &input.value));
+            let bytes = SymBytes::concat(builder.cx, [selector, encoded]);
+            if bytes.len() > config.max_calldata_bytes as usize {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic calldata size exceeds configured max",
+                ));
+            }
 
-                Ok(Self { bytes, inputs, constraints: builder.constraints })
-            })
-            .collect()
+            out.push(Self { bytes, inputs, constraints: state.constraints });
+        }
+        Ok(out)
     }
 
-    pub(super) fn call_data(&self) -> SymCalldata {
-        SymCalldata::from_bytes(self.bytes.clone())
+    pub(super) fn call_data(&self, cx: &mut SymCx) -> SymCalldata {
+        SymCalldata::from_bytes(cx, self.bytes.clone())
     }
 
     /// Returns symbolic calldata constraints.
@@ -94,19 +99,24 @@ impl SymbolicCalldata {
 
     pub(super) fn model_to_args(
         &self,
+        cx: &mut SymCx,
         model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<Vec<DynSolValue>, SymbolicError> {
-        self.inputs.iter().map(|input| input.value.model_value(model)).collect()
+        self.inputs.iter().map(|input| input.value.model_value(cx, model)).collect()
     }
 
-    pub(super) fn seed_model(&self, seed: &SymbolicConcreteInput) -> Option<SymbolicModel> {
+    pub(super) fn seed_model(
+        &self,
+        cx: &mut SymCx,
+        seed: &SymbolicConcreteInput,
+    ) -> Option<SymbolicModel> {
         if seed.args.len() != self.inputs.len() {
             return None;
         }
 
         let mut model = SymbolicModel::default();
         for (input, arg) in self.inputs.iter().zip(&seed.args) {
-            if !input.value.seed_model_value(&mut model, arg) {
+            if !input.value.seed_model_value(cx, &mut model, arg) {
                 return None;
             }
         }
@@ -117,7 +127,7 @@ impl SymbolicCalldata {
             }
         }
 
-        let calldata = self.bytes.eval_model(&model).ok()?;
+        let calldata = self.bytes.eval_model(cx, &model).ok()?;
         (calldata.as_slice() == seed.calldata.as_ref()).then_some(model)
     }
 }
@@ -128,39 +138,46 @@ pub(super) struct SymbolicInput {
 }
 
 impl SymbolicInput {
-    pub(super) fn variants<'a>(
-        builder: SymbolicAbiBuilder<'a>,
+    pub(super) fn variants<'a, 'cx>(
+        builder: &mut SymbolicAbiBuilder<'a, 'cx>,
+        state: SymbolicAbiState,
         prefix: &str,
         idx: usize,
         abi_name: Option<&str>,
         ty: &str,
-    ) -> Result<Vec<(SymbolicAbiBuilder<'a>, Self)>, SymbolicError> {
+    ) -> Result<Vec<(SymbolicAbiState, Self)>, SymbolicError> {
         let ty =
             DynSolType::parse(ty).map_err(|_| SymbolicError::UnsupportedAbi(ty.to_string()))?;
         let name = format!("{prefix}_{idx}");
         let aliases =
             abi_name.filter(|name| !name.is_empty()).map(str::to_string).into_iter().collect();
-        builder.value_variants(name, aliases, &ty).map(|variants| {
-            variants.into_iter().map(|(builder, value)| (builder, Self { value })).collect()
+        builder.value_variants(state, name, aliases, &ty).map(|variants| {
+            variants.into_iter().map(|(state, value)| (state, Self { value })).collect()
         })
     }
 }
 
-#[derive(Clone)]
-pub(super) struct SymbolicAbiBuilder<'a> {
-    config: &'a SymbolicConfig,
+#[derive(Clone, Debug, Default)]
+pub(super) struct SymbolicAbiState {
     constraints: Vec<SymBoolExpr>,
     positional_dynamic_index: usize,
 }
 
-impl<'a> SymbolicAbiBuilder<'a> {
+#[derive(Debug)]
+pub(super) struct SymbolicAbiBuilder<'a, 'cx> {
+    config: &'a SymbolicConfig,
+    cx: &'cx mut SymCx,
+}
+
+impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
     /// Constructs a new instance.
-    pub(super) const fn new(config: &'a SymbolicConfig) -> Self {
-        Self { config, constraints: Vec::new(), positional_dynamic_index: 0 }
+    pub(super) const fn new(config: &'a SymbolicConfig, cx: &'cx mut SymCx) -> Self {
+        Self { config, cx }
     }
 
     pub(super) fn value(
         &mut self,
+        state: &mut SymbolicAbiState,
         name: String,
         aliases: Vec<String>,
         ty: &DynSolType,
@@ -168,8 +185,9 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(match ty {
             DynSolType::Bool => {
                 let word = self.fresh_word(&name);
-                self.constraints.push(SymBoolExpr::cmp_word_const(
-                    SymBoolExprOp::Ult,
+                state.constraints.push(SymBoolExpr::cmp_word_const(
+                    self.cx,
+                    SymCmpOp::Ult,
                     &word,
                     U256::from(2),
                 ));
@@ -177,57 +195,56 @@ impl<'a> SymbolicAbiBuilder<'a> {
             }
             DynSolType::Uint(bits) => {
                 let word = self.fresh_word(&name);
-                self.constrain_uint(&word, *bits);
+                self.constrain_uint(state, &word, *bits);
                 SymbolicAbiValue::Uint { bits: *bits, word }
             }
             DynSolType::Int(bits) => {
                 let word = self.fresh_word(&name);
-                self.constrain_int(&word, *bits);
+                self.constrain_int(state, &word, *bits);
                 SymbolicAbiValue::Int { bits: *bits, word }
             }
-            DynSolType::FixedBytes(size) => SymbolicAbiValue::FixedBytes {
-                bytes: SymBytes::exprs(
-                    (0..*size)
-                        .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), false))
-                        .collect(),
-                ),
-                size: *size,
-            },
+            DynSolType::FixedBytes(size) => {
+                let bytes = (0..*size)
+                    .map(|idx| self.fresh_byte(state, &format!("{name}_{idx}"), false))
+                    .collect();
+                SymbolicAbiValue::FixedBytes { bytes: SymBytes::exprs(self.cx, bytes), size: *size }
+            }
             DynSolType::Address => {
                 let word = self.fresh_word(&name);
-                self.constrain_uint(&word, 160);
+                self.constrain_uint(state, &word, 160);
                 SymbolicAbiValue::Address { word }
             }
             DynSolType::Function => {
                 return Err(SymbolicError::UnsupportedAbi("function".to_string()));
             }
             DynSolType::Bytes => {
-                let len = self.next_dynamic_length(&name, &aliases, DynamicKind::Bytes)?;
+                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::Bytes)?;
+                let bytes = (0..len)
+                    .map(|idx| self.fresh_byte(state, &format!("{name}_{idx}"), false))
+                    .collect();
                 SymbolicAbiValue::Bytes {
-                    len: SymExpr::constant(U256::from(len)),
-                    bytes: SymBytes::exprs(
-                        (0..len)
-                            .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), false))
-                            .collect(),
-                    ),
+                    len: SymExpr::constant(self.cx, U256::from(len)),
+                    bytes: SymBytes::exprs(self.cx, bytes),
                 }
             }
             DynSolType::String => {
-                let len = self.next_dynamic_length(&name, &aliases, DynamicKind::String)?;
-                SymbolicAbiValue::String {
-                    bytes: SymBytes::exprs(
-                        (0..len)
-                            .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), true))
-                            .collect(),
-                    ),
-                }
+                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::String)?;
+                let bytes = (0..len)
+                    .map(|idx| self.fresh_byte(state, &format!("{name}_{idx}"), true))
+                    .collect();
+                SymbolicAbiValue::String { bytes: SymBytes::exprs(self.cx, bytes) }
             }
             DynSolType::Array(inner) => {
-                let len = self.next_dynamic_length(&name, &aliases, DynamicKind::Array)?;
+                let len = self.next_dynamic_length(state, &name, &aliases, DynamicKind::Array)?;
                 SymbolicAbiValue::Array {
                     elements: (0..len)
                         .map(|idx| {
-                            self.value(format!("{name}_{idx}"), child_aliases(&aliases, idx), inner)
+                            self.value(
+                                state,
+                                format!("{name}_{idx}"),
+                                child_aliases(&aliases, idx),
+                                inner,
+                            )
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 }
@@ -235,7 +252,12 @@ impl<'a> SymbolicAbiBuilder<'a> {
             DynSolType::FixedArray(inner, len) => SymbolicAbiValue::FixedArray {
                 elements: (0..*len)
                     .map(|idx| {
-                        self.value(format!("{name}_{idx}"), child_aliases(&aliases, idx), inner)
+                        self.value(
+                            state,
+                            format!("{name}_{idx}"),
+                            child_aliases(&aliases, idx),
+                            inner,
+                        )
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             },
@@ -244,7 +266,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                     .iter()
                     .enumerate()
                     .map(|(idx, ty)| {
-                        self.value(format!("{name}_{idx}"), child_aliases(&aliases, idx), ty)
+                        self.value(state, format!("{name}_{idx}"), child_aliases(&aliases, idx), ty)
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             },
@@ -253,7 +275,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                     .iter()
                     .enumerate()
                     .map(|(idx, ty)| {
-                        self.value(format!("{name}_{idx}"), child_aliases(&aliases, idx), ty)
+                        self.value(state, format!("{name}_{idx}"), child_aliases(&aliases, idx), ty)
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             },
@@ -261,59 +283,69 @@ impl<'a> SymbolicAbiBuilder<'a> {
     }
 
     pub(super) fn value_variants(
-        self,
+        &mut self,
+        state: SymbolicAbiState,
         name: String,
         aliases: Vec<String>,
         ty: &DynSolType,
-    ) -> Result<Vec<(Self, SymbolicAbiValue)>, SymbolicError> {
+    ) -> Result<Vec<(SymbolicAbiState, SymbolicAbiValue)>, SymbolicError> {
         Ok(match ty {
             DynSolType::Bytes => {
-                let mut builder = self;
-                let lengths =
-                    builder.next_dynamic_length_options(&name, &aliases, DynamicKind::Bytes)?;
-                let limit = calldata_variant_limit(builder.config);
+                let mut state = state;
+                let lengths = self.next_dynamic_length_options(
+                    &mut state,
+                    &name,
+                    &aliases,
+                    DynamicKind::Bytes,
+                )?;
+                let limit = calldata_variant_limit(self.config);
                 let mut variants = Vec::new();
                 for len in lengths {
-                    let mut builder = builder.clone();
+                    let mut state = state.clone();
+                    let bytes = (0..len as usize)
+                        .map(|idx| self.fresh_byte(&mut state, &format!("{name}_{idx}"), false))
+                        .collect();
                     let value = SymbolicAbiValue::Bytes {
-                        len: SymExpr::constant(U256::from(len)),
-                        bytes: SymBytes::exprs(
-                            (0..len as usize)
-                                .map(|idx| builder.fresh_byte(&format!("{name}_{idx}"), false))
-                                .collect(),
-                        ),
+                        len: SymExpr::constant(self.cx, U256::from(len)),
+                        bytes: SymBytes::exprs(self.cx, bytes),
                     };
-                    push_variant(&mut variants, (builder, value), limit)?;
+                    push_variant(&mut variants, (state, value), limit)?;
                 }
                 variants
             }
             DynSolType::String => {
-                let mut builder = self;
-                let lengths =
-                    builder.next_dynamic_length_options(&name, &aliases, DynamicKind::String)?;
-                let limit = calldata_variant_limit(builder.config);
+                let mut state = state;
+                let lengths = self.next_dynamic_length_options(
+                    &mut state,
+                    &name,
+                    &aliases,
+                    DynamicKind::String,
+                )?;
+                let limit = calldata_variant_limit(self.config);
                 let mut variants = Vec::new();
                 for len in lengths {
-                    let mut builder = builder.clone();
-                    let value = SymbolicAbiValue::String {
-                        bytes: SymBytes::exprs(
-                            (0..len as usize)
-                                .map(|idx| builder.fresh_byte(&format!("{name}_{idx}"), true))
-                                .collect(),
-                        ),
-                    };
-                    push_variant(&mut variants, (builder, value), limit)?;
+                    let mut state = state.clone();
+                    let bytes = (0..len as usize)
+                        .map(|idx| self.fresh_byte(&mut state, &format!("{name}_{idx}"), true))
+                        .collect();
+                    let value = SymbolicAbiValue::String { bytes: SymBytes::exprs(self.cx, bytes) };
+                    push_variant(&mut variants, (state, value), limit)?;
                 }
                 variants
             }
             DynSolType::Array(inner) => {
-                let mut builder = self;
-                let lengths =
-                    builder.next_dynamic_length_options(&name, &aliases, DynamicKind::Array)?;
-                let limit = calldata_variant_limit(builder.config);
+                let mut state = state;
+                let lengths = self.next_dynamic_length_options(
+                    &mut state,
+                    &name,
+                    &aliases,
+                    DynamicKind::Array,
+                )?;
+                let limit = calldata_variant_limit(self.config);
                 let mut variants = Vec::new();
                 for len in lengths {
-                    for (builder, elements) in builder.clone().array_elements_variants(
+                    for (state, elements) in self.array_elements_variants(
+                        state.clone(),
                         &name,
                         &aliases,
                         inner,
@@ -321,61 +353,61 @@ impl<'a> SymbolicAbiBuilder<'a> {
                     )? {
                         push_variant(
                             &mut variants,
-                            (builder, SymbolicAbiValue::Array { elements }),
+                            (state, SymbolicAbiValue::Array { elements }),
                             limit,
                         )?;
                     }
                 }
                 variants
             }
-            DynSolType::FixedArray(inner, len) => {
-                self.array_elements_variants(&name, &aliases, inner, *len).map(|variants| {
+            DynSolType::FixedArray(inner, len) => self
+                .array_elements_variants(state, &name, &aliases, inner, *len)
+                .map(|variants| {
                     variants
                         .into_iter()
-                        .map(|(builder, elements)| {
-                            (builder, SymbolicAbiValue::FixedArray { elements })
-                        })
+                        .map(|(state, elements)| (state, SymbolicAbiValue::FixedArray { elements }))
                         .collect()
-                })?
-            }
+                })?,
             DynSolType::Tuple(types) => self
-                .tuple_elements_variants(&name, &aliases, types)?
+                .tuple_elements_variants(state, &name, &aliases, types)?
                 .into_iter()
-                .map(|(builder, elements)| (builder, SymbolicAbiValue::Tuple { elements }))
+                .map(|(state, elements)| (state, SymbolicAbiValue::Tuple { elements }))
                 .collect(),
             DynSolType::CustomStruct { tuple, .. } => self
-                .tuple_elements_variants(&name, &aliases, tuple)?
+                .tuple_elements_variants(state, &name, &aliases, tuple)?
                 .into_iter()
-                .map(|(builder, elements)| (builder, SymbolicAbiValue::Tuple { elements }))
+                .map(|(state, elements)| (state, SymbolicAbiValue::Tuple { elements }))
                 .collect(),
             _ => {
-                let mut builder = self;
-                let value = builder.value(name, aliases, ty)?;
-                vec![(builder, value)]
+                let mut state = state;
+                let value = self.value(&mut state, name, aliases, ty)?;
+                vec![(state, value)]
             }
         })
     }
 
     pub(super) fn array_elements_variants(
-        self,
+        &mut self,
+        state: SymbolicAbiState,
         name: &str,
         aliases: &[String],
         inner: &DynSolType,
         len: usize,
-    ) -> Result<Vec<(Self, Vec<SymbolicAbiValue>)>, SymbolicError> {
+    ) -> Result<Vec<(SymbolicAbiState, Vec<SymbolicAbiValue>)>, SymbolicError> {
         let limit = calldata_variant_limit(self.config);
-        let mut variants = vec![(self, Vec::with_capacity(len))];
+        let mut variants = vec![(state, Vec::with_capacity(len))];
         for idx in 0..len {
             let mut next_variants = Vec::new();
-            for (builder, elements) in variants {
-                for (builder, value) in builder.value_variants(
+            for (state, elements) in variants {
+                for (state, value) in self.value_variants(
+                    state,
                     format!("{name}_{idx}"),
                     child_aliases(aliases, idx),
                     inner,
                 )? {
                     let mut elements = elements.clone();
                     elements.push(value);
-                    push_variant(&mut next_variants, (builder, elements), limit)?;
+                    push_variant(&mut next_variants, (state, elements), limit)?;
                 }
             }
             variants = next_variants;
@@ -384,24 +416,26 @@ impl<'a> SymbolicAbiBuilder<'a> {
     }
 
     pub(super) fn tuple_elements_variants(
-        self,
+        &mut self,
+        state: SymbolicAbiState,
         name: &str,
         aliases: &[String],
         types: &[DynSolType],
-    ) -> Result<Vec<(Self, Vec<SymbolicAbiValue>)>, SymbolicError> {
+    ) -> Result<Vec<(SymbolicAbiState, Vec<SymbolicAbiValue>)>, SymbolicError> {
         let limit = calldata_variant_limit(self.config);
-        let mut variants = vec![(self, Vec::with_capacity(types.len()))];
+        let mut variants = vec![(state, Vec::with_capacity(types.len()))];
         for (idx, ty) in types.iter().enumerate() {
             let mut next_variants = Vec::new();
-            for (builder, elements) in variants {
-                for (builder, value) in builder.value_variants(
+            for (state, elements) in variants {
+                for (state, value) in self.value_variants(
+                    state,
                     format!("{name}_{idx}"),
                     child_aliases(aliases, idx),
                     ty,
                 )? {
                     let mut elements = elements.clone();
                     elements.push(value);
-                    push_variant(&mut next_variants, (builder, elements), limit)?;
+                    push_variant(&mut next_variants, (state, elements), limit)?;
                 }
             }
             variants = next_variants;
@@ -409,25 +443,33 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(variants)
     }
 
-    pub(super) fn fresh_word(&self, name: &str) -> SymExpr {
-        SymExpr::var(name)
+    pub(super) fn fresh_word(&mut self, name: &str) -> SymExpr {
+        SymExpr::var(self.cx, name)
     }
 
-    pub(super) fn fresh_byte(&mut self, name: &str, printable: bool) -> SymExpr {
+    pub(super) fn fresh_byte(
+        &mut self,
+        state: &mut SymbolicAbiState,
+        name: &str,
+        printable: bool,
+    ) -> SymExpr {
         let word = self.fresh_word(name);
-        self.constraints.push(SymBoolExpr::cmp_word_const(
-            SymBoolExprOp::Ult,
+        state.constraints.push(SymBoolExpr::cmp_word_const(
+            self.cx,
+            SymCmpOp::Ult,
             &word,
             U256::from(256),
         ));
         if printable {
-            self.constraints.push(SymBoolExpr::cmp_word_const(
-                SymBoolExprOp::Uge,
+            state.constraints.push(SymBoolExpr::cmp_word_const(
+                self.cx,
+                SymCmpOp::Uge,
                 &word,
                 U256::from(0x20),
             ));
-            self.constraints.push(SymBoolExpr::cmp_word_const(
-                SymBoolExprOp::Ule,
+            state.constraints.push(SymBoolExpr::cmp_word_const(
+                self.cx,
+                SymCmpOp::Ule,
                 &word,
                 U256::from(0x7e),
             ));
@@ -436,19 +478,21 @@ impl<'a> SymbolicAbiBuilder<'a> {
     }
 
     pub(super) fn next_dynamic_length(
-        &mut self,
+        &self,
+        state: &mut SymbolicAbiState,
         name: &str,
         aliases: &[String],
         kind: DynamicKind,
     ) -> Result<usize, SymbolicError> {
         Ok(first_dynamic_length(
-            &self.next_dynamic_length_options(name, aliases, kind)?,
+            &self.next_dynamic_length_options(state, name, aliases, kind)?,
             "symbolic dynamic length",
         )? as usize)
     }
 
     pub(super) fn next_dynamic_length_options(
-        &mut self,
+        &self,
+        state: &mut SymbolicAbiState,
         name: &str,
         aliases: &[String],
         kind: DynamicKind,
@@ -462,9 +506,9 @@ impl<'a> SymbolicAbiBuilder<'a> {
         } else if let Some(lengths) = kind.default_lengths(self.config) {
             lengths.to_vec()
         } else if let Some(len) =
-            self.config.array_lengths.get(self.positional_dynamic_index).copied()
+            self.config.array_lengths.get(state.positional_dynamic_index).copied()
         {
-            self.positional_dynamic_index += 1;
+            state.positional_dynamic_index += 1;
             vec![len]
         } else {
             vec![self.config.default_dynamic_length]
@@ -487,22 +531,40 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(lengths)
     }
 
-    pub(super) fn constrain_uint(&mut self, word: &SymExpr, bits: usize) {
+    pub(super) fn constrain_uint(
+        &mut self,
+        state: &mut SymbolicAbiState,
+        word: &SymExpr,
+        bits: usize,
+    ) {
         if bits < 256 {
-            self.constraints.push(SymBoolExpr::cmp_word_const(
-                SymBoolExprOp::Ult,
+            state.constraints.push(SymBoolExpr::cmp_word_const(
+                self.cx,
+                SymCmpOp::Ult,
                 word,
                 U256::from(1) << bits,
             ));
         }
     }
 
-    pub(super) fn constrain_int(&mut self, word: &SymExpr, bits: usize) {
+    pub(super) fn constrain_int(
+        &mut self,
+        state: &mut SymbolicAbiState,
+        word: &SymExpr,
+        bits: usize,
+    ) {
         if bits < 256 {
             let byte_index = U256::from(bits / 8 - 1);
-            self.constraints
-                .push(SymBoolExpr::eq_word_expr(word, signextend_word(byte_index, word.clone())));
+            let signextended = signextend_word(self.cx, byte_index, word.clone());
+            state.constraints.push(SymBoolExpr::eq(self.cx, word.clone(), signextended));
         }
+    }
+
+    pub(super) fn encode_sequence<'v>(
+        &mut self,
+        values: impl IntoIterator<Item = &'v SymbolicAbiValue>,
+    ) -> SymBytes {
+        encode_sequence(self.cx, values)
     }
 }
 
@@ -623,48 +685,9 @@ impl SymbolicAbiValue {
         }
     }
 
-    pub(super) fn encode_static(&self) -> SymBytes {
-        match self {
-            Self::Bool { word }
-            | Self::Uint { word, .. }
-            | Self::Int { word, .. }
-            | Self::Address { word } => word.clone().into_bytes(),
-            Self::FixedBytes { bytes, .. } => SymBytes::concat([
-                bytes.clone(),
-                SymBytes::concrete(vec![0; 32usize.saturating_sub(bytes.len())]),
-            ]),
-            Self::FixedArray { elements } | Self::Tuple { elements } => {
-                encode_sequence(elements.iter())
-            }
-            Self::Bytes { .. } | Self::String { .. } | Self::Array { .. } => {
-                unreachable!("dynamic ABI value encoded as static")
-            }
-        }
-    }
-
-    pub(super) fn encode_dynamic_body(&self) -> SymBytes {
-        match self {
-            Self::Bytes { len, bytes } => encode_packed_bytes_with_len(len.clone(), bytes),
-            Self::String { bytes } => {
-                encode_packed_bytes_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
-            }
-            Self::Array { elements } => SymBytes::concat([
-                SymExpr::constant(U256::from(elements.len())).into_bytes(),
-                encode_sequence(elements.iter()),
-            ]),
-            Self::FixedArray { elements } | Self::Tuple { elements } => {
-                encode_sequence(elements.iter())
-            }
-            Self::Bool { .. }
-            | Self::Uint { .. }
-            | Self::Int { .. }
-            | Self::FixedBytes { .. }
-            | Self::Address { .. } => unreachable!("static ABI value encoded as dynamic"),
-        }
-    }
-
     pub(super) fn model_value(
         &self,
+        cx: &mut SymCx,
         model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<DynSolValue, SymbolicError> {
         Ok(match self {
@@ -678,7 +701,7 @@ impl SymbolicAbiValue {
             Self::FixedBytes { bytes, size } => {
                 let mut word = [0u8; 32];
                 for (idx, out) in word.iter_mut().enumerate().take(bytes.len()) {
-                    *out = bytes.byte(idx).eval_model(model)?.to::<u8>();
+                    *out = bytes.byte(cx, idx).eval_model(model)?.to::<u8>();
                 }
                 DynSolValue::FixedBytes(B256::from(word), *size)
             }
@@ -691,12 +714,12 @@ impl SymbolicAbiValue {
                     .ok()
                     .filter(|len| *len <= bytes.len())
                     .ok_or_else(|| SymbolicError::Solver("invalid symbolic bytes length".into()))?;
-                let mut bytes = bytes.eval_model(model)?;
+                let mut bytes = bytes.eval_model(cx, model)?;
                 bytes.truncate(len);
                 DynSolValue::Bytes(bytes)
             }
             Self::String { bytes } => {
-                let bytes = bytes.eval_model(model)?;
+                let bytes = bytes.eval_model(cx, model)?;
                 let value = String::from_utf8(bytes).map_err(|err| {
                     SymbolicError::Solver(format!("invalid symbolic string model: {err}"))
                 })?;
@@ -705,25 +728,30 @@ impl SymbolicAbiValue {
             Self::Array { elements } => DynSolValue::Array(
                 elements
                     .iter()
-                    .map(|value| value.model_value(model))
+                    .map(|value| value.model_value(cx, model))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
             Self::FixedArray { elements } => DynSolValue::FixedArray(
                 elements
                     .iter()
-                    .map(|value| value.model_value(model))
+                    .map(|value| value.model_value(cx, model))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
             Self::Tuple { elements } => DynSolValue::Tuple(
                 elements
                     .iter()
-                    .map(|value| value.model_value(model))
+                    .map(|value| value.model_value(cx, model))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
         })
     }
 
-    pub(super) fn seed_model_value(&self, model: &mut SymbolicModel, value: &DynSolValue) -> bool {
+    pub(super) fn seed_model_value(
+        &self,
+        cx: &mut SymCx,
+        model: &mut SymbolicModel,
+        value: &DynSolValue,
+    ) -> bool {
         match (self, value) {
             (Self::Bool { word }, DynSolValue::Bool(value)) => {
                 word.assign_model_value(model, U256::from(*value as u8))
@@ -741,25 +769,25 @@ impl SymbolicAbiValue {
             (Self::FixedBytes { bytes, size }, DynSolValue::FixedBytes(value, value_size))
                 if size == value_size =>
             {
-                seed_model_bytes(model, bytes, &value.as_slice()[..*size])
+                seed_model_bytes(cx, model, bytes, &value.as_slice()[..*size])
             }
             (Self::Address { word }, DynSolValue::Address(value)) => {
                 word.assign_model_value(model, address_word(*value))
             }
             (Self::Bytes { len, bytes }, DynSolValue::Bytes(value)) => {
                 len.assign_model_value(model, U256::from(value.len()))
-                    && seed_model_bytes(model, bytes, value)
+                    && seed_model_bytes(cx, model, bytes, value)
             }
             (Self::String { bytes }, DynSolValue::String(value)) => {
-                seed_model_bytes(model, bytes, value.as_bytes())
+                seed_model_bytes(cx, model, bytes, value.as_bytes())
             }
             (Self::Array { elements }, DynSolValue::Array(values))
             | (Self::FixedArray { elements }, DynSolValue::FixedArray(values))
             | (Self::Tuple { elements }, DynSolValue::Tuple(values)) => {
-                seed_model_elements(model, elements, values)
+                seed_model_elements(cx, model, elements, values)
             }
             (Self::Tuple { elements }, DynSolValue::CustomStruct { tuple, .. }) => {
-                seed_model_elements(model, elements, tuple)
+                seed_model_elements(cx, model, elements, tuple)
             }
             _ => false,
         }
@@ -767,6 +795,7 @@ impl SymbolicAbiValue {
 }
 
 fn seed_model_elements(
+    cx: &mut SymCx,
     model: &mut SymbolicModel,
     elements: &[SymbolicAbiValue],
     values: &[DynSolValue],
@@ -775,18 +804,24 @@ fn seed_model_elements(
         && elements
             .iter()
             .zip(values)
-            .all(|(element, value)| element.seed_model_value(model, value))
+            .all(|(element, value)| element.seed_model_value(cx, model, value))
 }
 
-fn seed_model_bytes(model: &mut SymbolicModel, bytes: &SymBytes, value: &[u8]) -> bool {
+fn seed_model_bytes(
+    cx: &mut SymCx,
+    model: &mut SymbolicModel,
+    bytes: &SymBytes,
+    value: &[u8],
+) -> bool {
     bytes.len() == value.len()
         && value
             .iter()
             .enumerate()
-            .all(|(idx, byte)| bytes.byte(idx).assign_model_value(model, U256::from(*byte)))
+            .all(|(idx, byte)| bytes.byte(cx, idx).assign_model_value(model, U256::from(*byte)))
 }
 
 pub(super) fn encode_sequence<'a>(
+    cx: &mut SymCx,
     values: impl IntoIterator<Item = &'a SymbolicAbiValue>,
 ) -> SymBytes {
     let values = values.into_iter().collect::<Vec<_>>();
@@ -797,23 +832,71 @@ pub(super) fn encode_sequence<'a>(
 
     for value in values {
         if value.is_dynamic() {
-            head.push(SymExpr::constant(U256::from(head_size + tail_len)).into_bytes());
-            let body = value.encode_dynamic_body();
+            let offset = SymExpr::constant(cx, U256::from(head_size + tail_len));
+            head.push(offset.into_bytes(cx));
+            let body = encode_dynamic_body(cx, value);
             tail_len += body.len();
             tail.push(body);
         } else {
-            head.push(value.encode_static());
+            head.push(encode_static(cx, value));
         }
     }
 
-    SymBytes::concat(head.into_iter().chain(tail))
+    SymBytes::concat(cx, head.into_iter().chain(tail))
 }
 
-pub(super) fn encode_packed_bytes_with_len(len: SymExpr, bytes: &SymBytes) -> SymBytes {
+fn encode_static(cx: &mut SymCx, value: &SymbolicAbiValue) -> SymBytes {
+    match value {
+        SymbolicAbiValue::Bool { word }
+        | SymbolicAbiValue::Uint { word, .. }
+        | SymbolicAbiValue::Int { word, .. }
+        | SymbolicAbiValue::Address { word } => word.clone().into_bytes(cx),
+        SymbolicAbiValue::FixedBytes { bytes, .. } => {
+            let padding = SymBytes::concrete(cx, vec![0; 32usize.saturating_sub(bytes.len())]);
+            SymBytes::concat(cx, [bytes.clone(), padding])
+        }
+        SymbolicAbiValue::FixedArray { elements } | SymbolicAbiValue::Tuple { elements } => {
+            encode_sequence(cx, elements.iter())
+        }
+        SymbolicAbiValue::Bytes { .. }
+        | SymbolicAbiValue::String { .. }
+        | SymbolicAbiValue::Array { .. } => unreachable!("dynamic ABI value encoded as static"),
+    }
+}
+
+fn encode_dynamic_body(cx: &mut SymCx, value: &SymbolicAbiValue) -> SymBytes {
+    match value {
+        SymbolicAbiValue::Bytes { len, bytes } => {
+            encode_packed_bytes_with_len(cx, len.clone(), bytes)
+        }
+        SymbolicAbiValue::String { bytes } => {
+            let len = SymExpr::constant(cx, U256::from(bytes.len()));
+            encode_packed_bytes_with_len(cx, len, bytes)
+        }
+        SymbolicAbiValue::Array { elements } => {
+            let len = SymExpr::constant(cx, U256::from(elements.len()));
+            let len = len.into_bytes(cx);
+            let elements = encode_sequence(cx, elements.iter());
+            SymBytes::concat(cx, [len, elements])
+        }
+        SymbolicAbiValue::FixedArray { elements } | SymbolicAbiValue::Tuple { elements } => {
+            encode_sequence(cx, elements.iter())
+        }
+        SymbolicAbiValue::Bool { .. }
+        | SymbolicAbiValue::Uint { .. }
+        | SymbolicAbiValue::Int { .. }
+        | SymbolicAbiValue::FixedBytes { .. }
+        | SymbolicAbiValue::Address { .. } => unreachable!("static ABI value encoded as dynamic"),
+    }
+}
+
+pub(super) fn encode_packed_bytes_with_len(
+    cx: &mut SymCx,
+    len: SymExpr,
+    bytes: &SymBytes,
+) -> SymBytes {
     let padded_len = bytes.len().next_multiple_of(32);
-    SymBytes::concat([
-        len.into_bytes(),
-        bytes.clone(),
-        SymBytes::concrete(vec![0; padded_len - bytes.len()]),
-    ])
+    let len = len.into_bytes(cx);
+    let padding = SymBytes::concrete(cx, vec![0; padded_len - bytes.len()]);
+    SymBytes::concat(cx, [len, bytes.clone(), padding])
 }

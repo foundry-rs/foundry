@@ -830,7 +830,7 @@ impl Config {
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
-        let provider = Figment::from(provider);
+        let provider = Figment::from(provider).select(self.profile.clone());
         let invariant_corpus_random_sequence_weight_configured =
             self.invariant.corpus_random_sequence_weight_configured
                 || provider.contains("invariant.corpus_random_sequence_weight")
@@ -1408,6 +1408,7 @@ impl Config {
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.fuzz.corpus.corpus_dir);
+        remove_test_dir(&self.fuzz.corpus.frontier_dir);
         remove_test_dir(&self.invariant.corpus.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
@@ -2692,8 +2693,12 @@ impl Provider for Config {
     #[track_caller]
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
+        let root = Value::serialize(self.root.clone())?;
+        if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
+            entry.insert("root".to_string(), root.clone());
+        }
         if let Some(entry) = data.get_mut(&self.profile) {
-            entry.insert("root".to_string(), Value::serialize(self.root.clone())?);
+            entry.insert("root".to_string(), root);
         }
         Ok(data)
     }

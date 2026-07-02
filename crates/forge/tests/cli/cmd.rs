@@ -1138,13 +1138,20 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
     let _ = fs::create_dir(fuzz_cache_dir.clone());
     let invariant_cache_dir = prj.root().join("cache/invariant");
     let _ = fs::create_dir(invariant_cache_dir.clone());
+    let frontier_cache_dir = prj.root().join("cache/frontiers");
+    let _ = fs::create_dir(frontier_cache_dir.clone());
+    prj.update_config(|config| {
+        config.fuzz.corpus.frontier_dir = Some("cache/frontiers".into());
+    });
 
     assert!(fuzz_cache_dir.exists());
     assert!(invariant_cache_dir.exists());
+    assert!(frontier_cache_dir.exists());
 
     cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!fuzz_cache_dir.exists());
     assert!(!invariant_cache_dir.exists());
+    assert!(!frontier_cache_dir.exists());
 });
 
 // checks that extra output works

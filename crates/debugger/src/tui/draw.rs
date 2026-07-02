@@ -1,6 +1,9 @@
 //! TUI draw implementation.
 
-use super::context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext};
+use super::{
+    context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext},
+    storage::{StorageAccess, storage_access_at},
+};
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
@@ -17,10 +20,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use revm::bytecode::opcode;
-use revm_inspectors::tracing::types::{
-    CallKind, DecodedInternalCall, DecodedTraceStep, StorageChange, StorageChangeReason,
-};
+use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -613,27 +613,7 @@ impl TUIContext<'_> {
     }
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
-        let step = self.current_step();
-        if let Some(change) = step.storage_change.as_deref() {
-            return Some(storage_access_line(change));
-        }
-
-        // `revm-inspectors` records `storage_change` from journal entries, so warm `SLOAD`s do not
-        // get one. Debug mode records full stack snapshots before each opcode; the following step's
-        // stack contains the loaded value after this `SLOAD` executes.
-        if step.op.get() == opcode::SLOAD {
-            let key = step.stack.as_deref()?.last().copied()?;
-            let value = self
-                .debug_steps()
-                .get(self.current_step.checked_add(1)?)?
-                .stack
-                .as_deref()?
-                .last()
-                .copied()?;
-            return Some(sload_storage_access_line(key, value));
-        }
-
-        None
+        storage_access_at(self.debug_steps(), self.current_step).map(storage_access_line)
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
@@ -1121,34 +1101,8 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     Line::from(spans)
 }
 
-fn storage_access_line(change: &StorageChange) -> Line<'static> {
-    let op = match change.reason {
-        StorageChangeReason::SLOAD => "SLOAD",
-        StorageChangeReason::SSTORE => "SSTORE",
-    };
-
-    let text = match (change.reason, change.had_value) {
-        (StorageChangeReason::SSTORE, Some(previous)) => format!(
-            "storage {op} slot {}: {} -> {}",
-            hex_u256(change.key),
-            hex_u256(previous),
-            hex_u256(change.value)
-        ),
-        _ => format!("storage {op} slot {} = {}", hex_u256(change.key), hex_u256(change.value)),
-    };
-
-    Line::from(Span::styled(text, Style::new().fg(Color::Yellow)))
-}
-
-fn sload_storage_access_line(key: U256, value: U256) -> Line<'static> {
-    Line::from(Span::styled(
-        format!("storage SLOAD slot {} = {}", hex_u256(key), hex_u256(value)),
-        Style::new().fg(Color::Yellow),
-    ))
-}
-
-fn hex_u256(value: U256) -> String {
-    format!("{value:#x}")
+fn storage_access_line(access: StorageAccess) -> Line<'static> {
+    Line::from(Span::styled(access.describe(), Style::new().fg(Color::Yellow)))
 }
 
 fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) -> String {
@@ -1783,30 +1737,33 @@ mod tests {
 
     #[test]
     fn storage_access_line_formats_sload() {
-        let change = StorageChange {
+        let mut step = trace_step(Vec::new());
+        step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
             value: U256::from(42),
             had_value: None,
             reason: StorageChangeReason::SLOAD,
-        };
+        }));
+        let steps = [step];
+        let access = super::storage_access_at(&steps, 0).unwrap();
 
-        assert_eq!(
-            line_text(&super::storage_access_line(&change)),
-            "storage SLOAD slot 0x1 = 0x2a"
-        );
+        assert_eq!(line_text(&super::storage_access_line(access)), "storage SLOAD slot 0x1 = 0x2a");
     }
 
     #[test]
     fn storage_access_line_formats_sstore_with_previous_value() {
-        let change = StorageChange {
+        let mut step = trace_step(Vec::new());
+        step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
             value: U256::from(42),
             had_value: Some(U256::from(7)),
             reason: StorageChangeReason::SSTORE,
-        };
+        }));
+        let steps = [step];
+        let access = super::storage_access_at(&steps, 0).unwrap();
 
         assert_eq!(
-            line_text(&super::storage_access_line(&change)),
+            line_text(&super::storage_access_line(access)),
             "storage SSTORE slot 0x1: 0x7 -> 0x2a"
         );
     }

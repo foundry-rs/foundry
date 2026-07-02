@@ -33,7 +33,7 @@ use alloy_rpc_types::{
 };
 use alloy_rpc_types_eth::Account;
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_trie::EMPTY_ROOT_HASH;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
@@ -225,6 +225,77 @@ async fn test_debug_account_at_local() {
         assert_eq!(account.code_hash, KECCAK256_EMPTY);
         assert_eq!(account.storage_root, EMPTY_ROOT_HASH);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_account_at_local_block_on_fork() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+    let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let fork_account = origin_accounts[2].address();
+    let fork_account_balance = origin_provider.get_balance(fork_account).await.unwrap();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let tx = TransactionRequest::default().to(to).value(U256::from(1000)).from(from);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    let account: Option<Account> = provider
+        .raw_request(
+            "debug_accountAt".into(),
+            (BlockId::number(block_number), Index::from(0), fork_account),
+        )
+        .await
+        .unwrap();
+    let account = account.unwrap();
+
+    assert_eq!(account.balance, fork_account_balance);
+    assert_eq!(account.nonce, 0);
+    assert_eq!(account.code_hash, KECCAK256_EMPTY);
+    assert_eq!(account.storage_root, EMPTY_ROOT_HASH);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_account_at_delegates_pre_fork_block() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+    let origin_accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let to = origin_accounts[1].address();
+    let tx = TransactionRequest::default()
+        .to(to)
+        .value(U256::from(1000))
+        .from(origin_accounts[0].address());
+    origin_provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+
+    let account: Option<Account> = provider
+        .raw_request("debug_accountAt".into(), (BlockId::number(1), Index::from(0), to))
+        .await
+        .unwrap();
+    let account = account.unwrap();
+
+    assert_eq!(account.balance, origin_handle.genesis_balance().saturating_add(U256::from(1000)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -649,6 +720,106 @@ async fn test_debug_trace_call_state_override() {
             unreachable!()
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_tx_index() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let from = wallets[0].address();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    for (offset, value) in ["first", "second", "third"].into_iter().enumerate() {
+        let set_value = simple_storage_contract.setValue(value.to_string());
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(*simple_storage_contract.address())
+            .with_input(set_value.calldata().to_owned())
+            .nonce(nonce + offset as u64);
+        let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    }
+
+    api.mine_one().await;
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let get_value = simple_storage_contract.getValue();
+    let call = TransactionRequest::default()
+        .from(from)
+        .to(*simple_storage_contract.address())
+        .with_input(get_value.calldata().to_owned());
+
+    for (tx_index, expected) in [(0, "init value"), (1, "first"), (2, "second")] {
+        let trace = provider
+            .debug_trace_call(
+                WithOtherFields::new(call.clone()),
+                BlockId::number(block_number),
+                GethDebugTracingCallOptions::default().with_tx_index(tx_index),
+            )
+            .await
+            .unwrap();
+        match trace {
+            GethTrace::Default(default_frame) => {
+                assert_eq!(
+                    default_frame.return_value,
+                    Bytes::from(String::from(expected).abi_encode())
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_call_tx_index_fork_lazy_state() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1));
+    let _ = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let block_number = provider.get_block_number().await.unwrap();
+
+    let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".parse().unwrap();
+    let total_supply = TransactionRequest::default()
+        .from(from)
+        .to(usdc)
+        .with_input(Bytes::from_hex("18160ddd").unwrap());
+
+    let tx_index_trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(total_supply.clone()),
+            BlockId::number(block_number),
+            GethDebugTracingCallOptions::default().with_tx_index(0),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(tx_index_frame) = tx_index_trace else { unreachable!() };
+
+    let latest_trace = provider
+        .debug_trace_call(
+            WithOtherFields::new(total_supply),
+            BlockId::number(block_number),
+            GethDebugTracingCallOptions::default(),
+        )
+        .await
+        .unwrap();
+    let GethTrace::Default(latest_frame) = latest_trace else { unreachable!() };
+
+    assert!(!tx_index_frame.return_value.is_empty());
+    assert_eq!(tx_index_frame.return_value, latest_frame.return_value);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2656>
