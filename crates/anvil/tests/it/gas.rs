@@ -4,7 +4,7 @@ use crate::utils::http_provider_with_signer;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 
@@ -215,6 +215,70 @@ async fn test_can_use_fee_history() {
         assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), latest_fee_history_fee);
         assert_eq!(latest_fee_history_fee, next_base_fee as u64);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_refreshes_fee_history_cache() {
+    let source_base_fee = 50u64;
+    let target_base_fee = 1_000u64;
+
+    let (source_api, _) = spawn(NodeConfig::test().with_base_fee(Some(source_base_fee))).await;
+    let state = source_api.anvil_dump_state(None).await.unwrap();
+
+    let (target_api, _) = spawn(NodeConfig::test().with_base_fee(Some(target_base_fee))).await;
+    let before =
+        target_api.fee_history(U256::from(1), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    assert_eq!(before.base_fee_per_gas.first().copied(), Some(target_base_fee as u128));
+
+    assert!(target_api.anvil_load_state(state).await.unwrap());
+
+    let after =
+        target_api.fee_history(U256::from(1), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    assert_eq!(after.base_fee_per_gas.first().copied(), Some(source_base_fee as u128));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_refreshes_fee_history_cache() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_reset(None).await.unwrap();
+
+    let latest_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let fee_history = provider.get_fee_history(1, BlockNumberOrTag::Latest, &[]).await.unwrap();
+
+    assert_eq!(fee_history.base_fee_per_gas.len(), 2);
+    assert_eq!(
+        fee_history.base_fee_per_gas.first().copied(),
+        latest_block.header.base_fee_per_gas.map(Into::into)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_refreshes_fee_history_cache() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+
+    let reverted_block_base_fee = U256::from(1_000u64);
+    api.anvil_set_next_block_base_fee_per_gas(reverted_block_base_fee).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+
+    let before = api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap();
+    assert_eq!(
+        before.base_fee_per_gas.first().copied(),
+        Some(reverted_block_base_fee.to::<u128>())
+    );
+
+    assert!(api.evm_revert(snapshot_id).await.unwrap());
+
+    let latest_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let after = api.fee_history(U256::from(1), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    assert_eq!(after.base_fee_per_gas.len(), 2);
+    assert_eq!(
+        after.base_fee_per_gas.first().copied(),
+        latest_block.header.base_fee_per_gas.map(Into::into)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

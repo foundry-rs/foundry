@@ -15,7 +15,10 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{
+            FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE,
+            insert_fee_history_cache_entry_for_block,
+        },
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -30,7 +33,8 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
+    transaction::Recovered,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
@@ -622,6 +626,32 @@ impl<N: Network> EthApi<N> {
         *self.instance_id.write() = B256::random();
     }
 
+    /// Rebuilds fee history cache entries from the current local chain context.
+    fn rebuild_fee_history_cache(&self)
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
+        self.fee_history_cache.lock().clear();
+
+        let blob_params = self.backend.blob_params();
+        let storage_info = self.storage_info();
+        let best_number = self.backend.best_number();
+        let oldest_number = best_number.saturating_sub(self.fee_history_limit.saturating_sub(1));
+
+        for block_number in oldest_number..=best_number {
+            if let Some(header) = self.backend.get_block(block_number).map(|block| block.header) {
+                insert_fee_history_cache_entry_for_block(
+                    &self.fee_history_cache,
+                    self.fee_history_limit,
+                    blob_params,
+                    &storage_info,
+                    header.hash_slow(),
+                    &header,
+                );
+            }
+        }
+    }
+
     /// Returns the first signer that can sign for the given address
     #[expect(clippy::borrowed_box)]
     pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<N>>> {
@@ -686,7 +716,10 @@ impl<N: Network> EthApi<N> {
     /// If `forking` is `None` then this will disable forking entirely.
     ///
     /// Handler for RPC call: `anvil_reset`
-    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
+    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         self.reset_instance_id();
         node_info!("anvil_reset");
         if let Some(forking) = forking {
@@ -696,6 +729,7 @@ impl<N: Network> EthApi<N> {
             // Reset to a fresh in-memory state
             self.backend.reset_to_in_mem().await?;
         }
+        self.rebuild_fee_history_cache();
         // Clear pending transactions since they reference the old chain state.
         self.pool.clear();
         Ok(())
@@ -705,9 +739,16 @@ impl<N: Network> EthApi<N> {
     /// Takes a single parameter, which is the snapshot id to revert to.
     ///
     /// Handler for RPC call: `evm_revert`
-    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
+    pub async fn evm_revert(&self, id: U256) -> Result<bool>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         node_info!("evm_revert");
-        self.backend.revert_state_snapshot(id).await
+        let reverted = self.backend.revert_state_snapshot(id).await?;
+        if reverted {
+            self.rebuild_fee_history_cache();
+        }
+        Ok(reverted)
     }
 
     /// Send transactions impersonating specific account and contract addresses.
@@ -1397,7 +1438,11 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_loadState`
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
-        self.backend.load_state_bytes(buf).await
+        let loaded = self.backend.load_state_bytes(buf).await?;
+        if loaded {
+            self.rebuild_fee_history_cache();
+        }
+        Ok(loaded)
     }
 
     async fn block_request(
