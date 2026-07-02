@@ -561,6 +561,16 @@ fn byte_concat_right_aligned_word_assembles_push_fragments() {
 }
 
 #[test]
+fn byte_concat_concrete_bytes_flattens_slices_with_padding() {
+    let mut cx = SymCx::new();
+    let left = SymBytes::concrete(&mut cx, vec![1, 2, 3]);
+    let right = SymBytes::concrete(&mut cx, vec![4, 5]);
+    let bytes = SymBytes::concat(&mut cx, [left, right]).slice_concrete(&mut cx, 2, 5);
+
+    assert_eq!(bytes.concrete_bytes(&mut cx, "test concrete bytes").unwrap(), vec![3, 4, 5, 0, 0]);
+}
+
+#[test]
 fn calldata_load_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let calldata_bytes =
