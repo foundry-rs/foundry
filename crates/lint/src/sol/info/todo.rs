@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::Todo;
 use crate::{
     linter::{EarlyLintPass, Lint, LintContext},
@@ -31,16 +33,15 @@ impl<'ast> EarlyLintPass<'ast> for Todo {
         let comments = Comments::new(file, _ctx.session().source_map(), false, false, None);
 
         for comment in comments.iter() {
-            let mut found = Vec::new();
-            for line in &comment.lines {
-                for word in line.split(|c: char| !c.is_alphanumeric()) {
-                    if MARKERS.iter().any(|m| word.eq_ignore_ascii_case(m))
-                        && !found.contains(&word)
-                    {
-                        found.push(word);
-                    }
-                }
-            }
+            let mut seen = HashSet::new();
+
+            let found: Vec<&str> = comment
+                .lines
+                .iter()
+                .flat_map(|line| line.split(|c: char| !c.is_alphanumeric()))
+                .filter(|&word| MARKERS.iter().any(|m| word.eq_ignore_ascii_case(m)))
+                .filter(|&word| seen.insert(word))
+                .collect();
 
             if found.is_empty() {
                 continue;
