@@ -607,8 +607,6 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             result.reason = reason;
         }
 
-        result.fuzz_fixtures = self.fuzz_fixtures(address);
-
         Ok(result)
     }
 
@@ -808,7 +806,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         });
 
         let setup_time = Instant::now();
-        let setup = self.setup(call_setup);
+        let mut setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
         if let Some(prev_tracer) = prev_tracer {
@@ -833,24 +831,25 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
-        let test_matcher = TestFunctionMatcher::new(
-            &self.config,
-            &self.mcr.inline_config,
-            self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
-        );
-        let functions = self
-            .contract
-            .abi
-            .functions()
-            .filter(|func| {
-                filter.matches_test_function_kind_in_contract(
-                    self.name,
-                    func,
-                    test_matcher.test_function_kind(self.name, func),
-                )
-            })
-            .filter(|func| self.function_matches_network_pass(func))
-            .collect::<Vec<_>>();
+        let functions = {
+            let test_matcher = TestFunctionMatcher::new(
+                &self.config,
+                &self.mcr.inline_config,
+                self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+            );
+            self.contract
+                .abi
+                .functions()
+                .filter(|func| {
+                    filter.matches_test_function_kind_in_contract(
+                        self.name,
+                        func,
+                        test_matcher.test_function_kind(self.name, func),
+                    )
+                })
+                .filter(|func| self.function_matches_network_pass(func))
+                .collect::<Vec<_>>()
+        };
         debug!(
             "Found {} test functions out of {} in {:?}",
             functions.len(),
@@ -956,7 +955,23 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             return SuiteResult::new(start.elapsed(), test_results, warnings);
         }
 
+        if functions.iter().any(|func| {
+            matches!(
+                func.test_function_kind(),
+                TestFunctionKind::FuzzTest { .. }
+                    | TestFunctionKind::TableTest
+                    | TestFunctionKind::InvariantTest
+            )
+        }) {
+            setup.fuzz_fixtures = self.fuzz_fixtures(setup.address);
+        }
+
         let early_exit = &self.tcfg.early_exit;
+        let test_matcher = TestFunctionMatcher::new(
+            &self.config,
+            &self.mcr.inline_config,
+            self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+        );
 
         if self.progress.is_some() {
             let interrupt = early_exit.clone();
