@@ -138,7 +138,7 @@ pub(crate) fn symbolic_create_address_word(
     let word = SymExpr::var_symbol(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(
         cx,
-        SymBoolExprOp::Ult,
+        SymCmpOp::Ult,
         &word,
         U256::from(1) << 160,
     ));
@@ -159,7 +159,7 @@ pub(crate) fn symbolic_create2_address_word(
     let word = SymExpr::var_symbol(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(
         cx,
-        SymBoolExprOp::Ult,
+        SymCmpOp::Ult,
         &word,
         U256::from(1) << 160,
     ));
@@ -221,17 +221,17 @@ impl SymExpr {
     fn storage_layout_key(&self, cx: &mut SymCx) -> Option<(Self, Self)> {
         match self.kind() {
             SymExprKind::Keccak { .. } => Some((self.clone(), Self::zero(cx))),
-            SymExprKind::Op(SymExprOp::Add, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
                 if let Some((base, offset)) = left.storage_layout_key(cx)
                     && !right.contains_keccak()
                 {
-                    let offset = Self::op(cx, SymExprOp::Add, offset, right.clone());
+                    let offset = Self::binop(cx, SymBinOp::Add, offset, right.clone());
                     return Some((base, offset));
                 }
                 if let Some((base, offset)) = right.storage_layout_key(cx)
                     && !left.contains_keccak()
                 {
-                    let offset = Self::op(cx, SymExprOp::Add, offset, left.clone());
+                    let offset = Self::binop(cx, SymBinOp::Add, offset, left.clone());
                     return Some((base, offset));
                 }
                 None
@@ -243,15 +243,15 @@ impl SymExpr {
 
 fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256> {
     match candidate {
-        SymExprKind::Op(SymExprOp::And, left, right) if left == target => right.eval(),
-        SymExprKind::Op(SymExprOp::And, left, right) if right == target => left.eval(),
+        SymExprKind::BinOp(SymBinOp::And, left, right) if left == target => right.eval(),
+        SymExprKind::BinOp(SymBinOp::And, left, right) if right == target => left.eval(),
         _ => None,
     }
 }
 
 fn context_forces_masked_expr(context: &[SymBoolExpr], target: &SymExpr, mask: U256) -> bool {
     context.iter().any(|condition| match condition.kind() {
-        SymBoolExprKind::Eq(left, right) => {
+        SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
             (left == target && masked_expr_matches(right.kind(), target) == Some(mask))
                 || (right == target && masked_expr_matches(left.kind(), target) == Some(mask))
         }
@@ -271,6 +271,11 @@ pub(crate) fn concrete_expr_bytes(
             None => Err(SymbolicError::Unsupported(reason)),
         })
         .collect()
+}
+
+pub(crate) fn mask_low_bits(mask: U256) -> Option<usize> {
+    let bits = mask.bit_len();
+    (mask == mask_bits(U256::MAX, bits)).then_some(bits)
 }
 
 fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
@@ -319,9 +324,8 @@ pub(in crate::runtime) enum SymExprKind {
     Keccak { name: Symbol, len: SymExpr, bytes: Arc<[SymExpr]> },
     Hash { name: Symbol, algorithm: &'static str, bytes: Arc<[SymExpr]> },
     Not(SymExpr),
-    Op(SymExprOp, SymExpr, SymExpr),
-    AddMod { left: SymExpr, right: SymExpr, modulus: SymExpr },
-    MulMod { left: SymExpr, right: SymExpr, modulus: SymExpr },
+    BinOp(SymBinOp, SymExpr, SymExpr),
+    TernOp(SymTernOp, SymExpr, SymExpr, SymExpr),
     Ite(SymBoolExpr, SymExpr, SymExpr),
 }
 
@@ -411,120 +415,176 @@ impl SymExpr {
         }
     }
 
-    pub(crate) fn op(cx: &mut SymCx, op: SymExprOp, left: Self, right: Self) -> Self {
-        match op {
-            SymExprOp::Add => match (left.kind(), right.kind()) {
+    pub(crate) fn binop(cx: &mut SymCx, binop: SymBinOp, left: Self, right: Self) -> Self {
+        match binop {
+            SymBinOp::Add => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const + const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `0 + a => a`.
                 (SymExprKind::Const(value), _) if value.is_zero() => right,
+                // `a + 0 => a`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                _ => Self::commutative_binop(cx, binop, left, right),
             },
-            SymExprOp::Sub => match (left.kind(), right.kind()) {
+            SymBinOp::Sub => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const - const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `a - 0 => a`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                // `a - a => 0`.
                 _ if left == right => Self::zero(cx),
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
-            SymExprOp::Mul => match (left.kind(), right.kind()) {
+            SymBinOp::Mul => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const * const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `0 * a => 0`.
                 (SymExprKind::Const(value), _) | (_, SymExprKind::Const(value))
                     if value.is_zero() =>
                 {
                     Self::zero(cx)
                 }
+                // `1 * a => a`.
                 (SymExprKind::Const(value), _) if *value == U256::from(1) => right,
+                // `a * 1 => a`.
                 (_, SymExprKind::Const(value)) if *value == U256::from(1) => left,
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                _ => Self::commutative_binop(cx, binop, left, right),
             },
-            SymExprOp::UDiv | SymExprOp::SDiv => match (left.kind(), right.kind()) {
+            SymBinOp::UDiv | SymBinOp::SDiv => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const / const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `a / 0 => 0`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => Self::zero(cx),
+                // `a / 1 => a`.
                 (_, SymExprKind::Const(value)) if *value == U256::from(1) => left,
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
-            SymExprOp::URem | SymExprOp::SRem => match (left.kind(), right.kind()) {
+            SymBinOp::URem | SymBinOp::SRem => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const % const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `a % 0 => 0`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => Self::zero(cx),
+                // `a % 1 => 0`.
                 (_, SymExprKind::Const(value)) if *value == U256::from(1) => Self::zero(cx),
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
-            SymExprOp::And => match (left.kind(), right.kind()) {
+            SymBinOp::And => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const & const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `0 & a => 0`.
                 (SymExprKind::Const(value), _) | (_, SymExprKind::Const(value))
                     if value.is_zero() =>
                 {
                     Self::zero(cx)
                 }
+                // `MAX & a => a`.
                 (SymExprKind::Const(value), _) if *value == U256::MAX => right,
+                // `a & MAX => a`.
                 (_, SymExprKind::Const(value)) if *value == U256::MAX => left,
+                // `a & a => a`.
                 _ if left == right => left,
                 (SymExprKind::Const(mask), _) => Self::and_const(cx, right, *mask),
                 (_, SymExprKind::Const(mask)) => Self::and_const(cx, left, *mask),
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                _ => Self::commutative_binop(cx, binop, left, right),
             },
-            SymExprOp::Or | SymExprOp::Xor => match (left.kind(), right.kind()) {
+            SymBinOp::Or => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const | const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `0 | a => a`.
                 (SymExprKind::Const(value), _) if value.is_zero() => right,
+                // `a | 0 => a`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                // `a | a => a`.
+                _ if left == right => left,
+                _ => Self::or(cx, left, right),
             },
-            SymExprOp::Shl | SymExprOp::Shr => match (left.kind(), right.kind()) {
+            SymBinOp::Xor => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const ^ const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `0 ^ a => a`.
+                (SymExprKind::Const(value), _) if value.is_zero() => right,
+                // `a ^ 0 => a`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                // `a ^ a => 0`.
+                _ if left == right => Self::zero(cx),
+                _ => Self::commutative_binop(cx, binop, left, right),
+            },
+            SymBinOp::Shl => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    // `const << const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
+                }
+                // `a << 0 => a`.
+                (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                // `0 << a => 0`.
                 (SymExprKind::Const(value), _) if value.is_zero() => Self::zero(cx),
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                // `a << 256 => 0`.
+                (_, SymExprKind::Const(value)) if *value >= U256::from(256) => Self::zero(cx),
+                _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
-            SymExprOp::Sar => match (left.kind(), right.kind()) {
+            SymBinOp::Shr => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
-                    Self::constant(cx, op.eval(*left_value, *right_value))
+                    // `const >> const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
                 }
+                // `a >> 0 => a`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
-                _ => Self::from_kind(cx, SymExprKind::Op(op, left, right)),
+                // `0 >> a => 0`.
+                (SymExprKind::Const(value), _) if value.is_zero() => Self::zero(cx),
+                (_, SymExprKind::Const(value)) => Self::shr_const(cx, left, *value),
+                _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
+            },
+            SymBinOp::Sar => match (left.kind(), right.kind()) {
+                (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
+                    // `const >>s const => const`.
+                    Self::constant(cx, binop.eval(*left_value, *right_value))
+                }
+                // `a >>s 0 => a`.
+                (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
         }
     }
 
-    pub(crate) fn addmod(cx: &mut SymCx, left: Self, right: Self, modulus: Self) -> Self {
+    pub(crate) fn ternop(
+        cx: &mut SymCx,
+        ternop: SymTernOp,
+        left: Self,
+        right: Self,
+        modulus: Self,
+    ) -> Self {
         match (left.kind(), right.kind(), modulus.kind()) {
             (_, _, SymExprKind::Const(modulus))
                 if modulus.is_zero() || *modulus == U256::from(1) =>
             {
+                // `addmod/mulmod(a, b, 0) => 0`.
                 Self::zero(cx)
             }
             (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
-                Self::constant(cx, left.add_mod(*right, *modulus))
+                // `addmod/mulmod(const, const, const) => const`.
+                Self::constant(cx, ternop.eval(*left, *right, *modulus))
             }
-            _ => Self::from_kind(cx, SymExprKind::AddMod { left, right, modulus }),
-        }
-    }
-
-    pub(crate) fn mulmod(cx: &mut SymCx, left: Self, right: Self, modulus: Self) -> Self {
-        match (left.kind(), right.kind(), modulus.kind()) {
-            (_, _, SymExprKind::Const(modulus))
-                if modulus.is_zero() || *modulus == U256::from(1) =>
-            {
-                Self::zero(cx)
+            _ => {
+                // `addmod/mulmod(a, b, m) => addmod/mulmod(ordered(a, b), m)`.
+                let (left, right) = Self::ordered_commutative_operands(left, right);
+                Self::from_kind(cx, SymExprKind::TernOp(ternop, left, right, modulus))
             }
-            (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
-                Self::constant(cx, left.mul_mod(*right, *modulus))
-            }
-            _ => Self::from_kind(cx, SymExprKind::MulMod { left, right, modulus }),
         }
     }
 
@@ -535,9 +595,31 @@ impl SymExpr {
         else_expr: Self,
     ) -> Self {
         match condition.as_const() {
+            // `ite(true, a, b) => a`.
             Some(true) => then_expr,
+            // `ite(false, a, b) => b`.
             Some(false) => else_expr,
+            // `ite(c, a, a) => a`.
             None if then_expr == else_expr => then_expr,
+            // `ite(a == 0, 0, a / a) => a != 0`.
+            None if then_expr.as_const().is_some_and(|value| value.is_zero())
+                && Self::self_div_expr_matches_zero_check(&condition, &else_expr) =>
+            {
+                let condition = condition.not(cx);
+                Self::bool_word(cx, condition)
+            }
+            // `ite(c, 1, bool_word(c)) => bool_word(c)`.
+            None if then_expr.as_const() == Some(U256::from(1))
+                && else_expr.bool_word_condition().as_ref() == Some(&condition) =>
+            {
+                else_expr
+            }
+            // `ite(c, bool_word(c), 0) => bool_word(c)`.
+            None if else_expr.as_const().is_some_and(|value| value.is_zero())
+                && then_expr.bool_word_condition().as_ref() == Some(&condition) =>
+            {
+                then_expr
+            }
             None => Self::from_kind(cx, SymExprKind::Ite(condition, then_expr, else_expr)),
         }
     }
@@ -546,6 +628,12 @@ impl SymExpr {
         let one = Self::one(cx);
         let zero = Self::zero(cx);
         Self::ite(cx, value, one, zero)
+    }
+
+    fn self_div_expr_matches_zero_check(cond: &SymBoolExpr, expr: &Self) -> bool {
+        let Some(zero_operand) = cond.zero_check_operand() else { return false };
+        let Some((numerator, denominator)) = expr.udiv_operands() else { return false };
+        numerator == zero_operand && denominator == zero_operand
     }
 
     pub(crate) fn keccak_symbol(cx: &mut SymCx, name: Symbol, len: Self, bytes: Vec<Self>) -> Self {
@@ -561,32 +649,258 @@ impl SymExpr {
         Self::from_kind(cx, SymExprKind::Hash { name, algorithm, bytes: bytes.into() })
     }
 
+    fn or(cx: &mut SymCx, left: Self, right: Self) -> Self {
+        if let Some(rebuilt) = Self::rebuild_from_or_terms(&left, &right) {
+            // `byte_parts(a) | byte_parts(a) => a`.
+            return rebuilt;
+        }
+        Self::commutative_binop(cx, SymBinOp::Or, left, right)
+    }
+
+    fn commutative_binop(cx: &mut SymCx, op: SymBinOp, left: Self, right: Self) -> Self {
+        // `a + b => b + a`.
+        let (left, right) = Self::ordered_commutative_operands(left, right);
+        Self::from_kind(cx, SymExprKind::BinOp(op, left, right))
+    }
+
+    pub(in crate::runtime::expr) fn ordered_commutative_operands(
+        left: Self,
+        right: Self,
+    ) -> (Self, Self) {
+        if right.kind.cached_hash() < left.kind.cached_hash() {
+            (right, left)
+        } else {
+            (left, right)
+        }
+    }
+
     fn and_const(cx: &mut SymCx, expr: Self, mask: U256) -> Self {
         if mask.is_zero() {
+            // `a & 0 => 0`.
             return Self::zero(cx);
         }
         if mask == U256::MAX {
+            // `a & MAX => a`.
             return expr;
         }
 
         match expr.kind() {
-            SymExprKind::Op(SymExprOp::And, left, right) => match (left.kind(), right.kind()) {
+            // `const & mask => const`.
+            SymExprKind::Const(value) => Self::constant(cx, *value & mask),
+            SymExprKind::BinOp(SymBinOp::Or, left, right) => {
+                // `(a | b) & mask => (a & mask) | (b & mask)`.
+                let left = Self::and_const(cx, left.clone(), mask);
+                let right = Self::and_const(cx, right.clone(), mask);
+                Self::binop(cx, SymBinOp::Or, left, right)
+            }
+            SymExprKind::BinOp(SymBinOp::Shl, _, shift)
+                if mask_low_bits(mask).is_some_and(|bits| {
+                    shift
+                        .as_const()
+                        .and_then(|shift| usize::try_from(shift).ok())
+                        .is_some_and(|shift| bits <= shift)
+                }) =>
+            {
+                // `(a << n) & low_mask(n) => 0`.
+                Self::zero(cx)
+            }
+            SymExprKind::BinOp(SymBinOp::And, left, right) => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(value), _) if *value == mask => {
+                    // `(mask & a) & mask => a & mask`.
                     Self::and_const(cx, right.clone(), mask)
                 }
                 (_, SymExprKind::Const(value)) if *value == mask => {
+                    // `(a & mask) & mask => a & mask`.
                     Self::and_const(cx, left.clone(), mask)
                 }
+                // `(a & a) & mask => a & mask`.
                 _ if left == right => Self::and_const(cx, left.clone(), mask),
                 _ => {
                     let mask = Self::constant(cx, mask);
-                    Self::from_kind(cx, SymExprKind::Op(SymExprOp::And, expr, mask))
+                    Self::from_kind(cx, SymExprKind::BinOp(SymBinOp::And, expr, mask))
                 }
             },
             _ => {
                 let mask = Self::constant(cx, mask);
-                Self::from_kind(cx, SymExprKind::Op(SymExprOp::And, expr, mask))
+                Self::from_kind(cx, SymExprKind::BinOp(SymBinOp::And, expr, mask))
             }
+        }
+    }
+
+    fn shr_const(cx: &mut SymCx, expr: Self, shift: U256) -> Self {
+        if shift.is_zero() {
+            // `a >> 0 => a`.
+            return expr;
+        }
+        if shift >= U256::from(256) {
+            // `a >> 256 => 0`.
+            return Self::zero(cx);
+        }
+
+        let shift = usize::try_from(shift).expect("shift is less than 256");
+        if expr.unsigned_bits() <= shift {
+            // `small(a) >> bits(a) => 0`.
+            return Self::zero(cx);
+        }
+
+        if let SymExprKind::BinOp(SymBinOp::Shl, inner, left_shift) = expr.kind()
+            && left_shift.as_const() == Some(U256::from(shift))
+            && inner.unsigned_bits() <= 256 - shift
+        {
+            // `(a << n) >> n => a`.
+            return inner.clone();
+        }
+
+        if let SymExprKind::BinOp(SymBinOp::Or, left, right) = expr.kind() {
+            // Distribute only when it collapses part of the OR; expanding broad
+            // bit-smearing chains eagerly makes SMT CSE much larger.
+            let left = Self::shr_const(cx, left.clone(), U256::from(shift));
+            let right = Self::shr_const(cx, right.clone(), U256::from(shift));
+            if left.as_const().is_some_and(|value| value.is_zero()) {
+                return right;
+            }
+            if right.as_const().is_some_and(|value| value.is_zero()) {
+                return left;
+            }
+        }
+
+        let shift = Self::constant(cx, U256::from(shift));
+        Self::from_kind(cx, SymExprKind::BinOp(SymBinOp::Shr, expr, shift))
+    }
+
+    fn rebuild_from_or_terms(left: &Self, right: &Self) -> Option<Self> {
+        let mut terms = Vec::new();
+        left.push_or_terms(&mut terms);
+        right.push_or_terms(&mut terms);
+        Self::rebuild_from_extracted_byte_terms(&terms)
+            .or_else(|| Self::rebuild_from_shifted_word_fragments(&terms))
+    }
+
+    pub(in crate::runtime) fn push_or_terms<'a>(&'a self, terms: &mut Vec<&'a Self>) {
+        match self.kind() {
+            SymExprKind::BinOp(SymBinOp::Or, left, right) => {
+                left.push_or_terms(terms);
+                right.push_or_terms(terms);
+            }
+            _ => terms.push(self),
+        }
+    }
+
+    fn rebuild_from_extracted_byte_terms(terms: &[&Self]) -> Option<Self> {
+        if terms.len() <= 1 {
+            return None;
+        }
+
+        let mut source = None;
+        let mut seen = [false; 32];
+        for term in terms {
+            if term.as_const().is_some_and(|value| value.is_zero()) {
+                continue;
+            }
+            let (term_source, index) = term.extracted_shifted_byte_term()?;
+            match &source {
+                Some(source) if source != &term_source => return None,
+                Some(_) => {}
+                None => source = Some(term_source),
+            }
+            seen[index] = true;
+        }
+
+        let source = source?;
+        for (index, seen) in seen.into_iter().enumerate() {
+            if !seen && source.known_byte(index) != Some(0) {
+                return None;
+            }
+        }
+        Some(source)
+    }
+
+    fn extracted_shifted_byte_term(&self) -> Option<(Self, usize)> {
+        match self.kind() {
+            SymExprKind::BinOp(SymBinOp::Shl, byte, shift) => {
+                let shift = shift.as_const()?;
+                let Ok(shift) = usize::try_from(shift) else { return None };
+                if shift % 8 != 0 || shift > 248 {
+                    return None;
+                }
+                let index = 31 - shift / 8;
+                let source = byte.extracted_unshifted_byte_source(index)?;
+                Some((source, index))
+            }
+            _ => self.extracted_unshifted_byte_source(31).map(|source| (source, 31)),
+        }
+    }
+
+    fn extracted_unshifted_byte_source(&self, index: usize) -> Option<Self> {
+        let expr = self.strip_low_byte_mask();
+        if index == 31 {
+            return Some(expr.clone());
+        }
+        let SymExprKind::BinOp(SymBinOp::Shr, source, shift) = expr.kind() else { return None };
+        let shift = shift.as_const()?;
+        (shift == U256::from((31 - index) * 8)).then(|| source.clone())
+    }
+
+    fn rebuild_from_shifted_word_fragments(terms: &[&Self]) -> Option<Self> {
+        if terms.len() != 2 {
+            return None;
+        }
+
+        let left_low = terms[0].low_word_fragment();
+        let right_low = terms[1].low_word_fragment();
+        let left_high = terms[0].shifted_high_word_fragment();
+        let right_high = terms[1].shifted_high_word_fragment();
+        match (left_low, right_low, left_high, right_high) {
+            (Some((low_source, low_bits)), None, None, Some((high_source, high_bits)))
+            | (None, Some((low_source, low_bits)), Some((high_source, high_bits)), None)
+                if low_source == high_source && low_bits == high_bits =>
+            {
+                Some(low_source)
+            }
+            _ => None,
+        }
+    }
+
+    fn low_word_fragment(&self) -> Option<(Self, usize)> {
+        let SymExprKind::BinOp(SymBinOp::And, left, right) = self.kind() else { return None };
+        if let Some(mask) = right.as_const() {
+            return mask_low_bits(mask).map(|bits| (left.clone(), bits));
+        }
+        let mask = left.as_const()?;
+        mask_low_bits(mask).map(|bits| (right.clone(), bits))
+    }
+
+    fn shifted_high_word_fragment(&self) -> Option<(Self, usize)> {
+        let SymExprKind::BinOp(SymBinOp::Shl, value, shift) = self.kind() else { return None };
+        let bits = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
+        if bits == 0 || bits >= 256 {
+            return None;
+        }
+
+        let (source, source_shift, width) = value.shifted_low_fragment_source()?;
+        (source_shift == bits && width == 256 - bits).then_some((source, bits))
+    }
+
+    fn shifted_low_fragment_source(&self) -> Option<(Self, usize, usize)> {
+        let SymExprKind::BinOp(SymBinOp::And, left, right) = self.kind() else { return None };
+        if let Some(mask) = right.as_const() {
+            return Self::shifted_low_fragment_source_with_mask(left, mask);
+        }
+        let mask = left.as_const()?;
+        Self::shifted_low_fragment_source_with_mask(right, mask)
+    }
+
+    fn shifted_low_fragment_source_with_mask(
+        value: &Self,
+        mask: U256,
+    ) -> Option<(Self, usize, usize)> {
+        let width = mask_low_bits(mask)?;
+        match value.kind() {
+            SymExprKind::BinOp(SymBinOp::Shr, source, shift) => {
+                let shift = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
+                Some((source.clone(), shift, width))
+            }
+            _ => Some((value.clone(), 0, width)),
         }
     }
 
@@ -595,7 +909,7 @@ impl SymExpr {
             return Self::constant(cx, U256::from(word.to::<u8>()));
         }
         let mask = Self::constant(cx, U256::from(0xff));
-        Self::op(cx, SymExprOp::And, self, mask)
+        Self::binop(cx, SymBinOp::And, self, mask)
     }
 
     pub(crate) fn into_byte_exprs(self, cx: &mut SymCx) -> Vec<Self> {
@@ -628,9 +942,9 @@ impl SymExpr {
                 byte
             } else {
                 let shift = Self::constant(cx, U256::from(shift));
-                Self::op(cx, SymExprOp::Shl, byte, shift)
+                Self::binop(cx, SymBinOp::Shl, byte, shift)
             };
-            expr = Self::op(cx, SymExprOp::Or, expr, byte);
+            expr = Self::binop(cx, SymBinOp::Or, expr, byte);
         }
         expr
     }
@@ -678,15 +992,14 @@ impl SymExpr {
             }
             SymExprKind::Hash { name, .. } => model.value(name.clone()).unwrap_or_default(),
             SymExprKind::Not(value) => !value.eval_model(model)?,
-            SymExprKind::Op(op, left, right) => {
+            SymExprKind::BinOp(op, left, right) => {
                 op.eval(left.eval_model(model)?, right.eval_model(model)?)
             }
-            SymExprKind::AddMod { left, right, modulus } => left
-                .eval_model(model)?
-                .add_mod(right.eval_model(model)?, modulus.eval_model(model)?),
-            SymExprKind::MulMod { left, right, modulus } => left
-                .eval_model(model)?
-                .mul_mod(right.eval_model(model)?, modulus.eval_model(model)?),
+            SymExprKind::TernOp(op, left, right, modulus) => op.eval(
+                left.eval_model(model)?,
+                right.eval_model(model)?,
+                modulus.eval_model(model)?,
+            ),
             SymExprKind::Ite(cond, then_expr, else_expr) => {
                 if cond.eval_model(model)? {
                     then_expr.eval_model(model)?
@@ -798,7 +1111,20 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Op(SymExprOp::UDiv, _, _)))
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::UDiv, _, _)))
+    }
+
+    pub(crate) fn contains_ite(&self) -> bool {
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Ite(_, _, _)))
+    }
+
+    pub(in crate::runtime) fn udiv_operands(&self) -> Option<(&Self, &Self)> {
+        match self.kind() {
+            SymExprKind::BinOp(SymBinOp::UDiv, numerator, denominator) => {
+                Some((numerator, denominator))
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
@@ -827,15 +1153,15 @@ impl SymExpr {
                 let else_byte = else_expr.known_byte(index)?;
                 (then_byte == else_byte).then_some(then_byte)
             }
-            SymExprKind::Op(op, left, right) => match op {
-                SymExprOp::And => match (left.known_byte(index), right.known_byte(index)) {
+            SymExprKind::BinOp(op, left, right) => match op {
+                SymBinOp::And => match (left.known_byte(index), right.known_byte(index)) {
                     (Some(left), Some(right)) => Some(left & right),
                     (Some(0), _) | (_, Some(0)) => Some(0),
                     _ => None,
                 },
-                SymExprOp::Or => Some(left.known_byte(index)? | right.known_byte(index)?),
-                SymExprOp::Xor => Some(left.known_byte(index)? ^ right.known_byte(index)?),
-                SymExprOp::Shl => {
+                SymBinOp::Or => Some(left.known_byte(index)? | right.known_byte(index)?),
+                SymBinOp::Xor => Some(left.known_byte(index)? ^ right.known_byte(index)?),
+                SymBinOp::Shl => {
                     let shift = right.as_const()?;
                     if shift >= U256::from(256) {
                         return Some(0);
@@ -847,7 +1173,7 @@ impl SymExpr {
                     let source_index = index + shift / 8;
                     if source_index >= 32 { Some(0) } else { left.known_byte(source_index) }
                 }
-                SymExprOp::Shr => {
+                SymBinOp::Shr => {
                     let shift = right.as_const()?;
                     if shift >= U256::from(256) {
                         return Some(0);
@@ -859,16 +1185,16 @@ impl SymExpr {
                     let byte_shift = shift / 8;
                     if index < byte_shift { Some(0) } else { left.known_byte(index - byte_shift) }
                 }
-                SymExprOp::Add
-                | SymExprOp::Sub
-                | SymExprOp::Mul
-                | SymExprOp::UDiv
-                | SymExprOp::URem
-                | SymExprOp::SDiv
-                | SymExprOp::SRem
-                | SymExprOp::Sar => None,
+                SymBinOp::Add
+                | SymBinOp::Sub
+                | SymBinOp::Mul
+                | SymBinOp::UDiv
+                | SymBinOp::URem
+                | SymBinOp::SDiv
+                | SymBinOp::SRem
+                | SymBinOp::Sar => None,
             },
-            SymExprKind::AddMod { .. } | SymExprKind::MulMod { .. } => None,
+            SymExprKind::TernOp(_, _, _, _) => None,
         }
     }
 
@@ -880,12 +1206,53 @@ impl SymExpr {
         Some(U256::from_be_bytes(word))
     }
 
+    pub(crate) fn unsigned_bits(&self) -> usize {
+        match self.kind() {
+            SymExprKind::Const(value) => value.bit_len().max(1),
+            SymExprKind::BinOp(SymBinOp::And, left, right) => {
+                if let Some(mask) = right.as_const() {
+                    left.unsigned_bits().min(mask.bit_len())
+                } else if let Some(mask) = left.as_const() {
+                    right.unsigned_bits().min(mask.bit_len())
+                } else {
+                    256
+                }
+            }
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
+                left.unsigned_bits().max(right.unsigned_bits()).saturating_add(1).min(256)
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                left.unsigned_bits().saturating_add(right.unsigned_bits()).min(256)
+            }
+            SymExprKind::BinOp(SymBinOp::Shl, left, right) => {
+                if let Some(shift) = right.as_const().and_then(|shift| usize::try_from(shift).ok())
+                {
+                    left.unsigned_bits().saturating_add(shift).min(256)
+                } else {
+                    256
+                }
+            }
+            SymExprKind::BinOp(SymBinOp::Shr, left, right) => {
+                if let Some(shift) = right.as_const().and_then(|shift| usize::try_from(shift).ok())
+                {
+                    left.unsigned_bits().saturating_sub(shift).max(1)
+                } else {
+                    256
+                }
+            }
+            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => left.unsigned_bits(),
+            SymExprKind::TernOp(_, _, _, modulus) => modulus.unsigned_bits(),
+            SymExprKind::Ite(_, left, right) => left.unsigned_bits().max(right.unsigned_bits()),
+            _ => 256,
+        }
+    }
+
     pub(crate) fn extracted_byte(&self, cx: &mut SymCx, index: usize) -> Self {
         debug_assert!(index < 32);
         let shift = Self::constant(cx, U256::from((31 - index) * 8));
-        let shifted = Self::op(cx, SymExprOp::Shr, self.clone(), shift);
+        let shifted = Self::binop(cx, SymBinOp::Shr, self.clone(), shift);
         let mask = Self::constant(cx, U256::from(0xff));
-        Self::op(cx, SymExprOp::And, shifted, mask)
+        Self::binop(cx, SymBinOp::And, shifted, mask)
     }
 
     pub(crate) fn extracted_byte_source(&self, index: usize) -> Option<Self> {
@@ -893,19 +1260,19 @@ impl SymExpr {
         if index == 31 {
             return Some(expr.clone());
         }
-        let SymExprKind::Op(SymExprOp::Shr, source, shift) = expr.kind() else { return None };
+        let SymExprKind::BinOp(SymBinOp::Shr, source, shift) = expr.kind() else { return None };
         let shift = shift.as_const()?;
         (shift == U256::from((31 - index) * 8)).then(|| source.clone())
     }
 
     pub(crate) fn strip_low_byte_mask(&self) -> &Self {
         match self.kind() {
-            SymExprKind::Op(SymExprOp::And, left, right)
+            SymExprKind::BinOp(SymBinOp::And, left, right)
                 if right.as_const() == Some(U256::from(0xff)) =>
             {
                 left.strip_low_byte_mask()
             }
-            SymExprKind::Op(SymExprOp::And, left, right)
+            SymExprKind::BinOp(SymBinOp::And, left, right)
                 if left.as_const() == Some(U256::from(0xff)) =>
             {
                 right.strip_low_byte_mask()
@@ -934,35 +1301,35 @@ impl SymExpr {
                 let else_expr = else_expr.byte_term(cx, index)?;
                 Some(Self::ite(cx, cond.clone(), then_expr, else_expr))
             }
-            SymExprKind::Op(op, left, right) => match op {
-                SymExprOp::And => Self::binary_byte_term(
+            SymExprKind::BinOp(op, left, right) => match op {
+                SymBinOp::And => Self::binary_byte_term(
                     cx,
                     left,
                     right,
                     index,
-                    SymExprOp::And,
+                    SymBinOp::And,
                     |byte| byte == 0xff,
                     |byte| byte == 0,
                 ),
-                SymExprOp::Or => Self::binary_byte_term(
+                SymBinOp::Or => Self::binary_byte_term(
                     cx,
                     left,
                     right,
                     index,
-                    SymExprOp::Or,
+                    SymBinOp::Or,
                     |byte| byte == 0,
                     |_| false,
                 ),
-                SymExprOp::Xor => Self::binary_byte_term(
+                SymBinOp::Xor => Self::binary_byte_term(
                     cx,
                     left,
                     right,
                     index,
-                    SymExprOp::Xor,
+                    SymBinOp::Xor,
                     |byte| byte == 0,
                     |_| false,
                 ),
-                SymExprOp::Shl => {
+                SymBinOp::Shl => {
                     let shift = right.eval()?;
                     if shift >= U256::from(256) {
                         return Some(Self::zero(cx));
@@ -978,7 +1345,7 @@ impl SymExpr {
                         left.byte_term(cx, source_index)
                     }
                 }
-                SymExprOp::Shr => {
+                SymBinOp::Shr => {
                     let shift = right.eval()?;
                     if shift >= U256::from(256) {
                         return Some(Self::zero(cx));
@@ -994,16 +1361,16 @@ impl SymExpr {
                         left.byte_term(cx, index - byte_shift)
                     }
                 }
-                SymExprOp::Add
-                | SymExprOp::Sub
-                | SymExprOp::Mul
-                | SymExprOp::UDiv
-                | SymExprOp::URem
-                | SymExprOp::SDiv
-                | SymExprOp::SRem
-                | SymExprOp::Sar => None,
+                SymBinOp::Add
+                | SymBinOp::Sub
+                | SymBinOp::Mul
+                | SymBinOp::UDiv
+                | SymBinOp::URem
+                | SymBinOp::SDiv
+                | SymBinOp::SRem
+                | SymBinOp::Sar => None,
             },
-            SymExprKind::AddMod { .. } | SymExprKind::MulMod { .. } => None,
+            SymExprKind::TernOp(_, _, _, _) => None,
         }
     }
 
@@ -1012,7 +1379,7 @@ impl SymExpr {
         left: &Self,
         right: &Self,
         index: usize,
-        op: SymExprOp,
+        op: SymBinOp,
         identity: impl Fn(u8) -> bool,
         absorbing: impl Fn(u8) -> bool,
     ) -> Option<Self> {
@@ -1023,7 +1390,7 @@ impl SymExpr {
             (_, Some(right)) if absorbing(right) => Some(Self::constant(cx, U256::from(right))),
             (Some(left), _) if identity(left) => Some(right),
             (_, Some(right)) if identity(right) => Some(left),
-            _ => Some(Self::op(cx, op, left, right)),
+            _ => Some(Self::binop(cx, op, left, right)),
         }
     }
 
@@ -1077,7 +1444,7 @@ impl SymExpr {
                     None
                 }
             }
-            SymExprKind::Op(SymExprOp::Or, left, right) => {
+            SymExprKind::BinOp(SymBinOp::Or, left, right) => {
                 if left.eval().is_some_and(|value| value.is_zero()) {
                     return right.nonzero_forces_const(target, context);
                 }
@@ -1086,7 +1453,7 @@ impl SymExpr {
                 }
                 None
             }
-            SymExprKind::Op(SymExprOp::And, left, right) => {
+            SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 if left.eval().is_some_and(|value| !value.is_zero()) {
                     return right.nonzero_forces_const(target, context);
                 }
@@ -1095,13 +1462,13 @@ impl SymExpr {
                 }
                 None
             }
-            SymExprKind::Op(SymExprOp::Shl | SymExprOp::Shr, value, shift)
+            SymExprKind::BinOp(SymBinOp::Shl | SymBinOp::Shr, value, shift)
                 if shift.eval().is_some_and(|shift| shift.is_zero()) =>
             {
                 value.nonzero_forces_const(target, context)
             }
-            SymExprKind::AddMod { .. } | SymExprKind::MulMod { .. } => None,
-            SymExprKind::Op(_, _, _) => None,
+            SymExprKind::TernOp(_, _, _, _) => None,
+            SymExprKind::BinOp(_, _, _) => None,
         }
     }
 
@@ -1117,7 +1484,7 @@ impl SymExpr {
             SymExprKind::Const(expr) => Self::constant(cx, expr.wrapping_add(value)),
             _ => {
                 let value = Self::constant(cx, value);
-                Self::op(cx, SymExprOp::Add, expr, value)
+                Self::binop(cx, SymBinOp::Add, expr, value)
             }
         }
     }
@@ -1142,12 +1509,11 @@ impl SymExpr {
                 }
             }
             SymExprKind::Not(value) => value.visit(visitor)?,
-            SymExprKind::Op(_, left, right) => {
+            SymExprKind::BinOp(_, left, right) => {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
             }
-            SymExprKind::AddMod { left, right, modulus }
-            | SymExprKind::MulMod { left, right, modulus } => {
+            SymExprKind::TernOp(_, left, right, modulus) => {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
                 modulus.visit(visitor)?;
@@ -1194,22 +1560,16 @@ impl SymExpr {
                 let value = value.fold(cx, folder);
                 Self::not(cx, value)
             }
-            SymExprKind::Op(op, left, right) => {
+            SymExprKind::BinOp(op, left, right) => {
                 let left = left.fold(cx, folder);
                 let right = right.fold(cx, folder);
-                Self::op(cx, op, left, right)
+                Self::binop(cx, op, left, right)
             }
-            SymExprKind::AddMod { left, right, modulus } => {
+            SymExprKind::TernOp(op, left, right, modulus) => {
                 let left = left.fold(cx, folder);
                 let right = right.fold(cx, folder);
                 let modulus = modulus.fold(cx, folder);
-                Self::addmod(cx, left, right, modulus)
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                let left = left.fold(cx, folder);
-                let right = right.fold(cx, folder);
-                let modulus = modulus.fold(cx, folder);
-                Self::mulmod(cx, left, right, modulus)
+                Self::ternop(cx, op, left, right, modulus)
             }
             SymExprKind::Ite(condition, then_expr, else_expr) => {
                 let condition = condition.fold_exprs(cx, folder);
@@ -1247,18 +1607,15 @@ impl SymExpr {
                 value.write_smt(out);
                 out.push(')');
             }
-            SymExprKind::Op(op, left, right) => {
+            SymExprKind::BinOp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 left.write_smt(out);
                 out.push(' ');
                 right.write_smt(out);
                 out.push(')');
             }
-            SymExprKind::AddMod { left, right, modulus } => {
-                write_smt_wide_modular_arithmetic(out, "bvadd", left, right, modulus);
-            }
-            SymExprKind::MulMod { left, right, modulus } => {
-                write_smt_wide_modular_arithmetic(out, "bvmul", left, right, modulus);
+            SymExprKind::TernOp(op, left, right, modulus) => {
+                write_smt_wide_modular_arithmetic(out, op.smt(), left, right, modulus);
             }
             SymExprKind::Ite(cond, left, right) => {
                 out.push_str("(ite ");
@@ -1298,7 +1655,32 @@ fn write_smt_wide_modular_arithmetic(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum SymExprOp {
+pub(crate) enum SymTernOp {
+    AddMod,
+    MulMod,
+}
+
+impl SymTernOp {
+    pub(crate) const fn smt(self) -> &'static str {
+        match self {
+            Self::AddMod => "bvadd",
+            Self::MulMod => "bvmul",
+        }
+    }
+
+    pub(crate) fn eval(self, left: U256, right: U256, modulus: U256) -> U256 {
+        if modulus.is_zero() {
+            return U256::ZERO;
+        }
+        match self {
+            Self::AddMod => left.add_mod(right, modulus),
+            Self::MulMod => left.mul_mod(right, modulus),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SymBinOp {
     Add,
     Sub,
     Mul,
@@ -1314,7 +1696,7 @@ pub(crate) enum SymExprOp {
     Sar,
 }
 
-impl SymExprOp {
+impl SymBinOp {
     pub(crate) const fn smt(self) -> &'static str {
         match self {
             Self::Add => "bvadd",

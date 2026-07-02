@@ -56,7 +56,7 @@ impl SymbolicExecutor {
         let mut above_max = state.constraints.clone();
         above_max.push(SymBoolExpr::cmp_word_const(
             &mut self.cx,
-            SymBoolExprOp::Ugt,
+            SymCmpOp::Ugt,
             expr,
             U256::from(max),
         ));
@@ -71,7 +71,7 @@ impl SymbolicExecutor {
             let mut above_mid = state.constraints.clone();
             above_mid.push(SymBoolExpr::cmp_word_const(
                 &mut self.cx,
-                SymBoolExprOp::Ugt,
+                SymCmpOp::Ugt,
                 expr,
                 U256::from(mid),
             ));
@@ -94,7 +94,7 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let condition =
-            SymBoolExpr::cmp_word_const(&mut self.cx, SymBoolExprOp::Uge, expr, U256::from(min));
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Uge, expr, U256::from(min));
         match condition.as_const() {
             Some(value) => Ok(value),
             None => {
@@ -150,9 +150,9 @@ impl SymbolicExecutor {
         let min_value = SymExpr::constant(&mut self.cx, min_word);
         let max_value = SymExpr::constant(&mut self.cx, max_word);
         let min_condition =
-            SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Uge, value_expr.clone(), min_value);
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, value_expr.clone(), min_value);
         let max_condition =
-            SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Ule, value_expr.clone(), max_value);
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, value_expr.clone(), max_value);
         let in_range = SymBoolExpr::and(&mut self.cx, vec![min_condition, max_condition]);
         let (_in_range_constraints, in_range_sat) =
             self.constraints_with_condition(state, in_range.clone())?;
@@ -168,9 +168,9 @@ impl SymbolicExecutor {
 
         let bounded = state.fresh_word(&mut self.cx, "vmBoundUint");
         let min_condition =
-            SymBoolExpr::cmp_word_const(&mut self.cx, SymBoolExprOp::Uge, &bounded, min_word);
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Uge, &bounded, min_word);
         let max_condition =
-            SymBoolExpr::cmp_word_const(&mut self.cx, SymBoolExprOp::Ule, &bounded, max_word);
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Ule, &bounded, max_word);
         state.constraints.push(min_condition);
         state.constraints.push(max_condition);
         let same_value = SymBoolExpr::eq(&mut self.cx, bounded.clone(), value_expr);
@@ -210,9 +210,9 @@ impl SymbolicExecutor {
         let min_value = SymExpr::constant(&mut self.cx, min_word);
         let max_value = SymExpr::constant(&mut self.cx, max_word);
         let below_min =
-            SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Slt, value_expr.clone(), min_value);
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Slt, value_expr.clone(), min_value);
         let above_max =
-            SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Sgt, value_expr.clone(), max_value);
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Sgt, value_expr.clone(), max_value);
         let below_min = below_min.not(&mut self.cx);
         let above_max = above_max.not(&mut self.cx);
         let in_range = SymBoolExpr::and(&mut self.cx, vec![below_min, above_max]);
@@ -230,9 +230,9 @@ impl SymbolicExecutor {
 
         let bounded = state.fresh_word(&mut self.cx, "vmBoundInt");
         let below_min =
-            SymBoolExpr::cmp_word_const(&mut self.cx, SymBoolExprOp::Slt, &bounded, min_word);
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Slt, &bounded, min_word);
         let above_max =
-            SymBoolExpr::cmp_word_const(&mut self.cx, SymBoolExprOp::Sgt, &bounded, max_word);
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Sgt, &bounded, max_word);
         let below_min = below_min.not(&mut self.cx);
         let above_max = above_max.not(&mut self.cx);
         state.constraints.push(below_min);

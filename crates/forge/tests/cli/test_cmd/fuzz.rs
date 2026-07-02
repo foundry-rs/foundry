@@ -460,6 +460,35 @@ forgetest_init!(forge_fuzz_rejects_watch, |prj, cmd| {
     assert!(stderr.contains("`--watch` is not supported for `forge fuzz replay`"), "{stderr}");
 });
 
+forgetest_init!(forge_fuzz_list_only_shows_runnable_tests, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzList.t.sol",
+        r#"
+contract ForgeFuzzListTest {
+    function test_unit() public {}
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+    function invariant_ok() public pure {}
+    function table_row() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--list", "--mc", "ForgeFuzzListTest"]).assert_success().stdout_eq(
+        str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+test/ForgeFuzzList.t.sol
+  ForgeFuzzListTest
+    invariant_ok
+    testFuzz_value
+
+
+"#]],
+    );
+});
+
 forgetest_init!(forge_showmap_skips_symbolic_tests, |prj, cmd| {
     prj.add_test(
         "ForgeShowmapSymbolic.t.sol",
@@ -1085,7 +1114,7 @@ contract ForgeFuzzFrontierTest {
         ])
         .assert_success();
 
-    let assert_frontier_artifact = |frontier_dir: &str| {
+    let assert_frontier_artifact = |frontier_dir: &str, expect_new_coverage: bool| {
         let frontier_path = prj
             .root()
             .join(frontier_dir)
@@ -1119,6 +1148,14 @@ contract ForgeFuzzFrontierTest {
         assert_eq!(frontier["operands"]["operand_delta"], "0x0");
         assert_eq!(frontier["operands"]["result"], false);
 
+        // `new_coverage` is only recorded when edge coverage is collected; frontier-only capture
+        // omits it rather than reporting an always-false value.
+        if expect_new_coverage {
+            assert!(frontier["new_coverage"].is_boolean(), "{frontier:#}");
+        } else {
+            assert!(frontier.get("new_coverage").is_none(), "{frontier:#}");
+        }
+
         let sequence = frontier["sequence"].as_array().unwrap();
         assert_eq!(sequence.len(), 1);
         assert!(
@@ -1131,7 +1168,7 @@ contract ForgeFuzzFrontierTest {
         assert!(calldata.starts_with(&format!("0x{expected_selector}")), "{calldata}");
         assert!(calldata.ends_with(&format!("{:064x}{:064x}", 100u64, 100u64)), "{calldata}");
     };
-    assert_frontier_artifact("fuzz_frontiers");
+    assert_frontier_artifact("fuzz_frontiers", false);
 
     prj.update_config(|config| {
         config.fuzz.corpus.sancov_edges = true;
@@ -1151,7 +1188,7 @@ contract ForgeFuzzFrontierTest {
             "sancov_fuzz_frontiers",
         ])
         .assert_success();
-    assert_frontier_artifact("sancov_fuzz_frontiers");
+    assert_frontier_artifact("sancov_fuzz_frontiers", true);
 });
 
 forgetest_init!(forge_fuzz_replay_scopes_generated_corpus_root_to_target, |prj, cmd| {

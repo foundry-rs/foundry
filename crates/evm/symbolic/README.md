@@ -137,7 +137,9 @@ configured record limit, and a `frontiers` array. Each frontier contains:
 - the EVM comparison site (`address`, `pc`, `opcode`, `opcode_name`)
 - concrete operands (`lhs`, `rhs`), the comparison result, and an
   `operand_delta` priority score interpreted according to opcode signedness
-- whether the call also expanded the worker's coverage map
+- whether the call also expanded the worker's coverage map (`new_coverage`),
+  present only when edge coverage is collected via a corpus directory, edge
+  coverage metrics, or sancov, and omitted otherwise
 
 Frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default 256).
 It reuses the fuzzer's comparison-operand inspector and does not store traces.

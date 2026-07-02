@@ -87,7 +87,7 @@ use alloy_rpc_types::{
         },
     },
 };
-use alloy_rpc_types_eth::{Bundle, EthCallResponse};
+use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
@@ -3940,6 +3940,101 @@ where
         };
 
         Ok(BlockOpcodeGas { block_hash, block_number: block.header.number(), transactions })
+    }
+
+    /// Returns account information after replaying a block through the transaction at `tx_index`.
+    pub async fn debug_account_info_at(
+        &self,
+        block_id: BlockId,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<Option<RpcAccountInfo>, BlockchainError> {
+        if let Some((block, _)) = self.get_block_with_hash(block_id) {
+            return self.mined_debug_account_info_at(&block, tx_index, address).map(Some);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            let number = self.ensure_block_number(Some(block_id)).await?;
+            if fork.predates_fork_inclusive(number) {
+                // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+                // `finalized`) are resolved against the fork's head instead of drifting with
+                // the upstream chain. Hashes are forwarded unchanged.
+                let resolved = match block_id {
+                    BlockId::Hash(_) => block_id,
+                    _ => BlockId::number(number),
+                };
+                return Ok(fork.debug_account_info_at(resolved, tx_index, address).await?);
+            }
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    fn mined_debug_account_info_at(
+        &self,
+        block: &Block,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<RpcAccountInfo, BlockchainError> {
+        let tx_index = tx_index.0;
+        let transaction_count = block.body.transactions.len();
+        if tx_index >= transaction_count {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "tx_index {tx_index} out of bounds for block with {transaction_count} transactions"
+            ))));
+        }
+
+        let pool_txs: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>> = block.body.transactions
+            [..=tx_index]
+            .iter()
+            .map(|tx| {
+                let pending_tx =
+                    PendingTransaction::from_maybe_impersonated(tx.clone()).expect("is valid");
+                Arc::new(PoolTransaction {
+                    pending_transaction: pending_tx,
+                    requires: vec![],
+                    provides: vec![],
+                    priority: crate::eth::pool::transactions::TransactionPriority(0),
+                })
+            })
+            .collect();
+
+        let trace = |parent_state: &StateDb| -> Result<RpcAccountInfo, BlockchainError> {
+            let mut cache_db = AnvilCacheDB::new(Box::new(parent_state));
+            let mut evm_env = self.evm_env.read().clone();
+            evm_env.block_env = block_env_from_header(&block.header);
+
+            let spec_id = *evm_env.spec_id();
+            let inspector_tx_config = self.inspector_tx_config();
+            let gas_config = self.pool_tx_gas_config(&evm_env);
+
+            self.execute_with_block_executor(
+                &mut cache_db,
+                &evm_env,
+                block.header.parent_hash,
+                spec_id,
+                &pool_txs,
+                &gas_config,
+                &inspector_tx_config,
+                &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
+            );
+
+            let cache_db = cache_db.0;
+            let account = revm::DatabaseRef::basic_ref(&cache_db, address)?.unwrap_or_default();
+            let code = self.get_code_with_state(&cache_db, address)?;
+            Ok(RpcAccountInfo { balance: account.balance, nonce: account.nonce, code })
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
     }
 
     /// Rollback the chain to a common height.

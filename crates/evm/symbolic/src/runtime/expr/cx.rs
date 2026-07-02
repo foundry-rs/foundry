@@ -107,8 +107,8 @@ mod tests {
         let x = SymExpr::var(&mut cx, "x");
         let y = SymExpr::var(&mut cx, "y");
 
-        let first = SymExpr::op(&mut cx, SymExprOp::Add, x.clone(), y.clone());
-        let second = SymExpr::op(&mut cx, SymExprOp::Add, x, y);
+        let first = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
+        let second = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
 
         assert!(first.ptr_eq(&second));
     }
@@ -119,9 +119,36 @@ mod tests {
         let x = SymExpr::var(&mut cx, "x");
 
         let upper = SymExpr::constant(&mut cx, U256::from(7));
-        let first = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x.clone(), upper.clone());
-        let second = SymBoolExpr::cmp(&mut cx, SymBoolExprOp::Ult, x, upper);
+        let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), upper.clone());
+        let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, upper);
 
         assert!(first.ptr_eq(&second));
+    }
+
+    #[test]
+    fn simplifies_shift_right_over_or_at_construction() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x").low_byte(&mut cx);
+        let low = SymExpr::constant(&mut cx, U256::from(0xff));
+        let shift = SymExpr::constant(&mut cx, U256::from(8));
+        let high = SymExpr::binop(&mut cx, SymBinOp::Shl, x.clone(), shift.clone());
+        let word = SymExpr::binop(&mut cx, SymBinOp::Or, high, low);
+        let shifted = SymExpr::binop(&mut cx, SymBinOp::Shr, word, shift);
+
+        assert_eq!(shifted, x);
+    }
+
+    #[test]
+    fn simplifies_masked_or_at_construction() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x").low_byte(&mut cx);
+        let y = SymExpr::var(&mut cx, "y").low_byte(&mut cx);
+        let shift = SymExpr::constant(&mut cx, U256::from(8));
+        let high = SymExpr::binop(&mut cx, SymBinOp::Shl, x, shift);
+        let word = SymExpr::binop(&mut cx, SymBinOp::Or, high, y.clone());
+        let mask = SymExpr::constant(&mut cx, U256::from(0xff));
+        let masked = SymExpr::binop(&mut cx, SymBinOp::And, word, mask);
+
+        assert_eq!(masked, y);
     }
 }

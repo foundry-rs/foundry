@@ -70,8 +70,10 @@ pub(super) struct FuzzBranchFrontier {
     /// Fuzz worker that produced the record, if known.
     #[serde(skip_serializing_if = "Option::is_none")]
     worker: Option<u32>,
-    /// Whether this call also expanded coverage from the worker's current map.
-    new_coverage: bool,
+    /// Whether this call also expanded coverage from the worker's current map. Only present when
+    /// edge coverage is collected (corpus, edge-coverage metrics, or sancov); omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    new_coverage: Option<bool>,
     /// Index of the call in the recorded sequence. Stateless fuzzing records one call.
     call_index: usize,
     /// Concrete call sequence that reached the frontier.
@@ -134,7 +136,7 @@ impl FuzzFrontierRecorder {
         target: Address,
         calldata: &Bytes,
         cmp_values: &[CmpOperands],
-        new_coverage: bool,
+        new_coverage: Option<bool>,
     ) {
         if self.limit == 0 || cmp_values.is_empty() {
             return;
@@ -191,13 +193,22 @@ impl FuzzFrontierRecorder {
 }
 
 impl FuzzBranchFrontier {
+    const fn key(&self) -> FuzzBranchFrontierKey {
+        FuzzBranchFrontierKey {
+            address: self.site.address,
+            pc: self.site.pc,
+            opcode: self.site.opcode,
+            result: self.operands.result,
+        }
+    }
+
     fn new(
         run: Option<&FuzzRunMetadata>,
         sequence: Arc<[BasicTxDetails]>,
         cmp: CmpOperands,
         result: bool,
         operand_delta: U256,
-        new_coverage: bool,
+        new_coverage: Option<bool>,
         call_index: usize,
     ) -> Self {
         Self {
@@ -222,6 +233,44 @@ impl FuzzBranchFrontier {
             },
         }
     }
+}
+
+/// Merges per-worker frontier records into a single bounded, globally deduplicated set.
+///
+/// Each worker deduplicates its own records by comparison site key while keeping the smallest
+/// `operand_delta`, but workers run independently, so the same site can appear in several workers'
+/// records with different observed deltas. This applies the same key dedup and smallest-delta
+/// policy across all workers so the artifact keeps one globally closest record per site and does
+/// not spend `limit` on duplicates. Iteration continues after `limit` is reached because a later
+/// record may be a smaller-delta duplicate of an already retained key.
+pub(super) fn merge_frontiers(
+    limit: usize,
+    frontiers: impl IntoIterator<Item = FuzzBranchFrontier>,
+) -> Vec<FuzzBranchFrontier> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut merged = Vec::<FuzzBranchFrontier>::with_capacity(limit.min(32));
+    let mut indexes = HashMap::<FuzzBranchFrontierKey, usize>::default();
+    for frontier in frontiers {
+        match indexes.entry(frontier.key()) {
+            Entry::Occupied(entry) => {
+                let index = *entry.get();
+                if frontier.operands.operand_delta < merged[index].operands.operand_delta {
+                    merged[index] = frontier;
+                }
+            }
+            Entry::Vacant(entry) => {
+                if merged.len() < limit {
+                    entry.insert(merged.len());
+                    merged.push(frontier);
+                }
+            }
+        }
+    }
+
+    merged
 }
 
 pub(super) fn write_frontier_artifact(
@@ -316,5 +365,100 @@ mod tests {
         let max = I256::MAX.into_raw();
 
         assert_eq!(signed_operand_delta(min, max), U256::MAX);
+    }
+
+    fn frontier(pc: usize, result: bool, operand_delta: u64) -> FuzzBranchFrontier {
+        frontier_at(Address::ZERO, pc, result, operand_delta)
+    }
+
+    fn frontier_at(
+        address: Address,
+        pc: usize,
+        result: bool,
+        operand_delta: u64,
+    ) -> FuzzBranchFrontier {
+        let cmp = CmpOperands { op1: U256::ZERO, op2: U256::ZERO, pc, address, opcode: opcode::LT };
+        FuzzBranchFrontier::new(
+            None,
+            Arc::from(Vec::<BasicTxDetails>::new().into_boxed_slice()),
+            cmp,
+            result,
+            U256::from(operand_delta),
+            None,
+            0,
+        )
+    }
+
+    #[test]
+    fn merge_frontiers_dedupes_across_workers_keeping_smallest_delta() {
+        let merged = merge_frontiers(
+            8,
+            [frontier(1, false, 30), frontier(1, false, 10), frontier(1, false, 20)],
+        );
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].operands.operand_delta, U256::from(10));
+    }
+
+    #[test]
+    fn merge_frontiers_keeps_records_with_distinct_result_keys() {
+        // Same site but different comparison result is a distinct key.
+        let merged = merge_frontiers(8, [frontier(1, false, 5), frontier(1, true, 5)]);
+
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merge_frontiers_replaces_retained_key_after_limit_is_full() {
+        // The first two unique keys fill the limit; a later new key is dropped, but a later
+        // smaller-delta duplicate of an already retained key still replaces it.
+        let merged = merge_frontiers(
+            2,
+            [
+                frontier(1, false, 30),
+                frontier(2, false, 30),
+                frontier(3, false, 5),
+                frontier(1, false, 10),
+            ],
+        );
+
+        assert_eq!(merged.len(), 2);
+        let retained = merged.iter().find(|f| f.site.pc == 1).unwrap();
+        assert_eq!(retained.operands.operand_delta, U256::from(10));
+        assert!(merged.iter().all(|f| f.site.pc != 3));
+    }
+
+    #[test]
+    fn merge_frontiers_does_not_spend_limit_on_duplicates() {
+        // A duplicate of a retained key must not count against the limit, so a later distinct key
+        // still fits. This guards against counting processed records instead of unique keys.
+        let merged = merge_frontiers(
+            2,
+            [frontier(1, false, 30), frontier(1, false, 10), frontier(2, false, 5)],
+        );
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(
+            merged.iter().find(|f| f.site.pc == 1).unwrap().operands.operand_delta,
+            U256::from(10)
+        );
+        assert!(merged.iter().any(|f| f.site.pc == 2));
+    }
+
+    #[test]
+    fn merge_frontiers_distinguishes_by_address() {
+        // Same pc/opcode/result at different addresses are distinct sites.
+        let other = Address::with_last_byte(1);
+        let merged = merge_frontiers(
+            8,
+            [frontier_at(Address::ZERO, 1, false, 5), frontier_at(other, 1, false, 5)],
+        );
+
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merge_frontiers_with_zero_limit_is_empty() {
+        assert!(merge_frontiers(0, [frontier(1, false, 1)]).is_empty());
     }
 }

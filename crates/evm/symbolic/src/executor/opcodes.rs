@@ -80,59 +80,59 @@ impl SymbolicExecutor {
             }
             opcode::STOP => return Ok(StepOutcome::Halt),
             opcode::ADD => {
-                state.bin_word(&mut self.cx, SymExprOp::Add)?;
+                state.bin_word(&mut self.cx, SymBinOp::Add)?;
             }
             opcode::SUB => {
-                state.bin_word(&mut self.cx, SymExprOp::Sub)?;
+                state.bin_word(&mut self.cx, SymBinOp::Sub)?;
             }
             opcode::MUL => {
-                state.bin_word(&mut self.cx, SymExprOp::Mul)?;
+                state.bin_word(&mut self.cx, SymBinOp::Mul)?;
             }
             opcode::EXP => {
                 state.exp_word(&mut self.cx)?;
             }
             opcode::DIV => {
-                state.bin_word_div_zero_guard(&mut self.cx, SymExprOp::UDiv)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymBinOp::UDiv)?;
             }
             opcode::SDIV => {
-                state.bin_word_div_zero_guard(&mut self.cx, SymExprOp::SDiv)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymBinOp::SDiv)?;
             }
             opcode::MOD => {
-                state.bin_word_div_zero_guard(&mut self.cx, SymExprOp::URem)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymBinOp::URem)?;
             }
             opcode::SMOD => {
-                state.bin_word_div_zero_guard(&mut self.cx, SymExprOp::SRem)?;
+                state.bin_word_div_zero_guard(&mut self.cx, SymBinOp::SRem)?;
             }
             opcode::ADDMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                state.stack.push(SymExpr::addmod(&mut self.cx, a, b, n))?;
+                state.stack.push(SymExpr::ternop(&mut self.cx, SymTernOp::AddMod, a, b, n))?;
             }
             opcode::MULMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                state.stack.push(SymExpr::mulmod(&mut self.cx, a, b, n))?;
+                state.stack.push(SymExpr::ternop(&mut self.cx, SymTernOp::MulMod, a, b, n))?;
             }
             opcode::LT => {
                 let op_pc = state.pc - 1;
-                let condition = state.cmp_word_condition(&mut self.cx, SymBoolExprOp::Ult)?;
+                let condition = state.cmp_word_condition(&mut self.cx, SymCmpOp::Ult)?;
                 return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::GT => {
                 let op_pc = state.pc - 1;
-                let condition = state.cmp_word_condition(&mut self.cx, SymBoolExprOp::Ugt)?;
+                let condition = state.cmp_word_condition(&mut self.cx, SymCmpOp::Ugt)?;
                 return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::SLT => {
                 let op_pc = state.pc - 1;
-                let condition = state.cmp_word_condition(&mut self.cx, SymBoolExprOp::Slt)?;
+                let condition = state.cmp_word_condition(&mut self.cx, SymCmpOp::Slt)?;
                 return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::SGT => {
                 let op_pc = state.pc - 1;
-                let condition = state.cmp_word_condition(&mut self.cx, SymBoolExprOp::Sgt)?;
+                let condition = state.cmp_word_condition(&mut self.cx, SymCmpOp::Sgt)?;
                 return self.push_comparison_result(state, op_pc, op, condition);
             }
             opcode::EQ => {
@@ -149,13 +149,13 @@ impl SymbolicExecutor {
                 return self.push_comparison_result(state, op_pc, op, value);
             }
             opcode::AND => {
-                state.bin_word(&mut self.cx, SymExprOp::And)?;
+                state.bin_word(&mut self.cx, SymBinOp::And)?;
             }
             opcode::OR => {
-                state.bin_word(&mut self.cx, SymExprOp::Or)?;
+                state.bin_word(&mut self.cx, SymBinOp::Or)?;
             }
             opcode::XOR => {
-                state.bin_word(&mut self.cx, SymExprOp::Xor)?;
+                state.bin_word(&mut self.cx, SymBinOp::Xor)?;
             }
             opcode::NOT => {
                 let value = state.stack.pop()?;
@@ -829,9 +829,9 @@ impl SymbolicExecutor {
         if offset.contains_gasleft() || size.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let end = SymExpr::op(&mut self.cx, SymExprOp::Add, offset, size);
+        let end = SymExpr::binop(&mut self.cx, SymBinOp::Add, offset, size);
         let in_bounds =
-            SymBoolExpr::cmp(&mut self.cx, SymBoolExprOp::Ule, end, state.return_data.len_expr());
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, end, state.return_data.len_expr());
         match in_bounds.as_const() {
             Some(value) => Ok(value),
             None => {
