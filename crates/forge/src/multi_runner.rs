@@ -159,13 +159,24 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                 let tests = c
                     .abi
                     .functions()
-                    // TODO(@mablr): in fuzz-only mode, make `--list` mirror execution
-                    // by hiding unit/table/symbolic tests that `forge fuzz run/replay` skips.
-                    .filter(|func| matcher.matches_test_function(filter, &identifier, func))
+                    .filter(|func| {
+                        let kind = matcher.test_function_kind(&identifier, func);
+                        (!self.tcfg.fuzz_only
+                            || matches!(
+                                kind,
+                                TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                            ))
+                            && filter.matches_test_function_kind_in_contract(
+                                &identifier,
+                                func,
+                                kind,
+                            )
+                    })
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
             })
+            .filter(|(_, _, tests)| !tests.is_empty())
             .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
                 acc.entry(source).or_default().insert(name, tests);
                 acc

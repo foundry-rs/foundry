@@ -14,10 +14,7 @@ pub(crate) use hard_arith_fallback::hard_arith_fallback_model;
 pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
 pub(crate) use opt::normalize_constraints_for_solver;
-use opt::{
-    constraint_cache_key, constraints_are_directly_unsat, sorted_bool_exprs_are_subset,
-    write_smt_assertions,
-};
+use opt::{constraints_are_directly_unsat, sorted_bool_exprs_are_subset, write_smt_assertions};
 #[cfg(test)]
 pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
 
@@ -98,6 +95,9 @@ pub(crate) trait SymbolicSolver {
     /// Takes any captured verbose diagnostics collected by this backend.
     fn take_diagnostics(&mut self) -> Option<String>;
 
+    /// Clears cached expression keys tied to a previous symbolic context.
+    fn clear_context_caches(&mut self) {}
+
     /// Returns the number of satisfiable witnesses produced by local hard-arithmetic search.
     fn heuristic_witnesses(&self) -> usize {
         0
@@ -114,18 +114,30 @@ pub(crate) trait SymbolicSolver {
     /// Implementations should count this as one solver query and map solver `unknown`
     /// or timeout responses into [`SymbolicError::SolverUnknown`] or
     /// [`SymbolicError::Solver`], as appropriate.
-    fn is_sat(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError>;
+    fn is_sat(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError>;
 
     /// Returns branch satisfiability, allowing branch-only hard-arithmetic shortcuts.
-    fn is_sat_branch(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
-        self.is_sat(constraints)
+    fn is_sat_branch(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        self.is_sat(cx, constraints)
     }
 
     /// Returns a concrete model for all symbolic variables constrained by the path.
     ///
     /// The executor uses the returned variable assignments to materialize ABI
     /// arguments, calldata, and invariant sequences for concrete replay.
-    fn model(&mut self, constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError>;
+    fn model(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<SymbolicModel, SymbolicError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -279,6 +291,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
     }
 
+    fn clear_context_caches(&mut self) {
+        self.sat_cache.clear();
+        self.model_cache.clear();
+    }
+
     /// Returns how many validated local hard-arithmetic witnesses this solver used.
     fn heuristic_witnesses(&self) -> usize {
         self.heuristic_witnesses
@@ -303,22 +320,34 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         Err(SymbolicError::Solver(errors.join("; ")))
     }
 
-    fn is_sat(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(constraints, false)
+    fn is_sat(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        self.is_sat_inner(cx, constraints, false)
     }
 
     /// Returns whether a branch is feasible.
-    fn is_sat_branch(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(constraints, true)
+    fn is_sat_branch(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        self.is_sat_inner(cx, constraints, true)
     }
 
-    fn model(&mut self, constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError> {
+    fn model(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+    ) -> Result<SymbolicModel, SymbolicError> {
         self.model_queries += 1;
         if constraints.iter().any(SymBoolExpr::contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let smt_constraints = normalize_constraints_for_solver(constraints);
-        let cache_key = constraint_cache_key(&smt_constraints);
+        let smt_constraints = normalize_constraints_for_solver(cx, constraints);
+        let cache_key = smt_constraints.clone();
 
         if self.sat_cache.get(&cache_key) == Some(&false) {
             self.model_cache.remove(&cache_key);
@@ -414,6 +443,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 impl SmtLibSubprocessSolver {
     fn is_sat_inner(
         &mut self,
+        cx: &mut SymCx,
         constraints: &[SymBoolExpr],
         defer_hard_arith_without_witness: bool,
     ) -> Result<bool, SymbolicError> {
@@ -421,8 +451,8 @@ impl SmtLibSubprocessSolver {
         if constraints.iter().any(SymBoolExpr::contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let smt_constraints = normalize_constraints_for_solver(constraints);
-        let cache_key = constraint_cache_key(&smt_constraints);
+        let smt_constraints = normalize_constraints_for_solver(cx, constraints);
+        let cache_key = smt_constraints.clone();
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
             trace!(result, "is_sat: normalized cache hit");
@@ -437,17 +467,15 @@ impl SmtLibSubprocessSolver {
         if defer_hard_arith_without_witness
             && let Some((condition, base)) = constraints.split_last()
             && {
-                let normalized_base = normalize_constraints_for_solver(base);
-                let base_key = constraint_cache_key(&normalized_base);
-                self.sat_cache.get(&base_key) == Some(&true)
+                let normalized_base = normalize_constraints_for_solver(cx, base);
+                self.sat_cache.get(&normalized_base) == Some(&true)
             }
             && {
                 let mut complement = Vec::with_capacity(constraints.len());
                 complement.extend(base.iter().cloned());
-                complement.push(condition.clone().not());
-                let normalized_complement = normalize_constraints_for_solver(&complement);
-                let complement_key = constraint_cache_key(&normalized_complement);
-                self.has_cached_unsat_subset(&complement_key)
+                complement.push(condition.clone().not(cx));
+                let normalized_complement = normalize_constraints_for_solver(cx, &complement);
+                self.has_cached_unsat_subset(&normalized_complement)
             }
         {
             self.sat_cache_hits += 1;
@@ -466,7 +494,7 @@ impl SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
-        if constraints_are_directly_unsat(&smt_constraints) {
+        if constraints_are_directly_unsat(cx, &smt_constraints) {
             trace!("is_sat: direct contradiction");
             self.cache_sat_result(cache_key, false);
             return Ok(false);
