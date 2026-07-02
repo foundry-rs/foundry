@@ -611,10 +611,24 @@ fn merge_new_edge_vec(cumulative: &mut Vec<u8>, candidate: &[u8]) -> bool {
     }
     let mut improved = false;
     for (cumulative, &candidate) in cumulative.iter_mut().zip(candidate) {
-        if candidate > 0 && *cumulative == 0 {
+        if *cumulative < candidate {
             *cumulative = candidate;
             improved = true;
         }
     }
     improved
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_new_edges_keeps_sancov_hit_count_bucket_increases() {
+        let mut cumulative = ReplayObservation { sancov_edges: vec![0, 1], ..Default::default() };
+        let candidate = ReplayObservation { sancov_edges: vec![0, 8], ..Default::default() };
+
+        assert!(merge_new_edges(&mut cumulative, &candidate));
+        assert_eq!(cumulative.sancov_edges, vec![0, 8]);
+    }
 }

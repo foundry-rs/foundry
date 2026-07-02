@@ -687,6 +687,54 @@ contract ForgeFuzzCminTargetTest {
     );
 });
 
+forgetest_init!(forge_fuzz_cmin_keeps_hit_count_bucket_increases, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminBucketTarget.t.sol",
+        r#"
+contract ForgeFuzzCminBucketTargetTest {
+    uint256 value;
+
+    function testFuzz_reps(uint256 input) public {
+        uint256 n = input % 5;
+        for (uint256 i = 0; i < n; i++) {
+            value = value + i + 1;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzCminBucketTarget.t.sol/ForgeFuzzCminBucketTargetTest.json",
+    );
+    let one = calldata_for(&abi, "testFuzz_reps", 1);
+    let four = calldata_for(&abi, "testFuzz_reps", 4);
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &one);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", &four);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminBucketTargetTest",
+            "--mt",
+            "testFuzz_reps",
+            "corpus",
+            "--corpus-out",
+            "min-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("minimized corpus: kept 2/2 entries in min-corpus"), "{stdout}");
+    assert_eq!(regular_file_count(&prj.root().join("min-corpus")), 2);
+});
+
 forgetest_init!(forge_fuzz_cmin_handles_multiple_matched_targets, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzCminMultiTarget.t.sol",
