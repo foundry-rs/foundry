@@ -98,8 +98,8 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
-experimental = false
 via_ssa_cfg = false
+experimental = false
 ast = false
 no_storage_caching = false
 no_rpc_rate_limit = false
@@ -1591,8 +1591,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "names": false,
   "sizes": false,
   "via_ir": false,
-  "experimental": false,
   "via_ssa_cfg": false,
+  "experimental": false,
   "ast": false,
   "rpc_storage_caching": {
     "chains": "all",
