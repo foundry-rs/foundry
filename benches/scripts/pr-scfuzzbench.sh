@@ -18,6 +18,11 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${REPO_ROOT}"
 
+if [[ -n "$(git status --porcelain)" ]]; then
+  printf 'error: working directory is dirty; commit or stash changes before benchmarking\n' >&2
+  exit 1
+fi
+
 git fetch origin master
 
 mkdir -p "${BENCH_ROOT}"
