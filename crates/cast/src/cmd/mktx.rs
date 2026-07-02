@@ -1,17 +1,27 @@
 use crate::tx::{self, CastTxBuilder};
+use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{
+    Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
+};
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
-use alloy_signer::Signer;
+use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    json::print_scalar,
     opts::{EthereumOpts, TransactionOpts},
-    utils::{LoadConfig, get_provider},
+    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+};
+use foundry_common::{
+    FoundryTransactionBuilder,
+    provider::ProviderBuilder,
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use std::{path::PathBuf, str::FromStr};
+use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast mktx`.
 #[derive(Debug, Parser)]
@@ -78,7 +88,27 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
+        if self.tx.tempo.is_tempo() {
+            self.run_generic::<TempoNetwork>().await
+        } else {
+            self.run_generic::<Ethereum>().await
+        }
+    }
+
+    pub async fn run_generic<N: Network>(self) -> Result<()>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        let Self { to, mut sig, mut args, command, mut tx, path, eth, raw_unsigned, ethsign } =
+            self;
+
+        let print_sponsor_hash = tx.tempo.print_sponsor_hash;
+        let sponsor_fee_payer = tx.tempo.sponsor;
+        let expires_at = tx.tempo.resolve_expires();
+        let tempo_sponsor =
+            if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -97,7 +127,12 @@ impl MakeTxArgs {
 
         let config = eth.load_config()?;
 
-        let provider = get_provider(&config)?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+
+        // Resolve `--tempo.lane <name>` against the lanes file (default
+        // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
+        // Must happen before `tx.clone()` so the cloned tx carries the resolved nonce_key.
+        let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
         let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
             .await?
@@ -106,6 +141,34 @@ impl MakeTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
+        let chain = tx_builder.chain();
+
+        // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
+        if print_sponsor_hash {
+            // Resolve the signer to derive the actual sender address, since the
+            // sponsor hash commits to the sender.
+            let signer = eth.wallet.signer().await?;
+            let from = signer.address();
+            let (mut tx, _) = tx_builder.build(from).await?;
+            if let Some(fee_payer) = sponsor_fee_payer {
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(fee_payer),
+                )
+                .await?;
+            }
+            let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
+                eyre::eyre!("This network does not support sponsored transactions")
+            })?;
+            print_scalar(format!("{hash:?}"))?;
+            return Ok(());
+        }
+
+        if let Some(ts) = expires_at {
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
+        }
 
         if raw_unsigned {
             // Build unsigned raw tx
@@ -116,25 +179,71 @@ impl MakeTxArgs {
                     "Missing required parameters for raw unsigned transaction. When --from is not provided, you must specify: --nonce"
                 );
             }
+            if tempo_sponsor.is_some() && eth.wallet.from.is_none() {
+                eyre::bail!(
+                    "--tempo.sponsor requires --from for --raw-unsigned because the sponsor digest commits to the sender"
+                );
+            }
 
             // Use zero address as placeholder for unsigned transactions
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
 
-            let raw_tx = tx_builder.build_unsigned_raw(from).await?;
+            let (mut tx, _) = tx_builder.build(from).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx,
+                    )
+                    .await?;
+                sponsor.attach_and_print::<N>(&mut tx, from).await?;
+            } else {
+                let fee_token = resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(from),
+                )
+                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
+                    .await?;
+            }
+            let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
-            sh_println!("{raw_tx}")?;
+            print_scalar(raw_tx)?;
             return Ok(());
         }
-
-        let is_tempo = tx_builder.is_tempo();
 
         if ethsign {
             // Use "eth_signTransaction" to sign the transaction only works if the node/RPC has
             // unlocked accounts.
-            let (tx, _) = tx_builder.build(config.sender).await?;
-            let signed_tx = provider.sign_transaction(tx.into_inner().into()).await?;
+            let (mut tx, _) = tx_builder.build(config.sender).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx,
+                    )
+                    .await?;
+                sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
+            } else {
+                let fee_token = resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(config.sender),
+                )
+                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
+                    .await?;
+            }
+            let signed_tx = provider.sign_transaction(tx).await?;
 
-            sh_println!("{signed_tx}")?;
+            print_scalar(signed_tx)?;
             return Ok(());
         }
 
@@ -145,31 +254,32 @@ impl MakeTxArgs {
 
         tx::validate_from_address(eth.wallet.from, from)?;
 
-        // Handle Tempo transactions separately
-        // TODO(onbjerg): All of this is a side effect of a few things, most notably that we do
-        // not use `FoundryNetwork` and `FoundryTransactionRequest` everywhere, which is
-        // downstream of the fact that we use `EthereumWallet` everywhere.
-        if is_tempo {
-            let (ftx, _) = tx_builder.build(&signer).await?;
-
-            let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
-
-            // Encode as 2718
-            let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
-            signed_tx.encode_2718(&mut raw_tx);
-
-            let signed_tx_hex = hex::encode(&raw_tx);
-            sh_println!("0x{signed_tx_hex}")?;
-
-            return Ok(());
+        let (mut tx, _) = tx_builder.build(&signer).await?;
+        maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                )
+                .await?;
+            sponsor.attach_and_print::<N>(&mut tx, from).await?;
+        } else {
+            let fee_token = resolve_and_set_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                Some(from),
+            )
+            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
         }
 
-        let (tx, _) = tx_builder.build(&signer).await?;
+        let tx = tx.build(&EthereumWallet::new(signer)).await?;
 
-        let tx = tx.into_inner().build(&EthereumWallet::new(signer)).await?;
-
-        let signed_tx = hex::encode(tx.encoded_2718());
-        sh_println!("0x{signed_tx}")?;
+        let signed_tx = format!("0x{}", hex::encode(tx.encoded_2718()));
+        print_scalar(signed_tx)?;
 
         Ok(())
     }

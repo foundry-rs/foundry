@@ -25,7 +25,7 @@ contract CustomErrors {
     function customErrors(uint256 value) public pure {
         require(value > 0, CustomError());
         require(value < 100, CustomErrorWithArg(value));
-        require(value > 0);
+        require(value > 0); //~NOTE: prefer using custom errors on revert and require calls
         revert CustomError();
         revert CustomErrorWithArg(value);
         revert CustomErrorWithNamedArgs({x: value, message: "test"});
@@ -39,4 +39,3 @@ contract CustomErrors {
         revert("This should not lint");
     }
 }
-

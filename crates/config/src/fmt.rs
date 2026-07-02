@@ -78,19 +78,19 @@ pub enum NumberUnderscore {
 impl NumberUnderscore {
     /// Returns true if the option is `Preserve`
     #[inline]
-    pub fn is_preserve(self) -> bool {
+    pub const fn is_preserve(self) -> bool {
         matches!(self, Self::Preserve)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
-    pub fn is_remove(self) -> bool {
+    pub const fn is_remove(self) -> bool {
         matches!(self, Self::Remove)
     }
 
     /// Returns true if the option is `Remove`
     #[inline]
-    pub fn is_thousands(self) -> bool {
+    pub const fn is_thousands(self) -> bool {
         matches!(self, Self::Thousands)
     }
 }
@@ -178,15 +178,15 @@ pub enum MultilineFuncHeaderStyle {
 }
 
 impl MultilineFuncHeaderStyle {
-    pub fn all(&self) -> bool {
+    pub const fn all(&self) -> bool {
         matches!(self, Self::All | Self::AllParams)
     }
 
-    pub fn params_first(&self) -> bool {
+    pub const fn params_first(&self) -> bool {
         matches!(self, Self::ParamsAlways | Self::ParamsFirstMulti)
     }
 
-    pub fn attrib_first(&self) -> bool {
+    pub const fn attrib_first(&self) -> bool {
         matches!(self, Self::AttributesFirst)
     }
 }
@@ -224,15 +224,15 @@ pub enum PreferCompact {
 }
 
 impl PreferCompact {
-    pub fn calls(&self) -> bool {
+    pub const fn calls(&self) -> bool {
         matches!(self, Self::All | Self::Calls)
     }
 
-    pub fn events(&self) -> bool {
+    pub const fn events(&self) -> bool {
         matches!(self, Self::All | Self::Events | Self::EventsErrors)
     }
 
-    pub fn errors(&self) -> bool {
+    pub const fn errors(&self) -> bool {
         matches!(self, Self::All | Self::Errors | Self::EventsErrors)
     }
 }

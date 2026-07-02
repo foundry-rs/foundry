@@ -1,27 +1,35 @@
-use std::str::FromStr;
+use std::{str::FromStr, time::Duration};
 
 use crate::{
-    cmd::send::cast_send,
-    format_uint_exp,
-    tx::{CastTxSender, SendTxOpts, get_provider_with_wallet},
+    cmd::send::{cast_send, cast_send_with_access_key},
+    format_uint_exp, tempo,
+    tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
-use alloy_eips::{BlockId, Encodable2718};
+use alloy_consensus::{SignableTransaction, Signed};
+use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{U64, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
-use alloy_serde::WithOtherFields;
+use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
+use alloy_primitives::{Address, U256};
+use alloy_provider::{Provider, fillers::RecommendedFillers};
+use alloy_signer::{Signature, Signer};
 use alloy_sol_types::sol;
-use clap::{Args, Parser};
+use clap::Parser;
 use foundry_cli::{
-    opts::{RpcOpts, TempoOpts},
+    json::{print_json_success, print_scalar},
+    opts::RpcOpts,
     utils::{LoadConfig, get_chain, get_provider},
 };
-use foundry_common::shell;
+use foundry_common::{
+    FoundryTransactionBuilder,
+    fmt::{UIfmt, UIfmtReceiptExt},
+    provider::{ProviderBuilder, RetryProviderWithSigner},
+    shell,
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
+};
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
-use foundry_primitives::FoundryTransactionRequest;
+use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
+use tempo_alloy::TempoNetwork;
 
 sol! {
     #[sol(rpc)]
@@ -40,111 +48,24 @@ sol! {
     }
 }
 
-/// Transaction options for ERC20 operations.
-///
-/// This struct contains only the transaction options relevant to ERC20 token interactions
-#[derive(Debug, Clone, Args)]
-pub struct Erc20TxOpts {
-    /// Gas limit for the transaction.
-    #[arg(long, env = "ETH_GAS_LIMIT")]
-    pub gas_limit: Option<U256>,
-
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_GAS_PRICE")]
-    pub gas_price: Option<U256>,
-
-    /// Max priority fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
-    pub priority_gas_price: Option<U256>,
-
-    /// Nonce for the transaction.
-    #[arg(long)]
-    pub nonce: Option<U64>,
-
-    #[command(flatten)]
-    pub tempo: TempoOpts,
+/// Creates a provider with a pre-resolved signer.
+pub(crate) fn build_provider_with_signer<N: Network + RecommendedFillers>(
+    tx_opts: &SendTxOpts,
+    signer: WalletSigner,
+) -> eyre::Result<RetryProviderWithSigner<N>>
+where
+    N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+    N::UnsignedTx: SignableTransaction<Signature>,
+{
+    let config = tx_opts.eth.load_config()?;
+    let wallet = EthereumWallet::from(signer);
+    let provider = ProviderBuilder::<N>::from_config(&config)?.build_with_wallet(wallet)?;
+    if let Some(interval) = tx_opts.poll_interval {
+        provider.client().set_poll_interval(Duration::from_secs(interval))
+    }
+    Ok(provider)
 }
 
-/// Apply transaction options to a transaction request for ERC20 operations.
-fn apply_tx_opts(
-    tx: &mut WithOtherFields<TransactionRequest>,
-    tx_opts: &Erc20TxOpts,
-    is_legacy: bool,
-) {
-    if let Some(gas_limit) = tx_opts.gas_limit {
-        tx.set_gas_limit(gas_limit.to());
-    }
-
-    if let Some(gas_price) = tx_opts.gas_price {
-        if is_legacy {
-            tx.set_gas_price(gas_price.to());
-        } else {
-            tx.set_max_fee_per_gas(gas_price.to());
-        }
-    }
-
-    if !is_legacy && let Some(priority_fee) = tx_opts.priority_gas_price {
-        tx.set_max_priority_fee_per_gas(priority_fee.to());
-    }
-
-    if let Some(nonce) = tx_opts.nonce {
-        tx.set_nonce(nonce.to());
-    }
-
-    // Apply Tempo-specific options
-    if let Some(fee_token) = tx_opts.tempo.fee_token {
-        tx.other.insert("feeToken".to_string(), serde_json::to_value(fee_token).unwrap());
-    }
-
-    if let Some(nonce_key) = tx_opts.tempo.sequence_key {
-        tx.other.insert("nonceKey".to_string(), serde_json::to_value(nonce_key).unwrap());
-    }
-}
-
-/// Send an ERC20 transaction, handling Tempo transactions specially if needed
-///
-/// TODO: Remove this temporary helper when we migrate to FoundryNetwork/FoundryTransactionRequest.
-async fn send_erc20_tx<P: Provider<AnyNetwork>>(
-    provider: P,
-    tx: WithOtherFields<TransactionRequest>,
-    send_tx: &SendTxOpts,
-    timeout: u64,
-) -> eyre::Result<()> {
-    // Same as in SendTxArgs::run(), Tempo transactions need to be signed locally and sent as raw
-    // transactions
-    if tx.other.contains_key("feeToken") || tx.other.contains_key("nonceKey") {
-        let signer = send_tx.eth.wallet.signer().await?;
-        let mut ftx = FoundryTransactionRequest::new(tx);
-        if ftx.chain_id().is_none() {
-            ftx.set_chain_id(provider.get_chain_id().await?);
-        }
-
-        let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
-
-        // Encode and send raw
-        let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
-        signed_tx.encode_2718(&mut raw_tx);
-
-        let cast = CastTxSender::new(&provider);
-        let pending_tx = cast.send_raw(&raw_tx).await?;
-        let tx_hash = pending_tx.inner().tx_hash();
-
-        if send_tx.cast_async {
-            sh_println!("{tx_hash:#x}")?;
-        } else {
-            // For sync mode, we already have the hash, just wait for receipt
-            let receipt = cast
-                .receipt(format!("{tx_hash:#x}"), None, send_tx.confirmations, Some(timeout), false)
-                .await?;
-            sh_println!("{receipt}")?;
-        }
-
-        return Ok(());
-    }
-
-    // Use the normal cast_send path for non-Tempo transactions
-    cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout).await
-}
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc20Subcommand {
@@ -185,7 +106,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Approve ERC20 token spending.
@@ -206,7 +127,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Query ERC20 token allowance.
@@ -310,7 +231,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Burn ERC20 tokens.
@@ -327,12 +248,12 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 }
 
 impl Erc20Subcommand {
-    fn rpc(&self) -> &RpcOpts {
+    const fn rpc_opts(&self) -> &RpcOpts {
         match self {
             Self::Allowance { rpc, .. } => rpc,
             Self::Approve { send_tx, .. } => &send_tx.eth.rpc,
@@ -347,8 +268,309 @@ impl Erc20Subcommand {
         }
     }
 
+    const fn erc20_opts(&self) -> Option<&TxParams> {
+        match self {
+            Self::Approve { tx, .. }
+            | Self::Transfer { tx, .. }
+            | Self::Mint { tx, .. }
+            | Self::Burn { tx, .. } => Some(tx),
+            Self::Allowance { .. }
+            | Self::Balance { .. }
+            | Self::Name { .. }
+            | Self::Symbol { .. }
+            | Self::Decimals { .. }
+            | Self::TotalSupply { .. } => None,
+        }
+    }
+
+    const fn uses_browser_send(&self) -> bool {
+        match self {
+            Self::Transfer { send_tx, .. }
+            | Self::Approve { send_tx, .. }
+            | Self::Mint { send_tx, .. }
+            | Self::Burn { send_tx, .. } => send_tx.browser.browser,
+            _ => false,
+        }
+    }
+
+    async fn should_use_tempo_network(
+        &self,
+        tempo_access_key: &Option<TempoAccessKeyConfig>,
+        has_session: bool,
+    ) -> eyre::Result<bool> {
+        if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
+            || has_session
+            || tempo_access_key.is_some()
+        {
+            return Ok(true);
+        }
+
+        if self.uses_browser_send() {
+            let config = self.rpc_opts().load_config()?;
+            return Ok(get_chain(config.chain, &get_provider(&config)?).await?.is_tempo());
+        }
+
+        Ok(false)
+    }
+
+    fn has_tempo_session(&self) -> eyre::Result<bool> {
+        self.erc20_opts().map_or(Ok(false), |opts| opts.tempo.session_id().map(|id| id.is_some()))
+    }
+
     pub async fn run(self) -> eyre::Result<()> {
-        let config = self.rpc().load_config()?;
+        let has_session = self.has_tempo_session()?;
+        // Resolve the signer once for state-changing variants.
+        let (signer, tempo_access_key) = match &self {
+            Self::Transfer { send_tx, .. }
+            | Self::Approve { send_tx, .. }
+            | Self::Mint { send_tx, .. }
+            | Self::Burn { send_tx, .. } => {
+                // Only attempt persistent Tempo lookup if --from is set (avoids unnecessary I/O).
+                // Explicit Tempo sessions are resolved after network selection, once the chain is
+                // known.
+                if !has_session && send_tx.eth.wallet.from.is_some() {
+                    let (s, ak) = send_tx.eth.wallet.maybe_signer().await?;
+                    (s, ak)
+                } else {
+                    (None, None)
+                }
+            }
+            _ => (None, None),
+        };
+
+        let is_tempo = self.should_use_tempo_network(&tempo_access_key, has_session).await?;
+
+        if is_tempo {
+            self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await
+        } else {
+            self.run_generic::<Ethereum>(signer, None, has_session).await
+        }
+    }
+
+    #[allow(clippy::large_stack_frames)]
+    pub async fn run_generic<N: Network + RecommendedFillers>(
+        self,
+        pre_resolved_signer: Option<WalletSigner>,
+        tempo_keychain: Option<TempoAccessKeyConfig>,
+        has_session: bool,
+    ) -> eyre::Result<()>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+    {
+        let config = self.rpc_opts().load_config()?;
+
+        // Macro to DRY the keychain-vs-normal send pattern for state-changing ops.
+        // The only thing that varies per variant is the IERC20 call expression.
+        macro_rules! erc20_send {
+            (
+                $token:expr,
+                $send_tx:expr,
+                $tx_opts:expr, |
+                $erc20:ident,
+                $provider:ident |
+                $build_tx:expr
+            ) => {{
+                let mut tx_opts = $tx_opts;
+                tempo::ensure_session_not_browser(&tx_opts.tempo, $send_tx.browser.browser)?;
+                let (pre_resolved_signer, tempo_keychain) = if has_session {
+                    let $provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    let chain = get_chain(config.chain, &$provider).await?;
+                    tempo::resolve_session_or_wallet_signer(
+                        &tx_opts.tempo,
+                        &$send_tx.eth.wallet,
+                        chain.id(),
+                    )
+                    .await?
+                } else {
+                    (pre_resolved_signer, tempo_keychain)
+                };
+                let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
+                let sponsor_fee_payer = tx_opts.tempo.sponsor;
+                let expires_at = tx_opts.tempo.resolve_expires();
+                let tempo_sponsor =
+                    if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
+                let needs_sponsor_payload = print_sponsor_hash || tempo_sponsor.is_some();
+                if let Some(ts) = expires_at {
+                    sh_status!("Transaction expires at unix timestamp {ts}")?;
+                }
+
+                let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);
+                if let Some(ref access_key) = tempo_keychain {
+                    let signer = pre_resolved_signer
+                        .as_ref()
+                        .ok_or_else(|| eyre::eyre!("signer required for access key"))?;
+                    let $provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
+                    let mut tx = { $build_tx }.into_transaction_request();
+                    let chain = get_chain(config.chain, &$provider).await?;
+                    tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
+                    tempo::fill_access_key_transaction(&$provider, &mut tx, access_key, chain)
+                        .await?;
+                    if needs_sponsor_payload {
+                        if print_sponsor_hash {
+                            if let Some(fee_payer) = sponsor_fee_payer {
+                                resolve_and_set_fee_token(
+                                    (!config.eth_rpc_curl).then_some(&$provider),
+                                    Some(chain),
+                                    &mut tx,
+                                    Some(fee_payer),
+                                )
+                                .await?;
+                            }
+                            let hash = tx
+                                .compute_sponsor_hash(access_key.wallet_address)
+                                .ok_or_else(|| {
+                                    eyre::eyre!(
+                                        "This network does not support sponsored transactions"
+                                    )
+                                })?;
+                            sh_println!("{hash:?}")?;
+                            return Ok(());
+                        }
+                        if let Some(sponsor) = &tempo_sponsor {
+                            sponsor
+                                .resolve_and_set_fee_token(
+                                    (!config.eth_rpc_curl).then_some(&$provider),
+                                    Some(chain),
+                                    &mut tx,
+                                )
+                                .await?;
+                            sponsor
+                                .attach_and_print::<TempoNetwork>(
+                                    &mut tx,
+                                    access_key.wallet_address,
+                                )
+                                .await?;
+                        }
+                    }
+                    cast_send_with_access_key(
+                        &$provider,
+                        tx,
+                        signer,
+                        access_key,
+                        tempo_sponsor.is_none().then_some(chain),
+                        None,
+                        $send_tx.cast_async,
+                        $send_tx.confirmations,
+                        timeout,
+                        tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                    )
+                    .await?;
+                } else if let Some(browser) = $send_tx.browser.run::<N>().await? {
+                    let $provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    if let Some(interval) = $send_tx.poll_interval {
+                        $provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
+                    let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
+                    let mut tx = { $build_tx }.into_transaction_request();
+                    let chain = get_chain(config.chain, &$provider).await?;
+                    tx_opts.apply::<N>(&mut tx, chain.is_legacy());
+                    fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
+                    if print_sponsor_hash {
+                        if let Some(fee_payer) = sponsor_fee_payer {
+                            resolve_and_set_fee_token(
+                                (!config.eth_rpc_curl).then_some(&$provider),
+                                Some(chain),
+                                &mut tx,
+                                Some(fee_payer),
+                            )
+                            .await?;
+                        }
+                        let hash = tx.compute_sponsor_hash(browser.address()).ok_or_else(|| {
+                            eyre::eyre!("This network does not support sponsored transactions")
+                        })?;
+                        sh_println!("{hash:?}")?;
+                        return Ok(());
+                    }
+                    if let Some(sponsor) = &tempo_sponsor {
+                        sponsor
+                            .resolve_and_set_fee_token(
+                                (!config.eth_rpc_curl).then_some(&$provider),
+                                Some(chain),
+                                &mut tx,
+                            )
+                            .await?;
+                        sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
+                    } else {
+                        let fee_token = resolve_and_set_fee_token(
+                            (!config.eth_rpc_curl).then_some(&$provider),
+                            Some(chain),
+                            &mut tx,
+                            Some(browser.address()),
+                        )
+                        .await?;
+                        maybe_print_fee_token(
+                            (!config.eth_rpc_curl).then_some(&$provider),
+                            fee_token,
+                        )
+                        .await?;
+                    }
+                    let tx_hash = browser.send_transaction_via_browser(tx).await?;
+                    CastTxSender::new(&$provider)
+                        .print_tx_result(
+                            tx_hash,
+                            $send_tx.cast_async,
+                            $send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?
+                } else {
+                    let signer = pre_resolved_signer.unwrap_or($send_tx.eth.wallet.signer().await?);
+                    let from = signer.address();
+                    let $provider = build_provider_with_signer::<N>(&$send_tx, signer)?;
+                    let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
+                    let mut tx = { $build_tx }.into_transaction_request();
+                    let chain = get_chain(config.chain, &$provider).await?;
+                    tx_opts.apply::<N>(&mut tx, chain.is_legacy());
+                    if needs_sponsor_payload {
+                        fill_tx(&$provider, &mut tx, from, chain, false).await?;
+                        if print_sponsor_hash {
+                            if let Some(fee_payer) = sponsor_fee_payer {
+                                resolve_and_set_fee_token(
+                                    (!config.eth_rpc_curl).then_some(&$provider),
+                                    Some(chain),
+                                    &mut tx,
+                                    Some(fee_payer),
+                                )
+                                .await?;
+                            }
+                            let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
+                                eyre::eyre!("This network does not support sponsored transactions")
+                            })?;
+                            sh_println!("{hash:?}")?;
+                            return Ok(());
+                        }
+                        if let Some(sponsor) = &tempo_sponsor {
+                            sponsor
+                                .resolve_and_set_fee_token(
+                                    (!config.eth_rpc_curl).then_some(&$provider),
+                                    Some(chain),
+                                    &mut tx,
+                                )
+                                .await?;
+                            sponsor.attach_and_print::<N>(&mut tx, from).await?;
+                        }
+                    }
+                    cast_send(
+                        $provider,
+                        tx,
+                        tempo_sponsor.is_none().then_some(chain),
+                        None,
+                        $send_tx.cast_async,
+                        $send_tx.sync,
+                        $send_tx.confirmations,
+                        timeout,
+                        tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                    )
+                    .await?;
+                }
+            }};
+        }
 
         match self {
             // Read-only
@@ -365,9 +587,9 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&allowance.to_string())?)?
+                    print_json_success(allowance.to_string())?;
                 } else {
-                    sh_println!("{}", format_uint_exp(allowance))?
+                    sh_println!("{}", format_uint_exp(allowance))?;
                 }
             }
             Self::Balance { token, owner, block, .. } => {
@@ -382,9 +604,9 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&balance.to_string())?)?
+                    print_json_success(balance.to_string())?;
                 } else {
-                    sh_println!("{}", format_uint_exp(balance))?
+                    sh_println!("{balance}")?;
                 }
             }
             Self::Name { token, block, .. } => {
@@ -397,11 +619,7 @@ impl Erc20Subcommand {
                     .call()
                     .await?;
 
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&name)?)?
-                } else {
-                    sh_println!("{}", name)?
-                }
+                print_scalar(name)?;
             }
             Self::Symbol { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -413,11 +631,7 @@ impl Erc20Subcommand {
                     .call()
                     .await?;
 
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&symbol)?)?
-                } else {
-                    sh_println!("{}", symbol)?
-                }
+                print_scalar(symbol)?;
             }
             Self::Decimals { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -428,11 +642,7 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&decimals)?)?
-                } else {
-                    sh_println!("{}", decimals)?
-                }
+                print_scalar(decimals)?;
             }
             Self::TotalSupply { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -445,97 +655,74 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&total_supply.to_string())?)?
+                    print_json_success(total_supply.to_string())?;
                 } else {
                     sh_println!("{}", format_uint_exp(total_supply))?
                 }
             }
             // State-changing
             Self::Transfer { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
-
-                send_erc20_tx(
-                    provider,
-                    tx,
-                    &send_tx,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
+                    erc20.transfer(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                })
             }
             Self::Approve { token, spender, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
-
-                send_erc20_tx(
-                    provider,
-                    tx,
-                    &send_tx,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
+                    erc20.approve(spender.resolve(&provider).await?, U256::from_str(&amount)?)
+                })
             }
             Self::Mint { token, to, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
-
-                send_erc20_tx(
-                    provider,
-                    tx,
-                    &send_tx,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
+                    erc20.mint(to.resolve(&provider).await?, U256::from_str(&amount)?)
+                })
             }
             Self::Burn { token, amount, send_tx, tx: tx_opts, .. } => {
-                let provider = get_provider_with_wallet(&send_tx).await?;
-                let mut tx = IERC20::new(token.resolve(&provider).await?, &provider)
-                    .burn(U256::from_str(&amount)?)
-                    .into_transaction_request();
-
-                // Apply transaction options using helper
-                apply_tx_opts(
-                    &mut tx,
-                    &tx_opts,
-                    get_chain(config.chain, &provider).await?.is_legacy(),
-                );
-
-                send_erc20_tx(
-                    provider,
-                    tx,
-                    &send_tx,
-                    send_tx.timeout.unwrap_or(config.transaction_timeout),
-                )
-                .await?
+                erc20_send!(token, send_tx, tx_opts, |erc20, provider| {
+                    erc20.burn(U256::from_str(&amount)?)
+                })
             }
         };
         Ok(())
     }
+}
+
+/// Fills from, chain_id, nonce, fees, and gas limit on a transaction request for sponsor/browser
+/// wallet flows. Mirrors the filling logic in the shared tx builder but operates on a
+/// pre-built transaction request from the sol! macro rather than through the builder pipeline.
+/// Only fills fields that haven't already been set by the user.
+async fn fill_tx<N: Network, P: Provider<N>>(
+    provider: &P,
+    tx: &mut N::TransactionRequest,
+    from: Address,
+    chain: Chain,
+    browser: bool,
+) -> eyre::Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    tx.set_from(from);
+    tx.set_chain_id(chain.id());
+
+    if tx.nonce().is_none() {
+        tx.set_nonce(provider.get_transaction_count(from).await?);
+    }
+
+    let legacy = chain.is_legacy();
+
+    fill_transaction_gas_fees(provider, tx, legacy, browser).await?;
+
+    if tx.gas_limit().is_none() {
+        let mut estimated = provider.estimate_gas(tx.clone()).await?;
+
+        // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
+        // costs more gas for signature verification on Tempo chains. Add a
+        // conservative buffer since we can't determine the signature type beforehand.
+        if chain.is_tempo() {
+            estimated += TEMPO_BROWSER_GAS_BUFFER;
+        }
+
+        tx.set_gas_limit(estimated);
+    }
+
+    Ok(())
 }

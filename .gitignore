@@ -13,11 +13,8 @@ snapshots/
 .claude
 .zed
 
-# NPM
 .env
 node_modules
-npm/dist
-npm/bin
 _
 *.tgz
 .vercel

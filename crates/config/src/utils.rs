@@ -3,11 +3,7 @@
 use crate::Config;
 use alloy_primitives::U256;
 use figment::value::Value;
-use foundry_compilers::artifacts::{
-    EvmVersion,
-    remappings::{Remapping, RemappingError},
-};
-use revm::primitives::hardfork::SpecId;
+use foundry_compilers::artifacts::remappings::{Remapping, RemappingError};
 use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
     io,
@@ -213,6 +209,21 @@ where
     deserialize_u64_or_max(deserializer)?.try_into().map_err(D::Error::custom)
 }
 
+/// Serialize a `usize` as `"max"` if it equals `usize::MAX`, as a string if it exceeds
+/// `i64::MAX` (TOML integer limit), or as a plain number otherwise.
+pub(crate) fn serialize_usize_or_max<S>(value: &usize, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if *value == usize::MAX {
+        serializer.serialize_str("max")
+    } else if *value > i64::MAX as usize {
+        serializer.serialize_str(&value.to_string())
+    } else {
+        serializer.serialize_u64(*value as u64)
+    }
+}
+
 /// Deserialize into `U256` from either a `u64`, a `U256` hex string, or a decimal string.
 pub fn deserialize_u64_to_u256<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
@@ -284,25 +295,5 @@ impl FromStr for Numeric {
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
         }
-    }
-}
-
-/// Returns the [SpecId] derived from [EvmVersion]
-pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
-    match evm_version {
-        EvmVersion::Homestead => SpecId::HOMESTEAD,
-        EvmVersion::TangerineWhistle => SpecId::TANGERINE,
-        EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
-        EvmVersion::Byzantium => SpecId::BYZANTIUM,
-        EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
-        EvmVersion::Petersburg => SpecId::PETERSBURG,
-        EvmVersion::Istanbul => SpecId::ISTANBUL,
-        EvmVersion::Berlin => SpecId::BERLIN,
-        EvmVersion::London => SpecId::LONDON,
-        EvmVersion::Paris => SpecId::MERGE,
-        EvmVersion::Shanghai => SpecId::SHANGHAI,
-        EvmVersion::Cancun => SpecId::CANCUN,
-        EvmVersion::Prague => SpecId::PRAGUE,
-        EvmVersion::Osaka => SpecId::OSAKA,
     }
 }

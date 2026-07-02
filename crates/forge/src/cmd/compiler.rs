@@ -72,8 +72,8 @@ impl ResolveArgs {
                 .iter()
                 .map(|(version, sources, _)| {
                     let paths: Vec<String> = sources
-                        .iter()
-                        .filter_map(|(path_file, _)| {
+                        .keys()
+                        .filter_map(|path_file| {
                             let path_str = path_file
                                 .strip_prefix(&project.paths.root)
                                 .unwrap_or(path_file)
@@ -92,15 +92,9 @@ impl ResolveArgs {
                         })
                         .collect();
 
-                    let evm_version = if shell::verbosity() > 1 {
-                        let evm = EvmVersion::default()
-                            .normalize_version_solc(version)
-                            .unwrap_or_default();
-
-                        Some(evm)
-                    } else {
-                        None
-                    };
+                    let evm_version = (shell::verbosity() > 1).then(|| {
+                        EvmVersion::default().normalize_version_solc(version).unwrap_or_default()
+                    });
 
                     ResolvedCompiler { version: version.clone(), evm_version, paths }
                 })
@@ -115,7 +109,9 @@ impl ResolveArgs {
                 // Clear paths if verbosity is 0, performed only after filtering to avoid being
                 // skipped.
                 if shell::verbosity() == 0 {
-                    versions_with_paths.iter_mut().for_each(|version| version.paths.clear());
+                    for version in &mut versions_with_paths {
+                        version.paths.clear();
+                    }
                 }
 
                 output.insert(language.to_string(), versions_with_paths);
