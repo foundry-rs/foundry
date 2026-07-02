@@ -87,7 +87,7 @@ use alloy_rpc_types::{
         },
     },
 };
-use alloy_rpc_types_eth::{Bundle, EthCallResponse};
+use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
@@ -183,10 +183,7 @@ use std::{
     io::{Read, Write},
     ops::{Mul, Not},
     path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering as AtomicOrdering},
-    },
+    sync::Arc,
     time::Duration,
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
@@ -1359,7 +1356,6 @@ impl<N: Network> Backend<N> {
         pool_transactions: &[Arc<PoolTransaction<FoundryTxEnvelope>>],
         gas_config: &PoolTxGasConfig,
         inspector_tx_config: &InspectorTxConfig,
-        state_hook: Option<Box<dyn alloy_evm::block::OnStateHook>>,
         validator: &dyn Fn(
             &PendingTransaction<FoundryTxEnvelope>,
             &AccountInfo,
@@ -1374,7 +1370,6 @@ impl<N: Network> Backend<N> {
             ($evm:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut());
                 let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
-                executor.set_state_hook(state_hook);
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
                 let pool_result = execute_pool_transactions(
                     &mut executor,
@@ -2894,7 +2889,6 @@ where
                     &pool_transactions,
                     &gas_config,
                     &inspector_tx_config,
-                    None,
                     &|pending, account| {
                         self.validate_pool_transaction_for(pending, account, &evm_env)
                     },
@@ -3093,7 +3087,6 @@ where
             &pool_transactions,
             &gas_config,
             &inspector_tx_config,
-            None,
             &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
         );
 
@@ -3331,7 +3324,6 @@ where
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
-                None,
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
             );
 
@@ -3727,7 +3719,6 @@ where
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
-                None,
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
             );
 
@@ -3951,40 +3942,40 @@ where
         Ok(BlockOpcodeGas { block_hash, block_number: block.header.number(), transactions })
     }
 
-    /// Returns account trie information after replaying a block through the transaction at
-    /// `tx_index`.
-    pub async fn debug_account_at(
+    /// Returns account information after replaying a block through the transaction at `tx_index`.
+    pub async fn debug_account_info_at(
         &self,
         block_id: BlockId,
         tx_index: Index,
         address: Address,
-    ) -> Result<Option<TrieAccount>, BlockchainError> {
+    ) -> Result<Option<RpcAccountInfo>, BlockchainError> {
         if let Some((block, _)) = self.get_block_with_hash(block_id) {
-            let fork_account = if let Some(fork) = self.get_fork() {
-                Some(fork.get_account(address, fork.block_number()).await?)
-            } else {
-                None
-            };
-            return self.mined_debug_account_at(&block, tx_index, address, fork_account);
+            return self.mined_debug_account_info_at(&block, tx_index, address).map(Some);
         }
 
         if let Some(fork) = self.get_fork() {
             let number = self.ensure_block_number(Some(block_id)).await?;
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.debug_account_at(block_id, tx_index, address).await?);
+                // Delegate the resolved block number so tags (`latest`/`pending`/`safe`/
+                // `finalized`) are resolved against the fork's head instead of drifting with
+                // the upstream chain. Hashes are forwarded unchanged.
+                let resolved = match block_id {
+                    BlockId::Hash(_) => block_id,
+                    _ => BlockId::number(number),
+                };
+                return Ok(fork.debug_account_info_at(resolved, tx_index, address).await?);
             }
         }
 
         Err(BlockchainError::BlockNotFound)
     }
 
-    fn mined_debug_account_at(
+    fn mined_debug_account_info_at(
         &self,
         block: &Block,
         tx_index: Index,
         address: Address,
-        fork_account: Option<TrieAccount>,
-    ) -> Result<Option<TrieAccount>, BlockchainError> {
+    ) -> Result<RpcAccountInfo, BlockchainError> {
         let tx_index = tx_index.0;
         let transaction_count = block.body.transactions.len();
         if tx_index >= transaction_count {
@@ -4008,75 +3999,41 @@ where
             })
             .collect();
 
-        let replay = |parent_state: &StateDb| -> Result<Option<TrieAccount>, BlockchainError> {
-            let mut replay_db = AnvilCacheDB::new(parent_state);
-
+        let trace = |parent_state: &StateDb| -> Result<RpcAccountInfo, BlockchainError> {
+            let mut cache_db = AnvilCacheDB::new(Box::new(parent_state));
             let mut evm_env = self.evm_env.read().clone();
             evm_env.block_env = block_env_from_header(&block.header);
 
             let spec_id = *evm_env.spec_id();
             let inspector_tx_config = self.inspector_tx_config();
             let gas_config = self.pool_tx_gas_config(&evm_env);
-            let target_storage_changed = Arc::new(AtomicBool::new(false));
-            let target_storage_changed_hook = target_storage_changed.clone();
 
             self.execute_with_block_executor(
-                &mut replay_db,
+                &mut cache_db,
                 &evm_env,
                 block.header.parent_hash,
                 spec_id,
                 &pool_txs,
                 &gas_config,
                 &inspector_tx_config,
-                Some(Box::new(move |state: revm::state::EvmState| {
-                    if state
-                        .get(&address)
-                        .is_some_and(|account| account.changed_storage_slots().next().is_some())
-                    {
-                        target_storage_changed_hook.store(true, AtomicOrdering::Relaxed);
-                    }
-                })),
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
             );
 
-            let _ = <AnvilCacheDB<&StateDb> as revm::Database>::basic(&mut replay_db, address)?;
-            let db = replay_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            let Some(account) = db.get(&address) else {
-                return Ok(None);
-            };
-
-            let parent_storage = parent_state
-                .maybe_as_full_db()
-                .and_then(|db| db.get(&address))
-                .map(|account| &account.storage);
-            let storage_root = if let Some(fork_account) = fork_account
-                && fork_account.storage_root != alloy_trie::EMPTY_ROOT_HASH
-            {
-                if target_storage_changed.load(AtomicOrdering::Relaxed) {
-                    return Err(BlockchainError::DataUnavailable);
-                } else if parent_storage.is_none_or(|storage| storage.is_empty()) {
-                    fork_account.storage_root
-                } else {
-                    return Err(BlockchainError::DataUnavailable);
-                }
-            } else {
-                storage_root(&account.storage)
-            };
-            let code_hash = account.info.code_hash;
-            let balance = account.info.balance;
-            let nonce = account.info.nonce;
-            Ok(Some(TrieAccount { balance, nonce, code_hash, storage_root }))
+            let cache_db = cache_db.0;
+            let account = revm::DatabaseRef::basic_ref(&cache_db, address)?.unwrap_or_default();
+            let code = self.get_code_with_state(&cache_db, address)?;
+            Ok(RpcAccountInfo { balance: account.balance, nonce: account.nonce, code })
         };
 
         let read_guard = self.states.upgradable_read();
         if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
-            replay(state)
+            trace(state)
         } else {
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
                 .ok_or(BlockchainError::BlockNotFound)?;
-            replay(state)
+            trace(state)
         }
     }
 

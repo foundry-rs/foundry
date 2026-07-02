@@ -397,9 +397,9 @@ pub enum EthRequest {
     #[serde(rename = "debug_freeOSMemory", with = "empty_params")]
     DebugFreeOsMemory(()),
 
-    /// reth's `debug_accountAt` endpoint.
-    #[serde(rename = "debug_accountAt")]
-    DebugAccountAt(BlockId, Index, Address),
+    /// reth's `debug_accountInfoAt` endpoint.
+    #[serde(rename = "debug_accountInfoAt")]
+    DebugAccountInfoAt(BlockId, Index, Address),
 
     /// geth's `debug_traceBlock` endpoint.
     #[serde(rename = "debug_traceBlock")]
@@ -1833,12 +1833,12 @@ true}]}"#;
     }
 
     #[test]
-    fn test_serde_debug_account_at() {
-        let s = r#"{"method": "debug_accountAt", "params": ["0x1", "0x0", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+    fn test_serde_debug_account_info_at() {
+        let s = r#"{"method": "debug_accountInfoAt", "params": ["0x1", "0x0", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
-        let s = r#"{"method": "debug_accountAt", "params": [{"blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"}, 0, "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let s = r#"{"method": "debug_accountInfoAt", "params": [{"blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"}, 0, "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
