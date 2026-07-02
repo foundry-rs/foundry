@@ -1,5 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{U256, hex};
+use foundry_config::fs_permissions::PathPermission;
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
@@ -142,6 +143,44 @@ Suite result: ok. 1 passed; 0 failed; 1 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 1 skipped (2 total tests)
 
 "#]]);
+});
+
+forgetest_init!(does_not_evaluate_unused_fuzz_fixtures_for_unit_test_filter, |prj, cmd| {
+    let marker = prj.root().join("fixture-called.txt");
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::write(prj.root())));
+    prj.add_test(
+        "UnusedFuzzFixtures.t.sol",
+        r#"
+interface Vm {
+    function projectRoot() external view returns (string memory path);
+    function writeFile(string calldata path, string calldata data) external;
+}
+
+contract UnusedFuzzFixturesTest {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function fixtureAmount() public returns (uint256[] memory values) {
+        vm.writeFile(string.concat(vm.projectRoot(), "/fixture-called.txt"), "called");
+        values = new uint256[](1);
+        values[0] = 1;
+    }
+
+    function testUnit() public pure {}
+
+    /// forge-config: default.fuzz.runs = 1
+    function testFuzzUsesFixture(uint256 amount) public pure {
+        amount;
+    }
+}
+    "#,
+    );
+
+    cmd.args(["test", "--match-test", "testUnit", "-q"]).assert_success();
+    assert!(!marker.exists(), "unit-only run evaluated fuzz fixture");
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--match-test", "testFuzzUsesFixture", "-q"]).assert_success();
+    assert!(marker.exists(), "fuzz run did not evaluate fuzz fixture");
 });
 
 forgetest_init!(forge_fuzz_skips_unit_only_failing_setup, |prj, cmd| {
