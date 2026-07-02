@@ -3714,7 +3714,6 @@ contract LocalProjectScript is Script {
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling project to generate artifacts
 Nothing to compile
 
 "#]])
@@ -3756,7 +3755,6 @@ Executing previous transactions from the block.
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling project to generate artifacts
 No files changed, compilation skipped
 Traces:
   [..] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
@@ -4379,7 +4377,6 @@ forgetest_async!(cast_call_debug_trace_call_with_local_artifacts, |prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Compiling project to generate artifacts
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -4392,6 +4389,108 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+});
+
+// `--debug-trace-call --with-local-artifacts` must label a contract that only exists through a
+// `--override-code` state override: the trace runs the override code, so artifact matching must
+// see that code instead of the (empty) on-chain code.
+forgetest_async!(cast_call_debug_trace_call_override_code_local_artifacts, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    // Deploy counter contract, only to read its runtime bytecode back.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    let runtime_code = cmd
+        .cast_fuse()
+        .args([
+            "code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Call an address that has no code on chain, overriding it with Counter's runtime code.
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    let output = cmd
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000aa",
+            "number()(uint256)",
+            "--debug-trace-call",
+            "--with-local-artifacts",
+            "--override-code",
+            &format!("0x00000000000000000000000000000000000000aa:{runtime_code}"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        output.contains("Counter::number()"),
+        "expected the override-code contract to be labeled from local artifacts:\n{output}"
+    );
+});
+
+// `--json --debug-trace-call --with-local-artifacts` must keep stdout machine-readable: the
+// compile banner/progress goes to stderr, so stdout is exactly one JSON document.
+forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    let output = cmd
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "number()(uint256)",
+            "--debug-trace-call",
+            "--with-local-artifacts",
+            "--json",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    serde_json::from_str::<serde_json::Value>(output.trim()).unwrap_or_else(|err| {
+        panic!("expected stdout to be a single JSON document ({err}):\n{output}")
+    });
 });
 
 forgetest_async!(cast_call_custom_override, |prj, cmd| {
@@ -5895,6 +5994,26 @@ casttest!(curl_call_with_jwt, |_prj, cmd| {
         .expect("malformed Authorization header");
     let secret = JwtSecret::from_hex(jwt_secret).unwrap();
     secret.validate(jwt).unwrap();
+});
+
+// tests that `--debug-trace-call --curl` emits a `debug_traceCall` request with the
+// callTracer, not a plain `eth_call`
+casttest!(curl_call_debug_trace_call, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["call", to, "number()(uint256)", "--rpc-url", rpc, "--debug-trace-call", "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains(rpc));
+    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
+    assert!(output.contains("callTracer"), "expected callTracer tracer param:\n{output}");
+    assert!(!output.contains("eth_call"), "unexpected eth_call request:\n{output}");
 });
 
 // tests that the --jwt-secret flag outputs a valid curl command with Authorization header

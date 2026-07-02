@@ -8,7 +8,10 @@ use crate::{
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
+use alloy_primitives::{
+    Address, B256, Bytes, TxKind, U256, hex,
+    map::{AddressHashMap, HashMap},
+};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
@@ -338,6 +341,18 @@ impl CallArgs {
                     .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
                     .with_call_config(CallConfig::default().with_log()),
             );
+            // A contract that only exists through a `--override-code` entry has no on-chain
+            // code to fetch for local-artifact matching, so remember the override code before
+            // handing the overrides to `debug_traceCall`.
+            let mut override_bytecode = AddressHashMap::<Bytes>::default();
+            if with_local_artifacts && let Some(overrides) = &state_overrides {
+                for (address, account) in overrides {
+                    if let Some(code) = &account.code {
+                        override_bytecode.insert(*address, code.clone());
+                    }
+                }
+            }
+
             // Honour the same state / block overrides as the local `--trace` path.
             if let Some(state_overrides) = state_overrides {
                 call_options = call_options.with_state_overrides(state_overrides);
@@ -408,7 +423,12 @@ impl CallArgs {
             // over RPC for the addresses in the trace. Skip the extra round-trips unless
             // local artifacts were requested.
             let contracts_bytecode = if with_local_artifacts {
-                fetch_contracts_bytecode_via_rpc(&provider, &result, block).await?
+                let mut contracts_bytecode =
+                    fetch_contracts_bytecode_via_rpc(&provider, &result, block).await?;
+                // The trace ran the override code, not the on-chain code, so the override
+                // wins for artifact matching.
+                contracts_bytecode.extend(override_bytecode);
+                contracts_bytecode
             } else {
                 Default::default()
             };
@@ -610,11 +630,25 @@ impl CallArgs {
             .map(|b| serde_json::to_value(b).unwrap_or(serde_json::json!("latest")))
             .unwrap_or(serde_json::json!("latest"));
 
-        let params = serde_json::json!([call_object, block_param]);
+        // `--debug-trace-call` fetches a callTracer trace of the call instead of executing it,
+        // so the curl payload must target `debug_traceCall` with the same tracer options as the
+        // non-curl path.
+        let (method, params) = if self.debug_trace_call {
+            (
+                "debug_traceCall",
+                serde_json::json!([
+                    call_object,
+                    block_param,
+                    { "tracer": "callTracer", "tracerConfig": { "withLog": true } }
+                ]),
+            )
+        } else {
+            ("eth_call", serde_json::json!([call_object, block_param]))
+        };
 
         let curl_cmd = generate_curl_command(
             url.as_ref(),
-            "eth_call",
+            method,
             params,
             config.eth_rpc_headers.as_deref(),
             jwt.as_deref(),
