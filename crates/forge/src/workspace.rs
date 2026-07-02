@@ -10,7 +10,7 @@ use std::{
 
 use eyre::Result;
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
-use foundry_config::Config;
+use foundry_config::{Config, fs_permissions::FsAccessKind};
 
 /// Check if a path is safe for use as a relative path within a workspace.
 /// Rejects absolute paths, parent directory components (..), and other unsafe patterns.
@@ -178,7 +178,24 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
 
     let handled_extra_roots = handled_project_roots(config)?;
     for extra_path in config.include_paths.iter().chain(config.allow_paths.iter()) {
-        copy_extra_project_path(&config.root, temp_dir, extra_path, &handled_extra_roots)?;
+        copy_extra_project_path(
+            &config.root,
+            temp_dir,
+            extra_path,
+            &handled_extra_roots,
+            "include/allow",
+        )?;
+    }
+    for permission in &config.fs_permissions.permissions {
+        if !permission.is_granted(FsAccessKind::Read) {
+            continue;
+        }
+        copy_project_local_permission_path(
+            &config.root,
+            temp_dir,
+            &permission.path,
+            &handled_extra_roots,
+        )?;
     }
 
     // Copy `script/` too when present and distinct from src/test. Many real
@@ -285,11 +302,12 @@ fn copy_extra_project_path(
     temp_dir: &Path,
     path: &Path,
     handled_roots: &[PathBuf],
+    label: &str,
 ) -> Result<()> {
     let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
     let rel = relative_to_root(root, &resolved);
-    ensure_safe_relative_path(&rel, "include/allow", path)?;
-    ensure_within_root(root, &resolved, "include/allow", path)?;
+    ensure_safe_relative_path(&rel, label, path)?;
+    ensure_within_root(root, &resolved, label, path)?;
 
     if is_covered_by_handled_root(&rel, handled_roots) {
         return Ok(());
@@ -309,6 +327,20 @@ fn copy_extra_project_path(
         fs::copy(&resolved, target)?;
         Ok(())
     }
+}
+
+fn copy_project_local_permission_path(
+    root: &Path,
+    temp_dir: &Path,
+    path: &Path,
+    handled_roots: &[PathBuf],
+) -> Result<()> {
+    let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let rel = relative_to_root(root, &resolved);
+    if rel.is_absolute() || rel.as_os_str().is_empty() {
+        return Ok(());
+    }
+    copy_extra_project_path(root, temp_dir, path, handled_roots, "fs permission")
 }
 
 /// Create a symlink to a directory (cross-platform).

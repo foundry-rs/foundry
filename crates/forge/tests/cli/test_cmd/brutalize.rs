@@ -1,8 +1,9 @@
 // CLI integration tests for `forge test --brutalize`
 
-use std::str::FromStr;
+use std::{fs, str::FromStr};
 
 use foundry_compilers::artifacts::remappings::Remapping;
+use foundry_config::fs_permissions::PathPermission;
 use foundry_test_utils::{str, util::OutputExt};
 
 // Robust contract with casts + assembly passes under brutalization
@@ -40,6 +41,17 @@ contract Robust {
 
     function bytes32ToBytes31(bytes32 x) external pure returns (bytes31) {
         return bytes31(x);
+    }
+
+    function transferTo(address x) external {
+        payable(x).transfer(0);
+    }
+
+    function dirtyInt16MinusOne() external pure returns (int16 value, uint256 raw) {
+        value = int16(-1);
+        assembly {
+            raw := value
+        }
     }
 
     function asmAdd(uint256 a, uint256 b) external pure returns (uint256 result) {
@@ -127,6 +139,16 @@ contract RobustTest is Test {
         assertEq(robust.bytes32ToBytes31(value), bytes31(value));
     }
 
+    function test_transferTo() public {
+        robust.transferTo(address(0xBEEF));
+    }
+
+    function test_dirtyInt16MinusOne() public view {
+        (int16 value, uint256 raw) = robust.dirtyInt16MinusOne();
+        assertEq(value, -1);
+        assertTrue(raw != type(uint256).max);
+    }
+
     function test_asmAdd() public view {
         assertEq(robust.asmAdd(2, 3), 5);
     }
@@ -156,6 +178,32 @@ contract RobustTest is Test {
 Suite result: ok. [..] passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
+});
+
+forgetest_init!(brutalize_copies_fs_permission_fixtures, |prj, cmd| {
+    let fixtures = prj.root().join("fixtures");
+    fs::create_dir_all(&fixtures).unwrap();
+    fs::write(fixtures.join("data.txt"), "fixture-data").unwrap();
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::read("./fixtures")));
+
+    prj.add_test(
+        "FixtureRead.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+
+contract FixtureReadTest is Test {
+    function test_readFixture() public view {
+        assertEq(vm.readFile("./fixtures/data.txt"), "fixture-data");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--brutalize", "--mt", "test_readFixture"]);
+    cmd.assert_success();
 });
 
 // --brutalize and --mutate are mutually exclusive

@@ -5,7 +5,7 @@ use solar::ast::{CallArgsKind, Expr, ExprKind, ItemFunction, SourceUnit, Type, v
 use super::{
     assembly::assembly_transforms,
     transform::{Transform, span_text},
-    value::{brutalize_cast, deterministic_mask},
+    value::{brutalize_cast, brutalize_payable_address, deterministic_mask},
 };
 
 pub(super) fn collect_transforms<'ast>(
@@ -39,6 +39,12 @@ impl<'ast, 'src> Visit<'ast> for BrutalizerVisitor<'src> {
                 return ControlFlow::Continue(());
             }
         }
+        if let Some(arg_text) = payable_call(self.source, expr) {
+            let mask = deterministic_mask(expr.span);
+            let replacement = brutalize_payable_address(arg_text, &mask);
+            self.transforms.push(Transform::Replace { span: expr.span, replacement });
+            return ControlFlow::Continue(());
+        }
 
         self.walk_expr(expr)
     }
@@ -50,6 +56,13 @@ impl<'ast, 'src> Visit<'ast> for BrutalizerVisitor<'src> {
         self.transforms.extend(assembly_transforms(func));
         self.walk_item_function(func)
     }
+}
+
+fn payable_call<'src>(source: &'src str, expr: &Expr<'_>) -> Option<&'src str> {
+    let ExprKind::Payable(call_args) = &expr.kind else { return None };
+    let CallArgsKind::Unnamed(args_exprs) = &call_args.kind else { return None };
+    let arg_text = span_text(source, args_exprs.first()?.span)?;
+    (!arg_text.is_empty()).then_some(arg_text)
 }
 
 fn cast_call<'ast, 'src>(

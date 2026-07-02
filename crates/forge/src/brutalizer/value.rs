@@ -11,7 +11,7 @@ pub(super) fn deterministic_mask(span: Span) -> String {
 pub(super) fn brutalize_cast(ty: &Type<'_>, arg_text: &str, mask: &str) -> Option<String> {
     match &ty.kind {
         TypeKind::Elementary(elem_ty) => match elem_ty {
-            ElementaryType::Address(_) => Some(brutalize_address(arg_text, mask)),
+            ElementaryType::Address(payable) => Some(brutalize_address(*payable, arg_text, mask)),
             ElementaryType::UInt(size) => brutalize_uint(*size, arg_text, mask),
             ElementaryType::Int(size) => brutalize_int(*size, arg_text, mask),
             ElementaryType::FixedBytes(size) => brutalize_fixed_bytes(*size, arg_text, mask),
@@ -23,8 +23,15 @@ pub(super) fn brutalize_cast(ty: &Type<'_>, arg_text: &str, mask: &str) -> Optio
     }
 }
 
-fn brutalize_address(arg_text: &str, mask: &str) -> String {
-    format!("address(uint160(uint256(uint160(address({arg_text}))) | (uint256({mask}) << 160)))")
+pub(super) fn brutalize_payable_address(arg_text: &str, mask: &str) -> String {
+    brutalize_address(true, arg_text, mask)
+}
+
+fn brutalize_address(payable: bool, arg_text: &str, mask: &str) -> String {
+    let expr = format!(
+        "address(uint160(uint256(uint160(address({arg_text}))) | (uint256({mask}) << 160)))"
+    );
+    if payable { format!("payable({expr})") } else { expr }
 }
 
 fn brutalize_uint(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
@@ -33,6 +40,7 @@ fn brutalize_uint(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> 
     if actual_bits >= 256 {
         return None;
     }
+    let mask = dirty_mask(mask, usize::from(256 - actual_bits));
     Some(format!(
         "uint{actual_bits}(uint256(uint{actual_bits}({arg_text})) | (uint256({mask}) << {actual_bits}))"
     ))
@@ -44,8 +52,9 @@ fn brutalize_int(size: TypeSize, arg_text: &str, mask: &str) -> Option<String> {
     if actual_bits >= 256 {
         return None;
     }
+    let mask = dirty_mask(mask, usize::from(256 - actual_bits));
     Some(format!(
-        "int{actual_bits}(int256(int{actual_bits}({arg_text})) | int256(uint256({mask}) << {actual_bits}))"
+        "int{actual_bits}(int256(int{actual_bits}({arg_text})) ^ int256(uint256({mask}) << {actual_bits}))"
     ))
 }
 
@@ -55,9 +64,24 @@ fn brutalize_fixed_bytes(size: TypeSize, arg_text: &str, mask: &str) -> Option<S
         return None;
     }
     let unused_bits = (32 - bytes) * 8;
+    let mask = dirty_mask(mask, usize::from(unused_bits));
     Some(format!(
         "bytes{bytes}(bytes32(bytes{bytes}({arg_text})) | bytes32(uint256({mask}) & ((uint256(1) << {unused_bits}) - 1)))"
     ))
+}
+
+fn dirty_mask(mask: &str, unused_bits: usize) -> String {
+    let Ok(mut value) = u64::from_str_radix(mask.trim_start_matches("0x"), 16) else {
+        return mask.to_string();
+    };
+    if unused_bits < 64 {
+        let width_mask = (1u64 << unused_bits) - 1;
+        value &= width_mask;
+        if value == 0 {
+            value = 1;
+        }
+    }
+    format!("0x{value:016x}")
 }
 
 #[cfg(test)]
@@ -112,7 +136,38 @@ contract T {
 }
 "#;
         let result = brutalize(source);
-        assert!(result.contains("int16(int256(int16(x)) | int256(uint256(0x"));
+        assert!(result.contains("int16(int256(int16(x)) ^ int256(uint256(0x"));
+        assert!(result.contains("<< 16)"));
+    }
+
+    #[test]
+    fn payable_address_cast() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    function f(address x) external pure returns (address payable) {
+        return payable(x);
+    }
+}
+"#;
+        let result = brutalize(source);
+        assert!(result.contains("payable(address(uint160(uint256(uint160(address(x)))"));
+        assert!(result.contains("| (uint256(0x"));
+        assert!(result.contains("<< 160)"));
+    }
+
+    #[test]
+    fn signed_cast_uses_xor() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    function f() external pure returns (int16) {
+        return int16(-1);
+    }
+}
+"#;
+        let result = brutalize(source);
+        assert!(result.contains("int16(int256(int16(-1)) ^ int256(uint256(0x"));
         assert!(result.contains("<< 16)"));
     }
 
@@ -129,6 +184,12 @@ contract T {
         let result = brutalize(source);
         assert!(result.contains("bytes4(bytes32(bytes4(x)) | bytes32(uint256(0x"));
         assert!(result.contains("<< 224"));
+    }
+
+    #[test]
+    fn dirty_mask_is_nonzero_in_effective_width() {
+        assert_eq!(super::dirty_mask("0x0000000000000100", 8), "0x0000000000000001");
+        assert_eq!(super::dirty_mask("0x0000000000000101", 8), "0x0000000000000001");
     }
 
     #[test]
