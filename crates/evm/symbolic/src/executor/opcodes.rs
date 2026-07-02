@@ -26,6 +26,9 @@ impl SymbolicExecutor {
         let Some(target) = state.branch_target() else {
             return Ok(true);
         };
+        if state.satisfies_branch_target() {
+            return Ok(true);
+        }
         if !target.matches(state.address, op_pc, opcode) {
             return Ok(true);
         }
@@ -901,5 +904,38 @@ impl SymbolicExecutor {
         } else {
             StepOutcome::Revert
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_state(executor: &mut SymbolicExecutor) -> PathState {
+        let calldata =
+            SymbolicCalldata::selector_only(&mut executor.cx, &Function::parse("empty()").unwrap())
+                .unwrap();
+        PathState::new(&mut executor.cx, Address::ZERO, Address::ZERO, U256::ZERO, calldata, false)
+    }
+
+    #[test]
+    fn branch_target_constraint_is_one_shot_after_target_reached() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        let mut state = empty_state(&mut executor);
+        state.set_branch_target(Some(SymbolicBranchTarget::new(
+            Address::ZERO,
+            0,
+            opcode::EQ,
+            false,
+        )));
+        state.mark_branch_target_reached();
+
+        let condition = SymBoolExpr::constant(&mut executor.cx, false);
+        let accepted =
+            executor.apply_branch_target_constraint(&mut state, 0, opcode::EQ, &condition).unwrap();
+
+        assert!(accepted);
+        assert!(state.constraints.is_empty());
+        assert!(state.satisfies_branch_target());
     }
 }
