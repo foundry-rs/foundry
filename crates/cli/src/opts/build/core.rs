@@ -284,6 +284,10 @@ impl Provider for BuildOpts {
             dict.insert("experimental".to_string(), true.into());
         }
 
+        if self.compiler.via_ssa_cfg {
+            dict.insert("via_ssa_cfg".to_string(), true.into());
+        }
+
         if let Some(optimize) = self.compiler.optimize {
             dict.insert("optimizer".to_string(), optimize.into());
         }

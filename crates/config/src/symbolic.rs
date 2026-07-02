@@ -38,6 +38,10 @@ pub struct SymbolicConfig {
     pub use_fuzz_corpus: bool,
     /// Maximum number of fuzz corpus seeds to import for one symbolic run.
     pub corpus_seed_limit: usize,
+    /// Whether fuzz branch frontiers should guide targeted symbolic fuzz-test seeding.
+    pub use_fuzz_frontiers: bool,
+    /// Maximum number of fuzz branch frontiers to try for one symbolic run.
+    pub frontier_limit: usize,
     /// Solver executable to invoke.
     pub solver: String,
     /// Exact solver command to invoke. When set, this overrides `solver`.
@@ -100,6 +104,8 @@ impl Default for SymbolicConfig {
             seed_corpus: false,
             use_fuzz_corpus: false,
             corpus_seed_limit: 32,
+            use_fuzz_frontiers: false,
+            frontier_limit: 256,
             solver: "z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
@@ -155,6 +161,8 @@ mod tests {
             "seed_corpus": false,
             "use_fuzz_corpus": false,
             "corpus_seed_limit": 32,
+            "use_fuzz_frontiers": false,
+            "frontier_limit": 256,
             "solver": "z3",
             "timeout": 30,
             "max_depth": 10000,
