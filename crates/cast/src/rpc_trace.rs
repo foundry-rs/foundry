@@ -174,7 +174,7 @@ fn call_log(log: &CallLogFrame) -> CallLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U256, address, b256, bytes};
+    use alloy_primitives::{address, b256, bytes};
 
     /// A geth `callTracer` `SELFDESTRUCT` frame encodes `from` as the destructed contract, `to` as
     /// the refund target and `value` as the transferred balance (the inverse of
