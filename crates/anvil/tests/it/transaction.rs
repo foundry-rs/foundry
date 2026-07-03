@@ -1533,7 +1533,7 @@ async fn can_send_tx_osaka_valid_with_limit_enabled() {
     let tx = WithOtherFields::new(tx);
     let err = provider.send_transaction(tx).await.unwrap_err().to_string();
     assert!(
-        err.contains("intrinsic gas too high -- tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+        err.contains("intrinsic gas too high -- tx.gas_limit > resolved tx gas limit cap"),
         "{err}"
     );
 }

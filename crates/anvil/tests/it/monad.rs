@@ -102,7 +102,7 @@ async fn monad_rejects_tx_gas_limit_above_monad_cap() {
         .with_gas_limit(MONAD_TX_GAS_LIMIT_CAP + 1);
     let err = provider.send_transaction(tx.into()).await.unwrap_err().to_string();
 
-    assert!(err.contains("tx.gas_limit > env.cfg.tx_gas_limit_cap"), "unexpected error: {err}");
+    assert!(err.contains("tx.gas_limit > resolved tx gas limit cap"), "unexpected error: {err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
