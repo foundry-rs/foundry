@@ -2476,6 +2476,18 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
     let shift = SymExpr::constant(&mut cx, U256::from(128));
     let expected = SymExpr::binop(&mut cx, SymBinOp::Shl, x, shift);
     assert_eq!(actual, expected);
+    let x = SymExpr::var(&mut cx, "x");
+    let divisor = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::UDiv, x.clone(), divisor);
+    let shift = SymExpr::constant(&mut cx, U256::from(128));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::Shr, x, shift);
+    assert_eq!(actual, expected);
+    let x = SymExpr::var(&mut cx, "x");
+    let divisor = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::URem, x.clone(), divisor);
+    let mask = SymExpr::constant(&mut cx, (U256::from(1) << 128) - U256::from(1));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::And, x, mask);
+    assert_eq!(actual, expected);
 }
 
 #[test]
