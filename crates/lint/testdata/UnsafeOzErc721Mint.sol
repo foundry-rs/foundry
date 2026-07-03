@@ -86,6 +86,36 @@ contract Token is ERC20 {
     }
 }
 
+// Overriding `_mint` without calling the base makes the override the dispatch target:
+// the plain call is safe, only an explicit `super._mint` still reaches the base.
+contract SafeOverride is ERC721 {
+    function _mint(address to, uint256 tokenId) internal override {
+        _owners[tokenId] = to;
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+
+    function mintSuper(address to, uint256 id) external {
+        super._mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+contract MiddleSafe is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        _owners[tokenId] = to;
+    }
+}
+
+// `super` dispatches to the closest declaration in the linearization: MiddleSafe's safe
+// override, not the ERC721 base behind it.
+contract ChildOfMiddle is MiddleSafe {
+    function mintSuper(address to, uint256 id) external {
+        super._mint(to, id);
+    }
+}
+
 // A local overload with a different arity is the only candidate a one-argument call can
 // dispatch to: out of scope. The two-argument call still resolves to the base `_mint`.
 contract OverloadNft is ERC721 {
@@ -99,6 +129,23 @@ contract OverloadNft is ERC721 {
 
     function mintTwo(address to, uint256 id) external {
         _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A genuine same-arity overload with different parameter types is not an override of the base
+// `_mint(address, uint256)`: the two-argument uint call still dispatches to the unsafe base.
+contract DataNft is ERC721 {
+    function _mint(address to, bytes memory data) internal {
+        _owners[uint256(uint160(to))] = to;
+        data;
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+
+    function mintWithData(address to, bytes memory data) external {
+        _mint(to, data);
     }
 }
 
