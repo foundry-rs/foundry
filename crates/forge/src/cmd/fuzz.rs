@@ -612,7 +612,7 @@ impl<'a> MinimizeContext<'a> {
                 if candidate.failure.as_ref() != Some(failure) {
                     return Ok(false);
                 }
-            } else if candidate.failure.is_some() || !same_edge_sets(candidate, baseline) {
+            } else if candidate.failure.is_some() || !same_edge_hit_sets(candidate, baseline) {
                 return Ok(false);
             }
         }
@@ -761,16 +761,17 @@ fn has_edges(observation: &ReplayObservation) -> bool {
         || observation.sancov_edges.iter().any(|&edge| edge != 0)
 }
 
-fn same_edge_sets(candidate: &ReplayObservation, baseline: &ReplayObservation) -> bool {
-    same_edge_set(&candidate.evm_edges, &baseline.evm_edges)
-        && same_edge_set(&candidate.sancov_edges, &baseline.sancov_edges)
+fn same_edge_hit_sets(candidate: &ReplayObservation, baseline: &ReplayObservation) -> bool {
+    same_edge_hit_set(&candidate.evm_edges, &baseline.evm_edges)
+        && same_edge_hit_set(&candidate.sancov_edges, &baseline.sancov_edges)
 }
 
-fn same_edge_set(candidate: &[u8], baseline: &[u8]) -> bool {
+fn same_edge_hit_set(candidate: &[u8], baseline: &[u8]) -> bool {
     let len = candidate.len().max(baseline.len());
     (0..len).all(|idx| {
-        candidate.get(idx).copied().unwrap_or_default()
-            == baseline.get(idx).copied().unwrap_or_default()
+        let candidate_hit = candidate.get(idx).copied().unwrap_or_default() != 0;
+        let baseline_hit = baseline.get(idx).copied().unwrap_or_default() != 0;
+        candidate_hit == baseline_hit
     })
 }
 
@@ -1234,19 +1235,19 @@ mod tests {
     }
 
     #[test]
-    fn same_edge_sets_preserves_hit_count_buckets() {
+    fn same_edge_hit_sets_allow_hit_count_bucket_changes() {
         let baseline = ReplayObservation { evm_edges: vec![0, 8], ..Default::default() };
         let candidate = ReplayObservation { evm_edges: vec![0, 1], ..Default::default() };
 
-        assert!(!same_edge_sets(&candidate, &baseline));
+        assert!(same_edge_hit_sets(&candidate, &baseline));
     }
 
     #[test]
-    fn same_edge_sets_treats_missing_trailing_buckets_as_zero() {
+    fn same_edge_hit_sets_treat_missing_trailing_buckets_as_zero() {
         let baseline = ReplayObservation { sancov_edges: vec![0, 0], ..Default::default() };
         let candidate = ReplayObservation { sancov_edges: vec![0], ..Default::default() };
 
-        assert!(same_edge_sets(&candidate, &baseline));
+        assert!(same_edge_hit_sets(&candidate, &baseline));
     }
 
     #[test]
