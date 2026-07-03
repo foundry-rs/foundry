@@ -260,6 +260,9 @@ impl VerifyBytecodeArgs {
                 match maybe_predeploy_contract(creation_data) {
                     Ok(res) => res,
                     Err(err) => {
+                        if has_explorer_config {
+                            return Err(err);
+                        }
                         if !shell::is_json() {
                             sh_warn!(
                                 "Failed to fetch creation data from the block explorer: {err}"
@@ -279,13 +282,18 @@ impl VerifyBytecodeArgs {
             Some(etherscan) => match etherscan.contract_source_code(self.address).await {
                 Ok(source_code) => {
                     // Check if the contract name matches.
-                    let name = source_code.items.first().map(|item| item.contract_name.clone());
-                    if name.as_ref() != Some(&self.contract.name) {
+                    if let Some(name) =
+                        source_code.items.first().map(|item| item.contract_name.clone())
+                        && name != self.contract.name
+                    {
                         eyre::bail!("Contract name mismatch");
                     }
                     Some(source_code)
                 }
                 Err(err) => {
+                    if has_explorer_config {
+                        return Err(err.into());
+                    }
                     if !shell::is_json() {
                         sh_warn!(
                             "Failed to fetch contract source code from the block explorer: {err}. Continuing with the local project configuration; compiler settings mismatches will not be reported."

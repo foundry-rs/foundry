@@ -388,6 +388,10 @@ forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| 
 // local project and an RPC endpoint.
 // <https://github.com/foundry-rs/foundry/issues/13479>
 forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
+
     foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
