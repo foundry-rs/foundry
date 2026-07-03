@@ -17,6 +17,12 @@ const FEE_HISTORY_BLOCKS: u64 = 10;
 /// The minimum priority fee to provide, in wei.
 const MIN_PRIORITY_FEE: u128 = 1;
 
+/// Gas used ratio below which a block is treated as near-empty and its reward is
+/// dropped from sampling, so one-off tips in otherwise idle blocks do not
+/// dominate the cross-block median on low-traffic chains. Local heuristic: there
+/// is no protocol-defined utilization threshold for priority-fee estimation.
+const MIN_GAS_USED_RATIO: f64 = 0.1;
+
 /// The resolved EIP-1559 fees together with the base fee they were derived from.
 ///
 /// The base fee is surfaced so callers can present a fee breakdown (max fee /
@@ -84,8 +90,10 @@ where
             .into(),
     };
 
-    let max_priority_fee_per_gas =
-        estimate_priority_fee(fee_history.reward.as_deref().unwrap_or_default());
+    let max_priority_fee_per_gas = estimate_priority_fee(
+        fee_history.reward.as_deref().unwrap_or_default(),
+        &fee_history.gas_used_ratio,
+    );
 
     let (num, den) = preset.base_fee_multiplier();
     let max_fee_per_gas = base_fee_per_gas
@@ -137,11 +145,17 @@ pub fn resolve_broadcast_eip1559_fees(
     Ok(fees)
 }
 
-/// Estimates the priority fee as the median of the per-block sampled rewards,
-/// ignoring zero rewards and never returning less than [`MIN_PRIORITY_FEE`].
-fn estimate_priority_fee(rewards: &[Vec<u128>]) -> u128 {
-    let mut rewards =
-        rewards.iter().filter_map(|r| r.first()).filter(|r| **r > 0_u128).collect::<Vec<_>>();
+/// Estimates the priority fee as the median of the per-block rewards, ignoring
+/// zero rewards and rewards from blocks below [`MIN_GAS_USED_RATIO`], and never
+/// returning less than [`MIN_PRIORITY_FEE`].
+fn estimate_priority_fee(rewards: &[Vec<u128>], gas_used_ratio: &[f64]) -> u128 {
+    let mut rewards = rewards
+        .iter()
+        .zip(gas_used_ratio)
+        .filter(|(_, ratio)| ratio.is_finite() && ratio.clamp(0.0, 1.0) >= MIN_GAS_USED_RATIO)
+        .filter_map(|(reward, _)| reward.first().copied())
+        .filter(|reward| *reward > 0)
+        .collect::<Vec<_>>();
     if rewards.is_empty() {
         return MIN_PRIORITY_FEE;
     }
@@ -149,8 +163,9 @@ fn estimate_priority_fee(rewards: &[Vec<u128>]) -> u128 {
     rewards.sort_unstable();
 
     let n = rewards.len();
+    // `midpoint` avoids overflow when averaging the two middle values.
     let median =
-        if n % 2 == 0 { (*rewards[n / 2 - 1] + *rewards[n / 2]) / 2 } else { *rewards[n / 2] };
+        if n % 2 == 0 { rewards[n / 2 - 1].midpoint(rewards[n / 2]) } else { rewards[n / 2] };
 
     std::cmp::max(median, MIN_PRIORITY_FEE)
 }
@@ -159,15 +174,102 @@ fn estimate_priority_fee(rewards: &[Vec<u128>]) -> u128 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn priority_fee_matches_alloy_semantics() {
-        // Empty rewards -> minimum priority fee.
-        assert_eq!(estimate_priority_fee(&[]), MIN_PRIORITY_FEE);
-        assert_eq!(estimate_priority_fee(&[vec![0], vec![0]]), MIN_PRIORITY_FEE);
+    /// A gas used ratio above [`MIN_GAS_USED_RATIO`].
+    const BUSY: f64 = 0.5;
 
-        // Median of non-zero rewards.
-        assert_eq!(estimate_priority_fee(&[vec![1], vec![3], vec![5]]), 3);
-        assert_eq!(estimate_priority_fee(&[vec![2], vec![4]]), 3);
+    #[test]
+    fn priority_fee_median_of_busy_blocks() {
+        // Empty rewards -> minimum priority fee.
+        assert_eq!(estimate_priority_fee(&[], &[]), MIN_PRIORITY_FEE);
+        assert_eq!(estimate_priority_fee(&[vec![0], vec![0]], &[BUSY, BUSY]), MIN_PRIORITY_FEE);
+
+        // Median of non-zero rewards from busy blocks.
+        assert_eq!(estimate_priority_fee(&[vec![1], vec![3], vec![5]], &[BUSY, BUSY, BUSY]), 3);
+        assert_eq!(estimate_priority_fee(&[vec![2], vec![4]], &[BUSY, BUSY]), 3);
+    }
+
+    #[test]
+    fn priority_fee_ignores_near_empty_blocks() {
+        // Rewards from blocks below MIN_GAS_USED_RATIO are dropped.
+        let rewards = vec![vec![0u128], vec![41_000_000_000_000u128], vec![0u128]];
+        let ratios = vec![0.0, 0.001, 0.0];
+        assert_eq!(estimate_priority_fee(&rewards, &ratios), MIN_PRIORITY_FEE);
+
+        // Only busy blocks are sampled -> median of [2, 3] = 2.
+        let rewards = vec![vec![500u128], vec![2u128], vec![800u128], vec![3u128], vec![999u128]];
+        let ratios = vec![0.01, BUSY, 0.03, 0.7, 0.02];
+        assert_eq!(estimate_priority_fee(&rewards, &ratios), 2);
+
+        // The threshold is inclusive; NaN/infinite ratios are dropped.
+        assert_eq!(estimate_priority_fee(&[vec![10], vec![20]], &[0.1, 0.09]), 10);
+        assert_eq!(
+            estimate_priority_fee(&[vec![5], vec![6]], &[f64::NAN, f64::INFINITY]),
+            MIN_PRIORITY_FEE
+        );
+    }
+
+    #[test]
+    fn priority_fee_tolerates_length_mismatch() {
+        // `zip` bounds the sample to the shorter slice.
+        assert_eq!(estimate_priority_fee(&[vec![7], vec![9], vec![11]], &[BUSY]), 7);
+        assert_eq!(estimate_priority_fee(&[vec![7]], &[BUSY, BUSY, BUSY]), 7);
+    }
+
+    /// Drives the public async estimator so `gas_used_ratio` wiring is covered.
+    #[tokio::test]
+    async fn estimate_filters_near_empty_block_outliers() {
+        use alloy_provider::{ProviderBuilder, mock::Asserter};
+        use alloy_rpc_types::FeeHistory;
+
+        let base = 20_000_000_000u128; // 20 gwei
+        let big = 41_000_000_000_000u128; // outlier tip in near-empty blocks
+        let fee_history = FeeHistory {
+            base_fee_per_gas: vec![base; 11],
+            gas_used_ratio: vec![0.001; 10],
+            base_fee_per_blob_gas: vec![1; 11],
+            blob_gas_used_ratio: vec![0.0; 10],
+            oldest_block: 1,
+            reward: Some(vec![
+                vec![0u128],
+                vec![big],
+                vec![0u128],
+                vec![big],
+                vec![0u128],
+                vec![big],
+                vec![0u128],
+                vec![0u128],
+                vec![0u128],
+                vec![0u128],
+            ]),
+        };
+
+        let asserter = Asserter::new();
+        asserter.push_success(&fee_history);
+        let provider = ProviderBuilder::new_with_network::<alloy_network::Ethereum>()
+            .connect_mocked_client(asserter);
+
+        let fees =
+            estimate_eip1559_fees(&provider, Eip1559FeeEstimatePreset::Market).await.unwrap();
+
+        // Near-empty outliers are dropped -> min priority, max_fee = 2 * base + min.
+        assert_eq!(fees.base_fee_per_gas, base);
+        assert_eq!(fees.max_priority_fee_per_gas, MIN_PRIORITY_FEE);
+        assert_eq!(fees.max_fee_per_gas, 40_000_000_001);
+    }
+
+    #[test]
+    fn tempo_scenario_yields_expected_max_fee() {
+        // Outlier tip in a near-empty block -> Market max_fee = 2 * base + min.
+        let base_fee = 20_000_000_000u128;
+        let rewards = vec![vec![0u128], vec![41_000_000_000_000u128], vec![0u128]];
+        let ratios = vec![BUSY, 0.001, BUSY];
+
+        let priority = estimate_priority_fee(&rewards, &ratios);
+        let (num, den) = Eip1559FeeEstimatePreset::Market.base_fee_multiplier();
+        let max_fee = base_fee.saturating_mul(num) / den + priority;
+
+        assert_eq!(priority, MIN_PRIORITY_FEE);
+        assert_eq!(max_fee, 40_000_000_001);
     }
 
     fn fees(max: u128, priority: u128) -> ResolvedEip1559Fees {
@@ -209,39 +311,21 @@ mod tests {
     }
 
     #[test]
-    fn market_preset_matches_alloy_default_formula() {
-        // alloy default: max_fee = base_fee * 2 + priority_fee.
+    fn market_preset_max_fee_formula() {
+        // Market preset: max_fee = base_fee * 2 + priority_fee.
         let preset = Eip1559FeeEstimatePreset::Market;
         let (num, den) = preset.base_fee_multiplier();
         let base_fee = 2_000_000_000u128; // 2 gwei
-        let priority = estimate_priority_fee(&[vec![100], vec![300]]);
+        let priority = estimate_priority_fee(&[vec![100], vec![300]], &[BUSY, BUSY]);
         let max_fee = base_fee.saturating_mul(num) / den + priority;
         assert_eq!(max_fee, base_fee * 2 + priority);
     }
 
-    /// The `market` preset must produce exactly what alloy's public default
-    /// estimator produces, for the same `(base_fee, rewards)` inputs. This is the
-    /// guarantee that switching to our resolver does not change default behavior.
     #[test]
-    fn market_preset_matches_alloy_default_estimator() {
-        let preset = Eip1559FeeEstimatePreset::Market;
-        let (num, den) = preset.base_fee_multiplier();
-
-        for base_fee in [0u128, 1, 1_000_000_000, 2_000_000_000, 137_000_000_000] {
-            for rewards in [
-                vec![],
-                vec![vec![0u128]],
-                vec![vec![100], vec![0], vec![300], vec![500]],
-                vec![vec![2], vec![4]],
-            ] {
-                let priority = estimate_priority_fee(&rewards);
-                let ours = Eip1559Estimation {
-                    max_fee_per_gas: base_fee.saturating_mul(num) / den + priority,
-                    max_priority_fee_per_gas: priority,
-                };
-                let alloy = alloy_provider::utils::eip1559_default_estimator(base_fee, &rewards);
-                assert_eq!(ours, alloy, "mismatch for base_fee={base_fee}, rewards={rewards:?}");
-            }
-        }
+    fn priority_fee_preserves_high_tips_on_busy_chains() {
+        // Busy blocks keep the median of non-zero rewards, even when the tip is
+        // far above the base fee (legitimate congestion is not clamped).
+        let rewards = vec![vec![10_000_000_000u128], vec![30_000_000_000u128]];
+        assert_eq!(estimate_priority_fee(&rewards, &[BUSY, BUSY]), 20_000_000_000);
     }
 }
