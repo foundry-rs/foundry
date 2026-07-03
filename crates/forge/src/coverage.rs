@@ -261,12 +261,14 @@ impl CoverageAttributionReporter {
     }
 }
 
+/// Top-level JSON payload for per-test coverage attribution.
 #[derive(Serialize)]
 struct AttributionReport<'a> {
     version: u8,
     tests: AttributionTests<'a>,
 }
 
+/// Coverage attributed to a single executed test.
 #[derive(Serialize)]
 struct AttributionTest {
     suite: String,
@@ -276,6 +278,7 @@ struct AttributionTest {
     covered: Vec<AttributionItem>,
 }
 
+/// A source range covered by a test, with hit counts and item metadata.
 #[derive(Serialize)]
 struct AttributionItem {
     source: String,
@@ -294,6 +297,7 @@ struct AttributionItem {
     path_id: Option<u32>,
 }
 
+/// Serializer state for streaming attribution entries from test results.
 struct AttributionTests<'a> {
     report: &'a CoverageReport,
     outcome: &'a TestOutcome,
