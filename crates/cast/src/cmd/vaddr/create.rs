@@ -186,7 +186,14 @@ async fn register(
     sh_status!("Submitting registerVirtualMaster({salt})...")?;
 
     if let Some(ref access_key) = tempo_access_key {
-        tempo::fill_access_key_transaction(&provider, &mut tx, access_key, chain).await?;
+        tempo::fill_access_key_transaction(
+            &provider,
+            &mut tx,
+            access_key,
+            chain,
+            config.eip1559_fee_estimate,
+        )
+        .await?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send_with_access_key`, so report the selection here.
             let fee_token = resolve_and_set_fee_token(
