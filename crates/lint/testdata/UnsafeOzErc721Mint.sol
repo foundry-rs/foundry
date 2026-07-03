@@ -5,9 +5,9 @@ pragma solidity ^0.8.18;
 // Tests for `unsafe-oz-erc721-mint`: `ERC721._mint` credits a token without checking that the
 // recipient can receive it (no `onERC721Received` call), so minting to a non-receiver contract
 // locks the token; `_safeMint` performs the check. A call is flagged when it resolves to a
-// function named `_mint` declared in a contract whose name contains "ERC721", wherever it sits
-// in the inheritance chain. Calls to `_safeMint`, calls made inside a `_safeMint` implementation
-// (the wrapper itself), and `_mint` functions of non-ERC721 contracts stay clean.
+// function named `_mint` declared in a contract named exactly `ERC721` or `ERC721Upgradeable`,
+// wherever that base sits in the inheritance chain. Calls to `_safeMint`, calls made inside the
+// canonical `_safeMint` wrapper, and `_mint` functions of other contracts stay clean.
 
 // Minimal mirror of OpenZeppelin's ERC721: unchecked `_mint`, checking `_safeMint`.
 contract ERC721 {
@@ -73,10 +73,23 @@ contract UpgradeableNft is ERC721Upgradeable {
     }
 }
 
-// Overriding `_safeMint` and calling `_mint` inside it is the wrapper pattern: exempt.
-contract CustomSafeNft is ERC721 {
+// A user-defined `_safeMint` override is not the canonical OZ wrapper: calling `_mint`
+// directly inside it skips the receiver check and must stay analyzed.
+contract BrokenSafeNft is ERC721 {
     function _safeMint(address to, uint256 tokenId) internal override {
-        _mint(to, tokenId);
+        _mint(to, tokenId); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A safe override in a contract whose name happens to contain "ERC721": the call resolves
+// to the local override, so nothing fires, since matching is on the exact base name.
+contract SafeERC721Override is ERC721 {
+    function _mint(address to, uint256 tokenId) internal override {
+        _owners[tokenId] = to;
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
     }
 }
 

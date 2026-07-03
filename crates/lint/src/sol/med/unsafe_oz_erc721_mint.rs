@@ -25,9 +25,12 @@ impl<'hir> LateLintPass<'hir> for UnsafeOzErc721Mint {
         hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        // A `_safeMint` implementation is the wrapper itself: it legitimately calls `_mint`
-        // after (or before) its receiver check.
-        if func.name.is_some_and(|name| name.as_str() == "_safeMint") {
+        // Only the canonical OZ `_safeMint` wrapper is exempt: it legitimately calls `_mint`
+        // next to its receiver check. A user-defined `_safeMint` override stays analyzed, since
+        // it can call `_mint` directly without any check.
+        if func.name.is_some_and(|name| name.as_str() == "_safeMint")
+            && func.contract.is_some_and(|id| is_canonical_erc721(hir.contract(id).name.as_str()))
+        {
             return;
         }
         // `ERC721._mint` credits the token without calling `onERC721Received`, so minting to a
@@ -79,15 +82,22 @@ impl MintCallFinder<'_, '_, '_, '_> {
         }
     }
 
-    /// Whether `function_id` is a function named `_mint` declared in a non-library contract whose
-    /// name contains `ERC721` (covers `ERC721`, `ERC721Upgradeable`, `ERC721Enumerable`, ...).
-    /// Libraries are excluded: OpenZeppelin's unchecked `_mint` lives in the `ERC721` contract.
+    /// Whether `function_id` is a function named `_mint` declared in a non-library contract
+    /// named exactly like an OZ ERC721 base. Extensions (`ERC721Enumerable`, ...) inherit
+    /// `_mint` rather than redeclare it, so resolution still lands on the canonical base; exact
+    /// names avoid flagging a safe override just because its contract name contains the
+    /// substring `ERC721`.
     fn is_erc721_mint(&self, function_id: FunctionId) -> bool {
         let function = self.hir.function(function_id);
         function.name.is_some_and(|name| name.as_str() == "_mint")
             && function.contract.is_some_and(|id| {
                 let contract = self.hir.contract(id);
-                !contract.kind.is_library() && contract.name.as_str().contains("ERC721")
+                !contract.kind.is_library() && is_canonical_erc721(contract.name.as_str())
             })
     }
+}
+
+/// The OpenZeppelin contracts that declare the unchecked `_mint`.
+fn is_canonical_erc721(name: &str) -> bool {
+    matches!(name, "ERC721" | "ERC721Upgradeable")
 }
