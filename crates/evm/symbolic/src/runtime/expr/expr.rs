@@ -194,7 +194,9 @@ impl SymExpr {
         }
         match (self.storage_layout_key(cx), write_key.storage_layout_key(cx)) {
             (Some((read_base, read_offset)), Some((write_base, write_offset))) => {
-                let read_base = SymBoolExpr::eq(cx, read_base, write_base);
+                let read_base = read_base
+                    .storage_base_eq(cx, &write_base)
+                    .unwrap_or_else(|| SymBoolExpr::eq(cx, read_base, write_base));
                 let read_offset = SymBoolExpr::eq(cx, read_offset, write_offset);
                 SymBoolExpr::and(cx, vec![read_base, read_offset])
             }
@@ -202,6 +204,28 @@ impl SymExpr {
             (None, Some(_)) if self.as_const().is_some() => SymBoolExpr::constant(cx, false),
             _ => SymBoolExpr::eq(cx, self.clone(), write_key.clone()),
         }
+    }
+
+    fn storage_base_eq(&self, cx: &mut SymCx, other: &Self) -> Option<SymBoolExpr> {
+        let (read_key, read_slot) = self.storage_mapping_key(cx)?;
+        let (write_key, write_slot) = other.storage_mapping_key(cx)?;
+
+        let key_eq = SymBoolExpr::eq(cx, read_key, write_key);
+        let slot_eq = read_slot
+            .storage_base_eq(cx, &write_slot)
+            .unwrap_or_else(|| SymBoolExpr::eq(cx, read_slot, write_slot));
+        Some(SymBoolExpr::and(cx, vec![key_eq, slot_eq]))
+    }
+
+    fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<(Self, Self)> {
+        let SymExprKind::Keccak { len, bytes, .. } = self.kind() else { return None };
+        if len.as_const() != Some(U256::from(64)) || bytes.len() < 64 {
+            return None;
+        }
+
+        let key = Self::from_bytes(cx, bytes[..32].iter().cloned());
+        let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
+        Some((key, slot))
     }
 
     fn storage_mapping_root_slot(&self, cx: &mut SymCx) -> Option<U256> {
