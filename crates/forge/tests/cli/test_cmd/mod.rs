@@ -4010,7 +4010,7 @@ Error: Not enough verbosity. Use -vvvvv to show opcodes.
 
 forgetest_init!(opcodes_conflict_with_non_trace_outputs, |prj, cmd| {
     prj.initialize_default_contracts();
-    for flag in ["--json", "--junit", "--list"] {
+    for flag in ["--json", "--junit", "--list", "--debug"] {
         let output =
             cmd.forge_fuse().args(["test", "-vvvvv", "--opcodes", "SLOAD", flag]).assert_failure();
         let stderr = String::from_utf8_lossy(&output.get_output().stderr);
