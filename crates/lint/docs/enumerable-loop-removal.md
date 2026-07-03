@@ -35,9 +35,14 @@ for (uint256 i = 0; i < set.length(); i++) {
 ### Good
 
 ```solidity
+// removing everything: EnumerableSet has a dedicated function for it,
+// much cheaper than removing one element at a time
+set.clear();
+
+// removing selectively: collect during the loop, remove after it
 address[] memory toRemove = new address[](set.length());
 for (uint256 i = 0; i < set.length(); i++) {
-    toRemove[i] = set.at(i);
+    if (shouldRemove(set.at(i))) toRemove[i] = set.at(i);
 }
 for (uint256 i = 0; i < toRemove.length; i++) {
     set.remove(toRemove[i]);
