@@ -1,3 +1,4 @@
+//@compile-flags: --only-lint block-timestamp
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
@@ -57,6 +58,20 @@ contract BlockTimestamp {
         return foo(block.timestamp) > 0; //~WARN: usage of `block.timestamp` in a comparison may be manipulated by validators
     }
 
+    function aliasedComparison() public view returns (bool) {
+        uint256 t = block.timestamp;
+        return t < deadline; //~WARN: usage of `block.timestamp` in a comparison may be manipulated by validators
+    }
+
+    function aliasedRequire() public view {
+        uint256 t = block.timestamp;
+        require(t < deadline); //~WARN: usage of `block.timestamp` in a comparison may be manipulated by validators
+    }
+
+    function helperComparison() public view returns (bool) {
+        return currentTime() < deadline; //~WARN: usage of `block.timestamp` in a comparison may be manipulated by validators
+    }
+
     // SHOULD PASS:
 
     function assignOnly() public view returns (uint256) {
@@ -76,8 +91,36 @@ contract BlockTimestamp {
         return block.timestamp + 100;
     }
 
+    function aliasOverwritten() public view returns (bool) {
+        uint256 t = block.timestamp;
+        t = deadline;
+        return t > 0;
+    }
+
+    function returningBranchAliasDoesNotLeak(bool condition) public view returns (bool) {
+        uint256 t = deadline;
+        if (condition) {
+            t = block.timestamp;
+            return true;
+        }
+        return t > 0;
+    }
+
+    function revertingBranchAliasDoesNotLeak(bool condition) public view returns (bool) {
+        uint256 t = deadline;
+        if (condition) {
+            t = block.timestamp;
+            revert("done");
+        }
+        return t > 0;
+    }
+
     function foo(uint256 x) internal pure returns (uint256) {
         return x;
+    }
+
+    function currentTime() internal view returns (uint256) {
+        return block.timestamp;
     }
 
     event Timestamp(uint256 ts);

@@ -1,6 +1,6 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
-    config::{DEFAULT_MNEMONIC, ForkChoice},
+    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
@@ -31,7 +31,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
@@ -94,7 +94,7 @@ pub struct NodeArgs {
     pub block_time: Option<Duration>,
 
     /// Slots in an epoch
-    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
@@ -105,6 +105,8 @@ pub struct NodeArgs {
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
+    /// Enable mixed mining mode. Blocks are mined on a timer (set by `--block-time`),
+    /// but also whenever a transaction is submitted. Requires `--block-time` to be set.
     #[arg(long, requires = "block_time")]
     pub mixed_mining: bool,
 
@@ -250,9 +252,21 @@ impl NodeArgs {
 
         let funded_accounts = self.parse_funded_accounts()?;
 
+        let networks = self
+            .evm
+            .chain_id
+            .map(u64::from)
+            .or_else(|| self.evm.fork_chain_id.map(u64::from))
+            .map_or(self.evm.networks, |chain_id| self.evm.networks.with_chain_id(chain_id));
+
         let hardfork = match &self.hardfork {
-            Some(hf) => Some(parse_hardfork(hf, &self.evm.networks)?),
+            Some(hf) => Some(parse_hardfork(hf, &networks)?),
             None => None,
+        };
+        let networks = if let Some(hardfork) = hardfork {
+            networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?
+        } else {
+            networks
         };
 
         Ok(NodeConfig::default()
@@ -293,7 +307,6 @@ impl NodeArgs {
             .with_host(self.host)
             .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
-            .with_chain_id(self.evm.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm.steps_tracing)
@@ -308,7 +321,10 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
-            .with_networks(self.evm.networks)
+            .with_networks(networks)
+            // Apply chain-id after explicit network flags so auto-detection can fill in
+            // defaults when no network was set, without being overwritten afterward.
+            .with_chain_id(self.evm.chain_id)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -877,6 +893,11 @@ impl FromStr for ForkUrl {
 
 /// Parses a hardfork string against the active network configuration.
 fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHardfork> {
+    if let Ok(hardfork) = FoundryHardfork::from_str(hf) {
+        networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?;
+        return Ok(hardfork);
+    }
+
     #[cfg(feature = "optimism")]
     if networks.is_optimism() {
         return Ok(OpHardfork::from_str(hf)?.into());
@@ -949,6 +970,62 @@ mod tests {
             NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, Some(OpHardfork::Regolith.into()));
+    }
+
+    #[test]
+    fn can_parse_tempo_hardfork_from_network() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "tempo", "--hardfork", "T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    fn can_parse_namespaced_tempo_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--hardfork", "tempo:T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn chain_id_infers_optimism_network_in_node_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "10"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_optimism());
+    }
+
+    #[test]
+    fn chain_id_infers_tempo_network_for_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "4217", "--hardfork", "T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    fn fork_chain_id_infers_tempo_network_for_hardfork() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "4217",
+            "--hardfork",
+            "T5",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
     }
 
     #[test]

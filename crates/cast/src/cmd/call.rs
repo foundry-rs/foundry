@@ -42,7 +42,7 @@ use foundry_evm::{
     },
     executors::TracingExecutor,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode},
+    traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_wallets::WalletOpts;
 use regex::Regex;
@@ -223,6 +223,7 @@ impl CallArgs {
         if self.rpc.curl {
             return self.run_curl().await;
         }
+
         if self.tx.tempo.is_tempo() {
             return self.run_with_network::<TempoEvmNetwork>().await;
         }
@@ -335,7 +336,8 @@ impl CallArgs {
                 }
             }
 
-            let trace_mode = TraceMode::Call
+            let trace_requirements = TraceRequirements::none()
+                .with_calls(true)
                 .with_debug(debug)
                 .with_decode_internal(if decode_internal {
                     InternalTraceMode::Full
@@ -347,7 +349,7 @@ impl CallArgs {
                 (evm_env, tx_env),
                 fork,
                 evm_version,
-                trace_mode,
+                trace_requirements,
                 networks,
                 create2_deployer,
                 state_overrides,
@@ -356,13 +358,18 @@ impl CallArgs {
             let value = tx.value().unwrap_or_default();
             let input = tx.input().cloned().unwrap_or_default();
             let tx_kind = tx.kind().expect("set by builder");
+
+            // Apply a user-provided `--gas-limit` to the executor. `build_test_env` propagates the
+            // executor's gas limit to the executed call/deploy, so setting it here is what takes
+            // effect; writing it onto the tx env directly would be overwritten. When no limit is
+            // given, the executor keeps the block gas limit (`u64::MAX`) set above.
+            if let Some(gas_limit) = tx.gas_limit() {
+                executor.set_gas_limit(gas_limit);
+            }
+
             let env_tx = executor.tx_env_mut();
 
             // Set transaction options with --trace
-            if let Some(gas_limit) = tx.gas_limit() {
-                env_tx.set_gas_limit(gas_limit);
-            }
-
             if let Some(gas_price) = tx.gas_price() {
                 env_tx.set_gas_price(gas_price);
             }
@@ -416,6 +423,7 @@ impl CallArgs {
                 decode_internal,
                 disable_labels,
                 None,
+                None,
             )
             .await?;
 
@@ -434,6 +442,7 @@ impl CallArgs {
                 sh_warn!("Contract code is empty")?;
             }
         }
+
         sh_println!("{}", response)?;
 
         Ok(())
@@ -488,7 +497,7 @@ impl CallArgs {
             params,
             config.eth_rpc_headers.as_deref(),
             jwt.as_deref(),
-        );
+        )?;
 
         sh_println!("{}", curl_cmd)?;
         Ok(())

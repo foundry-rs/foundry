@@ -20,7 +20,7 @@ use solar::{
     ast::{self as ast, visit::Visit as _},
     interface::{
         Session,
-        diagnostics::{self, HumanEmitter, JsonEmitter},
+        diagnostics::{self, HumanEmitter, JsonEmitter, SilentEmitter},
         source_map::SourceFile,
     },
     sema::{
@@ -37,6 +37,8 @@ use thiserror::Error;
 #[macro_use]
 pub mod macros;
 
+pub mod analysis;
+mod calls;
 pub mod codesize;
 pub mod gas;
 pub mod high;
@@ -123,7 +125,7 @@ impl<'a> SolidityLinter<'a> {
     fn include_lint(&self, lint: SolLint) -> bool {
         self.severity.as_ref().is_none_or(|sev| sev.contains(&lint.severity()))
             && self.lints_included.as_ref().is_none_or(|incl| incl.contains(&lint))
-            && !self.lints_excluded.as_ref().is_some_and(|excl| excl.contains(&lint))
+            && self.lints_excluded.as_ref().is_none_or(|excl| !excl.contains(&lint))
     }
 
     fn process_source_ast<'gcx>(
@@ -284,7 +286,7 @@ impl<'a> SolidityLinter<'a> {
             lints,
             source_file,
         );
-        let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
+        let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, gcx, &gcx.hir);
 
         // Visit this specific source
         let _ = late_visitor.visit_nested_source(source_id);
@@ -306,8 +308,8 @@ impl<'a> Linter for SolidityLinter<'a> {
         convert_solar_errors(compiler.dcx())?;
 
         // Cache diagnostic count before linting to isolate from the build phase.
-        let warn_count_before = compiler.dcx().warn_count();
-        let note_count_before = compiler.dcx().note_count();
+        let mut warn_count_before = compiler.dcx().warn_count();
+        let mut note_count_before = compiler.dcx().note_count();
 
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
 
@@ -330,6 +332,17 @@ impl<'a> Linter for SolidityLinter<'a> {
             if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
                 let _ = compiler.lower_asts();
             }
+            convert_solar_errors(compiler.dcx())?;
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Analysis) {
+                // Typeck is used as a data source for lints. Its diagnostics are still
+                // experimental and should not leak into `forge lint` output.
+                let prev_emitter =
+                    compiler.dcx().set_emitter(Box::new(SilentEmitter::new_boxed(None)));
+                let _ = compiler.analysis();
+                compiler.dcx().set_emitter(prev_emitter);
+            }
+            warn_count_before = compiler.dcx().warn_count();
+            note_count_before = compiler.dcx().note_count();
 
             let gcx = compiler.gcx();
 
@@ -375,7 +388,7 @@ impl<'a> Linter for SolidityLinter<'a> {
             // Project-wide lints, run once after all per-file passes.
             self.process_project(gcx, input);
 
-            convert_solar_errors(compiler.dcx())
+            Ok(())
         })?;
 
         let sess = compiler.sess_mut();

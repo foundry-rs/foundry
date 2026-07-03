@@ -4,13 +4,25 @@ use crate::{
         send::{cast_send, cast_send_with_access_key},
         tip20::mine,
     },
-    tx::{SendTxOpts, TxParams},
+    tempo,
+    tx::{CastTxSender, SendTxOpts, TxParams},
 };
+use alloy_network::Network;
 use alloy_primitives::{Address, B256};
+use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
-use foundry_cli::utils::{LoadConfig, get_chain};
-use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_cli::{
+    json::print_json_success,
+    utils::{LoadConfig, get_chain},
+};
+use foundry_common::{
+    FoundryTransactionBuilder,
+    fmt::{UIfmt, UIfmtReceiptExt},
+    provider::ProviderBuilder,
+    shell,
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use serde_json::json;
 use std::time::Instant;
@@ -71,12 +83,12 @@ pub(super) async fn run(
         }
 
         if !shell::is_json() {
-            sh_println!("Mining TIP-1022 salt for {owner} with {n_threads} threads...")?;
+            sh_status!("Mining TIP-1022 salt for {owner} with {n_threads} threads...")?;
         }
         let timer = Instant::now();
         let output = mine::mine(owner, start_salt, n_threads, POW_BYTES)?;
         if !shell::is_json() {
-            sh_println!("Found salt in {:?}", timer.elapsed())?;
+            sh_status!("Found salt in {:?}", timer.elapsed())?;
         }
         output
     };
@@ -94,20 +106,17 @@ pub(super) async fn run(
         virtual_addresses.push((user_tag, vaddr));
     }
 
-    if shell::is_json() {
-        sh_println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "salt": format!("{}", output.salt),
-                "registration_hash": format!("{}", output.registration_hash),
-                "master_id": format!("{}", output.master_id),
-                "virtual_addresses": virtual_addresses.iter().map(|(tag, addr)| json!({
-                    "tag": format!("{tag}"),
-                    "address": format!("{addr}"),
-                })).collect::<Vec<_>>(),
-            }))?
-        )?;
-    } else {
+    let payload = json!({
+        "salt": format!("{}", output.salt),
+        "registration_hash": format!("{}", output.registration_hash),
+        "master_id": format!("{}", output.master_id),
+        "virtual_addresses": virtual_addresses.iter().map(|(tag, addr)| json!({
+            "tag": format!("{tag}"),
+            "address": format!("{addr}"),
+        })).collect::<Vec<_>>(),
+    });
+
+    if !shell::is_json() {
         sh_println!(
             "Salt:              {}
 Registration hash: {}
@@ -123,19 +132,37 @@ Master ID:         {}",
     }
 
     if no_register {
+        if shell::is_json() {
+            print_json_success(payload)?;
+        }
         return Ok(());
     }
 
-    register(owner, output.salt, send_tx, tx_opts).await
+    let tx_hash = register(owner, output.salt, send_tx, tx_opts).await?;
+
+    if shell::is_json() {
+        let mut payload = payload;
+        payload["registration_tx_hash"] = json!(format!("{tx_hash:#x}"));
+        print_json_success(payload)?;
+    }
+
+    Ok(())
 }
 
 async fn register(
     owner: Address,
     salt: B256,
     send_tx: SendTxOpts,
-    tx_opts: TxParams,
-) -> Result<()> {
-    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    mut tx_opts: TxParams,
+) -> Result<B256> {
+    let config = send_tx.eth.load_config()?;
+    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let chain = get_chain(config.chain, &provider).await?;
+    tempo::ensure_session_not_browser(&tx_opts.tempo, send_tx.browser.browser)?;
+    let (signer, tempo_access_key) =
+        tempo::resolve_session_or_wallet_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id())
+            .await?;
     let signer = signer.ok_or_else(|| {
         eyre::eyre!("cast vaddr create requires a signer (for example --private-key or --from)")
     })?;
@@ -149,33 +176,121 @@ async fn register(
         );
     }
 
-    let config = send_tx.eth.load_config()?;
-    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
     let mut tx = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider)
         .registerVirtualMaster(salt)
         .into_transaction_request();
-    tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+    let expires_at = tx_opts.tempo.resolve_expires();
+    tempo::print_expires(expires_at)?;
+    tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
 
-    sh_println!("Submitting registerVirtualMaster({salt})...")?;
+    sh_status!("Submitting registerVirtualMaster({salt})...")?;
 
     if let Some(ref access_key) = tempo_access_key {
-        cast_send_with_access_key(
-            &provider,
-            tx,
-            &signer,
-            access_key,
-            send_tx.cast_async,
-            send_tx.confirmations,
-            timeout,
-        )
-        .await?;
+        tempo::fill_access_key_transaction(&provider, &mut tx, access_key, chain).await?;
+        if shell::is_json() {
+            // JSON mode bypasses `cast_send_with_access_key`, so report the selection here.
+            let fee_token = resolve_and_set_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                Some(access_key.wallet_address),
+            )
+            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
+            let raw_tx = tx
+                .sign_with_access_key(
+                    &provider,
+                    &signer,
+                    access_key.wallet_address,
+                    access_key.key_address,
+                    access_key.key_authorization.as_ref(),
+                )
+                .await?;
+            let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
+            wait_for_receipt_if_needed(
+                &provider,
+                tx_hash,
+                send_tx.cast_async,
+                send_tx.confirmations,
+                timeout,
+            )
+            .await?;
+            Ok(tx_hash)
+        } else {
+            cast_send_with_access_key(
+                &provider,
+                tx,
+                &signer,
+                access_key,
+                Some(chain),
+                None,
+                send_tx.cast_async,
+                send_tx.confirmations,
+                timeout,
+                !config.eth_rpc_curl,
+            )
+            .await
+        }
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
-        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
+        if shell::is_json() {
+            // JSON mode bypasses `cast_send`, so report the selection here.
+            let fee_token = resolve_and_set_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                Some(sender),
+            )
+            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
+            let cast = CastTxSender::new(&provider);
+            if send_tx.sync {
+                cast.send_sync(tx).await.map(|(tx_hash, _)| tx_hash)
+            } else {
+                let pending_tx = cast.send(tx).await?;
+                let tx_hash = *pending_tx.inner().tx_hash();
+                wait_for_receipt_if_needed(
+                    &provider,
+                    tx_hash,
+                    send_tx.cast_async,
+                    send_tx.confirmations,
+                    timeout,
+                )
+                .await?;
+                Ok(tx_hash)
+            }
+        } else {
+            cast_send(
+                provider,
+                tx,
+                Some(chain),
+                None,
+                send_tx.cast_async,
+                send_tx.sync,
+                send_tx.confirmations,
+                timeout,
+                !config.eth_rpc_curl,
+            )
+            .await
+        }
+    }
+}
+
+async fn wait_for_receipt_if_needed<P: Provider<TempoNetwork>>(
+    provider: &P,
+    tx_hash: B256,
+    cast_async: bool,
+    confirmations: u64,
+    timeout: u64,
+) -> Result<()>
+where
+    <TempoNetwork as Network>::TransactionRequest: FoundryTransactionBuilder<TempoNetwork>,
+    <TempoNetwork as Network>::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+{
+    if !cast_async {
+        CastTxSender::new(provider)
+            .receipt(format!("{tx_hash:#x}"), None, confirmations, Some(timeout), false)
             .await?;
     }
-
     Ok(())
 }

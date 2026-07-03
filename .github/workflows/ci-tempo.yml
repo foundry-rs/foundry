@@ -39,26 +39,30 @@ env:
 
 jobs:
   tempo-check:
-    runs-on: depot-ubuntu-latest
+    # Skip on PRs from forks (only run for branches in foundry-rs/foundry, i.e. maintainer PRs).
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: depot-ubuntu-latest-16
     timeout-minutes: 60
     permissions:
       contents: read
     steps:
       # Checkout the repository
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
         with:
           toolchain: stable
 
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
 
       # Build and install binaries
       - name: Build and install Foundry binaries
         run: |
-          cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
+          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Check Tempo fork schedule compatibility
@@ -71,7 +75,6 @@ jobs:
 
       - name: Run Tempo check on mainnet
         if: |
-          github.event_name == 'schedule' ||
           github.event.inputs.network == 'mainnet' ||
           github.event.inputs.network == 'all'
         env:
@@ -142,7 +145,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2

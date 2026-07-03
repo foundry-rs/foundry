@@ -8,25 +8,28 @@
 //! uses the shared initialization logic from `foundry-evm-core`.
 
 use alloy_primitives::{Address, U256, address};
-use foundry_evm::core::tempo::{PATH_USD_ADDRESS, initialize_tempo_genesis};
+use foundry_evm::core::tempo::{
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    initialize_tempo_genesis_at_hardfork,
+};
 use revm::{
-    context::journaled_state::JournalCheckpoint,
+    context::{BlockEnv, journaled_state::JournalCheckpoint},
     state::{AccountInfo, Bytecode},
 };
 use std::collections::HashMap;
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
         AccountKeychain,
         IAccountKeychain::{KeyRestrictions, SignatureType},
-        authorizeKeyCall,
     },
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
 };
+use tempo_primitives::TempoBlockEnv;
 
 use super::db::Db;
 
@@ -35,20 +38,15 @@ const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 /// Admin address used for genesis initialization.
 const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 
-const PATH_USD: Address = PATH_USD_ADDRESS;
-const ALPHA_USD: Address = address!("0x20C0000000000000000000000000000000000001");
-const BETA_USD: Address = address!("0x20C0000000000000000000000000000000000002");
-const THETA_USD: Address = address!("0x20C0000000000000000000000000000000000003");
-
 /// Storage provider adapter for Anvil's Db to work with Tempo precompiles.
 pub struct AnvilStorageProvider<'a> {
     db: &'a mut dyn Db,
     chain_id: u64,
-    timestamp: U256,
-    block_number: u64,
+    block_env: TempoBlockEnv,
     gas_used: u64,
     gas_refunded: i64,
     reservoir: u64,
+    tip1060_storage_credits_enabled: bool,
     transient: HashMap<(Address, U256), U256>,
     hardfork: TempoHardfork,
 }
@@ -64,11 +62,18 @@ impl<'a> AnvilStorageProvider<'a> {
         Self {
             db,
             chain_id,
-            timestamp,
-            block_number,
+            block_env: TempoBlockEnv {
+                inner: BlockEnv {
+                    timestamp,
+                    number: U256::from(block_number),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             gas_used: 0,
             gas_refunded: 0,
             reservoir: 0,
+            tip1060_storage_credits_enabled: hardfork.is_t7(),
             transient: HashMap::new(),
             hardfork,
         }
@@ -84,12 +89,8 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         self.chain_id
     }
 
-    fn timestamp(&self) -> U256 {
-        self.timestamp
-    }
-
-    fn block_number(&self) -> u64 {
-        self.block_number
+    fn block_env(&self) -> &TempoBlockEnv {
+        &self.block_env
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), TempoPrecompileError> {
@@ -189,10 +190,6 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         self.gas_refunded = self.gas_refunded.saturating_add(gas);
     }
 
-    fn beneficiary(&self) -> Address {
-        Address::ZERO
-    }
-
     fn is_static(&self) -> bool {
         false
     }
@@ -204,6 +201,14 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
     fn checkpoint_commit(&mut self, _checkpoint: JournalCheckpoint) {}
 
     fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
+
+    fn amsterdam_eip8037_enabled(&self) -> bool {
+        false
+    }
+
+    fn set_tip1060_storage_credits(&mut self, enabled: bool) {
+        self.tip1060_storage_credits_enabled = enabled && self.hardfork.is_t7();
+    }
 }
 
 /// Initialize Tempo precompiles and fee tokens for Anvil.
@@ -225,12 +230,12 @@ pub fn initialize_tempo_precompiles(
     let mut storage = AnvilStorageProvider::new(db, chain_id, timestamp, 0, hardfork);
 
     // Initialize base Tempo genesis (precompiles and tokens)
-    initialize_tempo_genesis(&mut storage, ADMIN, SENDER)?;
+    initialize_tempo_genesis_at_hardfork(&mut storage, ADMIN, SENDER, hardfork)?;
 
     // Mint fee tokens to test accounts
     // u64::MAX per account - safe since u128::MAX can hold ~18 quintillion u64::MAX values
     let mint_amount = U256::from(u64::MAX);
-    let tokens = [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD];
+    let tokens = [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
 
     StorageCtx::enter(&mut storage, || -> Result<(), TempoPrecompileError> {
         // Mint fee tokens to test accounts
@@ -251,17 +256,16 @@ pub fn initialize_tempo_precompiles(
             keychain.set_tx_origin(account)?;
             keychain.authorize_key(
                 account, // msg_sender (root account authorizes its own key)
-                authorizeKeyCall {
-                    keyId: account, // key ID = account address for secp256k1
-                    signatureType: SignatureType::Secp256k1,
-                    config: KeyRestrictions {
-                        expiry: u64::MAX,     // never expires
-                        enforceLimits: false, // no spending limits
-                        limits: vec![],
-                        allowAnyCalls: true,
-                        allowedCalls: vec![],
-                    },
+                account, // key ID = account address for secp256k1
+                SignatureType::Secp256k1,
+                KeyRestrictions {
+                    expiry: u64::MAX,     // never expires
+                    enforceLimits: false, // no spending limits
+                    limits: vec![],
+                    allowAnyCalls: true,
+                    allowedCalls: vec![],
                 },
+                None,
             )?;
         }
 
@@ -272,10 +276,10 @@ pub fn initialize_tempo_precompiles(
 
         for (i, &account) in test_accounts.iter().enumerate() {
             let fee_token = match i {
-                0 => ALPHA_USD, // Alice
-                1 => BETA_USD,  // Bob
-                2 => THETA_USD, // Charlie
-                _ => PATH_USD,  // Everyone else
+                0 => ALPHA_USD_ADDRESS, // Alice
+                1 => BETA_USD_ADDRESS,  // Bob
+                2 => THETA_USD_ADDRESS, // Charlie
+                _ => PATH_USD_ADDRESS,  // Everyone else
             };
             fee_manager
                 .set_user_token(account, IFeeManager::setUserTokenCall { token: fee_token })?;

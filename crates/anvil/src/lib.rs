@@ -22,7 +22,6 @@ use crate::{
     shutdown::Signal,
     tasks::TaskManager,
 };
-use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
@@ -32,7 +31,6 @@ pub use foundry_evm::hardfork::EthereumHardfork;
 use foundry_primitives::FoundryNetwork;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
-use revm::primitives::hardfork::SpecId;
 use server::try_spawn_ipc;
 use std::{
     net::SocketAddr,
@@ -211,11 +209,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
-        match backend.spec_id() {
-            SpecId::OSAKA => BlobParams::osaka(),
-            SpecId::PRAGUE => BlobParams::prague(),
-            _ => BlobParams::cancun(),
-        },
+        backend.blob_params(),
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),

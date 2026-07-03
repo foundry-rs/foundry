@@ -3,13 +3,13 @@
 **Severity**: `Gas`
 **ID**: `custom-errors`
 
-Flags `require(cond, "message")`, `revert("message")`, and `revert()` calls; suggests replacing
-them with a `revert CustomError(...)`.
+Flags `require(cond)`, `require(cond, "message")`, `revert("message")`, and `revert()` calls;
+suggests replacing them with a `revert CustomError(...)`.
 
 ## What it does
 
-Reports `require` calls whose second argument is a string literal, and `revert(...)` calls that
-are either bare or have a string-literal argument.
+Reports `require` calls with no reason or whose second argument is a string literal, and
+`revert(...)` calls that are either bare or have a string-literal argument.
 
 ## Why is this bad?
 
@@ -26,6 +26,7 @@ Solidity 0.8.4+ supports custom errors natively.
 
 ```solidity
 require(amount > 0, "amount must be > 0");
+require(amount > 0);
 revert("not authorized");
 revert();
 ```

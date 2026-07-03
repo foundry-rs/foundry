@@ -1,5 +1,5 @@
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, ruint::aliases::U256};
+use alloy_primitives::{Address, B256, ruint::aliases::U256};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::Result;
@@ -17,14 +17,24 @@ use std::{
 
 use crate::utils::parse_fee_token_address;
 
+mod session;
+pub use session::TEMPO_SESSION_ID_ENV;
+
 /// CLI options for Tempo transactions.
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Tempo")]
 pub struct TempoOpts {
-    /// Fee token address for Tempo transactions.
+    /// Use a live Tempo wallet session for signing.
+    ///
+    /// When set, Foundry resolves the session from `$TEMPO_HOME/wallet/sessions.toml` and signs
+    /// Tempo transactions with the session's temporary access key on behalf of its root account.
+    #[arg(long = "tempo.session", id = "tempo_session", value_name = "SESSION_ID")]
+    pub session: Option<B256>,
+
+    /// Fee token address, numeric TIP-20 token id, or known symbol for Tempo transactions.
     ///
     /// When set, builds a Tempo (type 0x76) transaction that pays gas fees
-    /// in the specified token.
+    /// in the specified token. Known symbols are PathUSD, AlphaUSD, BetaUSD, and ThetaUSD.
     ///
     /// If this is not set, the fee token is chosen according to network rules. See the Tempo docs
     /// for more information.
@@ -105,13 +115,30 @@ pub struct TempoOpts {
     )]
     pub sponsor_sig: Option<Signature>,
 
+    /// Remote sponsor (fee payer) service URL.
+    ///
+    /// When set, the user-signed transaction is forwarded to this URL via
+    /// `eth_signRawTransaction`. The service adds its fee payer signature and returns
+    /// the fully-sponsored transaction, which is then submitted via the regular RPC.
+    /// No local sponsor key is required.
+    ///
+    /// Example: `cast send 0x... --sponsor-url https://sponsor.tempo.xyz/tp_abc123`
+    #[arg(
+        long = "sponsor-url",
+        alias = "tempo.sponsor-url",
+        value_name = "URL",
+        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig", "print_sponsor_hash"],
+        env = "TEMPO_SPONSOR_URL"
+    )]
+    pub sponsor_url: Option<String>,
+
     /// Print the sponsor signature hash and exit.
     ///
     /// Computes the `fee_payer_signature_hash` for the transaction so that a sponsor
     /// knows what hash to sign. The transaction is not sent.
     #[arg(
         long = "tempo.print-sponsor-hash",
-        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig"]
+        conflicts_with_all = &["sponsor_signer", "sponsor_sig", "sponsor_url"]
     )]
     pub print_sponsor_hash: bool,
 
@@ -154,6 +181,7 @@ impl TempoOpts {
             || self.sponsor.is_some()
             || self.sponsor_signer.is_some()
             || self.sponsor_sig.is_some()
+            || self.sponsor_url.is_some()
             || self.print_sponsor_hash
             || self.key_id.is_some()
             || self.expiring_nonce
@@ -263,7 +291,9 @@ impl TempoOpts {
         // gas estimation so that `--tempo.print-sponsor-hash` and
         // `--tempo.sponsor-signature` produce identical gas estimates. Callers
         // should call `set_fee_payer_signature` on the built tx request.
-        if (self.has_sponsor_submission() || self.print_sponsor_hash) && tx.nonce_key().is_none() {
+        if (self.has_sponsor_submission() || self.sponsor_url.is_some() || self.print_sponsor_hash)
+            && tx.nonce_key().is_none()
+        {
             tx.set_nonce_key(U256::ZERO);
         }
     }
@@ -288,6 +318,7 @@ fn parse_expires_seconds(s: &str) -> Result<u64, String> {
 mod tests {
     use super::*;
     use alloy_primitives::address;
+    use foundry_common::tempo::{BETA_USD_ADDRESS, PATH_USD_ADDRESS};
 
     #[test]
     fn parses_lane_arg() {
@@ -351,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_fee_token_id() {
+    fn parse_fee_token_address_id_and_symbol() {
         let opts = TempoOpts::try_parse_from([
             "",
             "--tempo.fee-token",
@@ -366,6 +397,19 @@ mod tests {
             opts_with_id.fee_token,
             Some(address!("0x20C0000000000000000000000000000000000001")),
         );
+
+        let opts_with_symbol =
+            TempoOpts::try_parse_from(["", "--tempo.fee-token", "PathUSD"]).unwrap();
+        assert_eq!(opts_with_symbol.fee_token, Some(PATH_USD_ADDRESS));
+
+        let opts_with_mixed_case_symbol =
+            TempoOpts::try_parse_from(["", "--tempo.fee-token", "bEtAuSd"]).unwrap();
+        assert_eq!(opts_with_mixed_case_symbol.fee_token, Some(BETA_USD_ADDRESS));
+
+        let err = TempoOpts::try_parse_from(["", "--tempo.fee-token", "unknownusd"]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("expected address, numeric TIP-20 token id"));
+        assert!(msg.contains("PathUSD, AlphaUSD, BetaUSD, ThetaUSD"));
     }
 
     #[test]
@@ -409,11 +453,61 @@ mod tests {
     }
 
     #[test]
-    fn print_sponsor_hash_conflicts_with_sponsor_submission() {
+    fn print_sponsor_hash_allows_sponsor_address() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.print-sponsor-hash",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+        ])
+        .unwrap();
+
+        assert!(opts.print_sponsor_hash);
+        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+    }
+
+    #[test]
+    fn print_sponsor_hash_conflicts_with_sponsor_signature() {
         assert!(
             TempoOpts::try_parse_from([
                 "",
                 "--tempo.print-sponsor-hash",
+                "--tempo.sponsor",
+                "0x1111111111111111111111111111111111111111",
+                "--tempo.sponsor-signature",
+                "0x0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_sponsor_url() {
+        let opts =
+            TempoOpts::try_parse_from(["", "--sponsor-url", "https://sponsor.tempo.xyz/tp_abc123"])
+                .unwrap();
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz/tp_abc123"));
+        assert!(opts.is_tempo());
+    }
+
+    #[test]
+    fn sponsor_url_alias() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor-url",
+            "https://sponsor.tempo.xyz/tp_abc123",
+        ])
+        .unwrap();
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz/tp_abc123"));
+    }
+
+    #[test]
+    fn sponsor_url_conflicts_with_sponsor() {
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--sponsor-url",
+                "https://sponsor.tempo.xyz",
                 "--tempo.sponsor",
                 "0x1111111111111111111111111111111111111111",
             ])

@@ -15,7 +15,7 @@ use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_primitives::{
-    TempoSignature,
+    TempoSignature, TempoTxType,
     transaction::{Call, KeychainSignature, PrimitiveSignature, SignedKeyAuthorization},
 };
 
@@ -147,6 +147,21 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Get the fee token for a Tempo transaction.
     fn fee_token(&self) -> Option<Address> {
         None
+    }
+
+    /// Gets top-level Tempo calls for local fee-token inference.
+    fn tempo_calls(&self) -> Vec<(TxKind, &[u8])> {
+        Vec::new()
+    }
+
+    /// Returns true when [`Self::tempo_calls`] came from a Tempo AA `calls` list.
+    fn has_tempo_call_list(&self) -> bool {
+        false
+    }
+
+    /// Returns true when this request will be built as a Tempo AA transaction.
+    fn is_tempo_aa(&self) -> bool {
+        false
     }
 
     /// Set the fee token for a Tempo transaction.
@@ -405,6 +420,24 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn fee_token(&self) -> Option<Address> {
         self.fee_token
+    }
+
+    fn tempo_calls(&self) -> Vec<(TxKind, &[u8])> {
+        self.calls
+            .iter()
+            .map(|call| (call.to, call.input.as_ref()))
+            .chain(self.inner.to.map(|to| {
+                (to, self.inner.input.input().map_or(&[] as &[u8], |input| input.as_ref()))
+            }))
+            .collect()
+    }
+
+    fn has_tempo_call_list(&self) -> bool {
+        !self.calls.is_empty()
+    }
+
+    fn is_tempo_aa(&self) -> bool {
+        NetworkTransactionBuilder::<TempoNetwork>::output_tx_type(self) == TempoTxType::AA
     }
 
     fn set_fee_token(&mut self, fee_token: Address) {

@@ -6,7 +6,9 @@
 use alloy_primitives::{Address, hex};
 use alloy_rlp::Decodable;
 use serde::{Deserialize, Serialize};
-use std::{env, fs, io::Write, path::PathBuf};
+use std::{env, fmt, path::PathBuf};
+
+use super::registry::{read_toml_file, write_toml_file_atomic};
 
 /// Environment variable for an ephemeral Tempo private key.
 pub const TEMPO_PRIVATE_KEY_ENV: &str = "TEMPO_PRIVATE_KEY";
@@ -50,7 +52,7 @@ pub struct StoredTokenLimit {
 ///
 /// Mirrors the fields from `tempo-common::keys::model::KeyEntry`.
 /// Unknown fields are ignored by serde.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct KeyEntry {
     /// Wallet type: "local" or "passkey".
     #[serde(default)]
@@ -82,6 +84,26 @@ pub struct KeyEntry {
     pub limits: Vec<StoredTokenLimit>,
 }
 
+// Manual `Debug` redacts the persistent key material; propagates to `KeysFile`.
+impl fmt::Debug for KeyEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KeyEntry")
+            .field("wallet_type", &self.wallet_type)
+            .field("wallet_address", &self.wallet_address)
+            .field("chain_id", &self.chain_id)
+            .field("key_type", &self.key_type)
+            .field("key_address", &self.key_address)
+            .field("key", &self.key.as_deref().map(super::redacted_debug))
+            .field(
+                "key_authorization",
+                &self.key_authorization.as_deref().map(super::redacted_debug),
+            )
+            .field("expiry", &self.expiry)
+            .field("limits", &self.limits)
+            .finish()
+    }
+}
+
 impl KeyEntry {
     /// Whether this entry has a non-empty inline private key.
     pub fn has_inline_key(&self) -> bool {
@@ -94,16 +116,6 @@ impl KeyEntry {
 pub struct KeysFile {
     #[serde(default)]
     pub keys: Vec<KeyEntry>,
-}
-
-/// Process-wide mutex used by tests that mutate `TEMPO_HOME`.
-///
-/// Returns a [`tokio::sync::Mutex`] so async tests can hold it across `.await`
-/// points without tripping `clippy::await_holding_lock`.
-#[cfg(test)]
-pub(crate) fn test_env_mutex() -> &'static tokio::sync::Mutex<()> {
-    static M: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    M.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 /// Resolve the Tempo home directory.
@@ -127,23 +139,10 @@ pub fn tempo_keys_path() -> Option<PathBuf> {
 /// Errors are logged as warnings.
 pub fn read_tempo_keys_file() -> Option<KeysFile> {
     let keys_path = tempo_keys_path()?;
-    if !keys_path.exists() {
-        tracing::trace!(?keys_path, "tempo keys file not found");
-        return None;
-    }
-
-    let contents = match fs::read_to_string(&keys_path) {
-        Ok(c) => c,
+    match read_toml_file(&keys_path, "tempo keys") {
+        Ok(value) => value,
         Err(e) => {
-            tracing::warn!(?keys_path, %e, "failed to read tempo keys file");
-            return None;
-        }
-    };
-
-    match toml::from_str(&contents) {
-        Ok(f) => Some(f),
-        Err(e) => {
-            tracing::warn!(?keys_path, %e, "failed to parse tempo keys file");
+            tracing::warn!(?keys_path, %e, "failed to load tempo keys file");
             None
         }
     }
@@ -168,39 +167,43 @@ pub fn decode_key_authorization<T: Decodable>(hex_str: &str) -> eyre::Result<T> 
 /// temp file + rename so a crash mid-write cannot corrupt the file.
 pub(crate) fn upsert_key_entry(entry: KeyEntry) -> eyre::Result<()> {
     let path = tempo_keys_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
-    let dir = path.parent().ok_or_else(|| eyre::eyre!("invalid keys path: {}", path.display()))?;
-    fs::create_dir_all(dir)?;
-
-    let mut file = read_tempo_keys_file().unwrap_or_default();
+    let mut file = read_toml_file::<KeysFile>(&path, "tempo keys")?.unwrap_or_default();
     file.keys
         .retain(|k| !(k.wallet_address == entry.wallet_address && k.chain_id == entry.chain_id));
     file.keys.push(entry);
 
-    let body = toml::to_string_pretty(&file)?;
-    let contents = format!(
-        "# Tempo wallet keys — managed by Foundry / Tempo CLI.\n# Do not edit manually.\n\n{body}"
-    );
-
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
-    tmp.write_all(contents.as_bytes())?;
-    tmp.flush()?;
-    tmp.persist(&path).map_err(|e| eyre::eyre!("failed to persist keys.toml: {e}"))?;
-
-    Ok(())
+    write_toml_file_atomic(
+        &path,
+        &file,
+        "# Tempo wallet keys — managed by Foundry / Tempo CLI.\n# Do not edit manually.",
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use crate::tempo::with_tempo_home;
+    use std::{fs, str::FromStr};
 
-    fn with_tempo_home<F: FnOnce()>(f: F) {
-        let tmp = tempfile::tempdir().unwrap();
-        // SAFETY: process-global env access is serialized via the shared mutex.
-        let _g = test_env_mutex().blocking_lock();
-        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
-        f();
-        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
+    #[test]
+    fn debug_redacts_key_entry_secrets() {
+        let entry = KeyEntry {
+            key: Some("0xPRIVATE_KEY_MUST_NOT_LEAK".to_string()),
+            key_authorization: Some("0xKEY_AUTH_MUST_NOT_LEAK".to_string()),
+            ..Default::default()
+        };
+
+        let entry_dbg = format!("{entry:?}");
+        let file_dbg = format!("{:?}", KeysFile { keys: vec![entry] });
+
+        for rendered in [&entry_dbg, &file_dbg] {
+            assert!(!rendered.contains("PRIVATE_KEY_MUST_NOT_LEAK"), "key leaked in: {rendered}");
+            assert!(!rendered.contains("KEY_AUTH_MUST_NOT_LEAK"), "auth leaked in: {rendered}");
+        }
+        assert!(entry_dbg.contains("key: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        assert!(entry_dbg.contains("key_authorization: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        // Non-secret metadata stays visible.
+        assert!(entry_dbg.contains("wallet_type"));
     }
 
     #[test]
@@ -264,6 +267,34 @@ mod tests {
             let file = read_tempo_keys_file().unwrap();
             assert_eq!(file.keys.len(), 1, "old entry must be replaced, not duplicated");
             assert_eq!(file.keys[0].key_address, Some(new_key));
+        });
+    }
+
+    #[test]
+    fn upsert_fails_closed_when_keys_file_is_corrupt() {
+        with_tempo_home(|| {
+            let path = tempo_keys_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "keys = [").unwrap();
+            let original = fs::read_to_string(&path).unwrap();
+
+            let wallet = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
+            let key = Address::from_str("0x0000000000000000000000000000000000000abc").unwrap();
+            let entry = KeyEntry {
+                wallet_type: WalletType::Passkey,
+                wallet_address: wallet,
+                chain_id: 4217,
+                key_type: KeyType::Secp256k1,
+                key_address: Some(key),
+                key: Some("0xdead".to_string()),
+                key_authorization: Some("0xbeef".to_string()),
+                expiry: Some(100),
+                limits: vec![],
+            };
+
+            assert!(read_tempo_keys_file().is_none());
+            assert!(upsert_key_entry(entry).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
         });
     }
 }

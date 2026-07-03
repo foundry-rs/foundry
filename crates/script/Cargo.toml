@@ -29,6 +29,7 @@ forge-script-sequence.workspace = true
 
 serde.workspace = true
 eyre.workspace = true
+toml.workspace = true
 serde_json.workspace = true
 dunce.workspace = true
 foundry-compilers.workspace = true

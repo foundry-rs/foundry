@@ -158,6 +158,27 @@ No files changed, compilation skipped
 "#]]);
 });
 
+forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.code_size_limit = Some(64_000);
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 63938,
+    "init_margin": 77875
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
     prj.initialize_default_contracts();

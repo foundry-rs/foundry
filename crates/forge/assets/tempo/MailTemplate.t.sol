@@ -14,7 +14,7 @@ contract MailTest is Test {
     Mail public mail;
 
     address public constant ALICE = address(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-    address public constant BOB = address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+    address public BOB;
 
     function setUp() public virtual {
         address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.PATH_USD_ADDRESS);
@@ -26,6 +26,8 @@ contract MailTest is Test {
         );
 
         ITIP20RolesAuth(address(token)).grantRole(token.ISSUER_ROLE(), address(this));
+
+        BOB = address(uint160(uint256(keccak256(abi.encodePacked("tempo-mail-bob", address(token))))));
 
         mail = new Mail(token);
     }
@@ -63,12 +65,11 @@ contract MailTest is Test {
     }
 }
 
-/// @notice Tests for relayed mail using the TIP-1020 SignatureVerifier precompile (requires T3).
-/// forge-config: default.hardfork = "tempo:T3"
+/// @notice Tests for relayed mail using the TIP-1020 SignatureVerifier precompile (requires T3+).
 contract MailRelayTest is MailTest {
     // secp256k1 keys (used by vm.sign / vm.addr)
     uint256 internal constant ALICE_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
-    uint256 internal constant BOB_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+    uint256 internal constant BAD_SIGNER_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
 
     // P256 key (used by vm.signP256 / vm.publicKeyP256)
     uint256 internal constant CAROL_P256_PK = 0x1;
@@ -154,13 +155,13 @@ contract MailRelayTest is MailTest {
         mail.sendMail(ALICE, BOB, message, attachment, sig);
     }
 
-    /// @notice Submitting Bob's signature as Alice's fails.
+    /// @notice Submitting a different account's signature as Alice's fails.
     function test_WrongSignerReverts() public {
         Mail.Attachment memory attachment = Mail.Attachment({amount: 100, memo: "fake"});
 
         string memory message = "spoofed";
         bytes32 digest = mail.getDigest(ALICE, BOB, message, attachment);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BOB_PK, digest);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BAD_SIGNER_PK, digest);
 
         vm.expectRevert("invalid signature");
         mail.sendMail(ALICE, BOB, message, attachment, abi.encodePacked(r, s, v));

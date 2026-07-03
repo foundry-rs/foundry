@@ -1,8 +1,26 @@
+use alloy_json_abi::Function;
 use clap::Parser;
-use foundry_common::TestFilter;
+use foundry_common::{TestFilter, TestFunctionKind};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{Config, filter::GlobMatcher};
+use serde::{Deserialize, Serialize};
 use std::{fmt, path::Path};
+
+/// A failed test persisted for `forge test --rerun`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RerunFailure {
+    /// The test suite identifier (`path:contract_name`).
+    pub contract: String,
+    /// The test signature or invariant predicate name.
+    pub test: String,
+}
+
+/// Persisted `forge test --rerun` failures.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RerunFailures {
+    pub version: u8,
+    pub failures: Vec<RerunFailure>,
+}
 
 /// The filter to use during testing.
 ///
@@ -78,7 +96,11 @@ impl FilterArgs {
         if self.coverage_pattern_inverse.is_none() {
             self.coverage_pattern_inverse = config.coverage_pattern_inverse.clone().map(Into::into);
         }
-        ProjectPathsAwareFilter { args_filter: self, paths: config.project_paths() }
+        ProjectPathsAwareFilter {
+            args_filter: self,
+            paths: config.project_paths(),
+            rerun_failures: None,
+        }
     }
 }
 
@@ -172,6 +194,7 @@ impl fmt::Display for FilterArgs {
 pub struct ProjectPathsAwareFilter {
     args_filter: FilterArgs,
     paths: ProjectPathsConfig,
+    rerun_failures: Option<Vec<RerunFailure>>,
 }
 
 impl ProjectPathsAwareFilter {
@@ -193,6 +216,11 @@ impl ProjectPathsAwareFilter {
     /// Returns the project paths.
     pub const fn paths(&self) -> &ProjectPathsConfig {
         &self.paths
+    }
+
+    /// Sets exact contract/test pairs persisted by `forge test --rerun`.
+    pub fn set_rerun_failures(&mut self, failures: Vec<RerunFailure>) {
+        self.rerun_failures = Some(failures);
     }
 }
 
@@ -219,6 +247,27 @@ impl TestFilter for ProjectPathsAwareFilter {
         // we don't want to test files that belong to a library
         path = path.strip_prefix(&self.paths.root).unwrap_or(path);
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
+    }
+
+    fn matches_test_function_kind_in_contract(
+        &self,
+        contract_id: &str,
+        func: &Function,
+        kind: TestFunctionKind,
+    ) -> bool {
+        if let Some(failures) = &self.rerun_failures {
+            if !kind.is_any_test() || !self.args_filter.matches_test(&func.signature()) {
+                return false;
+            }
+            let signature = func.signature();
+            let name = signature.split('(').next().unwrap_or(&signature);
+            failures.iter().any(|failure| {
+                failure.contract == contract_id
+                    && (failure.test == signature || failure.test == name)
+            })
+        } else {
+            kind.is_any_test() && self.args_filter.matches_test(&func.signature())
+        }
     }
 }
 

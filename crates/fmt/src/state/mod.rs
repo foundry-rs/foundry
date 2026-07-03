@@ -706,16 +706,23 @@ impl<'sess> State<'sess, '_> {
             if i + 1 < lines.len() {
                 let next_line = &lines[i + 1];
 
-                // Check if next line is has the same prefix and is not empty
+                // Check if next line has the same prefix and is not empty.
                 if next_line.starts_with(prefix) && !next_line.trim().is_empty() {
+                    let next_content = next_line[prefix.len()..].trim_start();
+
+                    // Keep each NatSpec tag on its own doc-comment line. Merging a wrapped
+                    // `@dev`/`@param` line with the following tag changes the tag boundary.
+                    if next_content.starts_with('@') {
+                        result.push(current_line.clone());
+                        i += 1;
+                        continue;
+                    }
+
                     // Only merge if the current line doesn't fit within available width
                     if estimate_line_width(current_line, self.config.tab_width) > self.space_left()
                     {
                         // Merge the lines and let the wrapper handle breaking if needed
-                        let merged_line = format!(
-                            "{current_line} {next_content}",
-                            next_content = next_line[prefix.len()..].trim_start()
-                        );
+                        let merged_line = format!("{current_line} {next_content}");
                         result.push(merged_line);
 
                         // Skip both lines since they are merged

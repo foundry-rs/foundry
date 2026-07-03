@@ -502,6 +502,50 @@ casttest!(erc20_curl_total_supply, |_prj, cmd| {
     assert!(output.contains(rpc));
 });
 
+casttest!(erc20_transfer_help_includes_tempo_expires, |_prj, cmd| {
+    let output =
+        cmd.args(["erc20", "transfer", "--help"]).assert_success().get_output().stdout_lossy();
+
+    assert!(
+        output.contains("--tempo.expires <SECONDS>"),
+        "expected erc20 transfer help to expose --tempo.expires, got:\n{output}",
+    );
+});
+
+forgetest_async!(erc20_transfer_prints_tempo_sponsor_hash, |_prj, cmd| {
+    let (_, _handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = _handle.http_endpoint();
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            anvil_const::TOKEN,
+            anvil_const::ADDR2,
+            "1",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+            "--tempo.print-sponsor-hash",
+            "--nonce",
+            "0",
+            "--gas-limit",
+            "100000",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let hash = output.trim();
+    assert!(hash.starts_with("0x") && hash.len() == 66, "expected sponsor hash, got:\n{output}",);
+});
+
 // tests that `balance` command works correctly with --json flag
 forgetest_async!(erc20_balance_json, |prj, cmd| {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
@@ -513,7 +557,8 @@ forgetest_async!(erc20_balance_json, |prj, cmd| {
         .get_output()
         .stdout_lossy();
 
-    let balance_str: String = serde_json::from_str(&output).expect("valid json string");
+    let v: serde_json::Value = serde_json::from_str(&output).expect("valid json");
+    let balance_str = v["data"].as_str().expect("string data");
     let balance: U256 = balance_str.parse().unwrap();
     assert_eq!(balance, U256::from(1_000_000_000_000_000_000_000u128));
 });
@@ -555,7 +600,8 @@ forgetest_async!(erc20_allowance_json, |prj, cmd| {
         .get_output()
         .stdout_lossy();
 
-    let allowance_str: String = serde_json::from_str(&output).expect("valid json string");
+    let v: serde_json::Value = serde_json::from_str(&output).expect("valid json");
+    let allowance_str = v["data"].as_str().expect("string data");
     let allowance: U256 = allowance_str.parse().unwrap();
     assert_eq!(allowance, approve_amount);
 });
@@ -572,8 +618,8 @@ forgetest_async!(erc20_metadata_json, |prj, cmd| {
         .assert_success()
         .get_output()
         .stdout_lossy();
-    let name: String = serde_json::from_str(&output).expect("valid json string");
-    assert_eq!(name, "Test Token");
+    let v: serde_json::Value = serde_json::from_str(&output).expect("valid json");
+    assert_eq!(v["data"].as_str().expect("string data"), "Test Token");
 
     // Test symbol with --json
     let output = cmd
@@ -582,8 +628,8 @@ forgetest_async!(erc20_metadata_json, |prj, cmd| {
         .assert_success()
         .get_output()
         .stdout_lossy();
-    let symbol: String = serde_json::from_str(&output).expect("valid json string");
-    assert_eq!(symbol, "TEST");
+    let v: serde_json::Value = serde_json::from_str(&output).expect("valid json");
+    assert_eq!(v["data"].as_str().expect("string data"), "TEST");
 
     // Test decimals with --json
     let output = cmd
@@ -592,8 +638,8 @@ forgetest_async!(erc20_metadata_json, |prj, cmd| {
         .assert_success()
         .get_output()
         .stdout_lossy();
-    let decimals: u8 = output.trim().parse().expect("valid number");
-    assert_eq!(decimals, 18);
+    let v: serde_json::Value = serde_json::from_str(&output).expect("valid json");
+    assert_eq!(v["data"].as_u64().expect("numeric data"), 18);
 
     // Test totalSupply with --json
     let output = cmd
@@ -602,7 +648,7 @@ forgetest_async!(erc20_metadata_json, |prj, cmd| {
         .assert_success()
         .get_output()
         .stdout_lossy();
-    let total_supply_str: String = serde_json::from_str(&output).expect("valid json string");
-    let total_supply: U256 = total_supply_str.parse().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&output).expect("valid json");
+    let total_supply: U256 = v["data"].as_str().expect("string data").parse().unwrap();
     assert_eq!(total_supply, U256::from(1_000_000_000_000_000_000_000u128));
 });

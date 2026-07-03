@@ -189,7 +189,7 @@ impl FmtArgs {
                             Ok(()) => {}
                             Err(e) => return Some(Err(e.into())),
                         }
-                        let _ = sh_println!("Formatted {}", path.display());
+                        let _ = sh_status!("Formatted {}", path.display());
                         None
                     } else {
                         unreachable!()
@@ -238,7 +238,7 @@ impl fmt::Display for Line {
     }
 }
 
-fn format_diff_summary<'a>(name: &str, diff: &'a TextDiff<'a, 'a, '_, str>) -> String {
+fn format_diff_summary<'a>(name: &str, diff: &'a TextDiff<'a, 'a, str>) -> String {
     let cap = 128;
     let mut diff_summary = String::with_capacity(cap);
 

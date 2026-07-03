@@ -15,6 +15,7 @@ use alloy_rpc_types::ConversionError;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit, TxPostExec};
 use revm::context::TxEnv;
+use serde::{Deserialize, Serialize};
 use tempo_primitives::{AASigned, TempoTransaction};
 use tempo_revm::TempoTxEnv;
 
@@ -123,6 +124,11 @@ impl FoundryTxEnvelope {
         matches!(self, Self::Tempo(_))
     }
 
+    /// Returns `true` if this is a Tempo transaction with a nonzero nonce key.
+    pub fn has_nonzero_tempo_nonce_key(&self) -> bool {
+        matches!(self, Self::Tempo(tx) if !tx.tx().nonce_key.is_zero())
+    }
+
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(&self) -> Result<Address, RecoveryError> {
         Ok(match self {
@@ -138,6 +144,82 @@ impl FoundryTxEnvelope {
             Self::Tempo(tx) => tx.signature().recover_signer(&tx.signature_hash())?,
         })
     }
+
+    /// Converts this envelope into Tempo's classifier envelope, when supported.
+    pub fn clone_into_tempo_envelope(&self) -> Option<tempo_primitives::TempoTxEnvelope> {
+        Some(match self {
+            Self::Legacy(tx) => tempo_primitives::TempoTxEnvelope::Legacy(tx.clone()),
+            Self::Eip2930(tx) => tempo_primitives::TempoTxEnvelope::Eip2930(tx.clone()),
+            Self::Eip1559(tx) => tempo_primitives::TempoTxEnvelope::Eip1559(tx.clone()),
+            Self::Eip7702(tx) => tempo_primitives::TempoTxEnvelope::Eip7702(tx.clone()),
+            Self::Tempo(tx) => tempo_primitives::TempoTxEnvelope::AA(tx.clone()),
+            Self::Eip4844(_) => return None,
+            #[cfg(feature = "optimism")]
+            Self::Deposit(_) | Self::PostExec(_) => return None,
+        })
+    }
+
+    /// Classifies this transaction with Tempo's T5 payment-lane classifier.
+    pub fn classify_t5_payment_lane(&self) -> PaymentLaneClassification {
+        let Some(tx) = self.clone_into_tempo_envelope() else {
+            return PaymentLaneClassification::general(
+                PaymentLaneReason::UnsupportedTransactionType,
+            );
+        };
+
+        if tx.is_payment_v2() {
+            PaymentLaneClassification::payment()
+        } else {
+            PaymentLaneClassification::general(PaymentLaneReason::NotPaymentLane)
+        }
+    }
+}
+
+/// Structured T5 payment-lane classification for Foundry-facing APIs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentLaneClassification {
+    /// The classified lane.
+    pub lane: PaymentLane,
+    /// Convenience boolean for consumers that only need the lane predicate.
+    pub payment: bool,
+    /// Structured reason for general-lane classification, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<PaymentLaneReason>,
+}
+
+impl PaymentLaneClassification {
+    /// Constructs a payment-lane classification.
+    pub const fn payment() -> Self {
+        Self { lane: PaymentLane::Payment, payment: true, reason: None }
+    }
+
+    /// Constructs a general-lane classification with a structured reason.
+    pub const fn general(reason: PaymentLaneReason) -> Self {
+        Self { lane: PaymentLane::General, payment: false, reason: Some(reason) }
+    }
+}
+
+/// Payment-lane classifier output lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaymentLane {
+    Payment,
+    General,
+}
+
+/// Stable Foundry-facing reasons for general-lane classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaymentLaneReason {
+    /// The active network is not Tempo.
+    NotTempo,
+    /// Tempo is active but the T5 classifier is not active.
+    T5NotActive,
+    /// The transaction type cannot be classified by Tempo's payment-lane classifier.
+    UnsupportedTransactionType,
+    /// Tempo's T5 classifier classified the transaction as general.
+    NotPaymentLane,
 }
 
 impl TxHashRef for FoundryTxEnvelope {

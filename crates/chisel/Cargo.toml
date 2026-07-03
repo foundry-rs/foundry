@@ -44,7 +44,7 @@ clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
-rustyline = "17"
+rustyline = "18"
 itertools.workspace = true
 semver.workspace = true
 serde_json.workspace = true
@@ -60,7 +60,8 @@ tracing-subscriber.workspace = true
 # REPL tests only work on Unix.
 [target.'cfg(unix)'.dev-dependencies]
 foundry-test-utils.workspace = true
-rexpect = "0.6"
+# https://github.com/rust-cli/rexpect/pull/106
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]

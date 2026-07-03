@@ -288,21 +288,29 @@ contract ExpectRevertWithReverterTest is Test {
         aContract.callAndRevertInCContract();
     }
 
+    // The reverter for a CREATE that reverts is the would-be deployed address.
     function testExpectRevertsWithReverterInConstructor() public {
-        // Test expect revert with reverter when constructor reverts.
-        vm.expectRevert(abi.encodePacked("Reverted by DContract"), address(cContract));
+        address expected;
+
+        expected = vm.computeCreateAddress(address(cContract), vm.getNonce(address(cContract)));
+        vm.expectRevert(abi.encodePacked("Reverted by DContract"), expected);
         cContract.createDContract();
 
-        vm.expectRevert(address(bContract));
+        expected = vm.computeCreateAddress(address(bContract), vm.getNonce(address(bContract)));
+        vm.expectRevert(expected);
         bContract.createDContract();
-        vm.expectRevert(address(cContract));
+        expected = vm.computeCreateAddress(address(cContract), vm.getNonce(address(cContract)));
+        vm.expectRevert(expected);
         bContract.createDContractThroughCContract();
 
-        vm.expectRevert(address(aContract));
+        expected = vm.computeCreateAddress(address(aContract), vm.getNonce(address(aContract)));
+        vm.expectRevert(expected);
         aContract.createDContract();
-        vm.expectRevert(address(bContract));
+        expected = vm.computeCreateAddress(address(bContract), vm.getNonce(address(bContract)));
+        vm.expectRevert(expected);
         aContract.createDContractThroughBContract();
-        vm.expectRevert(address(cContract));
+        expected = vm.computeCreateAddress(address(cContract), vm.getNonce(address(cContract)));
+        vm.expectRevert(expected);
         aContract.createDContractThroughCContract();
     }
 
@@ -321,13 +329,12 @@ contract ExpectRevertWithReverterTest is Test {
     }
 
     // <https://github.com/foundry-rs/foundry/issues/14613>
-    // Regression: when the next operation is a top-level CREATE whose constructor
-    // synchronously creates another contract that reverts (i.e. innermost frame is
-    // a CREATE), the matched reverter is the outer would-be-deployed address (the
-    // contract whose deployment failed).
+    // Nested CREATE chain: innermost failed deployment wins.
     function testExpectRevertsWithReverterNestedCreate() public {
-        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
-        vm.expectRevert(expected);
+        address outer = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        // Contracts start at nonce 1; the inner DContract is outer's first creation.
+        address innerReverter = vm.computeCreateAddress(outer, 1);
+        vm.expectRevert(innerReverter);
         new NestedDContractCreator();
     }
 
@@ -371,6 +378,22 @@ contract ExpectRevertWithReverterTest is Test {
         vm.expectRevert(expected);
         new DContract{salt: salt}();
     }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: `count > 1` with a nested CREATE chain must still report the
+    // innermost reverter, not the outer frame. Uses fixed outer+inner CREATE2 salts
+    // so both iterations resolve to the same would-be addresses.
+    function testExpectRevertsWithReverterCountNestedCreate2() public {
+        bytes32 outerSalt = bytes32(uint256(0xBEEF));
+        bytes32 innerSalt = NESTED_DCONTRACT_CREATOR2_INNER_SALT;
+        address outer =
+            vm.computeCreate2Address(outerSalt, keccak256(type(NestedDContractCreator2).creationCode), address(this));
+        address inner = vm.computeCreate2Address(innerSalt, keccak256(type(DContract).creationCode), outer);
+
+        vm.expectRevert(inner, 2);
+        new NestedDContractCreator2{salt: outerSalt}();
+        new NestedDContractCreator2{salt: outerSalt}();
+    }
 }
 
 // Used by `testExpectRevertsWithReverterNestedCreate`: a contract whose constructor
@@ -378,6 +401,17 @@ contract ExpectRevertWithReverterTest is Test {
 contract NestedDContractCreator {
     constructor() {
         new DContract();
+    }
+}
+
+// File-level constant shared between NestedDContractCreator2 and its test.
+bytes32 constant NESTED_DCONTRACT_CREATOR2_INNER_SALT = bytes32(uint256(0xDEAD));
+
+// Used by `testExpectRevertsWithReverterCountNestedCreate2`: fixed inner salt so
+// both CREATE2 iterations produce the same inner would-be address.
+contract NestedDContractCreator2 {
+    constructor() {
+        new DContract{salt: NESTED_DCONTRACT_CREATOR2_INNER_SALT}();
     }
 }
 

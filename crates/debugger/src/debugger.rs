@@ -2,17 +2,57 @@
 
 use crate::{DebugNode, DebuggerBuilder, ExitReason, tui::TUI};
 use alloy_primitives::map::AddressHashMap;
+use clap::ValueEnum;
 use eyre::Result;
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::debug::ContractSources;
 use std::path::Path;
 
+/// Debugger TUI layout selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum DebuggerLayout {
+    /// Select horizontal or vertical layout from the terminal size.
+    #[default]
+    Auto,
+    /// Force the two-column debugger layout.
+    Horizontal,
+    /// Force the single-column debugger layout.
+    Vertical,
+}
+
+impl DebuggerLayout {
+    pub(crate) const fn next(self) -> Self {
+        match self {
+            Self::Auto | Self::Vertical => Self::Horizontal,
+            Self::Horizontal => Self::Vertical,
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Horizontal => "horizontal",
+            Self::Vertical => "vertical",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DebuggerStats {
+    /// Sum of root-call gas used across every trace arena passed to the debugger.
+    pub session_trace_gas_used: u64,
+    /// Number of subcalls in the traces passed to the debugger.
+    pub session_subcalls: usize,
+}
+
 pub struct DebuggerContext {
     pub debug_arena: Vec<DebugNode>,
+    pub stats: Option<DebuggerStats>,
     pub identified_contracts: AddressHashMap<String>,
     /// Source map of contract sources
     pub contracts_sources: ContractSources,
     pub breakpoints: Breakpoints,
+    pub layout: DebuggerLayout,
 }
 
 pub struct Debugger {
@@ -36,9 +76,31 @@ impl Debugger {
         Self {
             context: DebuggerContext {
                 debug_arena,
+                stats: None,
                 identified_contracts,
                 contracts_sources,
                 breakpoints,
+                layout: DebuggerLayout::Auto,
+            },
+        }
+    }
+
+    pub(crate) const fn new_with_stats(
+        debug_arena: Vec<DebugNode>,
+        stats: DebuggerStats,
+        identified_contracts: AddressHashMap<String>,
+        contracts_sources: ContractSources,
+        breakpoints: Breakpoints,
+        layout: DebuggerLayout,
+    ) -> Self {
+        Self {
+            context: DebuggerContext {
+                debug_arena,
+                stats: Some(stats),
+                identified_contracts,
+                contracts_sources,
+                breakpoints,
+                layout,
             },
         }
     }

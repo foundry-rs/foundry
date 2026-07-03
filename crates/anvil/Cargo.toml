@@ -29,7 +29,7 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-primitives = { workspace = true, default-features = false }
-tempo-chainspec.workspace = true
+tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
 tempo-precompiles.workspace = true
 tempo-evm.workspace = true
@@ -124,7 +124,7 @@ tokio = { workspace = true, features = ["full"] }
 tempo-alloy.workspace = true
 
 [features]
-default = ["cli", "jemalloc", "asm-keccak", "optimism"]
+default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-rpc-types",

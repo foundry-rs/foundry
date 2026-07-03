@@ -428,6 +428,8 @@ const fn test_kind_name(kind: &TestKind) -> &'static str {
         TestKind::Fuzz { .. } => "fuzz",
         TestKind::Invariant { .. } => "invariant",
         TestKind::Table { .. } => "table",
+        TestKind::Symbolic { .. } => "symbolic",
+        TestKind::Replay { .. } => "replay",
     }
 }
 

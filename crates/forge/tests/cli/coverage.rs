@@ -389,6 +389,107 @@ contract BContractTest is DSTest {
     ]]);
 });
 
+// `[profile.default.coverage] skip_files` should exclude matching sources from
+// the coverage report just like `--no-match-coverage`, but using glob patterns
+// from `foundry.toml`.
+forgetest!(skip_files_via_config, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "BContract.sol",
+        r#"
+contract BContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "BContractTest.sol",
+        r#"
+import "./test.sol";
+import {BContract} from "./BContract.sol";
+
+contract BContractTest is DSTest {
+    BContract a;
+
+    function setUp() public {
+        a = new BContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    prj.update_config(|config| {
+        config.coverage.skip_files =
+            vec!["src/AContract.sol".into(), "src/AContractTest.sol".into()];
+    });
+
+    // Assert AContract.sol is excluded via the config glob; BContract.sol still
+    // appears in the report.
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/BContract.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
 forgetest!(assert, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(

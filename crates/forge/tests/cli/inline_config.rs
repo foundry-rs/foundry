@@ -162,6 +162,7 @@ Encountered 1 failing test in test/inline.sol:Inline
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -195,11 +196,11 @@ Encountered 1 failing test in test/inline.sol:Inline
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(config_inline_isolate, |prj, cmd| {
     use serde::{Deserialize, Deserializer};
     use std::{fs, path::Path};
@@ -224,21 +225,23 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
                 dummy = new Dummy();
             }
 
-            /// forge-config: default.isolate = true
-            function test_isolate() public {
-                vm.startSnapshotGas("testIsolatedFunction");
+            /// forge-config: default.isolate = false
+            function test_non_isolate() public {
+                assertFalse(vm.isIsolateMode());
+                vm.startSnapshotGas("testNonIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
 
-            function test_non_isolate() public {
-                vm.startSnapshotGas("testNonIsolatedFunction");
-                dummy.setNumber(2);
+            function test_isolate() public {
+                assertTrue(vm.isIsolateMode());
+                vm.startSnapshotGas("testIsolatedFunction");
+                dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
         }
 
-        /// forge-config: default.isolate = true
+        /// forge-config: default.isolate = false
         contract ContractConfig is Test {
             Dummy dummy;
 
@@ -247,8 +250,9 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             }
 
             function test_non_isolate() public {
-                vm.startSnapshotGas("testIsolatedContract");
-                dummy.setNumber(3);
+                assertFalse(vm.isIsolateMode());
+                vm.startSnapshotGas("testNonIsolatedContract");
+                dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
         }
@@ -290,7 +294,7 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     #[serde(rename_all = "camelCase")]
     struct ContractConfig {
         #[serde(deserialize_with = "string_to_u64")]
-        test_isolated_contract: u64,
+        test_non_isolated_contract: u64,
     }
 
     fn string_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -315,18 +319,84 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     let contract_config: ContractConfig =
         read_snapshot(&prj.root().join("snapshots/ContractConfig.json"));
 
-    // FunctionConfig {
-    //     test_isolated_function: 48926,
-    //     test_non_isolated_function: 27722,
-    // }
-
-    // ContractConfig {
-    //     test_isolated_contract: 48926,
-    // }
-
-    assert!(function_config.test_isolated_function > function_config.test_non_isolated_function);
-    assert_eq!(function_config.test_isolated_function, contract_config.test_isolated_contract);
+    assert!(
+        function_config.test_isolated_function > function_config.test_non_isolated_function,
+        "isolated gas ({}) should be greater than non-isolated gas ({})",
+        function_config.test_isolated_function,
+        function_config.test_non_isolated_function
+    );
+    assert_eq!(
+        function_config.test_non_isolated_function,
+        contract_config.test_non_isolated_contract
+    );
 });
+
+forgetest_init!(is_isolate_mode_uses_effective_isolation, |prj, cmd| {
+    prj.update_config(|config| config.isolate = false);
+    prj.add_test(
+        "effective_isolation.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract EffectiveIsolationTest is Test {
+            function test_isolate_mode_disabled_by_config() public view {
+                assertFalse(vm.isIsolateMode());
+            }
+
+            function test_gas_report_enables_isolate_mode() public view {
+                assertTrue(vm.isIsolateMode());
+            }
+        }
+    "#,
+    );
+
+    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--gas-report", "--match-test", "test_gas_report_enables_isolate_mode"])
+        .assert_success();
+});
+
+forgetest_init!(
+    inline_isolate_inherits_default_fs_permissions_for_non_default_profile,
+    |prj, cmd| {
+        std::fs::write(
+            prj.root().join("foundry.toml"),
+            r#"
+        [profile.default]
+        src = "src"
+        out = "out"
+        libs = ["lib"]
+        fs_permissions = [{ access = "read-write", path = "./data" }]
+
+        [profile.test]
+        "#,
+        )
+        .unwrap();
+        prj.add_test(
+            "inline_isolate_fs_permissions.sol",
+            r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract InlineIsolateFsPermissionsTest is Test {
+            function setUp() public {
+                if (!vm.exists("./data")) {
+                    vm.createDir("./data", true);
+                }
+            }
+
+            /// forge-config: default.isolate = true
+            function testInlineIsolateCanCreateFile() public {
+                vm.writeFile("./data/new.txt", "hello");
+                vm.removeFile("./data/new.txt");
+            }
+        }
+    "#,
+        );
+
+        cmd.env("FOUNDRY_PROFILE", "test");
+        cmd.args(["test", "--match-test", "testInlineIsolateCanCreateFile"]).assert_success();
+    }
+);
 
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
     prj.add_test(

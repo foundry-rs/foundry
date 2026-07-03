@@ -6,9 +6,10 @@ use crate::{
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{
-    Address, B256, LogData, Selector,
-    map::{HashMap, HashSet, hash_map::Entry},
+    Address, B256, LogData, Selector, U256,
+    map::{AddressHashMap, HashMap, HashSet},
 };
+use alloy_sol_types::SolValue;
 use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
@@ -23,19 +24,23 @@ use foundry_evm_core::{
         MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
+use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
-    IAccountKeychain, IFeeManager, IStablecoinDEX, ITIP20Factory, ITIP403Registry, IValidatorConfig,
+    IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
+    IStablecoinDEX, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry, IValidatorConfig,
 };
 use tempo_precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
-    VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
+    RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
+    STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce,
+    tip20::ITIP20,
 };
 
-mod precompiles;
+pub(crate) mod precompiles;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -109,6 +114,25 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the Tempo hardfork for hardfork-specific precompile detection.
+    #[inline]
+    pub fn with_tempo_hardfork(mut self, hardfork: Option<TempoHardfork>) -> Self {
+        self.decoder.tempo_hardfork = hardfork;
+        if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
+            self.decoder
+                .labels
+                .entry(TIP20_CHANNEL_RESERVE_ADDRESS)
+                .or_insert_with(|| "TIP20ChannelReserve".to_string());
+        }
+        if hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
+            self.decoder
+                .labels
+                .entry(RECEIVE_POLICY_GUARD_ADDRESS)
+                .or_insert_with(|| "ReceivePolicyGuard".to_string());
+        }
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -149,6 +173,8 @@ pub struct CallTraceDecoder {
 
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
+    /// Functions identified for a specific contract address.
+    pub functions_by_address: HashMap<Address, HashMap<Selector, Vec<Function>>>,
     /// All known events.
     ///
     /// Key is: `(topics[0], topics.len() - 1)`.
@@ -169,6 +195,9 @@ pub struct CallTraceDecoder {
 
     /// The chain ID, used to determine network-specific precompiles.
     pub chain_id: Option<u64>,
+
+    /// The Tempo hardfork, used to determine hardfork-specific precompiles.
+    pub tempo_hardfork: Option<TempoHardfork>,
 }
 
 impl CallTraceDecoder {
@@ -185,6 +214,21 @@ impl CallTraceDecoder {
 
     #[instrument(name = "CallTraceDecoder::init", level = "debug")]
     fn init() -> Self {
+        // Materialized once so the revert decoder can take references below.
+        let tempo_abis = [
+            IFeeManager::abi::contract(),
+            ITIP20::abi::contract(),
+            ITIP403Registry::abi::contract(),
+            ITIP20Factory::abi::contract(),
+            IStablecoinDEX::abi::contract(),
+            INonce::abi::contract(),
+            IValidatorConfig::abi::contract(),
+            IAccountKeychain::abi::contract(),
+            IAddressRegistry::abi::contract(),
+            ITIP20ChannelReserve::abi::contract(),
+            ISignatureVerifier::abi::contract(),
+            IReceivePolicyGuard::abi::contract(),
+        ];
         Self {
             contracts: Default::default(),
             labels: HashMap::from_iter([
@@ -218,6 +262,11 @@ impl CallTraceDecoder {
                 (NONCE_PRECOMPILE_ADDRESS, "Nonce".to_string()),
                 (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
                 (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
+                (ADDRESS_REGISTRY_ADDRESS, "AddressRegistry".to_string()),
+                (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
+                (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
+                (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
+                (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
@@ -236,9 +285,14 @@ impl CallTraceDecoder {
                 .chain(INonce::abi::functions().into_values())
                 .chain(IValidatorConfig::abi::functions().into_values())
                 .chain(IAccountKeychain::abi::functions().into_values())
+                .chain(IAddressRegistry::abi::functions().into_values())
+                .chain(ITIP20ChannelReserve::abi::functions().into_values())
+                .chain(ISignatureVerifier::abi::functions().into_values())
+                .chain(IReceivePolicyGuard::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
+            functions_by_address: Default::default(),
             events: console::ds::abi::events()
                 .into_values()
                 // Tempo
@@ -250,10 +304,15 @@ impl CallTraceDecoder {
                 .chain(INonce::abi::events().into_values())
                 .chain(IValidatorConfig::abi::events().into_values())
                 .chain(IAccountKeychain::abi::events().into_values())
+                .chain(IAddressRegistry::abi::events().into_values())
+                .chain(ITIP20ChannelReserve::abi::events().into_values())
+                .chain(ISignatureVerifier::abi::events().into_values())
+                .chain(IReceivePolicyGuard::abi::events().into_values())
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
-            revert_decoder: Default::default(),
+            // Decode Tempo precompile custom errors by name in traces.
+            revert_decoder: RevertDecoder::new().with_abis(tempo_abis.iter()),
 
             signature_identifier: None,
             verbosity: 0,
@@ -263,6 +322,8 @@ impl CallTraceDecoder {
             disable_labels: false,
 
             chain_id: None,
+
+            tempo_hardfork: None,
         }
     }
 
@@ -278,6 +339,18 @@ impl CallTraceDecoder {
         self.receive_contracts.clear();
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
+        self.functions_by_address.clear();
+    }
+
+    /// Returns labels for precompiles active in this decoder's chain context.
+    pub fn precompile_labels(&self) -> AddressHashMap<String> {
+        self.labels
+            .iter()
+            .filter(|(address, _)| {
+                precompiles::is_known_precompile(**address, self.chain_id, self.tempo_hardfork)
+            })
+            .map(|(address, label)| (*address, label.clone()))
+            .collect()
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -298,7 +371,11 @@ impl CallTraceDecoder {
         let nodes = arena.nodes().iter().filter(|node| {
             // Skip precompile addresses, they will never resolve externally.
             if node.is_precompile()
-                || precompiles::is_known_precompile(node.trace.address, self.chain_id)
+                || precompiles::is_known_precompile(
+                    node.trace.address,
+                    self.chain_id,
+                    self.tempo_hardfork,
+                )
             {
                 return false;
             }
@@ -315,24 +392,49 @@ impl CallTraceDecoder {
 
     /// Adds a single function to the decoder.
     pub fn push_function(&mut self, function: Function) {
-        match self.functions.entry(function.selector()) {
-            Entry::Occupied(entry) => {
-                // This shouldn't happen that often.
-                if entry.get().contains(&function) {
-                    return;
-                }
-                trace!(target: "evm::traces", selector=%entry.key(), new=%function.signature(), "duplicate function selector");
-                entry.into_mut().push(function);
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(vec![function]);
-            }
+        let selector = function.selector();
+        let functions = self.functions.entry(selector).or_default();
+
+        if Self::push_function_to(functions, function) && functions.len() > 1 {
+            let function = functions.last().expect("function was just inserted");
+            let signature = function.signature();
+            trace!(target: "evm::traces", %selector, new=%signature, "duplicate function selector");
         }
     }
 
-    /// Selects the appropriate function from a list of functions with the same selector
-    /// by checking which one belongs to the contract being called, this avoids collisions
-    /// where multiple different functions across different contracts have the same selector.
+    /// Adds a single function to the decoder for a specific contract address.
+    pub fn push_address_function(&mut self, address: Address, function: Function) {
+        let functions = self
+            .functions_by_address
+            .entry(address)
+            .or_default()
+            .entry(function.selector())
+            .or_default();
+        Self::push_function_to(functions, function);
+    }
+
+    fn push_function_to(functions: &mut Vec<Function>, function: Function) -> bool {
+        if functions.contains(&function) {
+            false
+        } else {
+            functions.push(function);
+            true
+        }
+    }
+
+    fn functions_for_selector(&self, address: Address, selector: &Selector) -> Option<&[Function]> {
+        self.functions_by_address
+            .get(&address)
+            .and_then(|functions| functions.get(selector))
+            .or_else(|| self.functions.get(selector))
+            .map(Vec::as_slice)
+    }
+
+    /// Selects the appropriate function from a list of functions with the same selector by
+    /// checking which one decodes the calldata.
+    ///
+    /// Address-scoped function lookup should happen before this to avoid using ABI metadata from a
+    /// different contract when multiple functions have the same input types.
     fn select_contract_function<'a>(
         &self,
         functions: &'a [Function],
@@ -394,6 +496,9 @@ impl CallTraceDecoder {
         }
         trace!(target: "evm::traces", len, ?address, "collecting ABI");
         for function in abi.functions() {
+            if let Some(address) = address {
+                self.push_address_function(address, function.clone());
+            }
             self.push_function(function.clone());
         }
         for event in abi.events() {
@@ -424,7 +529,8 @@ impl CallTraceDecoder {
         for node in traces {
             node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
             for log in &mut node.logs {
-                log.decoded = Some(Box::new(self.decode_event(&log.raw_log).await));
+                log.decoded =
+                    Some(Box::new(self.decode_event_with_address(log.address, &log.raw_log).await));
             }
 
             if let Some(debug) = self.debug_identifier.as_ref()
@@ -444,7 +550,7 @@ impl CallTraceDecoder {
             return DecodedCallTrace { label, ..Default::default() };
         }
 
-        if let Some(trace) = precompiles::decode(trace, self.chain_id) {
+        if let Some(trace) = precompiles::decode(trace, self.chain_id, self.tempo_hardfork) {
             return trace;
         }
 
@@ -459,16 +565,16 @@ impl CallTraceDecoder {
 
         if is_abi_call_data(cdata) {
             let selector = Selector::try_from(&cdata[..SELECTOR_LEN]).unwrap();
-            let mut functions = Vec::new();
-            let functions = match self.functions.get(&selector) {
-                Some(fs) => fs,
+            let mut identified_functions = Vec::new();
+            let functions = match self.functions_for_selector(trace.address, &selector) {
+                Some(functions) => functions,
                 None => {
                     if let Some(identifier) = &self.signature_identifier
                         && let Some(function) = identifier.identify_function(selector).await
                     {
-                        functions.push(function);
+                        identified_functions.push(function);
                     }
-                    &functions
+                    &identified_functions
                 }
             };
 
@@ -553,9 +659,23 @@ impl CallTraceDecoder {
             }
 
             if args.is_none()
-                && let Ok(v) = func.abi_decode_input(&trace.data[SELECTOR_LEN..])
+                && let Ok(decoded) = func.abi_decode_input(&trace.data[SELECTOR_LEN..])
             {
-                args = Some(v.iter().map(|value| self.format_value(value)).collect());
+                args = Some(
+                    decoded
+                        .iter()
+                        .zip(&func.inputs)
+                        .map(|(value, input)| {
+                            self.format_param_value(
+                                Some(trace.address),
+                                &func.name,
+                                &input.name,
+                                &input.ty,
+                                value,
+                            )
+                        })
+                        .collect(),
+                );
             }
         }
 
@@ -768,7 +888,7 @@ impl CallTraceDecoder {
         // This is due to trace.status is derived from the revm_interpreter::InstructionResult in
         // revm-inspectors status will `None` post revm 27, as `InstructionResult::Continue` does
         // not exists anymore.
-        if trace.status.is_none() || trace.status.is_some_and(|s| s.is_ok()) {
+        if trace.status.is_none_or(|s| s.is_ok()) {
             return None;
         }
         (!trace.success).then(|| self.revert_decoder.decode(&trace.output, trace.status))
@@ -776,6 +896,19 @@ impl CallTraceDecoder {
 
     /// Decodes an event.
     pub async fn decode_event(&self, log: &LogData) -> DecodedCallLog {
+        self.decode_event_inner(None, log).await
+    }
+
+    /// Decodes an event emitted by a known address.
+    pub async fn decode_event_with_address(
+        &self,
+        address: Address,
+        log: &LogData,
+    ) -> DecodedCallLog {
+        self.decode_event_inner(Some(address), log).await
+    }
+
+    async fn decode_event_inner(&self, address: Option<Address>, log: &LogData) -> DecodedCallLog {
         let &[t0, ..] = log.topics() else { return DecodedCallLog { name: None, params: None } };
 
         let mut events = Vec::new();
@@ -802,7 +935,16 @@ impl CallTraceDecoder {
                             .map(|(param, input)| {
                                 // undo patched names
                                 let name = input.name.clone();
-                                (name, self.format_value(&param))
+                                (
+                                    name,
+                                    self.format_param_value(
+                                        address,
+                                        &event.name,
+                                        &input.name,
+                                        &input.ty,
+                                        &param,
+                                    ),
+                                )
                             })
                             .collect(),
                     ),
@@ -839,7 +981,11 @@ impl CallTraceDecoder {
                 // Ignore known addresses.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER
                     || n.is_precompile()
-                    || precompiles::is_known_precompile(n.trace.address, self.chain_id)
+                    || precompiles::is_known_precompile(
+                        n.trace.address,
+                        self.chain_id,
+                        self.tempo_hardfork,
+                    )
                 {
                     return false;
                 }
@@ -867,6 +1013,69 @@ impl CallTraceDecoder {
             return format!("{label}: [{addr}]");
         }
         format_token(value)
+    }
+
+    fn format_param_value(
+        &self,
+        address: Option<Address>,
+        context_name: &str,
+        input_name: &str,
+        input_ty: &str,
+        value: &DynSolValue,
+    ) -> String {
+        self.format_claim_receipt_bytes(address, context_name, input_name, input_ty, value)
+            .map(|value| self.format_value(&value))
+            .unwrap_or_else(|| self.format_value(value))
+    }
+
+    fn format_claim_receipt_bytes(
+        &self,
+        address: Option<Address>,
+        context_name: &str,
+        input_name: &str,
+        input_ty: &str,
+        value: &DynSolValue,
+    ) -> Option<DynSolValue> {
+        if !matches!(address, Some(RECEIVE_POLICY_GUARD_ADDRESS | TIP403_REGISTRY_ADDRESS)) {
+            return None;
+        }
+        if input_name != "receipt" || input_ty != "bytes" {
+            return None;
+        }
+        if !matches!(context_name, "balanceOf" | "claim" | "burnBlockedReceipt" | "TransferBlocked")
+        {
+            return None;
+        }
+        let DynSolValue::Bytes(bytes) = value else { return None };
+        let decoded = IReceivePolicyGuard::ClaimReceiptV1::abi_decode(bytes).ok()?;
+
+        Some(DynSolValue::CustomStruct {
+            name: "ClaimReceiptV1".to_string(),
+            prop_names: vec![
+                "version".to_string(),
+                "token".to_string(),
+                "recoveryAuthority".to_string(),
+                "originator".to_string(),
+                "recipient".to_string(),
+                "blockedAt".to_string(),
+                "blockedNonce".to_string(),
+                "blockedReason".to_string(),
+                "kind".to_string(),
+                "memo".to_string(),
+            ],
+            tuple: vec![
+                DynSolValue::Uint(U256::from(decoded.version), 8),
+                DynSolValue::Address(decoded.token),
+                DynSolValue::Address(decoded.recoveryAuthority),
+                DynSolValue::Address(decoded.originator),
+                DynSolValue::Address(decoded.recipient),
+                DynSolValue::Uint(U256::from(decoded.blockedAt), 64),
+                DynSolValue::Uint(U256::from(decoded.blockedNonce), 64),
+                DynSolValue::Uint(U256::from(decoded.blockedReason), 8),
+                DynSolValue::Uint(U256::from(decoded.kind as u8), 8),
+                DynSolValue::FixedBytes(decoded.memo, 32),
+            ],
+        })
     }
 }
 
@@ -922,7 +1131,8 @@ fn indexed_inputs(event: &Event) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
+    use alloy_primitives::{address, aliases::U96, hex};
+    use alloy_sol_types::{SolCall, SolEvent};
 
     #[test]
     fn test_selector_collision_resolution() {
@@ -1438,6 +1648,194 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_tempo_decode_preserves_existing_labels() {
+        let decoder = CallTraceDecoder::new();
+        let trace = CallTrace { address: PATH_USD_ADDRESS, success: true, ..Default::default() };
+
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+    }
+
+    #[tokio::test]
+    async fn test_t5_decode_does_not_synthesize_general_target_label() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+        let trace = CallTrace {
+            address: address!("0x0000000000000000000000000000000000000123"),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label, None);
+    }
+
+    #[tokio::test]
+    async fn test_t5_tip20_logo_uri_calls_and_events_decode() {
+        let decoder = CallTraceDecoder::new();
+
+        let call = ITIP20::setLogoURICall { newLogoURI: "https://example.com/logo.png".into() };
+        let trace = CallTrace {
+            address: PATH_USD_ADDRESS,
+            data: call.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        let call_data = decoded.call_data.expect("setLogoURI should decode");
+        assert_eq!(call_data.signature, "setLogoURI(string)");
+        assert_eq!(call_data.args, vec!["\"https://example.com/logo.png\"".to_string()]);
+
+        let call = ITIP20::logoURICall {};
+        let trace = CallTrace {
+            address: PATH_USD_ADDRESS,
+            data: call.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.call_data.expect("logoURI should decode").signature, "logoURI()");
+
+        let event = ITIP20::LogoURIUpdated {
+            updater: address!("0x0000000000000000000000000000000000000abc"),
+            newLogoURI: "ipfs://logo".into(),
+        };
+        let decoded = decoder.decode_event(&event.encode_log_data()).await;
+        assert_eq!(decoded.name.as_deref(), Some("LogoURIUpdated"));
+        let params = decoded.params.expect("LogoURIUpdated params should decode");
+        assert_eq!(params[0].0, "updater");
+        assert!(
+            params[0].1.to_ascii_lowercase().contains("0000000000000000000000000000000000000abc")
+        );
+        assert_eq!(params[1], ("newLogoURI".into(), "\"ipfs://logo\"".into()));
+    }
+
+    #[tokio::test]
+    async fn test_t5_tip20_factory_create_token_with_logo_decodes() {
+        let decoder = CallTraceDecoder::new();
+        let call = ITIP20Factory::createToken_1Call {
+            name: "Example USD".into(),
+            symbol: "xUSD".into(),
+            currency: "USD".into(),
+            quoteToken: PATH_USD_ADDRESS,
+            admin: address!("0x0000000000000000000000000000000000000abc"),
+            salt: B256::repeat_byte(0x11),
+            logoURI: "https://example.com/xusd.png".into(),
+        };
+        let trace = CallTrace {
+            address: TIP20_FACTORY_ADDRESS,
+            data: call.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        let call_data = decoded.call_data.expect("createToken overload should decode");
+        assert_eq!(
+            call_data.signature,
+            "createToken(string,string,string,address,address,bytes32,string)"
+        );
+        assert_eq!(call_data.args[6], "\"https://example.com/xusd.png\"");
+    }
+
+    #[tokio::test]
+    async fn test_t5_stablecoin_dex_order_flipped_event_decodes() {
+        let decoder = CallTraceDecoder::new();
+        let event = IStablecoinDEX::OrderFlipped {
+            orderId: 42,
+            maker: address!("0x0000000000000000000000000000000000000abc"),
+            token: PATH_USD_ADDRESS,
+            amount: 1_000_000,
+            isBid: false,
+            tick: 100,
+            flipTick: 100,
+        };
+        let decoded = decoder.decode_event(&event.encode_log_data()).await;
+        assert_eq!(decoded.name.as_deref(), Some("OrderFlipped"));
+        let params = decoded.params.expect("OrderFlipped params should decode");
+        assert_eq!(params[0], ("orderId".into(), "42".into()));
+        assert_eq!(params[4], ("isBid".into(), "false".into()));
+        assert_eq!(params[5], ("tick".into(), "100".into()));
+        assert_eq!(params[6], ("flipTick".into(), "100".into()));
+    }
+
+    #[tokio::test]
+    async fn test_t5_channel_reserve_call_and_event_decode() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+
+        let open = ITIP20ChannelReserve::openCall {
+            payee: address!("0x0000000000000000000000000000000000000abc"),
+            operator: Address::ZERO,
+            token: PATH_USD_ADDRESS,
+            deposit: U96::from(1_000_000u64),
+            salt: B256::repeat_byte(0x22),
+            authorizedSigner: Address::ZERO,
+        };
+        let trace = CallTrace {
+            address: TIP20_CHANNEL_RESERVE_ADDRESS,
+            data: open.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("TIP20ChannelReserve"));
+        assert_eq!(
+            decoded.call_data.expect("open should decode").signature,
+            "open(address,address,address,uint96,bytes32,address)"
+        );
+
+        let transfer = ITIP20::transferCall {
+            to: address!("0x0000000000000000000000000000000000000def"),
+            amount: U256::from(1_000_000u64),
+        };
+        let trace = CallTrace {
+            address: PATH_USD_ADDRESS,
+            data: transfer.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+        let json = serde_json::to_string(&decoded).expect("decoded trace serializes");
+        assert!(json.contains(r#""label":"PathUSD""#));
+        assert!(!json.contains("payment-lane"));
+
+        let balance_of = ITIP20::balanceOfCall {
+            account: address!("0x0000000000000000000000000000000000000def"),
+        };
+        let trace = CallTrace {
+            address: PATH_USD_ADDRESS,
+            data: balance_of.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+
+        let event = ITIP20ChannelReserve::ChannelOpened {
+            channelId: B256::repeat_byte(0x33),
+            payer: address!("0x0000000000000000000000000000000000000123"),
+            payee: address!("0x0000000000000000000000000000000000000abc"),
+            operator: Address::ZERO,
+            token: PATH_USD_ADDRESS,
+            authorizedSigner: Address::ZERO,
+            salt: B256::repeat_byte(0x22),
+            expiringNonceHash: B256::repeat_byte(0x44),
+            deposit: U96::from(1_000_000u64),
+        };
+        let decoded = decoder.decode_event(&event.encode_log_data()).await;
+        assert_eq!(decoded.name.as_deref(), Some("ChannelOpened"));
+        let params = decoded.params.expect("ChannelOpened params should decode");
+        assert_eq!(params[0].0, "channelId");
+        assert_eq!(params[8].0, "deposit");
+        assert!(params[8].1.starts_with("1000000"));
+    }
+
     // A mock identifier that records which addresses it was asked to identify.
     struct RecordingIdentifier {
         queried: Vec<Address>,
@@ -1491,11 +1889,18 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_tempo_precompiles() {
-        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
+        use foundry_evm_core::tempo::{TEMPO_PRECOMPILE_ADDRESSES, TIP20_CHANNEL_RESERVE_ADDRESS};
 
         // Decoder with Tempo chain ID (4217).
-        let mut decoder = CallTraceDecoder::new().clone();
-        decoder.chain_id = Some(4217);
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T5))
+            .build();
+
+        assert_eq!(
+            decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
 
         let mut arena = CallTraceArena::default();
         let regular_addr = Address::from([0x42; 20]);
@@ -1520,6 +1925,393 @@ mod tests {
 
         // On a Tempo chain, the Tempo precompile should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_precompile_labels_follow_tempo_hardfork_activation_boundaries() {
+        let labels_for_hardfork = |hardfork| {
+            CallTraceDecoderBuilder::new()
+                .with_tempo_hardfork(Some(hardfork))
+                .build()
+                .precompile_labels()
+        };
+
+        let t4_labels = labels_for_hardfork(TempoHardfork::T4);
+        assert_eq!(t4_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert!(!t4_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(!t4_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!t4_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t5_labels = labels_for_hardfork(TempoHardfork::T5);
+        assert_eq!(t5_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert_eq!(
+            t5_labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert!(!t5_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!t5_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t6_labels = labels_for_hardfork(TempoHardfork::T6);
+        assert_eq!(
+            t6_labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert_eq!(
+            t6_labels.get(&RECEIVE_POLICY_GUARD_ADDRESS),
+            Some(&"ReceivePolicyGuard".to_string())
+        );
+        assert!(!t6_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t7_labels = labels_for_hardfork(TempoHardfork::T7);
+        assert_eq!(
+            t7_labels.get(&RECEIVE_POLICY_GUARD_ADDRESS),
+            Some(&"ReceivePolicyGuard".to_string())
+        );
+        assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+    }
+
+    #[test]
+    fn test_precompile_labels_skip_tempo_precompiles_on_other_chains() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(1))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+
+        let labels = decoder.precompile_labels();
+        assert!(!labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
+        assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+    }
+
+    #[test]
+    fn test_tempo_hardfork_labels_do_not_clobber_user_labels() {
+        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+        let reserve_label = "UserReserve".to_string();
+        let guard_label = "UserGuard".to_string();
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_labels([
+                (TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone()),
+                (RECEIVE_POLICY_GUARD_ADDRESS, guard_label.clone()),
+            ])
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+
+        assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
+        assert_eq!(decoder.labels.get(&RECEIVE_POLICY_GUARD_ADDRESS), Some(&guard_label));
+    }
+
+    #[test]
+    fn test_tempo_hardfork_none_does_not_remove_user_reserve_label() {
+        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+        let reserve_label = "UserReserve".to_string();
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_labels([(TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone())])
+            .with_tempo_hardfork(None)
+            .build();
+
+        assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
+    }
+
+    #[tokio::test]
+    async fn test_decode_receive_policy_guard_at_t6() {
+        let function = Function::parse("claim(address,bytes)").unwrap();
+        let data = function
+            .abi_encode_input(&[
+                DynSolValue::Address(Address::from([0x11; 20])),
+                DynSolValue::Bytes(vec![0x12, 0x34]),
+            ])
+            .unwrap();
+        let trace = CallTrace {
+            address: RECEIVE_POLICY_GUARD_ADDRESS,
+            data: data.into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+        let decoded = decoder.decode_function(&trace).await;
+
+        assert_eq!(decoded.label, Some("ReceivePolicyGuard".to_string()));
+        assert_eq!(decoded.call_data.unwrap().signature, "claim(address,bytes)");
+    }
+
+    #[tokio::test]
+    async fn test_t6_receive_policy_calls_decode() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+
+        let set_policy = ITIP403Registry::setReceivePolicyCall {
+            senderPolicyId: 7,
+            tokenFilterId: 9,
+            recoveryAuthority: address!("0x0000000000000000000000000000000000000abc"),
+        };
+        let decoded = decoder
+            .decode_function(&CallTrace {
+                address: TIP403_REGISTRY_ADDRESS,
+                data: set_policy.abi_encode().into(),
+                success: true,
+                ..Default::default()
+            })
+            .await;
+        let call_data = decoded.call_data.expect("setReceivePolicy should decode");
+        assert_eq!(decoded.label.as_deref(), Some("TIP403Registry"));
+        assert_eq!(call_data.signature, "setReceivePolicy(uint64,uint64,address)");
+        assert_eq!(call_data.args[0], "7");
+        assert_eq!(call_data.args[1], "9");
+
+        let validate = ITIP403Registry::validateReceivePolicyCall {
+            token: PATH_USD_ADDRESS,
+            sender: address!("0x0000000000000000000000000000000000000def"),
+            receiver: address!("0x0000000000000000000000000000000000000123"),
+        };
+        let decoded = decoder
+            .decode_function(&CallTrace {
+                address: TIP403_REGISTRY_ADDRESS,
+                data: validate.abi_encode().into(),
+                success: true,
+                ..Default::default()
+            })
+            .await;
+        let call_data = decoded.call_data.expect("validateReceivePolicy should decode");
+        assert_eq!(call_data.signature, "validateReceivePolicy(address,address,address)");
+        assert!(call_data.args[0].contains("PathUSD"));
+    }
+
+    #[tokio::test]
+    async fn test_t6_admin_key_calls_decode() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+        let account = address!("0x0000000000000000000000000000000000000abc");
+        let key = address!("0x0000000000000000000000000000000000000def");
+        let signature = vec![0x04, 0xaa, 0xbb];
+
+        let cases = [
+            (
+                ACCOUNT_KEYCHAIN_ADDRESS,
+                IAccountKeychain::authorizeAdminKeyCall {
+                    keyId: key,
+                    signatureType: IAccountKeychain::SignatureType::Secp256k1,
+                    witness: B256::repeat_byte(0x11),
+                }
+                .abi_encode()
+                .into(),
+                "authorizeAdminKey(address,uint8,bytes32)",
+            ),
+            (
+                ACCOUNT_KEYCHAIN_ADDRESS,
+                IAccountKeychain::isAdminKeyCall { account, keyId: key }.abi_encode().into(),
+                "isAdminKey(address,address)",
+            ),
+            (
+                SIGNATURE_VERIFIER_ADDRESS,
+                ISignatureVerifier::verifyKeychainCall {
+                    account,
+                    hash: B256::repeat_byte(0x22),
+                    signature: signature.clone().into(),
+                }
+                .abi_encode()
+                .into(),
+                "verifyKeychain(address,bytes32,bytes)",
+            ),
+            (
+                SIGNATURE_VERIFIER_ADDRESS,
+                ISignatureVerifier::verifyKeychainAdminCall {
+                    account,
+                    hash: B256::repeat_byte(0x33),
+                    signature: signature.into(),
+                }
+                .abi_encode()
+                .into(),
+                "verifyKeychainAdmin(address,bytes32,bytes)",
+            ),
+        ];
+
+        for (address, data, signature) in cases {
+            let decoded = decoder
+                .decode_function(&CallTrace { address, data, success: true, ..Default::default() })
+                .await;
+            assert_eq!(
+                decoded.call_data.expect("T6 keychain call should decode").signature,
+                signature
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_t6_receive_policy_and_admin_events_decode() {
+        let decoder = CallTraceDecoder::new();
+        let account = address!("0x0000000000000000000000000000000000000abc");
+        let key = address!("0x0000000000000000000000000000000000000def");
+
+        let events = [
+            (
+                ITIP403Registry::ReceivePolicyUpdated {
+                    account,
+                    senderPolicyId: 7,
+                    tokenFilterId: 9,
+                    recoveryAuthority: key,
+                }
+                .encode_log_data(),
+                "ReceivePolicyUpdated",
+            ),
+            (
+                IAccountKeychain::AdminKeyAuthorized { account, publicKey: key }.encode_log_data(),
+                "AdminKeyAuthorized",
+            ),
+            (
+                IReceivePolicyGuard::ReceiptClaimed {
+                    token: PATH_USD_ADDRESS,
+                    receiver: account,
+                    blockedNonce: 11,
+                    blockedAt: 12,
+                    receiptVersion: 1,
+                    originator: key,
+                    recipient: account,
+                    recoveryAuthority: key,
+                    caller: key,
+                    to: account,
+                    amount: U256::from(123),
+                }
+                .encode_log_data(),
+                "ReceiptClaimed",
+            ),
+            (
+                IReceivePolicyGuard::ReceiptBurned {
+                    token: PATH_USD_ADDRESS,
+                    receiver: account,
+                    blockedNonce: 11,
+                    blockedAt: 12,
+                    receiptVersion: 1,
+                    originator: key,
+                    recipient: account,
+                    recoveryAuthority: key,
+                    caller: key,
+                    amount: U256::from(123),
+                }
+                .encode_log_data(),
+                "ReceiptBurned",
+            ),
+        ];
+
+        for (log, expected_name) in events {
+            let decoded = decoder.decode_event(&log).await;
+            assert_eq!(decoded.name.as_deref(), Some(expected_name));
+            assert!(decoded.params.expect("event params should decode").len() >= 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_t6_claim_receipt_bytes_decode_in_calls_and_transfer_blocked_event() {
+        let decoder = CallTraceDecoder::new();
+        let recovery = address!("0x0000000000000000000000000000000000000abc");
+        let originator = address!("0x0000000000000000000000000000000000000def");
+        let recipient = address!("0x0000000000000000000000000000000000000123");
+        let receipt = IReceivePolicyGuard::ClaimReceiptV1::new(
+            PATH_USD_ADDRESS,
+            recovery,
+            originator,
+            recipient,
+            12,
+            34,
+            ITIP403Registry::BlockedReason::RECEIVE_POLICY as u8,
+            IReceivePolicyGuard::InboundKind::TRANSFER,
+            B256::repeat_byte(0x44),
+        )
+        .abi_encode();
+
+        let claim =
+            IReceivePolicyGuard::claimCall { to: recipient, receipt: receipt.clone().into() };
+        let decoded = decoder
+            .decode_function(&CallTrace {
+                address: RECEIVE_POLICY_GUARD_ADDRESS,
+                data: claim.abi_encode().into(),
+                success: true,
+                ..Default::default()
+            })
+            .await;
+        let call_data = decoded.call_data.expect("claim should decode");
+        assert_eq!(call_data.signature, "claim(address,bytes)");
+        assert!(call_data.args[1].contains("ClaimReceiptV1"));
+        assert!(call_data.args[1].contains("blockedNonce: 34"));
+        assert!(call_data.args[1].contains(&originator.to_string()));
+
+        let decoded = decoder
+            .decode_function(&CallTrace {
+                address: Address::from([0x77; 20]),
+                data: claim.abi_encode().into(),
+                success: true,
+                ..Default::default()
+            })
+            .await;
+        let call_data = decoded.call_data.expect("matching claim selector should decode");
+        assert_eq!(call_data.signature, "claim(address,bytes)");
+        assert!(!call_data.args[1].contains("ClaimReceiptV1"));
+        assert!(call_data.args[1].starts_with("0x"));
+
+        let blocked = IReceivePolicyGuard::TransferBlocked {
+            token: PATH_USD_ADDRESS,
+            receiver: recipient,
+            blockedNonce: 34,
+            amount: U256::from(123),
+            receiptVersion: 1,
+            receipt: receipt.into(),
+        };
+        let blocked_log = blocked.encode_log_data();
+        let decoded =
+            decoder.decode_event_with_address(RECEIVE_POLICY_GUARD_ADDRESS, &blocked_log).await;
+        assert_eq!(decoded.name.as_deref(), Some("TransferBlocked"));
+        let params = decoded.params.expect("TransferBlocked params should decode");
+        let receipt = params.iter().find(|(name, _)| name == "receipt").unwrap();
+        assert!(receipt.1.contains("ClaimReceiptV1"));
+        assert!(receipt.1.contains("blockedReason: 2"));
+        assert!(receipt.1.contains("kind: 0"));
+
+        let decoded =
+            decoder.decode_event_with_address(Address::from([0x77; 20]), &blocked_log).await;
+        assert_eq!(decoded.name.as_deref(), Some("TransferBlocked"));
+        let params = decoded.params.expect("TransferBlocked params should decode");
+        let receipt = params.iter().find(|(name, _)| name == "receipt").unwrap();
+        assert!(!receipt.1.contains("ClaimReceiptV1"));
+        assert!(receipt.1.starts_with("0x"));
+    }
+
+    #[test]
+    fn test_identify_addresses_does_not_skip_future_tempo_precompiles() {
+        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T4))
+            .build();
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: TIP20_CHANNEL_RESERVE_ADDRESS,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        assert_eq!(identifier.queried, vec![regular_addr, TIP20_CHANNEL_RESERVE_ADDRESS]);
     }
 
     #[test]

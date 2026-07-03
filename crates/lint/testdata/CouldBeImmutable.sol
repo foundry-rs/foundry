@@ -70,6 +70,15 @@ contract ModifierBodyWrite {
     constructor() initializesState() {}
 }
 
+contract CrossInitializerWrite {
+    // `x` has a compile-time-constant initializer and is only written by a sibling
+    // state-var initializer. Such side-effect writes are NOT valid `immutable`
+    // assignments (immutables may only be assigned in their own initializer or in
+    // the constructor body), so `x` must NOT be flagged as could-be-immutable.
+    uint256 internal x = 0;
+    uint256 internal y = (x = 1); //~NOTE: state variable could be declared immutable
+}
+
 contract AssemblyWrite {
     uint256 private fromAssembly;
 

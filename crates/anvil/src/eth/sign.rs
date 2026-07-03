@@ -149,11 +149,14 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     }
 }
 
-/// Builds a TxEnvelope from UnsignedTx with a zeroed signature.
+/// Builds a TxEnvelope from UnsignedTx with r=1, s=1 dummy signature.
 ///
 /// Used for impersonated accounts, where transactions are accepted without a valid signature.
+/// The signature uses r=1, s=1 (not zero) because go-ethereum and other clients reject transactions
+/// where r or s are zero with "invalid transaction v, r, s values".
 pub fn build_impersonated(typed_tx: FoundryTypedTx) -> FoundryTxEnvelope {
-    let signature = Signature::new(Default::default(), Default::default(), false);
+    let signature =
+        Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false);
     match typed_tx {
         FoundryTypedTx::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
         FoundryTypedTx::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),

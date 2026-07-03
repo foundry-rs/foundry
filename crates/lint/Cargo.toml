@@ -18,6 +18,7 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 
+alloy-primitives.workspace = true
 solar.workspace = true
 
 eyre.workspace = true

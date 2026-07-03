@@ -104,7 +104,7 @@ impl InitArgs {
             } else {
                 "https://github.com/".to_string() + &template
             };
-            sh_println!("Initializing {} from {}...", root.display(), template)?;
+            sh_status!("Initializing {} from {}...", root.display(), template)?;
             // initialize the git repository
             git.init()?;
 
@@ -146,7 +146,7 @@ impl InitArgs {
                 git.ensure_clean()?;
             }
 
-            sh_println!("Initializing {}...", root.display())?;
+            sh_status!("Initializing {}...", root.display())?;
 
             // make the dirs
             let src = root.join("src");
@@ -280,7 +280,7 @@ impl InitArgs {
             }
         }
 
-        sh_println!("{}", "    Initialized forge project".green())?;
+        sh_status!("{}", "    Initialized forge project".green())?;
         Ok(())
     }
 }

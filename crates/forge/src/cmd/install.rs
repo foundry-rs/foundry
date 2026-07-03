@@ -103,8 +103,7 @@ impl DependencyInstallOpts {
     pub async fn install_missing_dependencies(self, config: &mut Config) -> bool {
         let lib = config.install_lib_dir();
         if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
-            // The extra newline is needed, otherwise the compiler output will overwrite the message
-            let _ = sh_println!("Missing dependencies found. Installing now...\n");
+            let _ = sh_status!("Missing dependencies found. Installing now...");
 
             if self.install(config, Vec::new()).await.is_err() {
                 let _ =
@@ -145,7 +144,7 @@ impl DependencyInstallOpts {
             let root = Git::root_of(git.root)?;
             match git.has_submodules(Some(&root)) {
                 Ok(true) => {
-                    sh_println!("Updating dependencies in {}", libs.display())?;
+                    sh_status!("Updating dependencies in {}", libs.display())?;
 
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
@@ -176,7 +175,7 @@ impl DependencyInstallOpts {
             let rel_path = path
                 .strip_prefix(git.root)
                 .wrap_err("Library directory is not relative to the repository root")?;
-            sh_println!(
+            sh_status!(
                 "Installing {} in {} (url: {}, tag: {})",
                 dep.name,
                 path.display(),
@@ -269,7 +268,7 @@ impl DependencyInstallOpts {
                     msg.push_str(tag.as_str());
                 }
             }
-            sh_println!("{msg}")?;
+            sh_status!("{msg}")?;
 
             // Check if the dependency has soldeer.lock and install soldeer dependencies
             if let Err(e) = install_soldeer_deps_if_needed(&path).await {
@@ -296,7 +295,7 @@ async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
     let soldeer_lock = dep_path.join("soldeer.lock");
 
     if soldeer_lock.exists() {
-        sh_println!("    Found soldeer.lock, installing soldeer dependencies...")?;
+        sh_status!("    Found soldeer.lock, installing soldeer dependencies...")?;
 
         // Change to the dependency directory and run soldeer install
         let original_dir = std::env::current_dir()?;
@@ -315,7 +314,7 @@ async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
         std::env::set_current_dir(original_dir)?;
 
         result.map_err(|e| eyre::eyre!("Failed to run soldeer install: {e}"))?;
-        sh_println!("    Soldeer dependencies installed successfully")?;
+        sh_status!("    Soldeer dependencies installed successfully")?;
     }
 
     Ok(())
@@ -559,9 +558,9 @@ impl Installer<'_> {
 
         // multiple candidates, ask the user to choose one or skip
         candidates.insert(0, String::from("SKIP AND USE ORIGINAL TAG"));
-        sh_println!("There are multiple matching tags:")?;
+        sh_status!("There are multiple matching tags:")?;
         for (i, candidate) in candidates.iter().enumerate() {
-            sh_println!("[{i}] {candidate}")?;
+            sh_status!("[{i}] {candidate}")?;
         }
 
         let n_candidates = candidates.len();
@@ -576,7 +575,7 @@ impl Installer<'_> {
                 Ok(0) => return Ok(tag.into()),
                 Ok(i) if (1..=n_candidates).contains(&i) => {
                     let c = &candidates[i];
-                    sh_println!("[{i}] {c} selected")?;
+                    sh_status!("[{i}] {c} selected")?;
                     return Ok(c.clone());
                 }
                 _ => {}
@@ -621,9 +620,9 @@ impl Installer<'_> {
 
         // multiple candidates, ask the user to choose one or skip
         candidates.insert(0, format!("{tag} (original branch)"));
-        sh_println!("There are multiple matching branches:")?;
+        sh_status!("There are multiple matching branches:")?;
         for (i, candidate) in candidates.iter().enumerate() {
-            sh_println!("[{i}] {candidate}")?;
+            sh_status!("[{i}] {candidate}")?;
         }
 
         let n_candidates = candidates.len();
@@ -635,7 +634,7 @@ impl Installer<'_> {
 
         // default selection, return None
         if input.is_empty() {
-            sh_println!("Canceled branch matching")?;
+            sh_status!("Canceled branch matching")?;
             return Ok(None);
         }
 
@@ -644,7 +643,7 @@ impl Installer<'_> {
             Ok(0) => Ok(Some(tag.into())),
             Ok(i) if (1..=n_candidates).contains(&i) => {
                 let c = &candidates[i];
-                sh_println!("[{i}] {c} selected")?;
+                sh_status!("[{i}] {c} selected")?;
                 Ok(Some(c.clone()))
             }
             _ => Ok(None),

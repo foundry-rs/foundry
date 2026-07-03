@@ -322,8 +322,9 @@ forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| 
         bytecode_hash: BytecodeHash::None,
         ..Default::default()
     });
-    // Build once with correct source (creates cache)
-    cmd.forge_fuse().arg("build").assert_success();
+    // Build once with correct source (creates cache). Linting is unrelated to bytecode
+    // verification here and can dominate runtime on the flattened Etherscan source.
+    cmd.forge_fuse().args(["build", "--no-lint"]).assert_success();
 
     let source_code = r#"
     contract SystemConfig {

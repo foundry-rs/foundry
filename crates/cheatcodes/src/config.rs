@@ -22,6 +22,8 @@ pub struct CheatsConfig {
     pub ffi: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
+    /// Rewrite plain CREATE to CREATE2 for `forge script --batch`.
+    pub batch_rewrite_creates: bool,
     /// Sets a timeout for vm.prompt cheatcodes
     pub prompt_timeout: Duration,
     /// RPC storage caching settings determines what chains and endpoints to cache
@@ -40,6 +42,8 @@ pub struct CheatsConfig {
     pub root: PathBuf,
     /// Absolute Path to broadcast dir i.e project_root/broadcast
     pub broadcast: PathBuf,
+    /// Whether isolated test execution is enabled.
+    pub isolate: bool,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
@@ -68,6 +72,7 @@ impl CheatsConfig {
         available_artifacts: Option<ContractsByArtifact>,
         running_artifact: Option<ArtifactId>,
         fee_token: Option<Address>,
+        batch_rewrite_creates: bool,
     ) -> Self {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
@@ -79,6 +84,7 @@ impl CheatsConfig {
         Self {
             ffi: evm_opts.ffi,
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
+            batch_rewrite_creates,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
             rpc_storage_caching: config.rpc_storage_caching.clone(),
             no_storage_caching: config.no_storage_caching,
@@ -88,6 +94,7 @@ impl CheatsConfig {
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
             root: config.root.clone(),
             broadcast: config.root.clone().join(&config.broadcast),
+            isolate: config.isolate,
             evm_opts,
             labels: config.labels.clone(),
             available_artifacts,
@@ -107,6 +114,7 @@ impl CheatsConfig {
             self.available_artifacts.clone(),
             self.running_artifact.clone(),
             self.fee_token,
+            self.batch_rewrite_creates,
         )
     }
 
@@ -219,6 +227,7 @@ impl Default for CheatsConfig {
         Self {
             ffi: false,
             always_use_create_2_factory: false,
+            batch_rewrite_creates: false,
             prompt_timeout: Duration::from_secs(120),
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
@@ -228,6 +237,7 @@ impl Default for CheatsConfig {
             root: Default::default(),
             bind_json_path: PathBuf::default().join("utils").join("jsonBindings.sol"),
             broadcast: Default::default(),
+            isolate: Config::default().isolate,
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),
@@ -252,6 +262,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         )
     }
 
@@ -266,6 +277,17 @@ mod tests {
         assert!(config.ensure_path_allowed("../root/t.txt", FsAccessKind::Write).is_ok());
         assert!(config.ensure_path_allowed("../../root/t.txt", FsAccessKind::Read).is_err());
         assert!(config.ensure_path_allowed("../../root/t.txt", FsAccessKind::Write).is_err());
+    }
+
+    #[test]
+    fn test_batch_rewrite_creates_flag_plumbing() {
+        assert!(!CheatsConfig::default().batch_rewrite_creates);
+
+        let on = CheatsConfig::new(&Config::default(), Default::default(), None, None, None, true);
+        assert!(on.batch_rewrite_creates);
+
+        let cloned = on.clone_with(&Config::default(), Default::default());
+        assert!(cloned.batch_rewrite_creates);
     }
 
     #[test]

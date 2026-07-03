@@ -1,4 +1,7 @@
-use solar::{interface::data_structures::Never, sema::hir};
+use solar::{
+    interface::data_structures::Never,
+    sema::{Gcx, hir},
+};
 use std::ops::ControlFlow;
 
 use super::LintContext;
@@ -23,6 +26,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_nested_contract(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _id: hir::ContractId,
     ) {
@@ -51,6 +55,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_contract(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _contract: &'hir hir::Contract<'hir>,
     ) {
@@ -58,6 +63,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_function(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _func: &'hir hir::Function<'hir>,
     ) {
@@ -79,6 +85,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_expr(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _expr: &'hir hir::Expr<'hir>,
     ) {
@@ -93,6 +100,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_stmt(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _stmt: &'hir hir::Stmt<'hir>,
     ) {
@@ -110,6 +118,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
 pub struct LateLintVisitor<'a, 's, 'hir> {
     ctx: &'a LintContext<'s, 'a>,
     passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
 }
 
@@ -120,9 +129,10 @@ where
     pub fn new(
         ctx: &'a LintContext<'s, 'a>,
         passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
     ) -> Self {
-        Self { ctx, passes, hir }
+        Self { ctx, passes, gcx, hir }
     }
 }
 
@@ -152,7 +162,7 @@ where
 
     fn visit_nested_contract(&mut self, id: hir::ContractId) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_nested_contract(self.ctx, self.hir, id);
+            pass.check_nested_contract(self.ctx, self.gcx, self.hir, id);
         }
         self.walk_nested_contract(id)
     }
@@ -176,14 +186,14 @@ where
         contract: &'hir hir::Contract<'hir>,
     ) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_contract(self.ctx, self.hir, contract);
+            pass.check_contract(self.ctx, self.gcx, self.hir, contract);
         }
         self.walk_contract(contract)
     }
 
     fn visit_function(&mut self, func: &'hir hir::Function<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_function(self.ctx, self.hir, func);
+            pass.check_function(self.ctx, self.gcx, self.hir, func);
         }
         self.walk_function(func)
     }
@@ -214,7 +224,7 @@ where
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_expr(self.ctx, self.hir, expr);
+            pass.check_expr(self.ctx, self.gcx, self.hir, expr);
         }
         self.walk_expr(expr)
     }
@@ -231,7 +241,7 @@ where
 
     fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_stmt(self.ctx, self.hir, stmt);
+            pass.check_stmt(self.ctx, self.gcx, self.hir, stmt);
         }
         self.walk_stmt(stmt)
     }
@@ -289,6 +299,7 @@ mod tests {
         fn check_nested_contract(
             &mut self,
             _ctx: &LintContext,
+            _gcx: solar::sema::Gcx<'hir>,
             _hir: &'hir hir::Hir<'hir>,
             _id: hir::ContractId,
         ) {
@@ -389,7 +400,7 @@ mod tests {
                 );
                 let mut passes: Vec<Box<dyn LateLintPass<'_>>> =
                     vec![Box::new(RecordingPass { counts: counts.clone() })];
-                let mut visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
+                let mut visitor = LateLintVisitor::new(&ctx, &mut passes, gcx, &gcx.hir);
                 let _ = hir::Visit::visit_nested_source(&mut visitor, source_id);
                 Ok(())
             })

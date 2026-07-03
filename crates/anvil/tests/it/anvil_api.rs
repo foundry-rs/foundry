@@ -669,8 +669,8 @@ async fn flaky_test_reorg() {
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
 
-    // Test calls
-    // Populate chain
+    // Populate with deterministic block boundaries: disable automine, batch 2 txs, mine.
+    api.anvil_set_auto_mine(false).await.unwrap();
     for i in 0..10 {
         let tx = TransactionRequest::default()
             .to(accounts[0].address())
@@ -685,7 +685,10 @@ async fn flaky_test_reorg() {
             .from(accounts[2].address());
         let tx = WithOtherFields::new(tx);
         api.send_transaction(tx).await.unwrap();
+
+        api.evm_mine(None).await.unwrap();
     }
+    api.anvil_set_auto_mine(true).await.unwrap();
 
     // Define transactions
     let mut txs = vec![];
@@ -699,20 +702,22 @@ async fn flaky_test_reorg() {
     }
 
     let prev_height = provider.get_block_number().await.unwrap();
-    api.anvil_reorg(ReorgOptions { depth: 7, tx_block_pairs: txs }).await.unwrap();
+    let depth = 7u64;
+    api.anvil_reorg(ReorgOptions { depth, tx_block_pairs: txs }).await.unwrap();
 
     let reorged_height = provider.get_block_number().await.unwrap();
     assert_eq!(reorged_height, prev_height);
 
-    // The first 3 reorged blocks should have 5 transactions each
-    for num in 14..17 {
+    // The 3 reorged blocks (one per `tx_block_pairs` group) should each hold 5 txs.
+    let first_reorged = prev_height - depth + 1;
+    for num in first_reorged..first_reorged + 3 {
         let block = provider.get_block_by_number(num.into()).full().await.unwrap();
         let block = block.unwrap();
         assert_eq!(block.transactions.len(), 5);
     }
 
-    // Verify that historic blocks are still accessible
-    for num in (0..14).rev() {
+    // Verify that historic blocks below the reorged range are still accessible
+    for num in (0..first_reorged).rev() {
         let block = provider.get_block_by_number(num.into()).full().await.unwrap();
         assert!(block.is_some(), "Historic block {num} should be accessible after reorg");
     }
@@ -1104,6 +1109,28 @@ async fn test_mine_first_block_with_interval() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_safe_and_finalized_use_configured_slots_in_epoch() {
+    let (api, _) = spawn(NodeConfig::test().with_slots_in_an_epoch(2)).await;
+
+    api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let safe_block = api.block_by_number(BlockNumberOrTag::Safe).await.unwrap().unwrap();
+    assert_eq!(safe_block.header.number, 3);
+
+    let finalized_block = api.block_by_number(BlockNumberOrTag::Finalized).await.unwrap().unwrap();
+    assert_eq!(finalized_block.header.number, 1);
+
+    let safe_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Safe, vec![]).await.unwrap();
+    assert_eq!(safe_history.oldest_block, 3);
+
+    let finalized_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Finalized, vec![]).await.unwrap();
+    assert_eq!(finalized_history.oldest_block, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_non_fork() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -1230,8 +1257,23 @@ async fn can_get_node_info_tempo_t0() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_tempo_t5_from_chain_timestamp() {
+    use tempo_hardfork::TempoHardfork;
+
+    let timestamp = TempoHardfork::T5.mainnet_activation_timestamp().unwrap();
+    let config = NodeConfig::test_tempo()
+        .with_chain_id(Some(4217u64))
+        .with_genesis_timestamp(Some(timestamp));
+    let (api, _handle) = spawn(config).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    assert_eq!(node_info.hard_fork, "T5");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info_tempo_t1() {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()));
     let (api, handle) = spawn(config).await;
@@ -1268,10 +1310,7 @@ async fn can_get_node_info_tempo_t1() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deal_erc20_tempo() {
-    use alloy_primitives::address;
-    use foundry_evm::core::tempo::PATH_USD_ADDRESS;
-
-    const ALPHA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000001");
+    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
 
     let (api, _handle) = spawn(NodeConfig::test_tempo()).await;
 
