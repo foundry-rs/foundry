@@ -604,6 +604,10 @@ impl<'a> MinimizeContext<'a> {
             .map(|obs| (obs.target, obs.observation))
             .collect::<BTreeMap<_, _>>();
 
+        if has_new_active_targets(&observations, &self.baseline.requirements) {
+            return Ok(false);
+        }
+
         for (target, baseline) in &self.baseline.requirements {
             let Some(candidate) = observations.get(target) else {
                 return Ok(false);
@@ -619,6 +623,16 @@ impl<'a> MinimizeContext<'a> {
 
         Ok(true)
     }
+}
+
+fn has_new_active_targets(
+    observations: &BTreeMap<String, ReplayObservation>,
+    baseline: &BTreeMap<String, ReplayObservation>,
+) -> bool {
+    observations.iter().any(|(target, observation)| {
+        !baseline.contains_key(target)
+            && (observation.failure.is_some() || observation.replayed > 0 || has_edges(observation))
+    })
 }
 
 fn minimize_sequence(
@@ -1248,6 +1262,34 @@ mod tests {
         let candidate = ReplayObservation { sancov_edges: vec![0], ..Default::default() };
 
         assert!(same_edge_hit_sets(&candidate, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_activity() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            ("B".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_allows_inactive_candidate_only_targets() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            ("B".to_string(), ReplayObservation::default()),
+        ]);
+
+        assert!(!has_new_active_targets(&observations, &baseline));
     }
 
     #[test]
