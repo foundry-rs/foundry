@@ -3,20 +3,22 @@
 **Severity**: `High`
 **ID**: `enumerable-loop-removal`
 
-Flags `remove` on an EnumerableSet inside a loop that also iterates a set with `at`.
+Flags `remove` on an EnumerableSet inside a loop that also iterates the same set with `at`.
 
 ## What it does
 
-Reports a call `set.remove(...)` where the receiver is a struct declared in a library named `EnumerableSet` (OpenZeppelin's `AddressSet`, `UintSet`, `Bytes32Set`), when an enclosing loop also contains a call `at(...)` on an EnumerableSet, not necessarily the same instance. This mirrors Aderyn's `enumerable-loop-removal` detector, with two differences: the `at` call must also be typed as an EnumerableSet (Aderyn matches any member named `at`), and any enclosing loop counts (Aderyn only checks the closest ancestor of each loop kind).
+Reports a call to `EnumerableSet.remove` when an enclosing loop also reads the same set with `EnumerableSet.at` at a varying index. Calls are resolved through the type checker, so both the `using for` method form (`set.remove(...)`) and the library-qualified form (`EnumerableSet.remove(set, ...)`) are recognized, and same-name functions from other libraries are not. This mirrors Aderyn's `enumerable-loop-removal` detector, with two differences: the calls must resolve to functions of a library named `EnumerableSet` (Aderyn matches any members named `at` and `remove`), and any enclosing loop counts (Aderyn only checks the closest ancestor of each loop kind).
 
-Only the combination is dangerous, so neither half fires alone:
+Only the combination on the same set is dangerous, so these stay clean:
 
 - `remove` in a loop without `at` is the recommended collect-then-remove pattern;
 - `at` in a loop without `remove` is a plain read;
 - `remove` outside a loop is fine;
-- the same method names on a type that is not an EnumerableSet are out of scope.
+- `at` on a different set instance cannot be corrupted by the removal;
+- `at` with a literal index is a drain (`remove(at(0))` style): the swap refills the read position;
+- the same function names outside the `EnumerableSet` library are out of scope.
 
-Calls reached indirectly through a function invoked from the loop are not analyzed.
+Two sets are told apart by the variable they are stored in; an operand too complex to name a single variable (a mapping entry, a call result) is conservatively treated as possibly the removed set. Calls reached indirectly through a function invoked from the loop are not analyzed.
 
 ## Why is this bad?
 

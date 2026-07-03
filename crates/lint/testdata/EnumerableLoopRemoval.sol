@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+import {EnumerableSet as ES} from "./auxiliary/EnumerableSetLib.sol";
+
 // Tests for `enumerable-loop-removal`: EnumerableSet removal is swap-and-pop, so calling
-// `remove` inside a loop that also iterates the set with `at` skips elements or reads
-// out-of-bounds indices. The safe pattern (collect during the loop, remove after) has a
-// `remove` loop without any `at` in it and must stay clean, as must the same method names
-// on a type that is not an EnumerableSet.
+// `remove` inside a loop that also iterates the same set with `at` at a varying index skips
+// elements or reads out-of-bounds indices. Calls resolve through the type checker, so the
+// method-call form and the library-qualified form are both covered. Clean patterns:
+// collect-then-remove (the `remove` loop has no `at`), draining at a literal index, `at` on
+// a different set instance, and same-name functions that are not EnumerableSet's.
 
 // Minimal mirror of OpenZeppelin's EnumerableSet: swap-and-pop removal, index access via `at`.
 library EnumerableSet {
@@ -96,6 +99,7 @@ contract EnumerableLoopRemoval {
     using EnumerableSet for EnumerableSet.AddressSet;
     using EnumerableSet for EnumerableSet.UintSet;
     using CustomSet for CustomSet.Bag;
+    using Helpers for EnumerableSet.AddressSet;
 
     EnumerableSet.AddressSet internal holders;
     EnumerableSet.AddressSet internal others;
@@ -111,8 +115,9 @@ contract EnumerableLoopRemoval {
 
     function removeWhileIteratingWhile() public {
         while (holders.length() > 0) {
+            // draining at the literal index 0 is safe: the swap refills the read position
             address value = holders.at(0);
-            holders.remove(value); //~WARN: EnumerableSet
+            holders.remove(value);
         }
     }
 
@@ -126,10 +131,34 @@ contract EnumerableLoopRemoval {
     }
 
     function removeWithAtOnOtherSet() public {
-        // The `at` walks another EnumerableSet instance, but the loop still mixes
-        // index iteration and removal.
+        // The `at` walks a different EnumerableSet instance: removing from `holders`
+        // cannot corrupt the iteration over `others`.
         for (uint256 i = 0; i < others.length(); i++) {
-            holders.remove(others.at(i)); //~WARN: EnumerableSet
+            holders.remove(others.at(i));
+        }
+    }
+
+    function removeQualifiedForm() public {
+        // The library-qualified form of the unsafe pattern: same set, varying index.
+        for (uint256 i = 0; i < EnumerableSet.length(holders); i++) {
+            EnumerableSet.remove(holders, EnumerableSet.at(holders, i)); //~WARN: EnumerableSet
+        }
+    }
+
+    function removeMixedForms() public {
+        // The two call forms mixed on the same set corrupt the iteration all the same.
+        for (uint256 i = 0; i < holders.length(); i++) {
+            holders.remove(EnumerableSet.at(holders, i)); //~WARN: EnumerableSet
+        }
+    }
+
+    ES.AddressSet internal imported;
+
+    function removeAliasedImport() public {
+        // An import alias renames the call site, not the declared library the calls
+        // resolve to.
+        for (uint256 i = 0; i < ES.length(imported); i++) {
+            ES.remove(imported, ES.at(imported, i)); //~WARN: EnumerableSet
         }
     }
 
@@ -175,5 +204,20 @@ contract EnumerableLoopRemoval {
         for (uint256 i = 0; i < bag.length(); i++) {
             if (bag.at(i) == address(0)) bag.remove(i);
         }
+    }
+
+    function helperRemoveIsNotEnumerable() public {
+        // A user library function named `remove` attached to the set type: the call resolves
+        // to the helper, not to EnumerableSet's swap-and-pop, so it is out of scope.
+        for (uint256 i = 0; i < holders.length(); i++) {
+            if (holders.at(i) == address(0)) holders.remove(i);
+        }
+    }
+}
+
+// A user library attached to the EnumerableSet type, with its own `remove` overload.
+library Helpers {
+    function remove(EnumerableSet.AddressSet storage, uint256 index) internal pure {
+        index += 1;
     }
 }
