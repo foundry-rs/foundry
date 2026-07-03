@@ -145,17 +145,40 @@ pub fn resolve_broadcast_eip1559_fees(
     Ok(fees)
 }
 
-/// Estimates the priority fee as the median of the per-block rewards, ignoring
-/// zero rewards and rewards from blocks below [`MIN_GAS_USED_RATIO`], and never
-/// returning less than [`MIN_PRIORITY_FEE`].
+/// Estimates the priority fee as the median of the non-zero per-block rewards,
+/// never returning less than [`MIN_PRIORITY_FEE`].
+///
+/// Rewards from blocks below [`MIN_GAS_USED_RATIO`] are dropped first so one-off
+/// tips in idle blocks do not dominate the median. If that empties the sample
+/// but at least half the blocks still carry a tip, the unfiltered median is used
+/// instead, so chronically light chains do not collapse to [`MIN_PRIORITY_FEE`].
+/// The filter is skipped when `gas_used_ratio` does not line up with `rewards`
+/// (e.g. `gasUsedRatio: null`, which alloy deserializes as an empty vec).
 fn estimate_priority_fee(rewards: &[Vec<u128>], gas_used_ratio: &[f64]) -> u128 {
-    let mut rewards = rewards
-        .iter()
-        .zip(gas_used_ratio)
-        .filter(|(_, ratio)| ratio.is_finite() && ratio.clamp(0.0, 1.0) >= MIN_GAS_USED_RATIO)
-        .filter_map(|(reward, _)| reward.first().copied())
-        .filter(|reward| *reward > 0)
-        .collect::<Vec<_>>();
+    let apply_filter = gas_used_ratio.len() == rewards.len();
+    let non_zero_rewards = |filtered: bool| {
+        rewards
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                !filtered
+                    || (gas_used_ratio[*i].is_finite() && gas_used_ratio[*i] >= MIN_GAS_USED_RATIO)
+            })
+            .filter_map(|(_, reward)| reward.first().copied())
+            .filter(|reward| *reward > 0)
+            .collect::<Vec<_>>()
+    };
+
+    let mut rewards = non_zero_rewards(apply_filter);
+    // If every sampled block is near-empty but tipping is the norm across the
+    // sample (at least half the blocks carry a tip), fall back to the unfiltered
+    // non-zero median; a one-off tip on an idle chain (#13885) stays excluded.
+    if apply_filter && rewards.is_empty() {
+        let unfiltered = non_zero_rewards(false);
+        if unfiltered.len() * 2 >= gas_used_ratio.len() {
+            rewards = unfiltered;
+        }
+    }
     if rewards.is_empty() {
         return MIN_PRIORITY_FEE;
     }
@@ -200,19 +223,39 @@ mod tests {
         let ratios = vec![0.01, BUSY, 0.03, 0.7, 0.02];
         assert_eq!(estimate_priority_fee(&rewards, &ratios), 2);
 
-        // The threshold is inclusive; NaN/infinite ratios are dropped.
+        // The threshold is inclusive.
         assert_eq!(estimate_priority_fee(&[vec![10], vec![20]], &[0.1, 0.09]), 10);
-        assert_eq!(
-            estimate_priority_fee(&[vec![5], vec![6]], &[f64::NAN, f64::INFINITY]),
-            MIN_PRIORITY_FEE
-        );
+
+        // NaN/infinite ratios fail the filter; the fallback restores the median.
+        assert_eq!(estimate_priority_fee(&[vec![5], vec![6]], &[f64::NAN, f64::INFINITY]), 5);
     }
 
     #[test]
-    fn priority_fee_tolerates_length_mismatch() {
-        // `zip` bounds the sample to the shorter slice.
-        assert_eq!(estimate_priority_fee(&[vec![7], vec![9], vec![11]], &[BUSY]), 7);
+    fn priority_fee_falls_back_when_tipping_is_the_norm() {
+        // Light chain, every block tipped: fallback keeps the median.
+        let rewards = vec![vec![1_000u128]; 10];
+        let ratios = vec![0.05; 10];
+        assert_eq!(estimate_priority_fee(&rewards, &ratios), 1_000);
+
+        // Exactly half the blocks tip -> `>=` is inclusive, fallback fires.
+        let rewards = vec![vec![0u128], vec![10u128], vec![0u128], vec![20u128]];
+        let ratios = vec![0.01; 4];
+        assert_eq!(estimate_priority_fee(&rewards, &ratios), 15);
+
+        // One-off tip on an idle chain (#13885): under half tip, no fallback.
+        let mut rewards = vec![vec![0u128]; 10];
+        rewards[3] = vec![41_000_000_000_000u128];
+        let ratios = vec![0.01; 10];
+        assert_eq!(estimate_priority_fee(&rewards, &ratios), MIN_PRIORITY_FEE);
+    }
+
+    #[test]
+    fn priority_fee_skips_filter_on_length_mismatch() {
+        // A mismatched `gas_used_ratio` (e.g. `gasUsedRatio: null`) disables the
+        // filter, so the unfiltered non-zero median is used.
+        assert_eq!(estimate_priority_fee(&[vec![7], vec![9], vec![11]], &[BUSY]), 9);
         assert_eq!(estimate_priority_fee(&[vec![7]], &[BUSY, BUSY, BUSY]), 7);
+        assert_eq!(estimate_priority_fee(&[vec![2], vec![4]], &[]), 3);
     }
 
     /// Drives the public async estimator so `gas_used_ratio` wiring is covered.
@@ -255,21 +298,6 @@ mod tests {
         assert_eq!(fees.base_fee_per_gas, base);
         assert_eq!(fees.max_priority_fee_per_gas, MIN_PRIORITY_FEE);
         assert_eq!(fees.max_fee_per_gas, 40_000_000_001);
-    }
-
-    #[test]
-    fn tempo_scenario_yields_expected_max_fee() {
-        // Outlier tip in a near-empty block -> Market max_fee = 2 * base + min.
-        let base_fee = 20_000_000_000u128;
-        let rewards = vec![vec![0u128], vec![41_000_000_000_000u128], vec![0u128]];
-        let ratios = vec![BUSY, 0.001, BUSY];
-
-        let priority = estimate_priority_fee(&rewards, &ratios);
-        let (num, den) = Eip1559FeeEstimatePreset::Market.base_fee_multiplier();
-        let max_fee = base_fee.saturating_mul(num) / den + priority;
-
-        assert_eq!(priority, MIN_PRIORITY_FEE);
-        assert_eq!(max_fee, 40_000_000_001);
     }
 
     fn fees(max: u128, priority: u128) -> ResolvedEip1559Fees {
@@ -319,13 +347,5 @@ mod tests {
         let priority = estimate_priority_fee(&[vec![100], vec![300]], &[BUSY, BUSY]);
         let max_fee = base_fee.saturating_mul(num) / den + priority;
         assert_eq!(max_fee, base_fee * 2 + priority);
-    }
-
-    #[test]
-    fn priority_fee_preserves_high_tips_on_busy_chains() {
-        // Busy blocks keep the median of non-zero rewards, even when the tip is
-        // far above the base fee (legitimate congestion is not clamped).
-        let rewards = vec![vec![10_000_000_000u128], vec![30_000_000_000u128]];
-        assert_eq!(estimate_priority_fee(&rewards, &[BUSY, BUSY]), 20_000_000_000);
     }
 }
