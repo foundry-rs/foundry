@@ -19,6 +19,8 @@ use foundry_common::{
     shell::{OutputMode, Shell},
 };
 use foundry_config::Config;
+#[cfg(test)]
+use foundry_evm::executors::ReplayFailure;
 use foundry_evm::{
     executors::{CorpusDirEntry, ReplayObservation, ShowmapDomain, read_corpus_tree},
     fuzz::BasicTxDetails,
@@ -1285,6 +1287,40 @@ mod tests {
         let observations = BTreeMap::from([
             ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
             ("B".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_failures() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            (
+                "B".to_string(),
+                ReplayObservation {
+                    failure: Some(ReplayFailure::AfterInvariant),
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_replayed_transactions() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            ("B".to_string(), ReplayObservation { replayed: 1, ..Default::default() }),
         ]);
 
         assert!(has_new_active_targets(&observations, &baseline));

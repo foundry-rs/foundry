@@ -1609,6 +1609,63 @@ contract ForgeFuzzTminFailureTargetTest {
     );
 });
 
+forgetest_init!(forge_fuzz_tmin_rejects_assume_and_skip_candidates, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzTminRejectedCandidateTarget.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzTminRejectedCandidateTargetTest is Test {
+    uint256 value;
+
+    function testFuzz_rejectedCandidates(uint256 input) public {
+        if (input == 0) {
+            vm.assume(false);
+        }
+        if (input == 1) {
+            vm.skip(true, "skip one");
+        }
+        if (input == 2) {
+            value = 1;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzTminRejectedCandidateTarget.t.sol/ForgeFuzzTminRejectedCandidateTargetTest.json",
+    );
+    let calldata = calldata_for(&abi, "testFuzz_rejectedCandidates", 2);
+    let corpus = prj.root().join("tmin-rejected-candidates-corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &calldata);
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzTminRejectedCandidateTargetTest",
+            "--mt",
+            "testFuzz_rejectedCandidates",
+            "tmin-rejected-candidates-corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "--corpus-out",
+            "tmin-rejected-candidates-output.json",
+        ])
+        .assert_success();
+
+    let args = output_calldata_args(
+        prj.root(),
+        "tmin-rejected-candidates-output.json",
+        &abi,
+        "testFuzz_rejectedCandidates",
+    );
+    assert_eq!(args, vec![DynSolValue::Uint(U256::from(2), 256)]);
+});
+
 forgetest_init!(forge_fuzz_tmin_rejects_existing_output, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzTminExistingOutput.t.sol",
