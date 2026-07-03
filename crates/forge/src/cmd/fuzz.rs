@@ -268,7 +268,6 @@ impl FuzzCminArgs {
         let mut unmatched_txs = 0usize;
         let mut rejected_txs = 0usize;
         let mut failed_entries = 0usize;
-        let mut successful_replays = 0usize;
         let mut failed_replays = 0usize;
         let mut replayed = 0usize;
         let mut cumulative = BTreeMap::<String, ReplayObservation>::new();
@@ -310,7 +309,6 @@ impl FuzzCminArgs {
             }
             if entry_replayed > 0 {
                 replayed += entry_replayed;
-                successful_replays += entry_replayed;
             } else if entry_failed {
                 skipped_entries += 1;
                 failed_entries += 1;
@@ -381,9 +379,8 @@ impl FuzzCminArgs {
                 );
             }
             bail!(
-                "replayed 0 transactions from {corpus}; {successful_replays} successful replayed \
-                 transactions, {unreadable} unreadable entries, {empty} empty entries, \
-                 {rejected_txs} rejected transactions"
+                "replayed 0 transactions from {corpus}; {unreadable} unreadable entries, {empty} \
+                 empty entries"
             );
         }
 
