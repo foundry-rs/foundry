@@ -638,9 +638,6 @@ impl SymbolicExecutor {
             Some(true) => Ok((state.constraints.clone(), true)),
             Some(false) => Ok((state.constraints.clone(), false)),
             None => {
-                if condition.contains_gasleft() {
-                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-                }
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
                 let sat = self.solver.is_sat(&mut self.cx, &constraints)?;

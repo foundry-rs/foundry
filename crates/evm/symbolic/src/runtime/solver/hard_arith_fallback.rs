@@ -233,8 +233,14 @@ fn fallback_partial_model_satisfies_known_constraints(
 
 fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit_exprs(&mut |expr| {
-        if let SymExprKind::Var(var) = expr.kind() {
-            vars.insert(var.clone());
+        match expr.kind() {
+            SymExprKind::Var(var) => {
+                vars.insert(var.clone());
+            }
+            SymExprKind::GasLeft(id) => {
+                vars.insert(SymExpr::gas_left_symbol(*id));
+            }
+            _ => {}
         }
         ControlFlow::<()>::Continue(())
     });
