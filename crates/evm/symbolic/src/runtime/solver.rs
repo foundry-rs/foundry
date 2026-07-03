@@ -341,9 +341,6 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
     ) -> Result<SymbolicModel, SymbolicError> {
         self.model_queries += 1;
-        if constraints.iter().any(SymBoolExpr::contains_gasleft) {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
         let smt_constraints = normalize_constraints_for_solver(cx, constraints);
         let cache_key = smt_constraints.clone();
 
@@ -453,9 +450,6 @@ impl SmtLibSubprocessSolver {
         defer_hard_arith_without_witness: bool,
     ) -> Result<bool, SymbolicError> {
         self.sat_queries += 1;
-        if constraints.iter().any(SymBoolExpr::contains_gasleft) {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
         let smt_constraints = normalize_constraints_for_solver(cx, constraints);
         let cache_key = smt_constraints.clone();
         if let Some(result) = self.sat_cache.get(&cache_key) {
@@ -658,7 +652,7 @@ impl SmtLibSubprocessSolver {
         for var in vars {
             let _ = writeln!(smt, "(declare-fun {var} () (_ BitVec 256))");
         }
-        write_smt_assertions(&mut smt, smt_constraints);
+        write_smt_assertions(&mut smt, smt_constraints)?;
         smt.push_str("(check-sat)\n");
         if model {
             smt.push_str("(get-model)\n");

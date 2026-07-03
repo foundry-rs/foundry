@@ -15,10 +15,6 @@ impl SymbolicExecutor {
             None => {}
         }
 
-        if pass.contains_gasleft() {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
-
         let mut fail_constraints = state.constraints.clone();
         fail_constraints.push(fail);
         if self.solver.is_sat(&mut self.cx, &fail_constraints)? {

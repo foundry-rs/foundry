@@ -438,6 +438,10 @@ impl SymExpr {
         Self::from_kind(cx, SymExprKind::GasLeft(id))
     }
 
+    pub(in crate::runtime) fn gas_left_symbol(id: usize) -> Symbol {
+        Symbol::intern(&format!("gasleft_{id}"))
+    }
+
     pub(crate) fn not(cx: &mut SymCx, value: Self) -> Self {
         match value.kind() {
             SymExprKind::Const(value) => Self::constant(cx, !*value),
@@ -1045,9 +1049,7 @@ impl SymExpr {
         Ok(match self.kind() {
             SymExprKind::Const(value) => *value,
             SymExprKind::Var(var) => model.value(var.clone()).unwrap_or_default(),
-            SymExprKind::GasLeft(_) => {
-                return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-            }
+            SymExprKind::GasLeft(id) => model.value(Self::gas_left_symbol(*id)).unwrap_or_default(),
             SymExprKind::Keccak { len, bytes, .. } => {
                 let len = len.eval_model(model)?;
                 let Ok(len) = usize::try_from(len) else {
@@ -1109,6 +1111,15 @@ impl SymExpr {
                     *existing == value
                 } else {
                     model.insert(var.clone(), value);
+                    true
+                }
+            }
+            SymExprKind::GasLeft(id) => {
+                let var = Self::gas_left_symbol(*id);
+                if let Some(existing) = model.get(&var) {
+                    *existing == value
+                } else {
+                    model.insert(var, value);
                     true
                 }
             }
@@ -1210,6 +1221,9 @@ impl SymExpr {
             match expr.kind() {
                 SymExprKind::Var(var) | SymExprKind::Hash { name: var, .. } => {
                     vars.insert(var.clone());
+                }
+                SymExprKind::GasLeft(id) => {
+                    vars.insert(Self::gas_left_symbol(*id));
                 }
                 _ => {}
             }
