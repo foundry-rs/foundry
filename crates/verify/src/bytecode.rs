@@ -485,6 +485,25 @@ impl VerifyBytecodeArgs {
         }
 
         if self.ignore.is_none_or(|b| !b.is_runtime()) {
+            // Runtime verification only supports direct `CREATE` and the default `CREATE2`
+            // deployer. Bail before forking and replaying the block, which is slow against a
+            // remote node, since custom factory deployments can't be re-deployed anyway.
+            if let Some(to) = unsupported_runtime_factory(ConsensusTransaction::kind(&transaction))
+            {
+                let message = unsupported_runtime_factory_message(to);
+                if shell::is_json() {
+                    json_results.push(JsonResult {
+                        bytecode_type: BytecodeType::Runtime,
+                        match_type: None,
+                        message: Some(message),
+                    });
+                    sh_println!("{}", serde_json::to_string(&json_results)?)?;
+                } else {
+                    sh_warn!("{message}")?;
+                }
+                return Ok(());
+            }
+
             // Get contract creation block.
             let simulation_block = match self.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
@@ -630,9 +649,53 @@ impl VerifyBytecodeArgs {
     }
 }
 
+/// Returns the factory address when `kind` is a deployment that runtime verification does not
+/// support, i.e. a call to a contract that is not the default `CREATE2` deployer.
+///
+/// Runtime verification re-deploys the locally built bytecode, which is only possible for direct
+/// `CREATE` transactions and calls to the default `CREATE2` deployer.
+fn unsupported_runtime_factory(kind: TxKind) -> Option<Address> {
+    match kind {
+        TxKind::Call(to) if to != DEFAULT_CREATE2_DEPLOYER => Some(to),
+        _ => None,
+    }
+}
+
+/// Builds the message shown when runtime verification is skipped for a custom factory deployment.
+fn unsupported_runtime_factory_message(factory: Address) -> String {
+    format!(
+        "Runtime bytecode verification is not supported for this contract: its creation \
+         transaction calls custom factory {factory}. forge can only verify runtime bytecode for \
+         direct CREATE transactions and calls to the default CREATE2 deployer; skipping runtime \
+         bytecode verification."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_factory_support_boundary() {
+        // Direct CREATE is supported.
+        assert_eq!(unsupported_runtime_factory(TxKind::Create), None);
+        // A call to the default CREATE2 deployer is supported.
+        assert_eq!(unsupported_runtime_factory(TxKind::Call(DEFAULT_CREATE2_DEPLOYER)), None);
+        // A call to any other address (custom factory) is not supported.
+        let factory = Address::with_last_byte(0x42);
+        assert_eq!(unsupported_runtime_factory(TxKind::Call(factory)), Some(factory));
+    }
+
+    #[test]
+    fn unsupported_runtime_factory_message_is_actionable() {
+        let factory = Address::with_last_byte(0x42);
+        let message = unsupported_runtime_factory_message(factory);
+        assert!(message.contains(&factory.to_string()));
+        assert!(message.contains("Runtime bytecode verification is not supported"));
+        assert!(message.contains("skipping runtime bytecode verification"));
+        assert!(message.contains("direct CREATE"));
+        assert!(message.contains("default CREATE2 deployer"));
+    }
 
     #[test]
     fn can_parse_network() {
