@@ -1,119 +1,57 @@
 use super::*;
 
-/// Returns the `bool_contains_hard_arith` solver helper result.
-pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_hard_arith(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_hard_arith),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
-        }
+impl SymBoolExpr {
+    pub(crate) fn contains_hard_arith(&self) -> bool {
+        self.visit_bool(is_hard_arith_node)
+    }
+
+    fn contains_symbolic_hash(&self) -> bool {
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Hash { .. }))
     }
 }
 
-/// Returns the `expr_contains_hard_arith` solver helper result.
-pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
-    match expr {
-        Expr::Const(_)
-        | Expr::Var(_)
-        | Expr::GasLeft(_)
-        | Expr::Keccak { .. }
-        | Expr::Hash { .. } => false,
-        Expr::Not(value) => expr_contains_hard_arith(value),
-        Expr::Op(ExprOp::Mul, left, right) => expr_contains_var(left) && expr_contains_var(right),
-        Expr::Op(ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, left, right) => {
-            expr_contains_var(left) || expr_contains_var(right)
-        }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_var(left) || expr_contains_var(right) || expr_contains_var(modulus)
-        }
-        Expr::Op(_, left, right) => {
-            expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
-        }
-        Expr::Ite(cond, left, right) => {
-            bool_contains_hard_arith(cond)
-                || expr_contains_hard_arith(left)
-                || expr_contains_hard_arith(right)
-        }
+impl SymExpr {
+    #[cfg(test)]
+    pub(crate) fn contains_hard_arith(&self) -> bool {
+        self.visit_bool(is_hard_arith_node)
+    }
+
+    fn contains_var(&self) -> bool {
+        self.visit_bool(|expr| {
+            matches!(
+                expr.kind(),
+                SymExprKind::Var(_) | SymExprKind::Keccak { .. } | SymExprKind::Hash { .. }
+            )
+        })
     }
 }
 
-/// Returns whether the expression contains symbolic hash variables that local search should avoid.
-pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
-    match expr {
-        Expr::Hash { .. } => true,
-        Expr::Keccak { len, bytes, .. } => {
-            expr_contains_symbolic_hash(len) || bytes.iter().any(expr_contains_symbolic_hash)
+fn is_hard_arith_node(expr: &SymExpr) -> bool {
+    match expr.kind() {
+        SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+            left.contains_var() && right.contains_var()
         }
-        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => false,
-        Expr::Not(value) => expr_contains_symbolic_hash(value),
-        Expr::Op(_, left, right) => {
-            expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right)
+        SymExprKind::BinOp(
+            SymBinOp::UDiv | SymBinOp::URem | SymBinOp::SDiv | SymBinOp::SRem,
+            left,
+            right,
+        ) => left.contains_var() || right.contains_var(),
+        SymExprKind::TernOp(_, left, right, modulus) => {
+            left.contains_var() || right.contains_var() || modulus.contains_var()
         }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_symbolic_hash(left)
-                || expr_contains_symbolic_hash(right)
-                || expr_contains_symbolic_hash(modulus)
-        }
-        Expr::Ite(cond, left, right) => {
-            bool_contains_symbolic_hash(cond)
-                || expr_contains_symbolic_hash(left)
-                || expr_contains_symbolic_hash(right)
-        }
-    }
-}
-
-/// Returns whether the boolean expression contains symbolic hash variables.
-pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_symbolic_hash(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_symbolic_hash),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right)
-        }
-    }
-}
-
-/// Returns the `expr_contains_var` solver helper result.
-pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
-    match expr {
-        Expr::Const(_) => false,
-        Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => true,
-        Expr::GasLeft(_) => false,
-        Expr::Not(value) => expr_contains_var(value),
-        Expr::Op(_, left, right) => expr_contains_var(left) || expr_contains_var(right),
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_var(left) || expr_contains_var(right) || expr_contains_var(modulus)
-        }
-        Expr::Ite(cond, left, right) => {
-            bool_contains_var(cond) || expr_contains_var(left) || expr_contains_var(right)
-        }
-    }
-}
-
-/// Returns the `bool_contains_var` solver helper result.
-pub(crate) fn bool_contains_var(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_var(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_var),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_var(left) || expr_contains_var(right)
-        }
+        _ => false,
     }
 }
 
 /// Returns whether local hard-arithmetic search should run before asking the solver.
-pub(crate) fn constraints_prefer_hard_arith_fallback_first(constraints: &[BoolExpr]) -> bool {
-    if !constraints.iter().any(bool_contains_hard_arith)
-        || constraints.iter().any(bool_contains_symbolic_hash)
+pub(crate) fn constraints_prefer_hard_arith_fallback_first(constraints: &[SymBoolExpr]) -> bool {
+    if !constraints.iter().any(SymBoolExpr::contains_hard_arith)
+        || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
     {
         return false;
     }
 
-    let mut vars = BTreeSet::new();
+    let mut vars = SymbolicVars::default();
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
     }
@@ -121,22 +59,21 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(constraints: &[BoolEx
     !vars.is_empty() && vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS
 }
 
-/// Implements the `hard_arith_fallback_model` solver helper.
-pub(crate) fn hard_arith_fallback_model(
-    constraints: &[BoolExpr],
-) -> Option<BTreeMap<String, U256>> {
-    if !constraints.iter().any(bool_contains_hard_arith)
-        || constraints.iter().any(bool_contains_symbolic_hash)
+pub(crate) fn hard_arith_fallback_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+    if !constraints.iter().any(SymBoolExpr::contains_hard_arith)
+        || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
     {
         return None;
     }
 
-    let mut vars = BTreeSet::new();
-    let mut constants = BTreeSet::new();
+    let mut vars = SymbolicVars::default();
+    let mut constants = HashSet::<U256>::default();
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
         collect_bool_constants(constraint, &mut constants);
     }
+    let mut constants = constants.into_iter().collect::<Vec<_>>();
+    constants.sort_unstable();
     let vars = fallback_search_vars(vars);
     if vars.is_empty() || vars.len() > HARD_ARITH_FALLBACK_MAX_VARS {
         return None;
@@ -144,18 +81,18 @@ pub(crate) fn hard_arith_fallback_model(
 
     let candidates = vars
         .iter()
-        .map(|var| fallback_candidates_for_var(var, constraints, &constants))
+        .map(|var| fallback_candidates_for_var(var.as_str(), constraints, &constants))
         .collect::<Option<Vec<_>>>()?;
-    let searched_vars = vars.iter().cloned().collect::<BTreeSet<_>>();
+    let searched_vars = vars.iter().cloned().collect::<SymbolicVars>();
     let constraint_vars = constraints
         .iter()
         .map(|constraint| {
-            let mut vars = BTreeSet::new();
+            let mut vars = SymbolicVars::default();
             constraint.collect_vars(&mut vars);
             vars
         })
         .collect::<Vec<_>>();
-    let mut model = BTreeMap::new();
+    let mut model = SymbolicModel::default();
     let mut assignments = 0usize;
     let search = FallbackSearch {
         constraints,
@@ -167,14 +104,14 @@ pub(crate) fn hard_arith_fallback_model(
     search.model(0, &mut model, &mut assignments)
 }
 
-/// Selects direct symbolic inputs for bounded fallback search.
-pub(crate) fn fallback_search_vars(vars: BTreeSet<String>) -> Vec<String> {
+fn fallback_search_vars(vars: SymbolicVars) -> Vec<Symbol> {
     if vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
         return vars.into_iter().collect();
     }
 
     vars.into_iter()
         .filter(|var| {
+            let var = var.as_str();
             var.starts_with("calldata")
                 || var.starts_with("sequence")
                 || var.starts_with("create_address")
@@ -184,18 +121,17 @@ pub(crate) fn fallback_search_vars(vars: BTreeSet<String>) -> Vec<String> {
         .collect()
 }
 
-/// Returns deterministic local-search candidates for one symbolic variable.
-pub(crate) fn fallback_candidates_for_var(
+fn fallback_candidates_for_var(
     var: &str,
-    constraints: &[BoolExpr],
-    constants: &BTreeSet<U256>,
+    constraints: &[SymBoolExpr],
+    constants: &[U256],
 ) -> Option<Vec<U256>> {
     let hints = MaskHints::for_var(var, constraints);
     if (hints.one & hints.zero) != U256::ZERO {
         return None;
     }
 
-    let mut candidates = BTreeSet::new();
+    let mut candidates = HashSet::<U256>::default();
     for candidate in [
         U256::ZERO,
         U256::from(1),
@@ -225,26 +161,27 @@ pub(crate) fn fallback_candidates_for_var(
         }
     }
 
-    Some(candidates.into_iter().take(HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR).collect())
+    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+    candidates.sort_unstable();
+    candidates.truncate(HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR);
+    Some(candidates)
 }
 
-/// Holds immutable state for recursive hard-arithmetic fallback search.
 struct FallbackSearch<'a> {
-    constraints: &'a [BoolExpr],
-    constraint_vars: &'a [BTreeSet<String>],
-    searched_vars: &'a BTreeSet<String>,
-    vars: &'a [String],
+    constraints: &'a [SymBoolExpr],
+    constraint_vars: &'a [SymbolicVars],
+    searched_vars: &'a SymbolicVars,
+    vars: &'a [Symbol],
     candidates: &'a [Vec<U256>],
 }
 
 impl FallbackSearch<'_> {
-    /// Searches the bounded candidate product for a satisfying assignment.
     fn model(
         &self,
         index: usize,
-        model: &mut BTreeMap<String, U256>,
+        model: &mut SymbolicModel,
         assignments: &mut usize,
-    ) -> Option<BTreeMap<String, U256>> {
+    ) -> Option<SymbolicModel> {
         if index == self.vars.len() {
             *assignments += 1;
             if *assignments > HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS {
@@ -274,95 +211,52 @@ impl FallbackSearch<'_> {
     }
 }
 
-/// Checks all constraints before returning a hard-arithmetic fallback witness.
-pub(crate) fn fallback_model_satisfies_all_constraints(
-    constraints: &[BoolExpr],
-    model: &BTreeMap<String, U256>,
+fn fallback_model_satisfies_all_constraints(
+    constraints: &[SymBoolExpr],
+    model: &(impl SymbolicModelLookup + ?Sized),
 ) -> bool {
-    constraints.iter().all(|constraint| eval_bool_expr(constraint, model).unwrap_or(false))
+    constraints.iter().all(|constraint| constraint.eval_model(model).unwrap_or(false))
 }
 
-/// Checks constraints that depend only on already-assigned fallback variables.
-pub(crate) fn fallback_partial_model_satisfies_known_constraints(
-    constraints: &[BoolExpr],
-    constraint_vars: &[BTreeSet<String>],
-    searched_vars: &BTreeSet<String>,
-    model: &BTreeMap<String, U256>,
+fn fallback_partial_model_satisfies_known_constraints(
+    constraints: &[SymBoolExpr],
+    constraint_vars: &[SymbolicVars],
+    searched_vars: &SymbolicVars,
+    model: &SymbolicModel,
 ) -> bool {
     constraints.iter().zip(constraint_vars).all(|(constraint, vars)| {
         !vars.is_subset(searched_vars)
-            || !vars.iter().all(|var| model.contains_key(var))
-            || eval_bool_expr(constraint, model).unwrap_or(false)
+            || !vars.iter().all(|var| model.contains_name(var.clone()))
+            || constraint.eval_model(model).unwrap_or(false)
     })
 }
 
-/// Collects variables that local hard-arithmetic search can assign directly.
-pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut BTreeSet<String>) {
-    match expr {
-        BoolExpr::Const(_) => {}
-        BoolExpr::Not(value) => collect_bool_fallback_vars(value, vars),
-        BoolExpr::And(values) => {
-            for value in values {
-                collect_bool_fallback_vars(value, vars);
-            }
-        }
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-        }
-    }
-}
-
-/// Collects assignable variables from an expression, recursing into recomputable hashes.
-pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
-    match expr {
-        Expr::Const(_) | Expr::GasLeft(_) | Expr::Hash { .. } => {}
-        Expr::Var(var) => {
+fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
+    let _ = expr.visit_exprs(&mut |expr| {
+        if let SymExprKind::Var(var) = expr.kind() {
             vars.insert(var.clone());
         }
-        Expr::Keccak { len, bytes, .. } => {
-            collect_expr_fallback_vars(len, vars);
-            for byte in bytes {
-                collect_expr_fallback_vars(byte, vars);
-            }
-        }
-        Expr::Not(value) => collect_expr_fallback_vars(value, vars),
-        Expr::Op(_, left, right) => {
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-        }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-            collect_expr_fallback_vars(modulus, vars);
-        }
-        Expr::Ite(cond, left, right) => {
-            collect_bool_fallback_vars(cond, vars);
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-        }
-    }
+        ControlFlow::<()>::Continue(())
+    });
 }
 
-/// Implements the `fallback_single_var_model` solver helper.
-#[cfg(test)]
-pub(crate) fn fallback_single_var_model(
-    constraints: &[BoolExpr],
-) -> Option<BTreeMap<String, U256>> {
-    let mut vars = BTreeSet::new();
-    let mut constants = BTreeSet::new();
+pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+    let mut vars = SymbolicVars::default();
+    let mut constants = HashSet::<U256>::default();
     for constraint in constraints {
         constraint.collect_vars(&mut vars);
         collect_bool_constants(constraint, &mut constants);
     }
+    let mut constants = constants.into_iter().collect::<Vec<_>>();
+    constants.sort_unstable();
 
     let var = if vars.len() == 1 { vars.iter().next()?.clone() } else { return None };
-    let hints = MaskHints::for_var(&var, constraints);
+    let hints = MaskHints::for_var(var.as_str(), constraints);
     if (hints.one & hints.zero) != U256::ZERO {
         return None;
     }
 
-    let mut candidates = BTreeSet::new();
+    let mut candidates = HashSet::<U256>::default();
     for candidate in [
         U256::ZERO,
         U256::from(1),
@@ -389,10 +283,12 @@ pub(crate) fn fallback_single_var_model(
         }
     }
 
+    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+    candidates.sort_unstable();
     for candidate in candidates {
-        let model = BTreeMap::from([(var.clone(), candidate)]);
-        if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false))
-        {
+        let mut model = SymbolicModel::default();
+        model.insert(var.clone(), candidate);
+        if constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(false)) {
             return Some(model);
         }
     }
@@ -400,66 +296,27 @@ pub(crate) fn fallback_single_var_model(
     None
 }
 
-/// Applies the `push_fallback_candidate` solver helper.
-pub(crate) fn push_fallback_candidate(
-    candidates: &mut BTreeSet<U256>,
-    candidate: U256,
-    hints: MaskHints,
-) {
+fn push_fallback_candidate(candidates: &mut HashSet<U256>, candidate: U256, hints: MaskHints) {
     candidates.insert((candidate | hints.one) & !hints.zero);
 }
 
-/// Implements the `collect_bool_constants` solver helper.
-pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut BTreeSet<U256>) {
-    match expr {
-        BoolExpr::Const(_) => {}
-        BoolExpr::Not(value) => collect_bool_constants(value, constants),
-        BoolExpr::And(values) => {
-            for value in values {
-                collect_bool_constants(value, constants);
-            }
-        }
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-    }
-}
-
-/// Implements the `collect_expr_constants` solver helper.
-pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut BTreeSet<U256>) {
-    match expr {
-        Expr::Const(value) => {
+fn collect_bool_constants(expr: &SymBoolExpr, constants: &mut HashSet<U256>) {
+    let _ = expr.visit_exprs(&mut |expr| {
+        if let SymExprKind::Const(value) = expr.kind() {
             constants.insert(*value);
         }
-        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => {}
-        Expr::Not(value) => collect_expr_constants(value, constants),
-        Expr::Op(_, left, right) => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-            collect_expr_constants(modulus, constants);
-        }
-        Expr::Ite(cond, left, right) => {
-            collect_bool_constants(cond, constants);
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-    }
+        ControlFlow::<()>::Continue(())
+    });
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct MaskHints {
-    pub(crate) one: U256,
-    pub(crate) zero: U256,
+struct MaskHints {
+    one: U256,
+    zero: U256,
 }
 
 impl MaskHints {
-    /// Implements the `for_var` solver helper.
-    pub(crate) fn for_var(var: &str, constraints: &[BoolExpr]) -> Self {
+    fn for_var(var: &str, constraints: &[SymBoolExpr]) -> Self {
         let mut hints = Self::default();
         for constraint in constraints {
             hints.apply_bool(var, constraint, false);
@@ -467,23 +324,23 @@ impl MaskHints {
         hints
     }
 
-    /// Applies the `apply_bool` solver helper.
-    pub(crate) fn apply_bool(&mut self, var: &str, expr: &BoolExpr, inverted: bool) {
-        match expr {
-            BoolExpr::Const(_) => {}
-            BoolExpr::Not(value) => self.apply_bool(var, value, !inverted),
-            BoolExpr::And(values) if !inverted => {
-                for value in values {
+    fn apply_bool(&mut self, var: &str, expr: &SymBoolExpr, inverted: bool) {
+        match expr.kind() {
+            SymBoolExprKind::Const(_) => {}
+            SymBoolExprKind::Not(value) => self.apply_bool(var, value, !inverted),
+            SymBoolExprKind::And(values) if !inverted => {
+                for value in values.iter() {
                     self.apply_bool(var, value, false);
                 }
             }
-            BoolExpr::Eq(left, right) => self.apply_equality(var, left, right, inverted),
-            BoolExpr::Cmp(_, _, _) | BoolExpr::And(_) => {}
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                self.apply_equality(var, left, right, inverted)
+            }
+            SymBoolExprKind::Cmp(_, _, _) | SymBoolExprKind::And(_) => {}
         }
     }
 
-    /// Applies the `apply_equality` solver helper.
-    pub(crate) fn apply_equality(&mut self, var: &str, left: &Expr, right: &Expr, inverted: bool) {
+    fn apply_equality(&mut self, var: &str, left: &SymExpr, right: &SymExpr, inverted: bool) {
         if let Some(mask) =
             zero_mask_equality(var, left, right).or_else(|| zero_mask_equality(var, right, left))
         {
@@ -496,15 +353,15 @@ impl MaskHints {
     }
 }
 
-/// Implements the `zero_mask_equality` solver helper.
-pub(crate) fn zero_mask_equality(var: &str, masked: &Expr, zero: &Expr) -> Option<U256> {
-    if !matches!(zero, Expr::Const(value) if value.is_zero()) {
+fn zero_mask_equality(var: &str, masked: &SymExpr, zero: &SymExpr) -> Option<U256> {
+    if !zero.as_const().is_some_and(|value| value.is_zero()) {
         return None;
     }
-    match masked {
-        Expr::Op(ExprOp::And, left, right) => match (left.as_ref(), right.as_ref()) {
-            (Expr::Var(name), Expr::Const(mask)) | (Expr::Const(mask), Expr::Var(name))
-                if name == var =>
+    match masked.kind() {
+        SymExprKind::BinOp(SymBinOp::And, left, right) => match (left.kind(), right.kind()) {
+            (SymExprKind::Var(name), SymExprKind::Const(mask))
+            | (SymExprKind::Const(mask), SymExprKind::Var(name))
+                if name.as_str() == var =>
             {
                 Some(*mask)
             }
