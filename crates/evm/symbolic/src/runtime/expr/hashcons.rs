@@ -50,7 +50,7 @@ impl<T> Clone for HashConsed<T> {
 
 impl<T> PartialEq for HashConsed<T> {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
+        ptr::addr_eq(Arc::as_ptr(&self.inner), Arc::as_ptr(&other.inner))
     }
 }
 
