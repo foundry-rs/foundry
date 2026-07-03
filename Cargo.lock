@@ -4889,6 +4889,7 @@ dependencies = [
  "dunce",
  "evm-disassembler",
  "eyre",
+ "flate2",
  "forge-doc",
  "forge-fmt",
  "forge-lint",
