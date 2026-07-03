@@ -20,7 +20,7 @@ use std::ops::Deref;
 /// This is a helper that carries the `impersonated` sender so that the right hash
 /// can be created.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MaybeImpersonatedTransaction<T = FoundryTxEnvelope> {
+pub struct MaybeImpersonatedTransaction<T> {
     transaction: T,
     impersonated_sender: Option<Address>,
 }
@@ -33,17 +33,17 @@ impl<T: Typed2718> Typed2718 for MaybeImpersonatedTransaction<T> {
 
 impl<T> MaybeImpersonatedTransaction<T> {
     /// Creates a new wrapper for the given transaction
-    pub fn new(transaction: T) -> Self {
+    pub const fn new(transaction: T) -> Self {
         Self { transaction, impersonated_sender: None }
     }
 
     /// Creates a new impersonated transaction wrapper using the given sender
-    pub fn impersonated(transaction: T, impersonated_sender: Address) -> Self {
+    pub const fn impersonated(transaction: T, impersonated_sender: Address) -> Self {
         Self { transaction, impersonated_sender: Some(impersonated_sender) }
     }
 
     /// Returns whether the transaction is impersonated
-    pub fn is_impersonated(&self) -> bool {
+    pub const fn is_impersonated(&self) -> bool {
         self.impersonated_sender.is_some()
     }
 
@@ -93,14 +93,14 @@ impl<T: Encodable> Encodable for MaybeImpersonatedTransaction<T> {
     }
 }
 
-impl From<MaybeImpersonatedTransaction> for FoundryTxEnvelope {
-    fn from(value: MaybeImpersonatedTransaction) -> Self {
+impl From<MaybeImpersonatedTransaction<Self>> for FoundryTxEnvelope {
+    fn from(value: MaybeImpersonatedTransaction<Self>) -> Self {
         value.transaction
     }
 }
 
-impl From<FoundryTxEnvelope> for MaybeImpersonatedTransaction {
-    fn from(value: FoundryTxEnvelope) -> Self {
+impl<T> From<T> for MaybeImpersonatedTransaction<T> {
+    fn from(value: T) -> Self {
         Self::new(value)
     }
 }
@@ -127,23 +127,34 @@ impl<T> Deref for MaybeImpersonatedTransaction<T> {
 
 /// Queued transaction
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingTransaction {
+pub struct PendingTransaction<T> {
     /// The actual transaction
-    pub transaction: MaybeImpersonatedTransaction,
+    pub transaction: MaybeImpersonatedTransaction<T>,
     /// the recovered sender of this transaction
     sender: Address,
     /// hash of `transaction`, so it can easily be reused with encoding and hashing again
     hash: TxHash,
 }
 
-impl PendingTransaction {
-    pub fn new(transaction: FoundryTxEnvelope) -> Result<Self, RecoveryError> {
-        let sender = transaction.recover()?;
-        let hash = transaction.hash();
-        Ok(Self { transaction: MaybeImpersonatedTransaction::new(transaction), sender, hash })
+impl<T> PendingTransaction<T> {
+    pub const fn hash(&self) -> &TxHash {
+        &self.hash
     }
 
-    pub fn with_impersonated(transaction: FoundryTxEnvelope, sender: Address) -> Self {
+    pub const fn sender(&self) -> &Address {
+        &self.sender
+    }
+}
+
+impl<T: SignerRecoverable + TxHashRef + Encodable> PendingTransaction<T> {
+    pub fn new(transaction: T) -> Result<Self, RecoveryError> {
+        let transaction = MaybeImpersonatedTransaction::new(transaction);
+        let sender = transaction.recover()?;
+        let hash = transaction.hash();
+        Ok(Self { transaction, sender, hash })
+    }
+
+    pub fn with_impersonated(transaction: T, sender: Address) -> Self {
         let transaction = MaybeImpersonatedTransaction::impersonated(transaction, sender);
         let hash = transaction.hash();
         Self { transaction, sender, hash }
@@ -151,7 +162,7 @@ impl PendingTransaction {
 
     /// Converts a [`MaybeImpersonatedTransaction`] into a [`PendingTransaction`].
     pub fn from_maybe_impersonated(
-        transaction: MaybeImpersonatedTransaction,
+        transaction: MaybeImpersonatedTransaction<T>,
     ) -> Result<Self, RecoveryError> {
         if let Some(impersonated) = transaction.impersonated_sender {
             Ok(Self::with_impersonated(transaction.transaction, impersonated))
@@ -159,17 +170,11 @@ impl PendingTransaction {
             Self::new(transaction.transaction)
         }
     }
+}
 
+impl<T: Transaction> PendingTransaction<T> {
     pub fn nonce(&self) -> u64 {
         self.transaction.nonce()
-    }
-
-    pub fn hash(&self) -> &TxHash {
-        &self.hash
-    }
-
-    pub fn sender(&self) -> &Address {
-        &self.sender
     }
 }
 

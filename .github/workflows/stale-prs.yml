@@ -1,0 +1,32 @@
+# Marks pull requests as stale.
+
+name: stale PRs
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "30 1 * * *"
+
+permissions: {}
+
+jobs:
+  stale-prs:
+    if: github.repository == 'foundry-rs/foundry'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@eb5cf3af3ac0a1aa4c9c45633dd1ae542a27a899 # v10.3.0
+        with:
+          days-before-issue-stale: -1
+          days-before-issue-close: -1
+          days-before-pr-stale: 14
+          days-before-pr-close: 7
+          stale-pr-label: "stale"
+          exempt-pr-labels: "stop-stale"
+          stale-pr-message: "This pull request is stale because it has been open for 14 days with no activity. It will be closed in 7 days if there is no further activity."
+          close-pr-message: "This pull request was closed because it has been inactive for 7 days since being marked as stale."
+          labels-to-add-when-unstale: "stop-stale"
+          exempt-all-milestones: true
+          exempt-all-assignees: true

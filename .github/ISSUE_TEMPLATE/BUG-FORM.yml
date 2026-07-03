@@ -10,6 +10,7 @@ body:
 
         Thanks for taking the time to report this bug!
   - type: dropdown
+    id: component
     attributes:
       label: Component
       description: What component is the bug in?
@@ -52,6 +53,7 @@ body:
         - macOS (Apple Silicon)
         - Linux
   - type: textarea
+    id: description
     attributes:
       label: Describe the bug
       description: Please include relevant Solidity snippets as well if relevant.

@@ -1,5 +1,7 @@
 use crate::eth::error::BlockchainError;
-use alloy_consensus::{Sealed, SignableTransaction};
+#[cfg(feature = "optimism")]
+use alloy_consensus::Sealed;
+use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::{Network, TxSignerSync};
 use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
@@ -8,13 +10,9 @@ use alloy_signer_local::PrivateKeySigner;
 use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
 use tempo_primitives::TempoSignature;
 
-/// A transaction signer, generic over the network.
-///
-/// Modelled after alloy's `NetworkWallet<N>`: the
-/// [`sign_transaction_from`](Signer::sign_transaction_from) method takes an
-/// unsigned transaction and returns the fully-signed envelope in one step.
+/// Network-agnostic signing: messages, typed data, and hashes.
 #[async_trait::async_trait]
-pub trait Signer<N: Network>: Send + Sync {
+pub trait MessageSigner: Send + Sync {
     /// returns the available accounts for this signer
     fn accounts(&self) -> Vec<Address>;
 
@@ -36,7 +34,14 @@ pub trait Signer<N: Network>: Send + Sync {
 
     /// Signs the given hash.
     async fn sign_hash(&self, address: Address, hash: B256) -> Result<Signature, BlockchainError>;
+}
 
+/// A transaction signer, generic over the network.
+///
+/// Modelled after alloy's `NetworkWallet<N>`: the
+/// [`sign_transaction_from`](Signer::sign_transaction_from) method takes an
+/// unsigned transaction and returns the fully-signed envelope in one step.
+pub trait Signer<N: Network>: MessageSigner {
     /// Signs an unsigned transaction and returns the signed envelope.
     ///
     /// Mirrors `NetworkWallet::sign_transaction_from`.
@@ -62,7 +67,7 @@ impl DevSigner {
 }
 
 #[async_trait::async_trait]
-impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
+impl MessageSigner for DevSigner {
     fn accounts(&self) -> Vec<Address> {
         self.addresses.clone()
     }
@@ -97,7 +102,9 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
 
         Ok(signer.sign_hash(&hash).await?)
     }
+}
 
+impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     fn sign_transaction_from(
         &self,
         sender: &Address,
@@ -125,8 +132,13 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
                 let sig = signer.sign_transaction_sync(&mut t)?;
                 FoundryTxEnvelope::Eip4844(t.into_signed(sig))
             }
+            #[cfg(feature = "optimism")]
             FoundryTypedTx::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
+            }
+            #[cfg(feature = "optimism")]
+            FoundryTypedTx::PostExec(_) => {
+                unreachable!("op post-exec txs should not be signed")
             }
             FoundryTypedTx::Tempo(mut t) => {
                 let sig = signer.sign_transaction_sync(&mut t)?;
@@ -137,18 +149,26 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     }
 }
 
-/// Builds a TxEnvelope from UnsignedTx with a zeroed signature.
+/// Builds a TxEnvelope from UnsignedTx with r=1, s=1 dummy signature.
 ///
 /// Used for impersonated accounts, where transactions are accepted without a valid signature.
+/// The signature uses r=1, s=1 (not zero) because go-ethereum and other clients reject transactions
+/// where r or s are zero with "invalid transaction v, r, s values".
 pub fn build_impersonated(typed_tx: FoundryTypedTx) -> FoundryTxEnvelope {
-    let signature = Signature::new(Default::default(), Default::default(), false);
+    let signature =
+        Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false);
     match typed_tx {
         FoundryTypedTx::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
         FoundryTypedTx::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),
         FoundryTypedTx::Eip1559(tx) => FoundryTxEnvelope::Eip1559(tx.into_signed(signature)),
         FoundryTypedTx::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
         FoundryTypedTx::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
+        #[cfg(feature = "optimism")]
         FoundryTypedTx::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
+        #[cfg(feature = "optimism")]
+        FoundryTypedTx::PostExec(_) => {
+            unreachable!("op post-exec txs should not be impersonated")
+        }
         FoundryTypedTx::Tempo(tx) => {
             let tempo_sig: TempoSignature = signature.into();
             FoundryTxEnvelope::Tempo(tx.into_signed(tempo_sig))

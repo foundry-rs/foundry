@@ -67,7 +67,7 @@ impl LintArgs {
                         inputs
                             .extend(foundry_compilers::utils::source_files(path, SOLC_EXTENSIONS));
                     } else if path.is_sol() {
-                        inputs.push(path.to_path_buf());
+                        inputs.push(path.clone());
                     } else {
                         warn!("cannot process path {}", path.display());
                     }
@@ -77,7 +77,7 @@ impl LintArgs {
         };
 
         if input.is_empty() {
-            sh_println!("nothing to lint")?;
+            sh_status!("nothing to lint")?;
             return Ok(());
         }
 
@@ -105,7 +105,7 @@ impl LintArgs {
             .with_lints(include)
             .without_lints(exclude)
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
-            .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
+            .with_lint_specific(&config.lint.lint_specific);
 
         let output = ProjectCompiler::new().files(input.iter().cloned()).compile(&project)?;
         let solar_sources =
@@ -116,8 +116,10 @@ impl LintArgs {
 
         // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
         // compiler, we should reuse the parser from the project output.
+        let mut opts = solar::interface::config::Opts::default();
+        opts.unstable.typeck = true;
         let mut compiler = solar::sema::Compiler::new(
-            solar::interface::Session::builder().with_stderr_emitter().build(),
+            solar::interface::Session::builder().opts(opts).with_stderr_emitter().build(),
         );
 
         // Load the solar-compatible sources to the pcx before linting

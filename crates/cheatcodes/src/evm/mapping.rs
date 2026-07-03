@@ -2,44 +2,45 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolValue;
 use foundry_common::mapping_slots::MappingSlots;
+use foundry_evm_core::evm::FoundryEvmNetwork;
 
-impl<CTX> Cheatcode<CTX> for startMappingRecordingCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+impl Cheatcode for startMappingRecordingCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.mapping_slots.get_or_insert_default();
         Ok(Default::default())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for stopMappingRecordingCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+impl Cheatcode for stopMappingRecordingCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
         state.mapping_slots = None;
         Ok(Default::default())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getMappingLengthCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+impl Cheatcode for getMappingLengthCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { target, mappingSlot } = self;
         let result = slot_child(state, target, mappingSlot).map(Vec::len).unwrap_or(0);
         Ok((result as u64).abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getMappingSlotAtCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+impl Cheatcode for getMappingSlotAtCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { target, mappingSlot, idx } = self;
         let result = slot_child(state, target, mappingSlot)
-            .and_then(|set| set.get(idx.saturating_to::<usize>()))
+            .and_then(|set| usize::try_from(*idx).ok().and_then(|idx| set.get(idx)))
             .copied()
             .unwrap_or_default();
         Ok(result.abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for getMappingKeyAndParentOfCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+impl Cheatcode for getMappingKeyAndParentOfCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { target, elementSlot: slot } = self;
         let mut found = false;
         let mut key = &B256::ZERO;
@@ -59,12 +60,15 @@ impl<CTX> Cheatcode<CTX> for getMappingKeyAndParentOfCall {
     }
 }
 
-fn mapping_slot<'a>(state: &'a Cheatcodes, target: &'a Address) -> Option<&'a MappingSlots> {
+fn mapping_slot<'a, FEN: FoundryEvmNetwork>(
+    state: &'a Cheatcodes<FEN>,
+    target: &'a Address,
+) -> Option<&'a MappingSlots> {
     state.mapping_slots.as_ref()?.get(target)
 }
 
-fn slot_child<'a>(
-    state: &'a Cheatcodes,
+fn slot_child<'a, FEN: FoundryEvmNetwork>(
+    state: &'a Cheatcodes<FEN>,
     target: &'a Address,
     slot: &'a B256,
 ) -> Option<&'a Vec<B256>> {

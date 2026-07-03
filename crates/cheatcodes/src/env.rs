@@ -3,13 +3,14 @@
 use crate::{Cheatcode, Cheatcodes, Error, Result, Vm::*, string};
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;
+use foundry_evm_core::evm::FoundryEvmNetwork;
 use std::{env, sync::OnceLock};
 
 /// Stores the forge execution context for the duration of the program.
 pub static FORGE_CONTEXT: OnceLock<ForgeContext> = OnceLock::new();
 
-impl<CTX> Cheatcode<CTX> for setEnvCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for setEnvCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name: key, value } = self;
         if key.is_empty() {
             Err(fmt_err!("environment variable key can't be empty"))
@@ -28,8 +29,8 @@ impl<CTX> Cheatcode<CTX> for setEnvCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for resolveEnvCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for resolveEnvCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { input } = self;
         let resolved = foundry_config::resolve::interpolate(input)
             .map_err(|e| fmt_err!("failed to resolve env var: {e}"))?;
@@ -37,226 +38,226 @@ impl<CTX> Cheatcode<CTX> for resolveEnvCall {
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envExistsCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envExistsCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name } = self;
         Ok(env::var(name).is_ok().abi_encode())
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBool_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envBool_0Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Bool)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envUint_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envUint_0Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Uint(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envInt_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envInt_0Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Int(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envAddress_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envAddress_0Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Address)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBytes32_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envBytes32_0Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::FixedBytes(32))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envString_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envString_0Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::String)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBytes_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envBytes_0Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name } = self;
         env(name, &DynSolType::Bytes)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBool_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envBool_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Bool)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envUint_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envUint_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Uint(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envInt_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envInt_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Int(256))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envAddress_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envAddress_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Address)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBytes32_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envBytes32_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::FixedBytes(32))
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envString_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envString_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::String)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for envBytes_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envBytes_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim } = self;
         env_array(name, delim, &DynSolType::Bytes)
     }
 }
 
 // bool
-impl<CTX> Cheatcode<CTX> for envOr_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_0Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Bool)
     }
 }
 
 // uint256
-impl<CTX> Cheatcode<CTX> for envOr_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Uint(256))
     }
 }
 
 // int256
-impl<CTX> Cheatcode<CTX> for envOr_2Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_2Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Int(256))
     }
 }
 
 // address
-impl<CTX> Cheatcode<CTX> for envOr_3Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_3Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Address)
     }
 }
 
 // bytes32
-impl<CTX> Cheatcode<CTX> for envOr_4Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_4Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::FixedBytes(32))
     }
 }
 
 // string
-impl<CTX> Cheatcode<CTX> for envOr_5Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_5Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::String)
     }
 }
 
 // bytes
-impl<CTX> Cheatcode<CTX> for envOr_6Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_6Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, defaultValue } = self;
         env_default(name, defaultValue, &DynSolType::Bytes)
     }
 }
 
 // bool[]
-impl<CTX> Cheatcode<CTX> for envOr_7Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_7Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Bool)
     }
 }
 
 // uint256[]
-impl<CTX> Cheatcode<CTX> for envOr_8Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_8Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Uint(256))
     }
 }
 
 // int256[]
-impl<CTX> Cheatcode<CTX> for envOr_9Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_9Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Int(256))
     }
 }
 
 // address[]
-impl<CTX> Cheatcode<CTX> for envOr_10Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_10Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::Address)
     }
 }
 
 // bytes32[]
-impl<CTX> Cheatcode<CTX> for envOr_11Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_11Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::FixedBytes(32))
     }
 }
 
 // string[]
-impl<CTX> Cheatcode<CTX> for envOr_12Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_12Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim, defaultValue } = self;
         env_array_default(name, delim, defaultValue, &DynSolType::String)
     }
 }
 
 // bytes[]
-impl<CTX> Cheatcode<CTX> for envOr_13Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for envOr_13Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { name, delim, defaultValue } = self;
-        let default = defaultValue.to_vec();
+        let default = defaultValue.clone();
         env_array_default(name, delim, &default, &DynSolType::Bytes)
     }
 }
 
-impl<CTX> Cheatcode<CTX> for isContextCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+impl Cheatcode for isContextCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { context } = self;
         Ok((FORGE_CONTEXT.get() == Some(context)).abi_encode())
     }

@@ -40,14 +40,14 @@ fn should_lint_revert(args: &solar::ast::CallArgs<'_>) -> bool {
     })
 }
 
-/// Checks if a require call should be linted: has string literal as second argument.
+/// Checks if a require call should be linted: bare `require(condition)` or string literal reason.
 fn should_lint_require(args: &solar::ast::CallArgs<'_>) -> bool {
     matches!(&args.kind, CallArgsKind::Unnamed(arg_exprs) if {
-        arg_exprs.get(1).is_some_and(|e| is_string_literal(e))
+        arg_exprs.len() == 1 || arg_exprs.get(1).is_some_and(|e| is_string_literal(e))
     })
 }
 
 /// Checks if an expression is a string literal.
-fn is_string_literal(expr: &Expr<'_>) -> bool {
+const fn is_string_literal(expr: &Expr<'_>) -> bool {
     matches!(&expr.kind, ExprKind::Lit(lit, _) if matches!(lit.kind, solar::ast::LitKind::Str(..)))
 }

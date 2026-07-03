@@ -39,8 +39,11 @@ pub struct TermSettings {
 
 impl TermSettings {
     /// Returns a new [`TermSettings`], configured from the current environment.
+    ///
+    /// Progress is written to stderr (see [`Spinner::tick`]), so it is enabled only
+    /// when stderr is a terminal.
     pub fn from_env() -> Self {
-        Self { indicate_progress: std::io::stdout().is_terminal() }
+        Self { indicate_progress: std::io::stderr().is_terminal() }
     }
 }
 
@@ -74,8 +77,10 @@ impl Spinner {
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        let _ = sh_print!("\r\x1B[2K\r{indicator} {}", self.message);
-        io::stdout().flush().unwrap();
+        // Progress is a diagnostic, not data: write to stderr so stdout stays clean
+        // for machine-readable output.
+        let _ = sh_eprint!("\r\x1B[2K\r{indicator} {}", self.message);
+        io::stderr().flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
     }
@@ -110,17 +115,27 @@ impl SpinnerReporter {
             .name("spinner".into())
             .spawn(move || {
                 let mut spinner = Spinner::new("Compiling...");
+                // Only emit the trailing newline (so past messages aren't overwritten by
+                // future ticks) when the spinner is actually painting to stderr. When
+                // `no_progress` is set the spinner is a no-op, so we shouldn't pollute
+                // stderr with blank lines either.
+                let emits_progress = !spinner.no_progress;
                 loop {
                     spinner.tick();
                     match rx.try_recv() {
                         Ok(SpinnerMsg::Msg(msg)) => {
                             spinner.message(msg);
-                            // new line so past messages are not overwritten
-                            let _ = sh_println!();
+                            if emits_progress {
+                                // new line so past messages are not overwritten
+                                // (matches the spinner channel: stderr)
+                                let _ = sh_eprintln!();
+                            }
                         }
                         Ok(SpinnerMsg::Shutdown(ack)) => {
-                            // end with a newline
-                            let _ = sh_println!();
+                            if emits_progress {
+                                // end with a newline (matches the spinner channel: stderr)
+                                let _ = sh_eprintln!();
+                            }
                             let _ = ack.send(());
                             break;
                         }

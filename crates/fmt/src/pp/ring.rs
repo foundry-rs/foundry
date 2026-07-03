@@ -11,7 +11,7 @@ pub(crate) struct RingBuffer<T> {
 }
 
 impl<T> RingBuffer<T> {
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { data: VecDeque::new(), offset: 0 }
     }
 

@@ -1,25 +1,33 @@
-use crate::EnvMut;
+use crate::{EvmEnv, FoundryBlock};
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, private::alloy_eips::eip7840::BlobParams};
 use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::{AnyRpcTransaction, TransactionResponse};
-use alloy_primitives::{B256, ChainId, Selector, TxKind, U256};
+use alloy_primitives::{B256, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
-use alloy_rpc_types::TransactionRequest;
 use foundry_config::NamedChain;
 use foundry_evm_networks::NetworkConfigs;
-use revm::primitives::{
-    eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-    hardfork::SpecId,
-};
+use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
 #[inline(always)]
-pub fn cold_path() {
+pub const fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
+}
+
+/// Constructs a generic [`FoundryBlock`] from a block header.
+pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockHeader) -> BLOCK {
+    let mut block = BLOCK::default();
+    block.set_number(U256::from(header.number()));
+    block.set_beneficiary(header.beneficiary());
+    block.set_timestamp(U256::from(header.timestamp()));
+    block.set_difficulty(header.difficulty());
+    block.set_prevrandao(header.mix_hash());
+    block.set_basefee(header.base_fee_per_gas().unwrap_or_default());
+    block.set_gas_limit(header.gas_limit());
+    block
 }
 
 /// Depending on the configured chain id and block number this should apply any specific changes
@@ -27,22 +35,29 @@ pub fn cold_path() {
 /// - checks for prevrandao mixhash after merge
 /// - applies chain specifics: on Arbitrum `block.number` is the L1 block
 ///
-/// Should be called with proper chain id (retrieved from provider if not provided).
-pub fn apply_chain_and_block_specific_env_changes<N: Network>(
-    env: EnvMut<'_>,
+/// Should be called with proper chain id (retrieved from provider if not provided), works with any
+/// [`FoundryBlock`] type.
+pub fn apply_chain_and_block_specific_env_changes<
+    N: Network,
+    SPEC: Into<SpecId> + Copy,
+    BLOCK: FoundryBlock,
+>(
+    evm_env: &mut EvmEnv<SPEC, BLOCK>,
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
-    use NamedChain::*;
+    use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
 
-    if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
+    if let Ok(chain) = NamedChain::try_from(evm_env.cfg_env.chain_id) {
         let block_number = block.header().number();
 
         match chain {
             Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number >= 15_537_351u64 {
-                    env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
+                    evm_env
+                        .block_env
+                        .set_difficulty(evm_env.block_env.prevrandao().unwrap_or_default().into());
                 }
 
                 return;
@@ -54,7 +69,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 // (`mixHash`) is always zero, even though bsc adopts the newer EVM
                 // specification. This will confuse revm and causes emulation
                 // failure.
-                env.block.prevrandao = Some(env.block.difficulty.into());
+                evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
                 return;
             }
             c if c.is_arbitrum() => {
@@ -67,21 +82,23 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                         serde_json::from_value::<U256>(l1_block_number).ok()
                     })
                 {
-                    env.block.number = l1_block_number.to();
+                    evm_env.block_env.set_number(l1_block_number);
                 }
             }
             _ => {}
         }
     }
 
-    if configs.bypass_prevrandao(env.cfg.chain_id) && env.block.prevrandao.is_none() {
+    if configs.bypass_prevrandao(evm_env.cfg_env.chain_id)
+        && evm_env.block_env.prevrandao().is_none()
+    {
         // <https://github.com/foundry-rs/foundry/issues/4232>
-        env.block.prevrandao = Some(B256::random());
+        evm_env.block_env.set_prevrandao(Some(B256::random()));
     }
 
     // if difficulty is `0` we assume it's past merge
     if block.header().difficulty().is_zero() {
-        env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
+        evm_env.block_env.set_difficulty(evm_env.block_env.prevrandao().unwrap_or_default().into());
     }
 }
 
@@ -116,13 +133,22 @@ pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u
     get_blob_params(chain_id, timestamp).update_fraction as u64
 }
 
+/// Returns the blob params based on the spec id.
+pub fn get_blob_params_by_spec_id(spec: SpecId) -> BlobParams {
+    if spec >= SpecId::AMSTERDAM {
+        BlobParams::bpo2()
+    } else if spec >= SpecId::OSAKA {
+        BlobParams::osaka()
+    } else if spec >= SpecId::PRAGUE {
+        BlobParams::prague()
+    } else {
+        BlobParams::cancun()
+    }
+}
+
 /// Returns the blob base fee update fraction based on the spec id.
 pub fn get_blob_base_fee_update_fraction_by_spec_id(spec: SpecId) -> u64 {
-    if spec >= SpecId::PRAGUE {
-        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-    } else {
-        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
-    }
+    get_blob_params_by_spec_id(spec).update_fraction as u64
 }
 
 /// Given an ABI and selector, it tries to find the respective function.
@@ -136,66 +162,19 @@ pub fn get_function<'a>(
         .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
 }
 
-/// Configures the env for the given RPC transaction.
-/// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
-pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &AnyRpcTransaction) {
-    let from = tx.from();
-    if let Some(tx) = tx.as_envelope() {
-        configure_tx_req_env(
-            env,
-            &TransactionRequest::from_transaction_with_sender(tx.clone(), from),
-        )
-        .expect("cannot fail");
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blob_params_by_spec_id_tracks_latest_known_blob_schedule() {
+        assert_eq!(get_blob_params_by_spec_id(SpecId::CANCUN), BlobParams::cancun());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::PRAGUE), BlobParams::prague());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::OSAKA), BlobParams::osaka());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::AMSTERDAM), BlobParams::bpo2());
+        assert_eq!(
+            get_blob_base_fee_update_fraction_by_spec_id(SpecId::AMSTERDAM),
+            BlobParams::bpo2().update_fraction as u64
+        );
     }
-}
-
-/// Configures the env for the given RPC transaction request.
-pub fn configure_tx_req_env(env: &mut EnvMut<'_>, tx: &TransactionRequest) -> eyre::Result<()> {
-    // If no transaction type is provided, we need to infer it from the other fields.
-    let tx_type = tx.transaction_type.unwrap_or_else(|| tx.minimal_tx_type() as u8);
-    env.tx.tx_type = tx_type;
-
-    let TransactionRequest {
-        nonce,
-        from,
-        to,
-        value,
-        gas_price,
-        gas,
-        max_fee_per_gas,
-        max_priority_fee_per_gas,
-        max_fee_per_blob_gas,
-        ref input,
-        chain_id,
-        ref blob_versioned_hashes,
-        ref access_list,
-        ref authorization_list,
-        transaction_type: _,
-        sidecar: _,
-    } = *tx;
-
-    // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
-    env.tx.kind = to.unwrap_or(TxKind::Create);
-    env.tx.caller = from.ok_or_else(|| eyre::eyre!("missing `from` field"))?;
-    env.tx.gas_limit = gas.ok_or_else(|| eyre::eyre!("missing `gas` field"))?;
-    env.tx.nonce = nonce.unwrap_or_default();
-    env.tx.value = value.unwrap_or_default();
-    env.tx.data = input.input().cloned().unwrap_or_default();
-    env.tx.chain_id = chain_id;
-
-    // Type 1, EIP-2930
-    env.tx.access_list = access_list.clone().unwrap_or_default();
-
-    // Type 2, EIP-1559
-    env.tx.gas_price = gas_price.or(max_fee_per_gas).unwrap_or_default();
-    env.tx.gas_priority_fee = max_priority_fee_per_gas;
-
-    // Type 3, EIP-4844
-    env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
-    env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.unwrap_or_default();
-
-    // Type 4, EIP-7702
-    env.tx.set_signed_authorization(authorization_list.clone().unwrap_or_default());
-
-    Ok(())
 }
