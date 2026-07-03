@@ -308,8 +308,15 @@ impl EdgeCovInspector {
     #[inline]
     fn store_dense_hit(&mut self, address: Address, depth: usize, pc: usize, jump_dest: U256) {
         let key = EdgeKey::new(address, depth, pc, jump_dest, self.config.include_call_depth);
-        let count = self.dense_hitcount.entry(key).or_default();
-        *count = count.wrapping_add(1).max(1);
+        match self.dense_hitcount.entry(key) {
+            Entry::Occupied(mut entry) => {
+                let count = entry.get_mut();
+                *count = count.wrapping_add(1).max(1);
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(1);
+            }
+        }
     }
 
     #[inline]
