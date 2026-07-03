@@ -11,17 +11,18 @@ use alloy_rpc_types::{
 use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
+use foundry_primitives::FoundryNetwork;
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http
 #[derive(Clone)]
 pub struct HttpEthRpcHandler {
     /// Access to the node
-    api: EthApi,
+    api: EthApi<FoundryNetwork>,
 }
 
 impl HttpEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi) -> Self {
+    pub const fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 }
@@ -39,12 +40,12 @@ impl RpcHandler for HttpEthRpcHandler {
 #[derive(Clone)]
 pub struct PubSubEthRpcHandler {
     /// Access to the node
-    api: EthApi,
+    api: EthApi<FoundryNetwork>,
 }
 
 impl PubSubEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi) -> Self {
+    pub const fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 
@@ -63,6 +64,7 @@ impl PubSubEthRpcHandler {
                     Params::None => None,
                     Params::Logs(filter) => Some(filter.clone()),
                     Params::Bool(_) => None,
+                    Params::TransactionReceipts(_) => None,
                 };
                 let params = FilteredParams::new(filter.map(|b| *b));
 
@@ -111,8 +113,29 @@ impl PubSubEthRpcHandler {
                             }
                         }
                     }
+                    SubscriptionKind::TransactionReceipts => {
+                        trace!(target: "rpc::ws", "received transaction receipts subscription");
+                        match *raw_params {
+                            Params::None => EthSubscription::TransactionReceipts(
+                                self.api.transaction_receipts_subscription(Default::default()),
+                                id.clone(),
+                            ),
+                            Params::TransactionReceipts(filter) => {
+                                EthSubscription::TransactionReceipts(
+                                    self.api.transaction_receipts_subscription(filter),
+                                    id.clone(),
+                                )
+                            }
+                            _ => {
+                                return ResponseResult::Error(RpcError::invalid_params(
+                                    "Expected transactionReceipts params",
+                                ));
+                            }
+                        }
+                    }
                     SubscriptionKind::Syncing => {
-                        return RpcError::internal_error_with("Not implemented").into();
+                        trace!(target: "rpc::ws", "received syncing subscription");
+                        EthSubscription::Syncing(Some(id.clone()))
                     }
                 };
 
@@ -129,7 +152,7 @@ impl PubSubEthRpcHandler {
 impl PubSubRpcHandler for PubSubEthRpcHandler {
     type Request = EthRpcCall;
     type SubscriptionId = SubscriptionId;
-    type Subscription = EthSubscription;
+    type Subscription = EthSubscription<FoundryNetwork>;
 
     async fn on_request(&self, request: Self::Request, cx: PubSubContext<Self>) -> ResponseResult {
         trace!(target: "rpc", "received pubsub request {:?}", request);

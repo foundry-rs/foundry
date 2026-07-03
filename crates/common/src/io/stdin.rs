@@ -101,9 +101,9 @@ pub fn read_bytes(read_line: bool) -> Result<Vec<u8>> {
         let mut buf = String::new();
         stdin.read_line(&mut buf)?;
         // remove the trailing newline
-        if let Some(b'\n') = buf.as_bytes().last() {
+        if matches!(buf.as_bytes().last(), Some(b'\n')) {
             buf.pop();
-            if let Some(b'\r') = buf.as_bytes().last() {
+            if matches!(buf.as_bytes().last(), Some(b'\r')) {
                 buf.pop();
             }
         }

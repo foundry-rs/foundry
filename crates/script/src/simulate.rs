@@ -10,15 +10,21 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::NamedChain;
+use alloy_evm::revm::context::Block;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
+use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
+use alloy_provider::Provider;
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{ContractData, shell};
-use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
+use foundry_common::{ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell};
+use foundry_evm::{
+    core::{FoundryBlock, evm::FoundryEvmNetwork},
+    traces::{decode_trace_arena, render_trace_arena},
+};
+use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
@@ -32,23 +38,24 @@ use std::{
 ///
 /// Can be either converted directly to [BundledState] or driven to it through
 /// [FilledTransactionsState].
-pub struct PreSimulationState {
+pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
-    pub execution_result: ScriptResult,
+    pub execution_result: ScriptResult<FEN::Network>,
     pub execution_artifacts: ExecutionArtifacts,
 }
 
-impl PreSimulationState {
+impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     /// If simulation is enabled, simulates transactions against fork and fills gas estimation and
     /// metadata. Otherwise, metadata (e.g. additional contracts, created contract names) is
     /// left empty.
     ///
     /// Both modes will panic if any of the transactions have None for the `rpc` field.
-    pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
+    pub async fn fill_metadata(self) -> Result<FilledTransactionsState<FEN>> {
         let address_to_abi = self.build_address_to_abi_map();
 
         let mut transactions = self
@@ -65,7 +72,7 @@ impl PreSimulationState {
 
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
-                if let Some(TxKind::Call(_)) = to {
+                if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
                         &self.execution_artifacts.decoder,
@@ -89,6 +96,7 @@ impl PreSimulationState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
@@ -101,8 +109,8 @@ impl PreSimulationState {
     /// Collects gas usage and metadata for each transaction.
     pub async fn simulate_and_fill(
         &self,
-        transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<VecDeque<TransactionWithMetadata>> {
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
         trace!(target: "script", "executing onchain simulation");
 
         let runners = Arc::new(
@@ -122,7 +130,7 @@ impl PreSimulationState {
                 let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
                 let tx = transaction.tx_mut();
 
-                let to = if let Some(TxKind::Call(to)) = tx.to() { Some(to) } else { None };
+                let to = tx.to();
                 let result = runner
                     .simulate(
                         tx.from()
@@ -140,7 +148,8 @@ impl PreSimulationState {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.env_mut().evm_env.block_env.number += U256::from(1);
+                    let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
+                    runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
 
                 let is_noop_tx = if let Some(to) = to {
@@ -227,12 +236,12 @@ impl PreSimulationState {
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
-    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
+    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner<FEN>)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
 
         if !shell::is_json() {
             let n = rpcs.len();
-            let s = if n != 1 { "s" } else { "" };
+            let s = if n == 1 { "" } else { "s" };
             sh_println!("\n## Setting up {n} EVM{s}.")?;
         }
 
@@ -249,22 +258,23 @@ impl PreSimulationState {
 /// At this point we have converted transactions collected during script execution to
 /// [TransactionWithMetadata] objects which contain additional metadata needed for broadcasting and
 /// verification.
-pub struct FilledTransactionsState {
+pub struct FilledTransactionsState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
-    pub transactions: VecDeque<TransactionWithMetadata>,
+    pub transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
 }
 
-impl FilledTransactionsState {
+impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
     /// Bundles all transactions of the [`TransactionWithMetadata`] type in a list of
     /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
     /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
-    pub async fn bundle(mut self) -> Result<BundledState> {
+    pub async fn bundle(mut self) -> Result<BundledState<FEN>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
         if is_multi_deployment && !self.build_data.libraries.is_empty() {
@@ -275,7 +285,7 @@ impl FilledTransactionsState {
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
-        let mut manager = ProvidersManager::default();
+        let mut manager = ProvidersManager::<FEN::Network>::default();
         let mut sequences = vec![];
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
@@ -283,8 +293,14 @@ impl FilledTransactionsState {
         let mut txes_iter = mem::take(&mut self.transactions).into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = tx.rpc.to_owned();
-            let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
+            let tx_rpc = tx.rpc.clone();
+            let provider_info = manager
+                .get_or_init_provider(
+                    &tx.rpc,
+                    self.args.legacy,
+                    self.script_config.config.eip1559_fee_estimate,
+                )
+                .await?;
 
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.
@@ -298,7 +314,7 @@ impl FilledTransactionsState {
                     // only estimate gas for unsigned transactions
                     if let Some(tx) = tx.as_unsigned_mut() {
                         trace!("estimating with different gas calculation");
-                        let gas = tx.gas.expect("gas is set by simulation.");
+                        let gas = tx.gas_limit().expect("gas is set by simulation.");
 
                         // We are trying to show the user an estimation of the total gas usage.
                         //
@@ -360,40 +376,93 @@ impl FilledTransactionsState {
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
+                //
+                // Resolve the fees with the same overrides as the broadcast path so the
+                // displayed values match what is sent. Skipped when `--with-gas-price` pins
+                // the max fee directly.
+                let resolved_eip1559_fees = if self.args.with_gas_price.is_none() {
+                    if let Some(fees) = provider_info.eip1559_fees().copied() {
+                        // `--batch` broadcasts via `broadcast_batch`, which applies no
+                        // browser tip, so skip it here too. Best-effort.
+                        let browser_suggested_tip =
+                            if !self.args.batch && self.browser_wallet.is_some() {
+                                provider_info.provider.get_max_priority_fee_per_gas().await.ok()
+                            } else {
+                                None
+                            };
+                        Some(resolve_broadcast_eip1559_fees(
+                            fees,
+                            None,
+                            self.args.priority_gas_price.map(|p| p.to()),
+                            browser_suggested_tip,
+                        )?)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // `per_gas` is the legacy gas price or, for EIP-1559, the `maxFeePerGas`
+                // (a base-fee buffer plus the priority fee), which is what the transaction
+                // can pay at most -- not the spot base fee shown by block explorers.
                 let per_gas = if let Some(gas_price) = self.args.with_gas_price {
                     gas_price.to()
+                } else if let Some(fees) = &resolved_eip1559_fees {
+                    fees.max_fee_per_gas
                 } else {
                     provider_info.gas_price()?
                 };
 
-                let estimated_gas_price_raw = format_units(per_gas, 9)
-                    .unwrap_or_else(|_| "[Could not calculate]".to_string());
-                let estimated_gas_price =
-                    estimated_gas_price_raw.trim_end_matches('0').trim_end_matches('.');
+                // Format a wei value as a trimmed gwei string.
+                let fmt_gwei = |wei: u128| {
+                    let raw = format_units(wei, 9)
+                        .unwrap_or_else(|_| "[Could not calculate]".to_string());
+                    raw.trim_end_matches('0').trim_end_matches('.').to_string()
+                };
+
+                let estimated_gas_price = fmt_gwei(per_gas);
+
+                // (base fee, max priority fee) for the EIP-1559 breakdown.
+                let fee_breakdown = resolved_eip1559_fees.as_ref().map(|fees| {
+                    (fmt_gwei(fees.base_fee_per_gas), fmt_gwei(fees.max_priority_fee_per_gas))
+                });
 
                 let estimated_amount_raw = format_units(total_gas.saturating_mul(per_gas), 18)
                     .unwrap_or_else(|_| "[Could not calculate]".to_string());
                 let estimated_amount = estimated_amount_raw.trim_end_matches('0');
 
-                if !shell::is_json() {
+                if shell::is_json() {
+                    let mut json = serde_json::json!({
+                        "chain": provider_info.chain,
+                        "estimated_gas_price": estimated_gas_price,
+                        "estimated_total_gas_used": total_gas,
+                        "estimated_amount_required": estimated_amount,
+                        "token_symbol": token_symbol,
+                    });
+                    if let Some((base_fee, priority_fee)) = &fee_breakdown {
+                        json["estimated_max_fee_per_gas"] =
+                            serde_json::Value::from(estimated_gas_price.clone());
+                        json["estimated_base_fee_per_gas"] =
+                            serde_json::Value::from(base_fee.clone());
+                        json["estimated_max_priority_fee_per_gas"] =
+                            serde_json::Value::from(priority_fee.clone());
+                    }
+                    sh_println!("{}", json)?;
+                } else {
                     sh_println!("\n==========================")?;
                     sh_println!("\nChain {}", provider_info.chain)?;
 
-                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
+                    if let Some((base_fee, priority_fee)) = &fee_breakdown {
+                        sh_println!("\nEstimated max fee per gas: {estimated_gas_price} gwei")?;
+                        sh_println!("Estimated base fee per gas: {base_fee} gwei")?;
+                        sh_println!("Estimated max priority fee per gas: {priority_fee} gwei")?;
+                    } else {
+                        sh_println!("\nEstimated gas price: {estimated_gas_price} gwei")?;
+                    }
                     sh_println!("\nEstimated total gas used for script: {total_gas}")?;
                     sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
                     sh_println!("\n==========================")?;
-                } else {
-                    sh_println!(
-                        "{}",
-                        serde_json::json!({
-                            "chain": provider_info.chain,
-                            "estimated_gas_price": estimated_gas_price,
-                            "estimated_total_gas_used": total_gas,
-                            "estimated_amount_required": estimated_amount,
-                            "token_symbol": token_symbol,
-                        })
-                    )?;
                 }
             }
         }
@@ -414,6 +483,7 @@ impl FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
+            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             sequence,
         })
@@ -424,14 +494,14 @@ impl FilledTransactionsState {
         &self,
         multi: bool,
         chain: u64,
-        transactions: VecDeque<TransactionWithMetadata>,
-    ) -> Result<ScriptSequence> {
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    ) -> Result<ScriptSequence<FEN::Network>> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
         // saved to a separate file.
         let paths = if multi {
             None
         } else {
-            Some(ScriptSequence::get_paths(
+            Some(ScriptSequence::<FEN::Network>::get_paths(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.build_data.target,

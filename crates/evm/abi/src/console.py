@@ -16,12 +16,15 @@ def main():
     # Parse signatures from `console.sol`'s string literals
     console_sol = open(console_file).read()
     sig_strings = re.findall(
-        r'"(log.*?)"',
+        r'"((?:log|table).*?)"',
         console_sol,
     )
     raw_sigs = [s.strip().strip('"') for s in sig_strings]
     sigs = [
-        s.replace("string", "string memory").replace("bytes)", "bytes memory)")
+        re.sub(r"(\w+\[\])", r"\1 memory", s)
+         .replace("string,", "string memory,")
+         .replace("string)", "string memory)")
+         .replace("bytes)", "bytes memory)")
         for s in raw_sigs
     ]
     sigs = list(set(sigs))
@@ -38,6 +41,7 @@ def main():
     )
     combined = json.loads(r.stdout.strip())
     abi = combined["contracts"]["<stdin>:HardhatConsole"]["abi"]
+
     open(abi_file, "w").write(json.dumps(abi, separators=(",", ":"), indent=None))
 
 

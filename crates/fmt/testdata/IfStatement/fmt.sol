@@ -83,6 +83,13 @@ contract IfStatement {
 
         if (condition) if (anotherLongCondition) execute();
 
+        if (condition) {
+            if (anotherLongCondition) {
+                execute();
+                executeElse();
+            }
+        }
+
         if (condition) execute(); // comment18
 
         if (condition) {

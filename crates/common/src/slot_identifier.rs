@@ -23,7 +23,7 @@ pub const ENCODING_BYTES: &str = "bytes";
 pub const ENCODING_DYN_ARRAY: &str = "dynamic_array";
 
 /// Information about a storage slot including its label, type, and decoded values.
-#[derive(Serialize, Debug)]
+#[derive(Clone, Serialize, Debug)]
 pub struct SlotInfo {
     /// The variable name from the storage layout.
     ///
@@ -62,7 +62,7 @@ pub struct SlotInfo {
 /// We need both because:
 /// - `label`: Used for serialization to ensure output matches user expectations
 /// - `dyn_sol_type`: The parsed type used for actual value decoding
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StorageTypeInfo {
     /// The original type label from storage layout (e.g., "uint256", "address", "mapping(address
     /// => uint256)")
@@ -124,7 +124,7 @@ impl SlotInfo {
     }
 
     /// Slot is of type [`DynSolType::Bytes`] or [`DynSolType::String`]
-    pub fn is_bytes_or_string(&self) -> bool {
+    pub const fn is_bytes_or_string(&self) -> bool {
         matches!(self.slot_type.dyn_sol_type, DynSolType::Bytes | DynSolType::String)
     }
 
@@ -348,7 +348,7 @@ where
 }
 
 /// Decoded storage slot values
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DecodedSlotValues {
     /// Initial decoded storage value
     pub previous_value: DynSolValue,
@@ -371,14 +371,25 @@ impl Serialize for DecodedSlotValues {
 }
 
 /// Storage slot identifier that uses Solidity [`StorageLayout`] to identify storage slots.
+#[derive(Clone)]
 pub struct SlotIdentifier {
     storage_layout: Arc<StorageLayout>,
+    parsed_types: BTreeMap<String, Option<DynSolType>>,
 }
 
 impl SlotIdentifier {
     /// Creates a new SlotIdentifier with the given storage layout.
     pub fn new(storage_layout: Arc<StorageLayout>) -> Self {
-        Self { storage_layout }
+        let parsed_types = storage_layout
+            .types
+            .iter()
+            .map(|(id, storage_type)| (id.clone(), DynSolType::parse(&storage_type.label).ok()))
+            .collect();
+        Self { storage_layout, parsed_types }
+    }
+
+    fn parsed_type(&self, storage_type: &str) -> Option<&DynSolType> {
+        self.parsed_types.get(storage_type).and_then(Option::as_ref)
     }
 
     /// Identifies a storage slots type using the [`StorageLayout`].
@@ -391,12 +402,12 @@ impl SlotIdentifier {
 
         for storage in &self.storage_layout.storage {
             let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
-            let dyn_type = DynSolType::parse(&storage_type.label).ok();
+            let dyn_type = self.parsed_type(&storage.storage_type);
 
             // Check if we're able to match on a slot from the layout i.e any of the base slots.
             // This will always be the case for primitive types that fit in a single slot.
             if storage.slot == slot_str
-                && let Some(parsed_type) = dyn_type
+                && let Some(parsed_type) = dyn_type.cloned()
             {
                 // Successfully parsed - handle arrays or simple types
                 let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
@@ -430,6 +441,7 @@ impl SlotIdentifier {
                     && let Some(slot_info) = self.handle_array_slot(
                         storage,
                         storage_type,
+                        parsed_type,
                         slot_u256,
                         array_start_slot,
                         &slot_str,
@@ -517,6 +529,7 @@ impl SlotIdentifier {
         &self,
         storage: &Storage,
         storage_type: &StorageType,
+        parsed_type: &DynSolType,
         slot: U256,
         array_start_slot: U256,
         slot_str: &str,
@@ -526,10 +539,9 @@ impl SlotIdentifier {
         let total_slots = total_bytes.div_ceil(32);
 
         if slot >= array_start_slot && slot < array_start_slot + U256::from(total_slots) {
-            let parsed_type = DynSolType::parse(&storage_type.label).ok()?;
             let index = (slot - array_start_slot).to::<u64>();
             // Format the array element label based on array dimensions
-            let label = match &parsed_type {
+            let label = match parsed_type {
                 DynSolType::FixedArray(inner, _) => {
                     if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
                         // 2D array: calculate row and column
@@ -548,7 +560,7 @@ impl SlotIdentifier {
                 label,
                 slot_type: StorageTypeInfo {
                     label: storage_type.label.clone(),
-                    dyn_sol_type: parsed_type,
+                    dyn_sol_type: parsed_type.clone(),
                 },
                 offset: 0,
                 slot: slot_str.to_string(),
@@ -612,7 +624,7 @@ impl SlotIdentifier {
                 for member in &members {
                     if let Some(member_type_info) =
                         self.storage_layout.types.get(&member.storage_type)
-                        && let Some(member_type) = DynSolType::parse(&member_type_info.label).ok()
+                        && let Some(member_type) = self.parsed_type(&member.storage_type).cloned()
                     {
                         member_infos.push(SlotInfo {
                             label: member.label.clone(),
@@ -654,37 +666,37 @@ impl SlotIdentifier {
                     members: if member_infos.is_empty() { None } else { Some(member_infos) },
                     keys: None,
                 });
-            } else {
-                // Multi-slot struct - return the first member.
-                let member_label = format!("{}.{}", base_label, first_member.label);
-
-                // If the first member is itself a struct, recurse
-                if is_struct(&member_type_info.label) {
-                    return self.handle_struct(
-                        &member_label,
-                        member_type_info,
-                        target_slot,
-                        struct_start_slot,
-                        first_member.offset,
-                        slot_str,
-                        depth + 1,
-                    );
-                }
-
-                // Return the first member as a primitive
-                return Some(SlotInfo {
-                    label: member_label,
-                    slot_type: StorageTypeInfo {
-                        label: member_type_info.label.clone(),
-                        dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
-                    },
-                    offset: first_member.offset,
-                    slot: slot_str.to_string(),
-                    decoded: None,
-                    members: None,
-                    keys: None,
-                });
             }
+
+            // Multi-slot struct - return the first member.
+            let member_label = format!("{}.{}", base_label, first_member.label);
+
+            // If the first member is itself a struct, recurse
+            if is_struct(&member_type_info.label) {
+                return self.handle_struct(
+                    &member_label,
+                    member_type_info,
+                    target_slot,
+                    struct_start_slot,
+                    first_member.offset,
+                    slot_str,
+                    depth + 1,
+                );
+            }
+
+            // Return the first member as a primitive
+            return Some(SlotInfo {
+                label: member_label,
+                slot_type: StorageTypeInfo {
+                    label: member_type_info.label.clone(),
+                    dyn_sol_type: self.parsed_type(&first_member.storage_type)?.clone(),
+                },
+                offset: first_member.offset,
+                slot: slot_str.to_string(),
+                decoded: None,
+                members: None,
+                keys: None,
+            });
         }
 
         // Not the base slot - search through members
@@ -715,7 +727,7 @@ impl SlotIdentifier {
                 // Found the exact member slot
 
                 // Regular member
-                let member_type = DynSolType::parse(&member_type_info.label).ok()?;
+                let member_type = self.parsed_type(&member.storage_type)?.clone();
                 return Some(SlotInfo {
                     label: member_label,
                     slot_type: StorageTypeInfo {
@@ -954,14 +966,9 @@ impl SlotIdentifier {
                 let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
                 key_types.extend(nested_keys);
                 return Some((key_types, final_value, storage_type.label.clone()));
-            } else {
-                // Value is not a mapping, we're done
-                return Some((
-                    key_types,
-                    value_storage_type.label.clone(),
-                    storage_type.label.clone(),
-                ));
             }
+            // Value is not a mapping, we're done
+            return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
         }
 
         None

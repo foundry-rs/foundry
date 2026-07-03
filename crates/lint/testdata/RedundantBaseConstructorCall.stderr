@@ -1,0 +1,70 @@
+note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
+   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
+   │
+LL │ contract A1 is NoCtor() {}
+   │                      ━━ help: remove redundant base-constructor call
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
+
+note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
+   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
+   │
+LL │ contract A2 is EmptyCtor() {}
+   │                         ━━ help: remove redundant base-constructor call
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
+
+note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
+   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
+   │
+LL │ contract A3 is NonEmptyZeroParamCtor() {}
+   │                                     ━━ help: remove redundant base-constructor call
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
+
+note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
+   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
+   │
+LL │     constructor() NoCtor() {}
+   │                  ┬──────━━
+   │                  │
+   │                  help: remove redundant base-constructor call
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
+
+note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
+   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
+   │
+LL │     constructor() EmptyCtor() {}
+   │                  ┬─────────━━
+   │                  │
+   │                  help: remove redundant base-constructor call
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
+
+note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
+   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
+   │
+LL │ contract A6 is NoCtor(), EmptyCtor() {}
+   │                      ━━ help: remove redundant base-constructor call
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
+
+note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
+   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
+   │
+LL │ contract A6 is NoCtor(), EmptyCtor() {}
+   │                                   ━━ help: remove redundant base-constructor call
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
+
+note[redundant-base-constructor-call]: explicit empty base-constructor arguments are redundant
+   ╭▸ ROOT/testdata/RedundantBaseConstructorCall.sol:LL:CC
+   │
+LL │     constructor(uint256 v) m() WithArgs(v) NoCtor() {}
+   │                                           ┬──────━━
+   │                                           │
+   │                                           help: remove redundant base-constructor call
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/redundant-base-constructor-call
+

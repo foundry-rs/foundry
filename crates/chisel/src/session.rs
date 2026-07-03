@@ -5,21 +5,23 @@
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
+use foundry_evm::core::evm::FoundryEvmNetwork;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{OffsetDateTime, format_description};
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ChiselSession {
+#[serde(bound = "")]
+pub struct ChiselSession<FEN: FoundryEvmNetwork> {
     /// The `SessionSource` object that houses the REPL session.
-    pub source: SessionSource,
+    pub source: SessionSource<FEN>,
     /// The current session's identifier
     pub id: Option<String>,
 }
 
 // ChiselSession Common Associated Functions
-impl ChiselSession {
+impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     /// Create a new `ChiselSession` with a specified `solc` version and configuration.
     ///
     /// ### Takes
@@ -29,7 +31,7 @@ impl ChiselSession {
     /// ### Returns
     ///
     /// A new instance of [ChiselSession]
-    pub fn new(config: SessionSourceConfig) -> Result<Self> {
+    pub fn new(config: SessionSourceConfig<FEN>) -> Result<Self> {
         // Return initialized ChiselSession with set solc version
         Ok(Self { source: SessionSource::new(config)?, id: None })
     }
@@ -109,26 +111,8 @@ impl ChiselSession {
     /// Optionally, returns a tuple containing the next cached session's id and file name.
     pub fn next_cached_session() -> Result<(String, String)> {
         let cache_dir = Self::cache_dir()?;
-        let mut entries = std::fs::read_dir(&cache_dir)?;
-
-        // If there are no existing cached sessions, just create the first one: "chisel-0.json"
-        let mut latest = if let Some(e) = entries.next() {
-            e?
-        } else {
-            return Ok((String::from("0"), format!("{cache_dir}chisel-0.json")));
-        };
-
-        let mut session_num = 1;
-        // Get the latest cached session
-        for entry in entries {
-            let entry = entry?;
-            if entry.metadata()?.modified()? >= latest.metadata()?.modified()? {
-                latest = entry;
-            }
-
-            // Increase session_num counter rather than cloning the iterator and using `.count`
-            session_num += 1;
-        }
+        let entries = std::fs::read_dir(&cache_dir)?;
+        let session_num = entries.filter(Result::is_ok).count();
 
         Ok((format!("{session_num}"), format!("{cache_dir}chisel-{session_num}.json")))
     }

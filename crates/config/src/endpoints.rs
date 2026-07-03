@@ -277,6 +277,11 @@ pub struct RpcEndpoint {
     /// endpoint url or env
     pub endpoint: RpcEndpointUrl,
 
+    /// Additional fallback endpoints for load-balanced multi-endpoint forking.
+    /// When set, requests are distributed across all endpoints (primary + extra)
+    /// with automatic failover.
+    pub extra_endpoints: Vec<RpcEndpointUrl>,
+
     /// Token to be used as authentication
     pub auth: Option<RpcAuth>,
 
@@ -293,6 +298,7 @@ impl RpcEndpoint {
     pub fn resolve(self) -> ResolvedRpcEndpoint {
         ResolvedRpcEndpoint {
             endpoint: self.endpoint.resolve(),
+            extra_endpoints: self.extra_endpoints.into_iter().map(|e| e.resolve()).collect(),
             auth: self.auth.map(|auth| auth.resolve()),
             config: self.config,
         }
@@ -301,7 +307,7 @@ impl RpcEndpoint {
 
 impl fmt::Display for RpcEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { endpoint, auth, config } = self;
+        let Self { endpoint, auth, config, .. } = self;
         write!(f, "{endpoint}")?;
         write!(f, "{config}")?;
         if let Some(auth) = auth {
@@ -316,16 +322,24 @@ impl Serialize for RpcEndpoint {
     where
         S: Serializer,
     {
-        if self.config.retries.is_none()
-            && self.config.retry_backoff.is_none()
-            && self.config.compute_units_per_second.is_none()
-            && self.auth.is_none()
-        {
-            // serialize as endpoint if there's no additional config
+        let has_config = self.config.retries.is_some()
+            || self.config.retry_backoff.is_some()
+            || self.config.compute_units_per_second.is_some()
+            || self.auth.is_some();
+
+        if !has_config && self.extra_endpoints.is_empty() {
+            // serialize as plain endpoint string if there's no additional config
             self.endpoint.serialize(serializer)
         } else {
-            let mut map = serializer.serialize_map(Some(5))?;
-            map.serialize_entry("endpoint", &self.endpoint)?;
+            let mut map = serializer.serialize_map(None)?;
+            if self.extra_endpoints.is_empty() {
+                map.serialize_entry("endpoint", &self.endpoint)?;
+            } else {
+                // Serialize all endpoints as an array under "endpoints"
+                let all: Vec<&RpcEndpointUrl> =
+                    std::iter::once(&self.endpoint).chain(&self.extra_endpoints).collect();
+                map.serialize_entry("endpoints", &all)?;
+            }
             map.serialize_entry("retries", &self.config.retries)?;
             map.serialize_entry("retry_backoff", &self.config.retry_backoff)?;
             map.serialize_entry("compute_units_per_second", &self.config.compute_units_per_second)?;
@@ -348,10 +362,13 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
             });
         }
 
+        // Support both single "endpoint" and array "endpoints" for backwards compatibility
         #[derive(Deserialize)]
         struct RpcEndpointConfigInner {
             #[serde(alias = "url")]
-            endpoint: RpcEndpointUrl,
+            endpoint: Option<RpcEndpointUrl>,
+            /// Array of endpoint URLs for multi-endpoint load balancing
+            endpoints: Option<Vec<RpcEndpointUrl>>,
             retries: Option<u32>,
             retry_backoff: Option<u64>,
             compute_units_per_second: Option<u64>,
@@ -360,14 +377,43 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
 
         let RpcEndpointConfigInner {
             endpoint,
+            endpoints,
             retries,
             retry_backoff,
             compute_units_per_second,
             auth,
         } = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
 
+        let (primary, extra) = match (endpoint, endpoints) {
+            // Single endpoint: endpoint = "..."
+            (Some(ep), None) => (ep, vec![]),
+            // Array of endpoints: endpoints = ["...", "..."]
+            (None, Some(mut eps)) => {
+                if eps.is_empty() {
+                    return Err(serde::de::Error::custom(
+                        "endpoints array must contain at least one URL",
+                    ));
+                }
+                let primary = eps.remove(0);
+                (primary, eps)
+            }
+            // Both provided — error
+            (Some(_), Some(_)) => {
+                return Err(serde::de::Error::custom(
+                    "cannot specify both `endpoint` and `endpoints`",
+                ));
+            }
+            // Neither provided — error
+            (None, None) => {
+                return Err(serde::de::Error::custom(
+                    "must specify either `endpoint` or `endpoints`",
+                ));
+            }
+        };
+
         Ok(Self {
-            endpoint,
+            endpoint: primary,
+            extra_endpoints: extra,
             auth,
             config: RpcEndpointConfig { retries, retry_backoff, compute_units_per_second },
         })
@@ -384,6 +430,7 @@ impl Default for RpcEndpoint {
     fn default() -> Self {
         Self {
             endpoint: RpcEndpointUrl::Url("http://localhost:8545".to_string()),
+            extra_endpoints: vec![],
             config: RpcEndpointConfig::default(),
             auth: None,
         }
@@ -394,21 +441,38 @@ impl Default for RpcEndpoint {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedRpcEndpoint {
     pub endpoint: Result<String, UnresolvedEnvVarError>,
+    /// Additional resolved endpoints for multi-endpoint load balancing.
+    pub extra_endpoints: Vec<Result<String, UnresolvedEnvVarError>>,
     pub auth: Option<Result<String, UnresolvedEnvVarError>>,
     pub config: RpcEndpointConfig,
 }
 
 impl ResolvedRpcEndpoint {
-    /// Returns the url this type holds, see [`RpcEndpoint::resolve`]
+    /// Returns the primary url this type holds, see [`RpcEndpoint::resolve`]
     pub fn url(&self) -> Result<String, UnresolvedEnvVarError> {
         self.endpoint.clone()
+    }
+
+    /// Returns all resolved URLs (primary + extra) for multi-endpoint configurations.
+    /// Returns an empty vec if no extra endpoints are configured.
+    pub fn all_urls(&self) -> Result<Vec<String>, UnresolvedEnvVarError> {
+        let primary = self.endpoint.clone()?;
+        if self.extra_endpoints.is_empty() {
+            return Ok(vec![primary]);
+        }
+        let mut urls = vec![primary];
+        for ep in &self.extra_endpoints {
+            urls.push(ep.clone()?);
+        }
+        Ok(urls)
     }
 
     // Returns true if all environment variables are resolved successfully
     pub fn is_unresolved(&self) -> bool {
         let endpoint_err = self.endpoint.is_err();
+        let extra_err = self.extra_endpoints.iter().any(|e| e.is_err());
         let auth_err = self.auth.as_ref().map(|auth| auth.is_err()).unwrap_or(false);
-        endpoint_err || auth_err
+        endpoint_err || extra_err || auth_err
     }
 
     // Attempts to resolve unresolved environment variables into a new instance
@@ -418,6 +482,11 @@ impl ResolvedRpcEndpoint {
         }
         if let Err(err) = self.endpoint {
             self.endpoint = err.try_resolve()
+        }
+        for ep in &mut self.extra_endpoints {
+            if let Err(err) = std::mem::replace(ep, Ok(String::new())) {
+                *ep = err.try_resolve();
+            }
         }
         if let Some(Err(err)) = self.auth {
             self.auth = Some(err.try_resolve())
@@ -453,6 +522,18 @@ impl DerefMut for ResolvedRpcEndpoints {
     }
 }
 
+/// Returns the URL for a built-in RPC alias, if one exists.
+///
+/// Built-in aliases act as fallbacks: they are only used when the alias has **not** been
+/// defined by the user in `[rpc_endpoints]` or resolved via MESC.
+pub fn builtin_rpc_url(alias: &str) -> Option<&'static str> {
+    match alias {
+        "tempo" => Some("https://rpc.mpp.tempo.xyz"),
+        "moderato" => Some("https://rpc.mpp.moderato.tempo.xyz"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,6 +552,7 @@ mod tests {
             config,
             RpcEndpoint {
                 endpoint: RpcEndpointUrl::Url("http://localhost:8545".to_string()),
+                extra_endpoints: vec![],
                 config: RpcEndpointConfig {
                     retries: Some(5),
                     retry_backoff: Some(250),
@@ -486,6 +568,7 @@ mod tests {
             config,
             RpcEndpoint {
                 endpoint: RpcEndpointUrl::Url("http://localhost:8545".to_string()),
+                extra_endpoints: vec![],
                 config: RpcEndpointConfig {
                     retries: None,
                     retry_backoff: None,
@@ -494,5 +577,63 @@ mod tests {
                 auth: None,
             }
         );
+    }
+
+    #[test]
+    fn serde_rpc_config_multi_endpoints() {
+        // Array of endpoints via "endpoints" key
+        let s = r#"{
+            "endpoints": ["https://rpc1.example.com", "https://rpc2.example.com", "https://rpc3.example.com"],
+            "retries": 5,
+            "retry_backoff": 1000
+        }"#;
+        let config: RpcEndpoint = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            config,
+            RpcEndpoint {
+                endpoint: RpcEndpointUrl::Url("https://rpc1.example.com".to_string()),
+                extra_endpoints: vec![
+                    RpcEndpointUrl::Url("https://rpc2.example.com".to_string()),
+                    RpcEndpointUrl::Url("https://rpc3.example.com".to_string()),
+                ],
+                config: RpcEndpointConfig {
+                    retries: Some(5),
+                    retry_backoff: Some(1000),
+                    compute_units_per_second: None,
+                },
+                auth: None,
+            }
+        );
+
+        // Resolved URLs
+        let resolved = config.resolve();
+        let all_urls = resolved.all_urls().unwrap();
+        assert_eq!(
+            all_urls,
+            vec![
+                "https://rpc1.example.com".to_string(),
+                "https://rpc2.example.com".to_string(),
+                "https://rpc3.example.com".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn serde_rpc_config_rejects_both_endpoint_and_endpoints() {
+        let s = r#"{
+            "endpoint": "https://rpc1.example.com",
+            "endpoints": ["https://rpc2.example.com"]
+        }"#;
+        let result: Result<RpcEndpoint, _> = serde_json::from_str(s);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot specify both"));
+    }
+
+    #[test]
+    fn serde_rpc_config_rejects_empty_endpoints() {
+        let s = r#"{ "endpoints": [] }"#;
+        let result: Result<RpcEndpoint, _> = serde_json::from_str(s);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("at least one URL"));
     }
 }
