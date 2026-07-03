@@ -1326,10 +1326,13 @@ contract ForgeFuzzTminRemoveTargetTest {
         ])
         .assert_success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(
         stdout.contains("minimized entry: 2 txs -> 1 txs in tmin-remove-output.json"),
         "{stdout}"
     );
+    assert!(!stdout.contains("attempted"), "{stdout}");
+    assert!(stderr.contains("attempted"), "{stderr}");
 
     let output: Value = serde_json::from_str(
         &std::fs::read_to_string(prj.root().join("tmin-remove-output.json")).unwrap(),
@@ -1680,6 +1683,8 @@ contract ForgeFuzzTminDirectoryTargetTest {
     std::fs::create_dir_all(&corpus).unwrap();
     write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &small);
     write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", &large);
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000003-3.json"), "[]").unwrap();
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000004-4.json"), "not json").unwrap();
 
     let assert = cmd
         .forge_fuse()
@@ -1696,7 +1701,11 @@ contract ForgeFuzzTminDirectoryTargetTest {
         ])
         .assert_success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(stdout.contains("minimized corpus: 2 entries"), "{stdout}");
+    assert!(!stdout.contains("attempted"), "{stdout}");
+    assert!(stderr.contains("attempted"), "{stderr}");
+    assert!(stderr.contains("skipped 2 entries"), "{stderr}");
     assert_eq!(regular_file_count(&prj.root().join("tmin-dir-output")), 2);
 
     let show = cmd.forge_fuse().args(["fuzz", "show", "tmin-dir-output"]).assert_success();

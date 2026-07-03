@@ -446,7 +446,7 @@ impl FuzzTminArgs {
             sequence.len(),
             self.out.display()
         )?;
-        sh_println!("attempted {attempts} candidate replays")?;
+        sh_status!("attempted {attempts} candidate replays")?;
         Ok(())
     }
 
@@ -464,13 +464,19 @@ impl FuzzTminArgs {
         let mut before_txs = 0usize;
         let mut after_txs = 0usize;
         let mut attempts = 0usize;
+        let mut skipped_entries = 0usize;
 
         for entry in entries {
-            let mut sequence = entry
+            let sequence = entry
                 .read_tx_seq()
-                .with_context(|| format!("failed to read corpus entry {}", entry.path.display()))?;
+                .with_context(|| format!("failed to read corpus entry {}", entry.path.display()));
+            let Ok(mut sequence) = sequence else {
+                skipped_entries += 1;
+                continue;
+            };
             if sequence.is_empty() {
-                bail!("corpus entry {} is empty", entry.path.display());
+                skipped_entries += 1;
+                continue;
             }
             before_txs += sequence.len();
             attempts +=
@@ -486,6 +492,9 @@ impl FuzzTminArgs {
             })?;
             write_sequence_create_new(&staging_out.path().join(relative), &sequence)?;
             total_entries += 1;
+        }
+        if total_entries == 0 {
+            bail!("no readable non-empty corpus entries found under {}", self.input.display());
         }
 
         let staging_path = staging_out.keep();
@@ -508,7 +517,10 @@ impl FuzzTminArgs {
             "minimized corpus: {total_entries} entries, {before_txs} txs -> {after_txs} txs in {}",
             self.out.display()
         )?;
-        sh_println!("attempted {attempts} candidate replays")?;
+        sh_status!("attempted {attempts} candidate replays")?;
+        if skipped_entries > 0 {
+            sh_status!("skipped {skipped_entries} entries that could not be read or were empty")?;
+        }
         Ok(())
     }
 }
