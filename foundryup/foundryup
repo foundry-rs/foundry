@@ -31,7 +31,7 @@ FOUNDRY_DIR="${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}"
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 
 # Pinned Rust foundryup version to bootstrap. Override for testing/emergencies.
-FOUNDRYUP_BOOTSTRAP_VERSION="${FOUNDRYUP_BOOTSTRAP_VERSION:-0.0.5}"
+FOUNDRYUP_BOOTSTRAP_VERSION="${FOUNDRYUP_BOOTSTRAP_VERSION:-0.0.6}"
 # `foundryup-init.sh` for the pinned bootstrap version.
 FOUNDRYUP_INIT_URL="${FOUNDRYUP_INIT_URL:-"https://raw.githubusercontent.com/foundry-rs/foundryup/v${FOUNDRYUP_BOOTSTRAP_VERSION}/foundryup-init.sh"}"
 
