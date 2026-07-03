@@ -159,6 +159,10 @@ impl InvariantFuzzState {
         run_depth: u32,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
+        if logs.is_empty() && result.is_empty() && state_changeset.is_empty() {
+            return;
+        }
+
         let mut dict = self.inner.borrow_mut();
         let targets = fuzzed_contracts.targets();
         let (target_contract, target_function) = if logs.is_empty() && result.is_empty() {
