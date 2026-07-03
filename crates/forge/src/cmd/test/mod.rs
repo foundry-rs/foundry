@@ -13,8 +13,8 @@ use crate::{
         SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
     },
     symbolic_regression::{
-        SymbolicRegressionConfig, attach_symbolic_regressions, collect_symbolic_artifacts,
-        emit_symbolic_regressions,
+        SymbolicRegressionConfig, attach_symbolic_regressions_to_suites,
+        collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
     },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -2211,16 +2211,14 @@ impl TestArgs {
                 }
             }
             if let Some(regression) = &symbolic_regression {
-                for suite_result in results.values_mut() {
-                    let artifacts = collect_symbolic_artifacts(suite_result);
-                    let regressions = emit_symbolic_regressions(
-                        &config,
-                        regression,
-                        &runner.known_contracts,
-                        &artifacts,
-                    )?;
-                    attach_symbolic_regressions(suite_result, &regressions);
-                }
+                let artifacts = collect_symbolic_artifacts_from_suites(results.values());
+                let regressions = emit_symbolic_regressions(
+                    &config,
+                    regression,
+                    &runner.known_contracts,
+                    &artifacts,
+                )?;
+                attach_symbolic_regressions_to_suites(results.values_mut(), &regressions);
             }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             let kc = runner.known_contracts.clone();
@@ -2230,16 +2228,14 @@ impl TestArgs {
         if self.junit {
             let mut results = runner.test_collect(filter)?;
             if let Some(regression) = &symbolic_regression {
-                for suite_result in results.values_mut() {
-                    let artifacts = collect_symbolic_artifacts(suite_result);
-                    let regressions = emit_symbolic_regressions(
-                        &config,
-                        regression,
-                        &runner.known_contracts,
-                        &artifacts,
-                    )?;
-                    attach_symbolic_regressions(suite_result, &regressions);
-                }
+                let artifacts = collect_symbolic_artifacts_from_suites(results.values());
+                let regressions = emit_symbolic_regressions(
+                    &config,
+                    regression,
+                    &runner.known_contracts,
+                    &artifacts,
+                )?;
+                attach_symbolic_regressions_to_suites(results.values_mut(), &regressions);
             }
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             let kc = runner.known_contracts.clone();
@@ -2596,28 +2592,27 @@ impl TestArgs {
                 sh_println!("{}", suite_result.summary())?;
             }
 
-            if let Some(regression) = &symbolic_regression {
-                let artifacts = collect_symbolic_artifacts(&suite_result);
-                let regressions =
-                    emit_symbolic_regressions(&config, regression, &known_contracts, &artifacts)?;
-                attach_symbolic_regressions(&mut suite_result, &regressions);
-                if !silent {
-                    for regression in regressions {
-                        sh_warn!(
-                            "Regression test: {} (from {})",
-                            regression.path.display(),
-                            regression.artifact.display()
-                        )?;
-                    }
-                }
-            }
-
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
 
             // Stop processing the remaining suites if any test failed and `fail_fast` is set.
             if self.fail_fast && any_test_failed {
                 break;
+            }
+        }
+        if let Some(regression) = &symbolic_regression {
+            let artifacts = collect_symbolic_artifacts_from_suites(outcome.results.values());
+            let regressions =
+                emit_symbolic_regressions(&config, regression, &known_contracts, &artifacts)?;
+            attach_symbolic_regressions_to_suites(outcome.results.values_mut(), &regressions);
+            if !silent {
+                for regression in regressions {
+                    sh_warn!(
+                        "Regression test: {} (from {})",
+                        regression.path.display(),
+                        regression.artifact.display()
+                    )?;
+                }
             }
         }
         outcome.last_run_decoder = Some(decoder);

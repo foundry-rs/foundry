@@ -5,10 +5,10 @@ use crate::result::{
 };
 use alloy_primitives::{U256, hex};
 use eyre::{Result, bail};
-use foundry_common::{TestFunctionExt, contracts::ContractsByArtifact, fs};
+use foundry_common::{TestFunctionExt, contracts::ContractsByArtifact, fs, sh_warn};
 use foundry_config::Config;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Write,
     path::{Component, Path, PathBuf},
 };
@@ -27,13 +27,19 @@ pub(crate) struct SymbolicRegression {
     pub path: PathBuf,
 }
 
+struct PlannedSymbolicRegression {
+    regression: SymbolicRegression,
+    contents: String,
+    test: String,
+}
+
 pub(crate) fn emit_symbolic_regressions(
     config: &Config,
     regression: &SymbolicRegressionConfig,
     known_contracts: &ContractsByArtifact,
     results: &[SymbolicArtifactRef],
 ) -> Result<Vec<SymbolicRegression>> {
-    let mut emitted = Vec::new();
+    let mut planned = Vec::new();
     let mut seen_tests = HashSet::new();
     for artifact_ref in results {
         let artifact = load_artifact(&artifact_ref.path)?;
@@ -56,7 +62,7 @@ pub(crate) fn emit_symbolic_regressions(
         } else {
             continue;
         };
-        emitted.push(emit_symbolic_regression(
+        planned.push(plan_symbolic_regression(
             config,
             regression,
             &artifact_ref.path,
@@ -64,6 +70,15 @@ pub(crate) fn emit_symbolic_regressions(
             known_contracts,
             suffix.as_deref(),
         )?);
+    }
+
+    ensure_unique_regression_paths(&planned)?;
+
+    let mut emitted = Vec::new();
+    for plan in planned {
+        if let Some(regression) = write_symbolic_regression(regression, plan)? {
+            emitted.push(regression);
+        }
     }
     Ok(emitted)
 }
@@ -89,35 +104,41 @@ fn artifact_source_and_contract<'a>(
     Ok((source, contract))
 }
 
-pub(crate) fn collect_symbolic_artifacts(suite: &SuiteResult) -> Vec<SymbolicArtifactRef> {
+pub(crate) fn collect_symbolic_artifacts_from_suites<'a>(
+    suites: impl IntoIterator<Item = &'a SuiteResult>,
+) -> Vec<SymbolicArtifactRef> {
     let mut artifacts = Vec::new();
-    for result in suite.test_results.values() {
-        for artifact in &result.counterexample_artifacts {
-            if !artifacts.contains(artifact) {
-                artifacts.push(artifact.clone());
+    for suite in suites {
+        for result in suite.test_results.values() {
+            for artifact in &result.counterexample_artifacts {
+                if !artifacts.contains(artifact) {
+                    artifacts.push(artifact.clone());
+                }
             }
         }
     }
     artifacts
 }
 
-pub(crate) fn attach_symbolic_regressions(
-    suite: &mut SuiteResult,
+pub(crate) fn attach_symbolic_regressions_to_suites<'a>(
+    suites: impl IntoIterator<Item = &'a mut SuiteResult>,
     regressions: &[SymbolicRegression],
 ) {
-    for result in suite.test_results.values_mut() {
-        for artifact in &result.counterexample_artifacts {
-            for regression in regressions {
-                if artifact.path == regression.artifact
-                    && !result
-                        .symbolic_regressions
-                        .iter()
-                        .any(|existing| existing.path == regression.path)
-                {
-                    result.symbolic_regressions.push(SymbolicRegressionRef {
-                        artifact: regression.artifact.clone(),
-                        path: regression.path.clone(),
-                    });
+    for suite in suites {
+        for result in suite.test_results.values_mut() {
+            for artifact in &result.counterexample_artifacts {
+                for regression in regressions {
+                    if artifact.path == regression.artifact
+                        && !result
+                            .symbolic_regressions
+                            .iter()
+                            .any(|existing| existing.path == regression.path)
+                    {
+                        result.symbolic_regressions.push(SymbolicRegressionRef {
+                            artifact: regression.artifact.clone(),
+                            path: regression.path.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -164,14 +185,14 @@ fn load_artifact(path: &Path) -> Result<SymbolicCounterexampleArtifact> {
     Ok(artifact)
 }
 
-fn emit_symbolic_regression(
+fn plan_symbolic_regression(
     config: &Config,
     regression: &SymbolicRegressionConfig,
     artifact_path: &Path,
     artifact: &SymbolicCounterexampleArtifact,
     known_contracts: &ContractsByArtifact,
     suffix: Option<&str>,
-) -> Result<SymbolicRegression> {
+) -> Result<PlannedSymbolicRegression> {
     let (source, contract) = artifact_source_and_contract(artifact_path, artifact)?;
 
     let test_name =
@@ -200,90 +221,119 @@ fn emit_symbolic_regression(
 
     let import_path =
         relative_solidity_import(path.parent().unwrap_or(&config.root), &config.root.join(source));
-    let mut out = String::new();
-    writeln!(out, "// SPDX-License-Identifier: UNLICENSED")?;
-    writeln!(out, "pragma solidity >=0.8.0;")?;
-    writeln!(out)?;
-    writeln!(out, "import \"{import_path}\";")?;
-    writeln!(out)?;
-    writeln!(out, "interface {vm_interface} {{")?;
-    writeln!(out, "    function deal(address who, uint256 newBalance) external;")?;
-    writeln!(out, "    function prank(address msgSender) external;")?;
-    writeln!(out, "    function roll(uint256 newHeight) external;")?;
-    writeln!(out, "    function warp(uint256 newTimestamp) external;")?;
-    writeln!(out, "}}")?;
-    writeln!(out)?;
-    writeln!(out, "contract {generated_contract} is {contract} {{")?;
+    let mut contents = String::new();
+    writeln!(contents, "// SPDX-License-Identifier: UNLICENSED")?;
+    writeln!(contents, "pragma solidity >=0.8.0;")?;
+    writeln!(contents)?;
+    writeln!(contents, "import \"{import_path}\";")?;
+    writeln!(contents)?;
+    writeln!(contents, "interface {vm_interface} {{")?;
+    writeln!(contents, "    function deal(address who, uint256 newBalance) external;")?;
+    writeln!(contents, "    function prank(address msgSender) external;")?;
+    writeln!(contents, "    function roll(uint256 newHeight) external;")?;
+    writeln!(contents, "    function warp(uint256 newTimestamp) external;")?;
+    writeln!(contents, "}}")?;
+    writeln!(contents)?;
+    writeln!(contents, "contract {generated_contract} is {contract} {{")?;
     writeln!(
-        out,
+        contents,
         "    {vm_interface} private constant __foundrySymbolicVm = {vm_interface}(address(uint160(uint256(keccak256(\"hevm cheat code\")))));"
     )?;
-    writeln!(out)?;
-    writeln!(out, "    function {generated_test}() public payable {{")?;
+    writeln!(contents)?;
+    writeln!(contents, "    function {generated_test}() public payable {{")?;
     match artifact.kind {
         SymbolicCounterexampleArtifactKind::SingleCall => {
             let call = artifact.calls.first().expect("single-call artifact has at least one call");
-            write_call(&mut out, call, "address(this)", true)?;
+            write_call(&mut contents, call, "address(this)", true)?;
         }
         SymbolicCounterexampleArtifactKind::Sequence => {
             let call_after_invariant = call_after_invariant(known_contracts, artifact)?;
             for call in &artifact.calls {
                 write_call(
-                    &mut out,
+                    &mut contents,
                     call,
                     &format!("address({})", call.target),
                     artifact.replay_semantics.fail_on_revert,
                 )?;
             }
             writeln!(
-                out,
+                contents,
                 "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",
                 hex::encode(selector_from_signature(&artifact.test.test))
             )?;
             if call_after_invariant {
                 writeln!(
-                    out,
+                    contents,
                     "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",
                     hex::encode(selector_from_signature("afterInvariant()"))
                 )?;
             }
         }
     }
-    writeln!(out, "    }}")?;
-    writeln!(out)?;
+    writeln!(contents, "    }}")?;
+    writeln!(contents)?;
     writeln!(
-        out,
+        contents,
         "    function __foundrySymbolicRegressionCall(address target, bytes memory data, uint256 value, bool bubbleFailure) internal {{"
     )?;
-    writeln!(out, "        if (target != address(this)) {{")?;
-    writeln!(out, "            uint256 codeSize;")?;
-    writeln!(out, "            assembly {{ codeSize := extcodesize(target) }}")?;
+    writeln!(contents, "        if (target != address(this)) {{")?;
+    writeln!(contents, "            uint256 codeSize;")?;
+    writeln!(contents, "            assembly {{ codeSize := extcodesize(target) }}")?;
     writeln!(
-        out,
+        contents,
         "            require(codeSize != 0, \"symbolic regression target has no code\");"
     )?;
-    writeln!(out, "        }}")?;
-    writeln!(out, "        (bool ok, bytes memory ret) = target.call{{value: value}}(data);")?;
-    writeln!(out, "        if (!ok && bubbleFailure) {{")?;
-    writeln!(out, "            assembly {{")?;
-    writeln!(out, "                revert(add(ret, 0x20), mload(ret))")?;
-    writeln!(out, "            }}")?;
-    writeln!(out, "        }}")?;
-    writeln!(out, "    }}")?;
-    writeln!(out, "}}")?;
+    writeln!(contents, "        }}")?;
+    writeln!(contents, "        (bool ok, bytes memory ret) = target.call{{value: value}}(data);")?;
+    writeln!(contents, "        if (!ok && bubbleFailure) {{")?;
+    writeln!(contents, "            assembly {{")?;
+    writeln!(contents, "                revert(add(ret, 0x20), mload(ret))")?;
+    writeln!(contents, "            }}")?;
+    writeln!(contents, "        }}")?;
+    writeln!(contents, "    }}")?;
+    writeln!(contents, "}}")?;
 
-    if path.exists() && !regression.overwrite {
-        if std::fs::read_to_string(&path).is_ok_and(|existing| existing == out) {
-            return Ok(SymbolicRegression { artifact: artifact_path.to_path_buf(), path });
+    Ok(PlannedSymbolicRegression {
+        regression: SymbolicRegression { artifact: artifact_path.to_path_buf(), path },
+        contents,
+        test: format!("{}::{}", artifact.test.contract, artifact.test.test),
+    })
+}
+
+fn ensure_unique_regression_paths(planned: &[PlannedSymbolicRegression]) -> Result<()> {
+    let mut seen = HashMap::<&Path, &PlannedSymbolicRegression>::new();
+    for plan in planned {
+        if let Some(previous) = seen.insert(&plan.regression.path, plan) {
+            bail!(
+                "multiple symbolic regressions resolve to {}; {} and {} cannot share one output file",
+                plan.regression.path.display(),
+                previous.test,
+                plan.test
+            );
         }
-        bail!(
-            "regression test {} already exists; pass --regression-overwrite to replace it",
-            path.display()
-        );
+    }
+    Ok(())
+}
+
+fn write_symbolic_regression(
+    regression: &SymbolicRegressionConfig,
+    plan: PlannedSymbolicRegression,
+) -> Result<Option<SymbolicRegression>> {
+    let SymbolicRegression { artifact, path } = &plan.regression;
+    if path.exists() && !regression.overwrite {
+        if std::fs::read_to_string(path).is_ok_and(|existing| existing == plan.contents) {
+            return Ok(Some(plan.regression));
+        }
+        sh_warn!(
+            "Regression test {} already exists; skipping {} (pass --regression-overwrite to replace it)",
+            path.display(),
+            artifact.display()
+        )?;
+        return Ok(None);
     }
 
-    std::fs::write(&path, out)?;
-    Ok(SymbolicRegression { artifact: artifact_path.to_path_buf(), path })
+    std::fs::write(path, plan.contents)?;
+    Ok(Some(plan.regression))
 }
 
 fn write_call(

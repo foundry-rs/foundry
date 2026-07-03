@@ -2049,6 +2049,215 @@ contract SymbolicRegressionMultipleHandlers is Test {
     );
 });
 
+forgetest_init!(symbolic_emit_regression_stale_file_preserves_json_output, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_stale_file_preserves_json_output because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionStaleJson.t.sol",
+        r#"
+contract SymbolicRegressionStaleJson {
+    function checkStaleJson(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkStaleJson"])
+        .assert_failure();
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionStaleJson_checkStaleJson_SymbolicRegression.t.sol",
+    );
+    let mut generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    generated = generated.replacen("UNLICENSED", "MIT", 1);
+    std::fs::write(&regression, generated)
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", regression.display()));
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--json",
+            "--match-test",
+            "checkStaleJson",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout.clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("already exists; skipping"), "{stderr}");
+
+    let result = json_test_result(&stdout, "checkStaleJson(uint256)");
+    assert!(result.get("symbolic_regressions").is_none(), "{result}");
+});
+
+forgetest_init!(symbolic_regression_contract_runs_only_generated_tests, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_regression_contract_runs_only_generated_tests because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionCollection.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionCollectionTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicRegressionCollection is Test {
+    SymbolicRegressionCollectionTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionCollectionTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--emit-regression",
+        "--match-test",
+        "invariant_counterNeverEleven",
+        "--symbolic-invariant-depth",
+        "1",
+    ])
+    .assert_failure();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicRegressionCollection_invariant_counterNeverEleven_SymbolicRegression",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("Ran 1 test"), "{stdout}");
+    assert!(stdout.contains("test_regression_invariant_counterNeverEleven_symbolic()"), "{stdout}");
+    assert!(!stdout.contains(" invariant_counterNeverEleven()"), "{stdout}");
+});
+
+forgetest_init!(symbolic_emit_regression_rejects_explicit_output_collision, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_rejects_explicit_output_collision because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionCollisionFile.t.sol",
+        r#"
+contract SymbolicRegressionCollisionFileFirst {
+    function checkFirst(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+
+contract SymbolicRegressionCollisionFileSecond {
+    function checkSecond(uint256 x) public pure {
+        assert(x != 11);
+    }
+}
+"#,
+    );
+
+    let collision_path = prj.root().join("test/onlyone.sol");
+    let stderr = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--regression-out",
+            "test/onlyone.sol",
+            "--regression-overwrite",
+            "--match-test",
+            "check(First|Second)",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("multiple symbolic regressions resolve to"), "{stderr}");
+    assert!(stderr.contains("checkFirst(uint256)"), "{stderr}");
+    assert!(stderr.contains("checkSecond(uint256)"), "{stderr}");
+    assert!(!collision_path.exists(), "unexpected collision file {}", collision_path.display());
+});
+
+forgetest_init!(symbolic_emit_regression_rejects_default_path_collision, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_rejects_default_path_collision because z3 is not available"
+        );
+        return;
+    }
+
+    let test_dir = prj.root().join("test");
+    std::fs::create_dir_all(test_dir.join("a")).unwrap();
+    std::fs::create_dir_all(test_dir.join("b")).unwrap();
+    std::fs::write(
+        test_dir.join("a/SameName.t.sol"),
+        r#"
+contract SameName {
+    function checkSame(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        test_dir.join("b/SameName.t.sol"),
+        r#"
+contract SameName {
+    function checkSame(uint256 x) public pure {
+        assert(x != 11);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let collision_path =
+        prj.root().join("test/regressions/SameName_checkSame_SymbolicRegression.t.sol");
+    let stderr = cmd
+        .args(["test", "--symbolic", "--emit-regression", "--match-test", "checkSame"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("multiple symbolic regressions resolve to"), "{stderr}");
+    assert!(stderr.contains("test/a/SameName.t.sol:SameName::checkSame(uint256)"), "{stderr}");
+    assert!(stderr.contains("test/b/SameName.t.sol:SameName::checkSame(uint256)"), "{stderr}");
+    assert!(!collision_path.exists(), "unexpected collision file {}", collision_path.display());
+});
+
 forgetest_init!(symbolic_json_reports_minimized_sequence_counterexample, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

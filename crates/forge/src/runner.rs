@@ -742,19 +742,37 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     pub fn run_tests(mut self, filter: &dyn TestFilter) -> SuiteResult {
         let start = Instant::now();
         let mut warnings = Vec::new();
-
         // In fuzz-only mode, drop suites with no runnable fuzz or invariant tests before
         // executing `setUp`. The full function list is built after setup so contract-level
         // inline config can still affect symbolic entrypoint discovery.
-        if self.mcr.tcfg.fuzz_only
-            && !self
+        let skip_fuzz_only_suite = if self.mcr.tcfg.fuzz_only {
+            let test_matcher = TestFunctionMatcher::new(
+                &self.config,
+                &self.mcr.inline_config,
+                self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+            );
+            !self
                 .contract
                 .abi
                 .functions()
-                .filter(|func| filter.matches_test_function_in_contract(self.name, func))
+                .filter(|func| {
+                    filter.matches_test_function_kind_in_contract(
+                        self.name,
+                        func,
+                        test_matcher.test_function_kind(self.name, func),
+                    )
+                })
                 .filter(|func| self.function_matches_network_pass(func))
-                .any(|func| func.is_fuzz_test() || func.is_invariant_test())
-        {
+                .any(|func| {
+                    matches!(
+                        test_matcher.test_function_kind(self.name, func),
+                        TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                    )
+                })
+        } else {
+            false
+        };
+        if skip_fuzz_only_suite {
             return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
         }
 
@@ -813,8 +831,18 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             match_sig
         });
 
-        let invariant_fns: Vec<_> =
-            self.contract.abi.functions().filter(|func| func.is_invariant_test()).collect();
+        let invariant_fns: Vec<_> = {
+            let test_matcher = TestFunctionMatcher::new(
+                &self.config,
+                &self.mcr.inline_config,
+                self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+            );
+            self.contract
+                .abi
+                .functions()
+                .filter(|func| test_matcher.test_function_kind(self.name, func).is_invariant_test())
+                .collect()
+        };
 
         // Validate signatures up front: invariant functions must take no parameters. Without
         // this, parameterized `invariant_*` functions would slip into contract-level campaigns

@@ -887,6 +887,12 @@ impl<'a> TestFunctionMatcher<'a> {
         contract_id: &str,
         func: &Function,
     ) -> TestFunctionKind {
+        if is_symbolic_regression_contract(contract_id)
+            && !func.name.starts_with("test_regression_")
+        {
+            return TestFunctionKind::Unknown;
+        }
+
         TestFunctionKind::classify(
             func.name.as_str(),
             !func.inputs.is_empty(),
@@ -918,6 +924,13 @@ impl<'a> TestFunctionMatcher<'a> {
             self.test_function_kind(&identifier, func)
         })
     }
+}
+
+fn is_symbolic_regression_contract(contract_id: &str) -> bool {
+    contract_id
+        .rsplit_once(':')
+        .map_or(contract_id, |(_, contract)| contract)
+        .ends_with("_SymbolicRegression")
 }
 
 pub(crate) fn matches_contract(
