@@ -2213,7 +2213,12 @@ impl TestArgs {
             if let Some(regression) = &symbolic_regression {
                 for suite_result in results.values_mut() {
                     let artifacts = collect_symbolic_artifacts(suite_result);
-                    let regressions = emit_symbolic_regressions(&config, regression, &artifacts)?;
+                    let regressions = emit_symbolic_regressions(
+                        &config,
+                        regression,
+                        &runner.known_contracts,
+                        &artifacts,
+                    )?;
                     attach_symbolic_regressions(suite_result, &regressions);
                 }
             }
@@ -2227,7 +2232,12 @@ impl TestArgs {
             if let Some(regression) = &symbolic_regression {
                 for suite_result in results.values_mut() {
                     let artifacts = collect_symbolic_artifacts(suite_result);
-                    let regressions = emit_symbolic_regressions(&config, regression, &artifacts)?;
+                    let regressions = emit_symbolic_regressions(
+                        &config,
+                        regression,
+                        &runner.known_contracts,
+                        &artifacts,
+                    )?;
                     attach_symbolic_regressions(suite_result, &regressions);
                 }
             }
@@ -2588,7 +2598,8 @@ impl TestArgs {
 
             if let Some(regression) = &symbolic_regression {
                 let artifacts = collect_symbolic_artifacts(&suite_result);
-                let regressions = emit_symbolic_regressions(&config, regression, &artifacts)?;
+                let regressions =
+                    emit_symbolic_regressions(&config, regression, &known_contracts, &artifacts)?;
                 attach_symbolic_regressions(&mut suite_result, &regressions);
                 if !silent {
                     for regression in regressions {

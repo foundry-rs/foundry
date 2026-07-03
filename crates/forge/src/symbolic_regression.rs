@@ -5,7 +5,7 @@ use crate::result::{
 };
 use alloy_primitives::{U256, hex};
 use eyre::{Result, bail};
-use foundry_common::fs;
+use foundry_common::{TestFunctionExt, contracts::ContractsByArtifact, fs};
 use foundry_config::Config;
 use std::{
     collections::HashSet,
@@ -30,6 +30,7 @@ pub(crate) struct SymbolicRegression {
 pub(crate) fn emit_symbolic_regressions(
     config: &Config,
     regression: &SymbolicRegressionConfig,
+    known_contracts: &ContractsByArtifact,
     results: &[SymbolicArtifactRef],
 ) -> Result<Vec<SymbolicRegression>> {
     let mut emitted = Vec::new();
@@ -60,6 +61,7 @@ pub(crate) fn emit_symbolic_regressions(
             regression,
             &artifact_ref.path,
             &artifact,
+            known_contracts,
             suffix.as_deref(),
         )?);
     }
@@ -167,6 +169,7 @@ fn emit_symbolic_regression(
     regression: &SymbolicRegressionConfig,
     artifact_path: &Path,
     artifact: &SymbolicCounterexampleArtifact,
+    known_contracts: &ContractsByArtifact,
     suffix: Option<&str>,
 ) -> Result<SymbolicRegression> {
     let (source, contract) = artifact_source_and_contract(artifact_path, artifact)?;
@@ -223,6 +226,7 @@ fn emit_symbolic_regression(
             write_call(&mut out, call, "address(this)", true)?;
         }
         SymbolicCounterexampleArtifactKind::Sequence => {
+            let call_after_invariant = call_after_invariant(known_contracts, artifact)?;
             for call in &artifact.calls {
                 write_call(
                     &mut out,
@@ -236,6 +240,13 @@ fn emit_symbolic_regression(
                 "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",
                 hex::encode(selector_from_signature(&artifact.test.test))
             )?;
+            if call_after_invariant {
+                writeln!(
+                    out,
+                    "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",
+                    hex::encode(selector_from_signature("afterInvariant()"))
+                )?;
+            }
         }
     }
     writeln!(out, "    }}")?;
@@ -340,6 +351,23 @@ fn sanitize_identifier(value: &str) -> String {
 fn handler_regression_suffix(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy();
     stem.starts_with("handler-").then(|| sanitize_identifier(&stem))
+}
+
+fn call_after_invariant(
+    known_contracts: &ContractsByArtifact,
+    artifact: &SymbolicCounterexampleArtifact,
+) -> Result<bool> {
+    let Some((_, contract)) =
+        known_contracts.find_by_name_or_identifier(&artifact.test.contract)?
+    else {
+        return Ok(false);
+    };
+    let mut after_invariant_fns =
+        contract.abi.functions().filter(|func| func.name.is_after_invariant());
+    let Some(after_invariant) = after_invariant_fns.next() else {
+        return Ok(false);
+    };
+    Ok(after_invariant.name == "afterInvariant" && after_invariant_fns.next().is_none())
 }
 
 fn relative_solidity_import(from_dir: &Path, to_file: &Path) -> String {

@@ -1810,6 +1810,80 @@ contract SymbolicRegressionSequence is Test {
     assert!(stdout.contains("assertion failed"), "{stdout}");
 });
 
+forgetest_init!(symbolic_emits_stateful_regression_with_after_invariant, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_stateful_regression_with_after_invariant because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionAfterInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionAfterInvariantTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 1;
+        }
+    }
+}
+
+contract SymbolicRegressionAfterInvariant is Test {
+    SymbolicRegressionAfterInvariantTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionAfterInvariantTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public pure {}
+
+    function afterInvariant() public view {
+        require(target.value() != 1, "afterInvariant failure");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_ok",
+            "--symbolic-invariant-depth",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression.t.sol",
+    );
+    assert!(regression.exists(), "missing regression {}", regression.display());
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    assert!(generated.contains(r#"hex"93969ddf""#), "{generated}");
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_invariant_ok_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_invariant_ok_symbolic()"), "{stdout}");
+    assert!(stdout.contains("afterInvariant failure"), "{stdout}");
+});
+
 forgetest_init!(symbolic_emits_handler_assertion_regression, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
