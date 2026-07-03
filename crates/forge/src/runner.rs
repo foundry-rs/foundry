@@ -1880,9 +1880,40 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return Vec::new();
         }
 
+        let requested_ids = &self.config.symbolic.frontier_ids;
+        let requested_pcs = &self.config.symbolic.frontier_pcs;
+        let requested_selectors = &self.config.symbolic.frontier_selectors;
+        let parsed_selectors = parse_frontier_selectors(requested_selectors, &signature);
+        let select_frontier_ids = !requested_ids.is_empty();
+        let select_frontier_pcs = !requested_pcs.is_empty();
+        let select_frontier_selectors = !requested_selectors.is_empty();
+        let selection_active =
+            select_frontier_ids || select_frontier_pcs || select_frontier_selectors;
+        let mut skipped_by_selection = 0usize;
+        let mut imported_ids = Vec::new();
+        let mut imported_pcs = Vec::new();
+        let mut imported_selectors = Vec::new();
         let mut imported = Vec::with_capacity(limit.min(artifact.frontiers.len()));
         for frontier in artifact.frontiers {
+            if select_frontier_ids && !requested_ids.contains(&frontier.id) {
+                skipped_by_selection += 1;
+                continue;
+            }
+            if select_frontier_pcs && !requested_pcs.contains(&frontier.site.pc) {
+                skipped_by_selection += 1;
+                continue;
+            }
+            if select_frontier_selectors
+                && frontier_selector(&frontier)
+                    .is_none_or(|selector| !parsed_selectors.contains(&selector))
+            {
+                skipped_by_selection += 1;
+                continue;
+            }
             if imported.len() == limit {
+                if selection_active {
+                    continue;
+                }
                 break;
             }
             if !is_symbolic_frontier_opcode(frontier.site.opcode) {
@@ -1921,6 +1952,75 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ),
                 input,
             });
+            imported_ids.push(frontier.id);
+            imported_pcs.push(frontier.site.pc);
+            if let Some(selector) = frontier_selector(&frontier) {
+                imported_selectors.push(selector);
+            }
+        }
+
+        if select_frontier_ids {
+            for id in requested_ids {
+                if !imported_ids.contains(id) {
+                    warn!(
+                        id,
+                        test = %signature,
+                        path = %frontier_path.display(),
+                        "requested fuzz branch frontier was not imported"
+                    );
+                    let _ = sh_warn!(
+                        "requested fuzz branch frontier id {id} was not imported for {signature}"
+                    );
+                }
+            }
+        }
+        if select_frontier_pcs {
+            for pc in requested_pcs {
+                if !imported_pcs.contains(pc) {
+                    warn!(
+                        pc,
+                        test = %signature,
+                        path = %frontier_path.display(),
+                        "requested fuzz branch frontier pc was not imported"
+                    );
+                    let _ = sh_warn!(
+                        "requested fuzz branch frontier pc {pc} was not imported for {signature}"
+                    );
+                }
+            }
+        }
+        if select_frontier_selectors {
+            for selector in &parsed_selectors {
+                if !imported_selectors.contains(selector) {
+                    let selector = hex::encode_prefixed(selector);
+                    warn!(
+                        selector = %selector,
+                        test = %signature,
+                        path = %frontier_path.display(),
+                        "requested fuzz branch frontier selector was not imported"
+                    );
+                    let _ = sh_warn!(
+                        "requested fuzz branch frontier selector {selector} was not imported for \
+                         {signature}"
+                    );
+                }
+            }
+        }
+        if selection_active {
+            let id_filter = frontier_filter_display(requested_ids);
+            let pc_filter = frontier_filter_display(requested_pcs);
+            let selector_filter = if requested_selectors.is_empty() {
+                "any".to_string()
+            } else {
+                requested_selectors.iter().format(", ").to_string()
+            };
+            let _ = sh_status!(
+                "Symbolic frontier selection for {signature}: imported {}, skipped {} by target \
+                 filters (ids: {id_filter}; pcs: {pc_filter}; selectors: {selector_filter}; \
+                 limit: {limit})",
+                imported.len(),
+                skipped_by_selection
+            );
         }
 
         debug!(
@@ -1928,6 +2028,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             path = %frontier_path.display(),
             imported = imported.len(),
             limit,
+            skipped_by_selection,
+            requested_ids = ?requested_ids,
+            requested_pcs = ?requested_pcs,
+            requested_selectors = ?requested_selectors,
             "imported fuzz branch frontiers for targeted symbolic seeding"
         );
         imported
@@ -4241,6 +4345,43 @@ fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
 
 const fn is_symbolic_frontier_opcode(op: u8) -> bool {
     matches!(op, opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO)
+}
+
+fn frontier_selector(frontier: &FuzzBranchFrontierRecord) -> Option<Selector> {
+    frontier
+        .sequence
+        .get(frontier.call_index)
+        .and_then(|call| call.call_details.calldata.get(..4))
+        .map(Selector::from_slice)
+}
+
+fn parse_frontier_selectors(selectors: &[String], signature: &str) -> Vec<Selector> {
+    selectors
+        .iter()
+        .filter_map(|selector| match parse_frontier_selector(selector) {
+            Some(selector) => Some(selector),
+            None => {
+                let _ = sh_warn!(
+                    "invalid symbolic frontier selector `{selector}` for {signature}; expected \
+                     a 4-byte hex selector like 0x12345678"
+                );
+                None
+            }
+        })
+        .collect()
+}
+
+fn parse_frontier_selector(selector: &str) -> Option<Selector> {
+    let selector = selector.strip_prefix("0x").unwrap_or(selector);
+    if selector.len() != 8 {
+        return None;
+    }
+    let bytes = hex::decode(selector).ok()?;
+    Some(Selector::from_slice(&bytes))
+}
+
+fn frontier_filter_display<T: std::fmt::Display>(values: &[T]) -> String {
+    if values.is_empty() { "any".to_string() } else { values.iter().format(", ").to_string() }
 }
 
 /// Helper function to set test corpus dir and to compose persisted failure paths.

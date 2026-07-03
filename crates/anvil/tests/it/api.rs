@@ -18,8 +18,8 @@ use alloy_primitives::{
 };
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockTransactions, request::TransactionRequest,
-    state::AccountOverride,
+    BlockId, BlockNumberOrTag, BlockTransactions, erc4337::TransactionConditional,
+    request::TransactionRequest, state::AccountOverride,
 };
 use alloy_rpc_types_eth::{Bundle, EthCallResponse};
 use alloy_serde::WithOtherFields;
@@ -683,7 +683,10 @@ async fn can_send_raw_transaction_conditional() {
     let tx_hash = provider
         .raw_request(
             "eth_sendRawTransactionConditional".into(),
-            (alloy_primitives::Bytes::from(encoded), serde_json::json!({"knownAccounts": {}})),
+            (
+                alloy_primitives::Bytes::from(encoded),
+                TransactionConditional { block_number_min: Some(u64::MAX), ..Default::default() },
+            ),
         )
         .await
         .unwrap();
@@ -701,19 +704,22 @@ async fn can_send_raw_transaction_conditional() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn rejects_raw_transaction_conditional_prestate() {
+async fn ignores_raw_transaction_conditional_prestate() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let result: std::result::Result<serde_json::Value, _> = provider
         .raw_request(
             "eth_sendRawTransactionConditional".into(),
-            (alloy_primitives::Bytes::default(), serde_json::json!({"blockNumberMin": "0x2"})),
+            (
+                alloy_primitives::Bytes::default(),
+                TransactionConditional { block_number_min: Some(u64::MAX), ..Default::default() },
+            ),
         )
         .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("transaction conditions are not supported"), "{err}");
+    assert!(err.contains("Empty transaction data"), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
