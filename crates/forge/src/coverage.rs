@@ -225,6 +225,14 @@ pub struct CoverageAttributionReporter {
     path: PathBuf,
 }
 
+/// A hit map resolved to the contract coverage metadata it belongs to.
+pub struct ResolvedHitMap {
+    pub contract_id: ContractId,
+    pub is_deployed_code: bool,
+}
+
+pub type ResolvedHitMaps = alloy_primitives::map::B256HashMap<ResolvedHitMap>;
+
 impl CoverageAttributionReporter {
     /// Create a new attribution reporter.
     pub const fn new(path: PathBuf) -> Self {
@@ -232,15 +240,15 @@ impl CoverageAttributionReporter {
     }
 
     /// Writes per-test coverage attribution for the provided outcome.
-    pub fn report(&self, report: &CoverageReport, outcome: &TestOutcome) -> eyre::Result<()> {
-        let known_contracts = outcome
-            .known_contracts
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("coverage attribution requires known contracts"))?;
-
+    pub fn report(
+        &self,
+        report: &CoverageReport,
+        outcome: &TestOutcome,
+        resolved_hit_maps: &ResolvedHitMaps,
+    ) -> eyre::Result<()> {
         let payload = AttributionReport {
             version: 1,
-            tests: AttributionTests { report, outcome, known_contracts },
+            tests: AttributionTests { report, outcome, resolved_hit_maps },
         };
         let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
         serde_json::to_writer(&mut out, &payload)?;
@@ -289,7 +297,7 @@ struct AttributionItem {
 struct AttributionTests<'a> {
     report: &'a CoverageReport,
     outcome: &'a TestOutcome,
-    known_contracts: &'a foundry_common::ContractsByArtifact,
+    resolved_hit_maps: &'a ResolvedHitMaps,
 }
 
 impl Serialize for AttributionTests<'_> {
@@ -307,7 +315,7 @@ impl Serialize for AttributionTests<'_> {
                     test: test.clone(),
                     status: test_status_name(result.status),
                     kind: test_kind_name(&result.kind),
-                    covered: attributed_items(self.report, self.known_contracts, result),
+                    covered: attributed_items(self.report, self.resolved_hit_maps, result),
                 })?;
             }
         }
@@ -318,7 +326,7 @@ impl Serialize for AttributionTests<'_> {
 
 fn attributed_items(
     report: &CoverageReport,
-    known_contracts: &foundry_common::ContractsByArtifact,
+    resolved_hit_maps: &ResolvedHitMaps,
     result: &TestResult,
 ) -> Vec<AttributionItem> {
     type AttributionItemKey = (
@@ -337,32 +345,15 @@ fn attributed_items(
     let mut items = BTreeMap::<AttributionItemKey, AttributionItem>::new();
     let Some(hit_maps) = result.line_coverage.as_ref() else { return Vec::new() };
 
-    for map in hit_maps.0.values() {
-        let (artifact_id, is_deployed_code) = if let Some((artifact_id, _)) =
-            known_contracts.find_by_deployed_code(map.bytecode())
-        {
-            (artifact_id, true)
-        } else if let Some((artifact_id, _)) = known_contracts.find_by_creation_code(map.bytecode())
-        {
-            (artifact_id, false)
-        } else {
-            continue;
-        };
+    for (code_hash, map) in &hit_maps.0 {
+        let Some(resolved) = resolved_hit_maps.get(code_hash) else { continue };
 
-        let Some(source_id) =
-            report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
-        else {
-            continue;
-        };
-        let contract_id = ContractId {
-            version: artifact_id.version.clone(),
-            source_id,
-            contract_name: artifact_id.name.as_str().into(),
-        };
-
-        for (item, hits) in report.hit_items_for_hit_map(&contract_id, map, is_deployed_code) {
-            let Some(source_path) =
-                report.source_paths.get(&(contract_id.version.clone(), item.loc.source_id))
+        for (item, hits) in
+            report.hit_items_for_hit_map(&resolved.contract_id, map, resolved.is_deployed_code)
+        {
+            let Some(source_path) = report
+                .source_paths
+                .get(&(resolved.contract_id.version.clone(), item.loc.source_id))
             else {
                 continue;
             };

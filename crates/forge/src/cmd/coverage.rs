@@ -1,7 +1,8 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
-    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter,
+    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, ResolvedHitMap,
+    ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::find_anchors,
 };
@@ -264,39 +265,53 @@ impl CoverageArgs {
         let outcome =
             self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
 
-        let known_contracts = outcome.known_contracts.as_ref().unwrap().clone();
+        let known_contracts = outcome.known_contracts.as_ref().unwrap();
+        let mut resolved_hit_maps = ResolvedHitMaps::default();
 
         // Add hit data to the coverage report
-        let data = outcome.results.values().flat_map(|suite| {
-            let mut hits = Vec::new();
+        for suite in outcome.results.values() {
             for result in suite.test_results.values() {
                 let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
-                for map in hit_maps.0.values() {
-                    if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
-                        hits.push((id, map, true));
-                    } else if let Some((id, _)) =
-                        known_contracts.find_by_creation_code(map.bytecode())
-                    {
-                        hits.push((id, map, false));
-                    }
-                }
-            }
-            hits
-        });
 
-        for (artifact_id, map, is_deployed_code) in data {
-            if let Some(source_id) =
-                report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
-            {
-                report.add_hit_map(
-                    &ContractId {
+                for (code_hash, map) in &hit_maps.0 {
+                    if let Some(resolved) = resolved_hit_maps.get(code_hash) {
+                        report.add_hit_map(
+                            &resolved.contract_id,
+                            map,
+                            resolved.is_deployed_code,
+                        )?;
+                        continue;
+                    }
+
+                    let Some((artifact_id, is_deployed_code)) = known_contracts
+                        .find_by_deployed_code(map.bytecode())
+                        .map(|(id, _)| (id, true))
+                        .or_else(|| {
+                            known_contracts
+                                .find_by_creation_code(map.bytecode())
+                                .map(|(id, _)| (id, false))
+                        })
+                    else {
+                        continue;
+                    };
+
+                    let Some(source_id) = report
+                        .get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
+                    else {
+                        continue;
+                    };
+                    let contract_id = ContractId {
                         version: artifact_id.version.clone(),
                         source_id,
                         contract_name: artifact_id.name.as_str().into(),
-                    },
-                    map,
-                    is_deployed_code,
-                )?;
+                    };
+
+                    report.add_hit_map(&contract_id, map, is_deployed_code)?;
+
+                    resolved_hit_maps
+                        .entry(*code_hash)
+                        .or_insert(ResolvedHitMap { contract_id, is_deployed_code });
+                }
             }
         }
 
@@ -316,7 +331,7 @@ impl CoverageArgs {
             let reporter = CoverageAttributionReporter::new(
                 self.report_path(project_root, "coverage-attribution.json"),
             );
-            reporter.report(&report, &outcome)?;
+            reporter.report(&report, &outcome, &resolved_hit_maps)?;
         }
 
         // Check for test failures after generating coverage report.
