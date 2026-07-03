@@ -285,37 +285,37 @@ fn power_of_two_shift(value: U256) -> Option<usize> {
     Some(value.bit_len() - 1)
 }
 
-pub(in crate::runtime::expr) fn low_masked_source(expr: &SymExpr, bits: usize) -> Option<SymExpr> {
+pub(in crate::runtime::expr) fn low_masked_source(expr: &SymExpr, bits: usize) -> Option<&SymExpr> {
     match expr.kind() {
         // `a & low_mask => a`.
         SymExprKind::BinOp(SymBinOp::And, left, right)
             if right.as_const().and_then(mask_low_bits) == Some(bits) =>
         {
-            Some(left.clone())
+            Some(left)
         }
         // `low_mask & a => a`.
         SymExprKind::BinOp(SymBinOp::And, left, right)
             if left.as_const().and_then(mask_low_bits) == Some(bits) =>
         {
-            Some(right.clone())
+            Some(right)
         }
         _ => None,
     }
 }
 
-pub(in crate::runtime::expr) fn low_masked_source_any(expr: &SymExpr) -> Option<SymExpr> {
+pub(in crate::runtime::expr) fn low_masked_source_any(expr: &SymExpr) -> Option<&SymExpr> {
     match expr.kind() {
         // `a & low_mask => a`.
         SymExprKind::BinOp(SymBinOp::And, left, right)
             if right.as_const().and_then(mask_low_bits).is_some() =>
         {
-            Some(left.clone())
+            Some(left)
         }
         // `low_mask & a => a`.
         SymExprKind::BinOp(SymBinOp::And, left, right)
             if left.as_const().and_then(mask_low_bits).is_some() =>
         {
-            Some(right.clone())
+            Some(right)
         }
         _ => None,
     }
@@ -524,7 +524,7 @@ impl SymExpr {
                     SymExprKind::Const(divisor),
                 ) if binop == SymBinOp::UDiv
                     && let Some(shift) = power_of_two_shift(*divisor)
-                    && low_masked_source(low_bits, shift).as_ref() == Some(value) =>
+                    && low_masked_source(low_bits, shift) == Some(value) =>
                 {
                     let shift = Self::constant(cx, U256::from(shift));
                     Self::binop(cx, SymBinOp::Shr, value.clone(), shift)
@@ -644,10 +644,10 @@ impl SymExpr {
                 // `addmod/mulmod(const, const, const) => const`.
                 Self::constant(cx, ternop.eval(*left, *right, *modulus))
             }
+            // `addmod/mulmod(a, b, 2**n) => op(a, b) & (2**n - 1)`.
             (_, _, SymExprKind::Const(modulus))
                 if let Some(bits) = power_of_two_shift(*modulus) =>
             {
-                // `addmod/mulmod(a, b, 2**n) => op(a, b) & (2**n - 1)`.
                 let binop = match ternop {
                     SymTernOp::AddMod => SymBinOp::Add,
                     SymTernOp::MulMod => SymBinOp::Mul,
