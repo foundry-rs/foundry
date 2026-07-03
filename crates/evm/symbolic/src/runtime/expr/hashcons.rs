@@ -3,6 +3,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     fmt,
     hash::{BuildHasher, BuildHasherDefault, Hash, Hasher},
+    ptr,
     sync::{Arc, Weak},
 };
 
@@ -24,10 +25,6 @@ struct HashConsedInner<T> {
 impl<T> HashConsed<T> {
     pub(in crate::runtime) fn cached_hash(&self) -> u64 {
         self.inner.hash
-    }
-
-    pub(in crate::runtime) fn ptr_eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
     }
 
     pub(in crate::runtime) fn value(&self) -> &T {
@@ -53,7 +50,7 @@ impl<T> Clone for HashConsed<T> {
 
 impl<T> PartialEq for HashConsed<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.ptr_eq(other)
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
@@ -143,7 +140,7 @@ mod tests {
         let first = table.make("same".to_string());
         let second = table.make("same".to_string());
 
-        assert!(first.ptr_eq(&second));
+        assert_eq!(first, second);
         assert_eq!(first.cached_hash(), second.cached_hash());
     }
 
@@ -154,7 +151,6 @@ mod tests {
         let first = table.make("first".to_string());
         let second = table.make("second".to_string());
 
-        assert!(!first.ptr_eq(&second));
         assert_ne!(first, second);
     }
 

@@ -78,18 +78,18 @@ fn write_expr_structural_key(out: &mut String, expr: &SymExpr) {
             let _ = write!(out, "0:{value:064x}");
         }
         SymExprKind::Var(name) => {
-            let _ = write!(out, "1:{}", name.as_str());
+            let _ = write!(out, "1:{}", name.id());
         }
-        SymExprKind::GasLeft(id) => {
-            let _ = write!(out, "2:{id:020}");
+        SymExprKind::GasLeft(symbol) => {
+            let _ = write!(out, "2:{}", symbol.id());
         }
         SymExprKind::Keccak { name, len, bytes } => {
-            let _ = write!(out, "3:{}:", name.as_str());
+            let _ = write!(out, "3:{}:", name.id());
             write_expr_structural_key(out, len);
             write_exprs_structural_key(out, bytes);
         }
         SymExprKind::Hash { name, algorithm, bytes } => {
-            let _ = write!(out, "4:{}:{algorithm}:", name.as_str());
+            let _ = write!(out, "4:{}:{algorithm}:", name.id());
             write_exprs_structural_key(out, bytes);
         }
         SymExprKind::Not(value) => {
@@ -211,6 +211,7 @@ impl SymBoolExpr {
 }
 
 pub(super) fn write_smt_assertions(
+    cx: &SymCx,
     out: &mut String,
     constraints: &[SymBoolExpr],
 ) -> Result<(), SymbolicError> {
@@ -224,12 +225,12 @@ pub(super) fn write_smt_assertions(
     let plan = SmtCsePlan::new(constraints);
     if plan.bindings.is_empty() {
         for constraint in constraints {
-            let _ = writeln!(out, "(assert {})", constraint.smt());
+            let _ = writeln!(out, "(assert {})", constraint.smt(cx));
         }
         return Ok(());
     }
 
-    let writer = SmtCseWriter { plan: &plan };
+    let writer = SmtCseWriter { cx, plan: &plan };
     // define binding_0 = term_0
     // ...
     // define binding_n = term_n
@@ -464,6 +465,7 @@ impl SmtBinding {
 }
 
 struct SmtCseWriter<'a> {
+    cx: &'a SymCx,
     plan: &'a SmtCsePlan,
 }
 
@@ -482,16 +484,20 @@ impl SmtCseWriter<'_> {
             return;
         }
 
-        match expr.kind() {
+        let kind = expr.kind();
+        if let Some(var) = kind.var() {
+            out.push_str(self.cx.symbol_name(var));
+            return;
+        }
+
+        match kind {
             SymExprKind::Const(value) => {
                 let _ = write!(out, "(_ bv{value} 256)");
             }
-            SymExprKind::Var(var) => out.push_str(var.as_str()),
-            SymExprKind::GasLeft(id) => {
-                let _ = write!(out, "gasleft_{id}");
-            }
-            SymExprKind::Keccak { name, .. } => out.push_str(name.as_str()),
-            SymExprKind::Hash { name, .. } => out.push_str(name.as_str()),
+            SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Hash { .. } => unreachable!("symbolic leaf handled above"),
             SymExprKind::Not(value) => {
                 out.push_str("(bvnot ");
                 self.write_expr(out, value, skip_expr, skip_bool);
