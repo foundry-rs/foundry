@@ -1115,11 +1115,18 @@ impl<N: Network> EthApi<N> {
 
         let number = self.backend.convert_block_number(Some(newest_block));
 
+        // Snapshot the fork block once so the early return here and the pre-fork split below agree
+        // on the same value. Reading it a second time lets an `anvil_reset` move the fork between
+        // the reads: the newest block could clear this early return, then the split treats the
+        // whole range as pre-fork and tacks on a stray local next-block fee.
+        let fork = self.get_fork();
+        let fork_block = fork.as_ref().map(|fork| fork.block_number());
+
         // check if the number predates the fork, if in fork mode
-        if let Some(fork) = self.get_fork() {
+        if let (Some(fork), Some(fork_block)) = (fork.as_ref(), fork_block) {
             // if we're still at the forked block we don't have any history and can't compute it
             // efficiently, instead we fetch it from the fork
-            if fork.predates_fork_inclusive(number) {
+            if number <= fork_block {
                 return fork
                     .fee_history(block_count.to(), BlockNumber::Number(number), &reward_percentiles)
                     .await
@@ -1153,10 +1160,9 @@ impl<N: Network> EthApi<N> {
         // range can dip below the fork block while its newest block is post-fork. Local storage
         // has no pre-fork blocks, so resolving them via `backend.get_block` below would fail.
         // Serve the pre-fork portion from the fork provider and compute only post-fork locally.
-        let local_lowest = if let Some(fork) = self.get_fork() {
-            // Read the fork block once: re-reading it after the range check would race an
-            // `anvil_reset` moving the fork, which could underflow `count_pre` below.
-            let fork_block = fork.block_number();
+        // Reuse the `fork_block` snapshot from above so this split stays consistent with the early
+        // return; we didn't return, so `fork_block < highest` and only a crossing range splits.
+        let local_lowest = if let (Some(fork), Some(fork_block)) = (fork.as_ref(), fork_block) {
             if lowest <= fork_block {
                 let count_pre = fork_block - lowest + 1;
                 let pre = fork

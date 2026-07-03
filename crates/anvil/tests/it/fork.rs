@@ -259,6 +259,11 @@ async fn test_fork_fee_history_across_fork_boundary() {
     let history =
         api.fee_history(U256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
 
+    // The oldest block must be the true range start (latest - count + 1); a split that mistook the
+    // whole range for pre-fork would shift it and return more entries than requested.
+    let latest = api.block_number().unwrap().to::<u64>();
+    assert_eq!(history.oldest_block, latest - count + 1, "wrong oldest_block");
+
     // Full range covered: per-block arrays have `count` entries; base_fee_per_gas has one more.
     assert_eq!(history.gas_used_ratio.len(), count as usize, "incomplete gas_used_ratio");
     assert_eq!(
