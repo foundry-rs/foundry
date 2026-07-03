@@ -13,7 +13,10 @@ use revm::{
     state::Bytecode,
 };
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
-use tempo_precompiles::{extend_tempo_precompiles, storage::StorageCtx};
+use tempo_precompiles::{
+    extend_tempo_precompiles,
+    storage::{StorageActions, StorageCtx},
+};
 use tempo_revm::{
     TempoInvalidTransaction, TempoTxEnv, evm::TempoContext, gas_params::tempo_gas_params,
     handler::TempoEvmHandler,
@@ -46,23 +49,32 @@ pub(crate) fn initialize_tempo_evm<
     is_forked: bool,
 ) {
     let ctx = evm.ctx_mut();
-    StorageCtx::enter_evm(&mut ctx.journaled_state, &ctx.block, &ctx.cfg, &ctx.tx, || {
-        if is_forked {
-            // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
-            let mut sctx = StorageCtx;
-            let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-            for addr in
-                TEMPO_PRECOMPILE_ADDRESSES.iter().copied().chain(TEMPO_TIP20_TOKENS.iter().copied())
-            {
-                sctx.set_code(addr, sentinel.clone())
-                    .expect("failed to warm tempo precompile address");
+    StorageCtx::enter_evm(
+        &mut ctx.journaled_state,
+        &ctx.block,
+        &ctx.cfg,
+        &ctx.tx,
+        StorageActions::disabled(),
+        || {
+            if is_forked {
+                // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
+                let mut sctx = StorageCtx;
+                let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+                for addr in TEMPO_PRECOMPILE_ADDRESSES
+                    .iter()
+                    .copied()
+                    .chain(TEMPO_TIP20_TOKENS.iter().copied())
+                {
+                    sctx.set_code(addr, sentinel.clone())
+                        .expect("failed to warm tempo precompile address");
+                }
+            } else {
+                // In non-fork mode, run full genesis initialization.
+                initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
+                    .expect("tempo genesis initialization failed");
             }
-        } else {
-            // In non-fork mode, run full genesis initialization.
-            initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
-                .expect("tempo genesis initialization failed");
-        }
-    });
+        },
+    );
 }
 
 impl FoundryEvmFactory for TempoEvmFactory {
@@ -88,8 +100,15 @@ impl FoundryEvmFactory for TempoEvmFactory {
 
         let networks = tempo_evm.inspector().get_networks();
         networks.inject_precompiles(tempo_evm.precompiles_mut());
+        // Re-extend Tempo precompiles, preserving shared non-creditable slots.
         let cfg = tempo_evm.cfg.clone();
-        extend_tempo_precompiles(tempo_evm.precompiles_mut(), &cfg);
+        let non_creditable_slots = tempo_evm.non_creditable_slots();
+        extend_tempo_precompiles(
+            tempo_evm.precompiles_mut(),
+            &cfg,
+            StorageActions::disabled(),
+            non_creditable_slots,
+        );
 
         initialize_tempo_evm(&mut tempo_evm, is_forked);
         tempo_evm

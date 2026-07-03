@@ -7,12 +7,12 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use revm::state::Bytecode;
-use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
     contracts::ARACHNID_CREATE2_FACTORY_BYTECODE, precompiles::VALIDATOR_CONFIG_ADDRESS,
 };
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
@@ -28,10 +28,11 @@ pub use foundry_evm_networks::{
     TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,
 };
 pub use tempo_contracts::precompiles::{
-    ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, IFeeManager, ISignatureVerifier, IStablecoinDEX,
-    ITIP20ChannelReserve, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, IAccountKeychain, IAddressRegistry,
+    IFeeManager, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, ITIP20ChannelReserve,
+    ITIP403Registry, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
     STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
-    TIP20_FACTORY_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 pub use tempo_precompiles::{
     address_registry::{AddressRegistry, IMPLICIT_APPROVAL_LIST, is_implicitly_approved},

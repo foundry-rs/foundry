@@ -78,7 +78,7 @@ regex = { workspace = true, default-features = false }
 revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
-similar = { version = "2", features = ["inline"] }
+similar = { version = "3", features = ["inline"] }
 solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
@@ -93,18 +93,19 @@ path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 
+axum.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
 opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
 soldeer-core.workspace = true
-quick-junit = "0.5.2"
+quick-junit = "0.6.0"
 tempfile.workspace = true
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
-axum.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 
@@ -125,7 +126,6 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
-isolate-by-default = ["foundry-config/isolate-by-default"]
 optimism = [
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",

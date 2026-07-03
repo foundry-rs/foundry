@@ -1,7 +1,6 @@
 use super::*;
 
 impl SymbolicExecutor {
-    /// Implements the `call` symbolic executor helper.
     pub(super) fn call(
         &mut self,
         executor: &Executor<impl FoundryEvmNetwork>,
@@ -10,39 +9,43 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
     ) -> Result<StepOutcome, SymbolicError> {
-        let pre_call_state = state.clone();
+        let pre_call_state = (!state.function_mocks.is_empty()
+            || !state.expected_calls.is_empty()
+            || !state.call_mocks.is_empty())
+        .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
         let gas = state.stack.pop()?;
         if gas.contains_gasleft() && !gas.is_raw_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let target = state.stack.pop()?;
-        ensure_word_not_gasleft(&target)?;
+        ensure_expr_not_gasleft(&target)?;
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to)) if is_known_cheatcode(to) => {
                 let value = state.stack.pop()?;
-                let value = state.expect_constrained_word(value, "symbolic CALL value")?;
-                SymWord::Concrete(value)
+                let value =
+                    state.expect_constrained_word(&mut self.cx, value, "symbolic CALL value")?;
+                SymExpr::constant(&mut self.cx, value)
             }
             (CallKind::Call, _) => state.stack.pop()?,
             (CallKind::CallCode, _) => state.stack.pop()?,
-            (CallKind::StaticCall | CallKind::DelegateCall, _) => SymWord::zero(),
+            (CallKind::StaticCall | CallKind::DelegateCall, _) => SymExpr::zero(&mut self.cx),
         };
-        ensure_word_not_gasleft(&value)?;
+        ensure_expr_not_gasleft(&value)?;
         let in_offset = state.stack.pop()?;
-        ensure_word_not_gasleft(&in_offset)?;
+        ensure_expr_not_gasleft(&in_offset)?;
         let in_size = state.stack.pop()?;
-        ensure_word_not_gasleft(&in_size)?;
-        let in_size = match state.constrained_usize(&in_size) {
-            Some(size) => BoundedCopySize::Concrete(size),
-            None if state.constrained_word(&in_size).is_some() => {
+        ensure_expr_not_gasleft(&in_size)?;
+        let in_size = match state.constrained_usize_checked(&mut self.cx, &in_size) {
+            Some(Ok(size)) => BoundedCopySize::Concrete(size),
+            Some(Err(_)) => {
                 return Ok(StepOutcome::Revert);
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
                 let max_size = state
-                    .upper_bound_usize(&in_size)
+                    .upper_bound_usize(&mut self.cx, &in_size)
                     .filter(|size| *size <= max_limit)
                     .map(Ok)
                     .unwrap_or_else(|| {
@@ -57,18 +60,18 @@ impl SymbolicExecutor {
             }
         };
         let out_offset = state.stack.pop()?;
-        ensure_word_not_gasleft(&out_offset)?;
+        ensure_expr_not_gasleft(&out_offset)?;
         let out_size = state.stack.pop()?;
-        ensure_word_not_gasleft(&out_size)?;
-        let out_size = match state.constrained_usize(&out_size) {
-            Some(size) => BoundedCopySize::Concrete(size),
-            None if state.constrained_word(&out_size).is_some() => {
+        ensure_expr_not_gasleft(&out_size)?;
+        let out_size = match state.constrained_usize_checked(&mut self.cx, &out_size) {
+            Some(Ok(size)) => BoundedCopySize::Concrete(size),
+            Some(Err(_)) => {
                 return Ok(StepOutcome::Revert);
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
                 let max_size = state
-                    .upper_bound_usize(&out_size)
+                    .upper_bound_usize(&mut self.cx, &out_size)
                     .filter(|size| *size <= max_limit)
                     .map(Ok)
                     .unwrap_or_else(|| {
@@ -83,54 +86,69 @@ impl SymbolicExecutor {
             }
         };
 
-        if state.is_static && !state.constrained_word(&value).is_some_and(|value| value.is_zero()) {
-            state.return_data = SymReturnData::default();
+        if state.is_static
+            && !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero())
+        {
+            state.return_data = SymReturnData::empty(&mut self.cx);
             return Ok(StepOutcome::Revert);
         }
 
-        let call_input = call_input_from_memory(&state.memory, in_offset.clone(), &in_size);
-        if call_input.iter().any(SymWord::contains_gasleft) {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
+        let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
 
         if let Some(to) = target_address {
-            if self.branch_symbolic_function_mock_if_needed(
-                state,
-                worklist,
-                &pre_call_state,
-                call_pc,
-                to,
-                &call_input,
-            )? {
-                return Ok(StepOutcome::Forked);
+            if !state.function_mocks.is_empty() {
+                let pre_call_state =
+                    pre_call_state.as_ref().expect("function mocks require pre-call state");
+                if self.branch_symbolic_function_mock_if_needed(
+                    state,
+                    worklist,
+                    pre_call_state,
+                    call_pc,
+                    to,
+                    &call_input,
+                )? {
+                    return Ok(StepOutcome::Forked);
+                }
             }
-            let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
-            if self.branch_symbolic_call_value_if_needed(
-                state,
-                worklist,
-                &pre_call_state,
-                call_pc,
-                to,
-                code_address,
-                &value,
-                &gas,
-                &call_input,
-            )? {
-                return Ok(StepOutcome::Forked);
+            let code_address = if state.function_mocks.is_empty() {
+                to
+            } else {
+                self.function_mock_target(state, to, &call_input)?.unwrap_or(to)
+            };
+            if !state.expected_calls.is_empty() || !state.call_mocks.is_empty() {
+                let pre_call_state =
+                    pre_call_state.as_ref().expect("call mocks require pre-call state");
+                if self.branch_symbolic_call_value_if_needed(
+                    state,
+                    worklist,
+                    pre_call_state,
+                    call_pc,
+                    to,
+                    code_address,
+                    &value,
+                    &gas,
+                    &call_input,
+                )? {
+                    return Ok(StepOutcome::Forked);
+                }
             }
-            let concrete_value = state.constrained_word(&value);
-            if self.branch_symbolic_call_match_if_needed(
-                state,
-                worklist,
-                &pre_call_state,
-                call_pc,
-                to,
-                code_address,
-                concrete_value,
-                &gas,
-                &call_input,
-            )? {
-                return Ok(StepOutcome::Forked);
+            let concrete_value = state.constrained_word(&mut self.cx, &value);
+            if !state.expected_calls.is_empty() || !state.call_mocks.is_empty() {
+                let pre_call_state =
+                    pre_call_state.as_ref().expect("call mocks require pre-call state");
+                if self.branch_symbolic_call_match_if_needed(
+                    state,
+                    worklist,
+                    pre_call_state,
+                    call_pc,
+                    to,
+                    code_address,
+                    concrete_value,
+                    &gas,
+                    &call_input,
+                )? {
+                    return Ok(StepOutcome::Forked);
+                }
             }
             return self.call_concrete_target(
                 executor,
@@ -166,7 +184,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `branch_symbolic_call_value_if_needed` symbolic executor helper.
     pub(super) fn branch_symbolic_call_value_if_needed(
         &mut self,
         state: &mut PathState,
@@ -175,17 +192,17 @@ impl SymbolicExecutor {
         call_pc: usize,
         to: Address,
         code_address: Address,
-        value: &SymWord,
-        gas: &SymWord,
-        call_input: &[SymWord],
+        value: &SymExpr,
+        gas: &SymExpr,
+        call_input: &SymBytes,
     ) -> Result<bool, SymbolicError> {
-        if state.constrained_word(value).is_some() {
+        if state.constrained_word(&mut self.cx, value).is_some() {
             return Ok(false);
         }
 
-        let mut candidates = BTreeSet::new();
+        let mut candidates = HashSet::<U256>::default();
         for expected in &state.expected_calls {
-            let Some(expected_value) = expected.value else { continue };
+            let Some(expected_value) = expected.value() else { continue };
             if self
                 .expected_call_match_constraints(
                     state,
@@ -201,7 +218,7 @@ impl SymbolicExecutor {
             }
         }
         for mock in &state.call_mocks {
-            let Some(mock_value) = mock.value else { continue };
+            let Some(mock_value) = mock.value() else { continue };
             if self
                 .call_mock_match_constraints(
                     state,
@@ -216,10 +233,13 @@ impl SymbolicExecutor {
             }
         }
 
+        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+        candidates.sort_unstable();
         for candidate in candidates {
-            let eq = BoolExpr::eq(value.clone().into_expr(), Expr::Const(candidate));
+            let eq = SymBoolExpr::eq_word_const(&mut self.cx, value, candidate);
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
-            let (neq_constraints, neq_sat) = self.constraints_with_condition(state, eq.not())?;
+            let eq_not = eq.not(&mut self.cx);
+            let (neq_constraints, neq_sat) = self.constraints_with_condition(state, eq_not)?;
 
             match (eq_sat, neq_sat) {
                 (true, true) => {
@@ -248,7 +268,6 @@ impl SymbolicExecutor {
         Ok(false)
     }
 
-    /// Implements the `branch_symbolic_function_mock_if_needed` symbolic executor helper.
     pub(super) fn branch_symbolic_function_mock_if_needed(
         &mut self,
         state: &mut PathState,
@@ -256,19 +275,14 @@ impl SymbolicExecutor {
         pre_call_state: &PathState,
         call_pc: usize,
         callee: Address,
-        calldata: &[SymWord],
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
-        let function_mocks = state.function_mocks.clone();
-        for mock in function_mocks.iter().rev().cloned() {
-            if mock.data.len() != calldata.len() {
+        for idx in (0..state.function_mocks.len()).rev() {
+            if state.function_mocks[idx].calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) = function_mock_match_condition(
-                &mock,
-                callee,
-                calldata,
-                "symbolic vm.mockFunction calldata",
-            )?
+            let Some(condition) =
+                state.function_mocks[idx].match_condition(&mut self.cx, callee, calldata)
             else {
                 continue;
             };
@@ -283,16 +297,12 @@ impl SymbolicExecutor {
             }
         }
 
-        for mock in function_mocks.iter().rev().cloned() {
-            if mock.data.len() != 4 {
+        for idx in (0..state.function_mocks.len()).rev() {
+            if state.function_mocks[idx].calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) = function_mock_match_condition(
-                &mock,
-                callee,
-                calldata,
-                "symbolic vm.mockFunction selector",
-            )?
+            let Some(condition) =
+                state.function_mocks[idx].match_condition(&mut self.cx, callee, calldata)
             else {
                 continue;
             };
@@ -310,23 +320,26 @@ impl SymbolicExecutor {
         Ok(false)
     }
 
-    /// Applies the `observe_expected_call` symbolic executor helper.
     pub(super) fn observe_expected_call(
         &mut self,
         state: &mut PathState,
         callee: Address,
         value: Option<U256>,
-        gas: &SymWord,
-        calldata: &[SymWord],
+        gas: &SymExpr,
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         if state.expected_calls.is_empty() {
             return Ok(true);
         }
         for idx in 0..state.expected_calls.len() {
-            let expected = state.expected_calls[idx].clone();
-            if let Some(constraints) = self
-                .expected_call_match_constraints(state, &expected, callee, value, gas, calldata)?
-            {
+            if let Some(constraints) = self.expected_call_match_constraints(
+                state,
+                &state.expected_calls[idx],
+                callee,
+                value,
+                gas,
+                calldata,
+            )? {
                 state.constraints = constraints;
                 return Ok(state.expected_calls[idx].observe());
             }
@@ -335,7 +348,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `branch_symbolic_call_match_if_needed` symbolic executor helper.
     pub(super) fn branch_symbolic_call_match_if_needed(
         &mut self,
         state: &mut PathState,
@@ -345,13 +357,17 @@ impl SymbolicExecutor {
         callee: Address,
         code_address: Address,
         value: Option<U256>,
-        gas: &SymWord,
-        calldata: &[SymWord],
+        gas: &SymExpr,
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
-        let expected_calls = state.expected_calls.clone();
-        for expected in expected_calls {
-            let Some(condition) =
-                self.expected_call_match_condition(&expected, callee, value, gas, calldata)?
+        for idx in 0..state.expected_calls.len() {
+            let Some(condition) = state.expected_calls[idx].match_condition(
+                &mut self.cx,
+                callee,
+                value,
+                gas,
+                calldata,
+            )?
             else {
                 continue;
             };
@@ -366,14 +382,15 @@ impl SymbolicExecutor {
             }
         }
 
-        let mut mocks = state.call_mocks.iter().cloned().enumerate().collect::<Vec<_>>();
-        mocks.sort_by_key(|(idx, mock)| {
-            (std::cmp::Reverse(mock.data.len()), std::cmp::Reverse(mock.value.is_some()), *idx)
+        let mut mocks = (0..state.call_mocks.len()).collect::<Vec<_>>();
+        mocks.sort_by_key(|idx| {
+            let (len, has_value) = state.call_mocks[*idx].specificity();
+            (std::cmp::Reverse(len), std::cmp::Reverse(has_value), *idx)
         });
 
-        for (_, mock) in mocks {
+        for idx in mocks {
             let Some(condition) =
-                self.call_mock_match_condition(&mock, code_address, value, calldata)?
+                state.call_mocks[idx].match_condition(&mut self.cx, code_address, value, calldata)
             else {
                 continue;
             };
@@ -391,28 +408,31 @@ impl SymbolicExecutor {
         Ok(false)
     }
 
-    /// Implements the `take_call_mock` symbolic executor helper.
     pub(super) fn take_call_mock(
         &mut self,
         state: &mut PathState,
         callee: Address,
         value: Option<U256>,
-        calldata: &[SymWord],
+        calldata: &SymBytes,
     ) -> Result<Option<CallMockOutcome>, SymbolicError> {
         if state.call_mocks.is_empty() {
             return Ok(None);
         }
         let mut best = None;
         for idx in 0..state.call_mocks.len() {
-            let mock = state.call_mocks[idx].clone();
-            let Some(constraints) =
-                self.call_mock_match_constraints(state, &mock, callee, value, calldata)?
+            let Some(constraints) = self.call_mock_match_constraints(
+                state,
+                &state.call_mocks[idx],
+                callee,
+                value,
+                calldata,
+            )?
             else {
                 continue;
             };
-            let specificity = (mock.data.len(), mock.value.is_some());
+            let specificity = state.call_mocks[idx].specificity();
             if best.as_ref().is_none_or(
-                |(_, best_specificity, _): &(usize, (usize, bool), Vec<BoolExpr>)| {
+                |(_, best_specificity, _): &(usize, (usize, bool), Vec<SymBoolExpr>)| {
                     specificity > *best_specificity
                 },
             ) {
@@ -423,22 +443,22 @@ impl SymbolicExecutor {
             return Ok(None);
         };
         state.constraints = constraints;
-        Ok(Some(state.call_mocks[idx].next_outcome()))
+        Ok(Some(state.call_mocks[idx].next_outcome(&mut self.cx)))
     }
 
-    /// Implements the `branch_symbolic_match_condition_if_needed` symbolic executor helper.
     pub(super) fn branch_symbolic_match_condition_if_needed(
         &mut self,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         pre_call_state: &PathState,
         call_pc: usize,
-        condition: BoolExpr,
+        condition: SymBoolExpr,
     ) -> Result<bool, SymbolicError> {
         let (match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
+        let mismatch_condition = condition.not(&mut self.cx);
         let (mismatch_constraints, mismatch_sat) =
-            self.constraints_with_condition(state, condition.not())?;
+            self.constraints_with_condition(state, mismatch_condition)?;
 
         match (match_sat, mismatch_sat) {
             (true, true) => {
@@ -465,125 +485,72 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `function_mock_target` symbolic executor helper.
     pub(super) fn function_mock_target(
         &mut self,
         state: &mut PathState,
         callee: Address,
-        calldata: &[SymWord],
+        calldata: &SymBytes,
     ) -> Result<Option<Address>, SymbolicError> {
-        for mock in state.function_mocks.iter().rev().cloned() {
-            if mock.data.len() != calldata.len() {
+        for idx in (0..state.function_mocks.len()).rev() {
+            if state.function_mocks[idx].calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) = function_mock_match_condition(
-                &mock,
-                callee,
-                calldata,
-                "symbolic vm.mockFunction calldata",
-            )?
+            let Some(condition) =
+                state.function_mocks[idx].match_condition(&mut self.cx, callee, calldata)
             else {
                 continue;
             };
             if let Some(constraints) = self.constraints_for_condition(state, condition)? {
                 state.constraints = constraints;
-                return Ok(Some(mock.target));
+                return Ok(Some(state.function_mocks[idx].target()));
             }
         }
-        for mock in state.function_mocks.iter().rev().cloned() {
-            if mock.data.len() != 4 {
+        for idx in (0..state.function_mocks.len()).rev() {
+            if state.function_mocks[idx].calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) = function_mock_match_condition(
-                &mock,
-                callee,
-                calldata,
-                "symbolic vm.mockFunction selector",
-            )?
+            let Some(condition) =
+                state.function_mocks[idx].match_condition(&mut self.cx, callee, calldata)
             else {
                 continue;
             };
             if let Some(constraints) = self.constraints_for_condition(state, condition)? {
                 state.constraints = constraints;
-                return Ok(Some(mock.target));
+                return Ok(Some(state.function_mocks[idx].target()));
             }
         }
         Ok(None)
     }
 
-    /// Implements the `expected_call_match_constraints` symbolic executor helper.
     pub(super) fn expected_call_match_constraints(
         &mut self,
         state: &PathState,
         expected: &ExpectedCall,
         callee: Address,
         value: Option<U256>,
-        gas: &SymWord,
-        calldata: &[SymWord],
-    ) -> Result<Option<Vec<BoolExpr>>, SymbolicError> {
+        gas: &SymExpr,
+        calldata: &SymBytes,
+    ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
         let Some(condition) =
-            self.expected_call_match_condition(expected, callee, value, gas, calldata)?
+            expected.match_condition(&mut self.cx, callee, value, gas, calldata)?
         else {
             return Ok(None);
         };
         self.constraints_for_condition(state, condition)
     }
 
-    /// Implements the `call_mock_match_constraints` symbolic executor helper.
     pub(super) fn call_mock_match_constraints(
         &mut self,
         state: &PathState,
         mock: &CallMock,
         callee: Address,
         value: Option<U256>,
-        calldata: &[SymWord],
-    ) -> Result<Option<Vec<BoolExpr>>, SymbolicError> {
-        let Some(condition) = self.call_mock_match_condition(mock, callee, value, calldata)? else {
+        calldata: &SymBytes,
+    ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
+        let Some(condition) = mock.match_condition(&mut self.cx, callee, value, calldata) else {
             return Ok(None);
         };
         self.constraints_for_condition(state, condition)
-    }
-
-    /// Implements the `expected_call_match_condition` symbolic executor helper.
-    pub(super) fn expected_call_match_condition(
-        &self,
-        expected: &ExpectedCall,
-        callee: Address,
-        value: Option<U256>,
-        gas: &SymWord,
-        calldata: &[SymWord],
-    ) -> Result<Option<BoolExpr>, SymbolicError> {
-        if !expected.static_parts_match(value, gas)? {
-            return Ok(None);
-        }
-        let Some(data_condition) =
-            calldata_prefix_condition(calldata, &expected.data, "symbolic expected call calldata")?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(BoolExpr::and(vec![
-            address_match_condition(&expected.callee, callee),
-            data_condition,
-        ])))
-    }
-
-    /// Implements the `call_mock_match_condition` symbolic executor helper.
-    pub(super) fn call_mock_match_condition(
-        &self,
-        mock: &CallMock,
-        callee: Address,
-        value: Option<U256>,
-        calldata: &[SymWord],
-    ) -> Result<Option<BoolExpr>, SymbolicError> {
-        if !mock.static_parts_match(value) {
-            return Ok(None);
-        }
-        let Some(data_condition) =
-            calldata_prefix_condition(calldata, &mock.data, "symbolic mocked call calldata")?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(BoolExpr::and(vec![address_match_condition(&mock.callee, callee), data_condition])))
     }
 
     /// Returns whether `expected_revert_matches` holds.
@@ -594,8 +561,7 @@ impl SymbolicExecutor {
         reverter: Address,
         return_data: &SymReturnData,
     ) -> Result<bool, SymbolicError> {
-        let Some(condition) = expected_revert_match_condition(expected, reverter, return_data)
-        else {
+        let Some(condition) = expected.match_condition(&mut self.cx, reverter, return_data) else {
             return Ok(false);
         };
 
@@ -605,8 +571,9 @@ impl SymbolicExecutor {
             return Ok(false);
         }
 
+        let mismatch_condition = condition.not(&mut self.cx);
         let (mismatch_constraints, mismatch_sat) =
-            self.constraints_with_condition(state, condition.not())?;
+            self.constraints_with_condition(state, mismatch_condition)?;
         if mismatch_sat {
             state.constraints = mismatch_constraints;
             return Ok(false);
@@ -616,7 +583,6 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
-    /// Implements the `assume_no_revert_rejects` symbolic executor helper.
     pub(super) fn assume_no_revert_rejects(
         &mut self,
         state: &mut PathState,
@@ -630,21 +596,22 @@ impl SymbolicExecutor {
 
         let conditions = filters
             .iter()
-            .filter_map(|filter| expected_revert_match_condition(filter, reverter, return_data))
+            .filter_map(|filter| filter.match_condition(&mut self.cx, reverter, return_data))
             .collect::<Vec<_>>();
         if conditions.is_empty() {
             return Ok(false);
         }
 
-        let condition = BoolExpr::or(conditions);
+        let condition = SymBoolExpr::or(&mut self.cx, conditions);
         let (_match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
         if !match_sat {
             return Ok(false);
         }
 
+        let mismatch_condition = condition.not(&mut self.cx);
         let (mismatch_constraints, mismatch_sat) =
-            self.constraints_with_condition(state, condition.not())?;
+            self.constraints_with_condition(state, mismatch_condition)?;
         if mismatch_sat {
             state.constraints = mismatch_constraints;
             return Ok(false);
@@ -653,38 +620,35 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
-    /// Implements the `constraints_for_condition` symbolic executor helper.
     pub(super) fn constraints_for_condition(
         &mut self,
         state: &PathState,
-        condition: BoolExpr,
-    ) -> Result<Option<Vec<BoolExpr>>, SymbolicError> {
+        condition: SymBoolExpr,
+    ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
         let (constraints, sat) = self.constraints_with_condition(state, condition)?;
         Ok(sat.then_some(constraints))
     }
 
-    /// Implements the `constraints_with_condition` symbolic executor helper.
     pub(super) fn constraints_with_condition(
         &mut self,
         state: &PathState,
-        condition: BoolExpr,
-    ) -> Result<(Vec<BoolExpr>, bool), SymbolicError> {
-        match condition {
-            BoolExpr::Const(true) => Ok((state.constraints.clone(), true)),
-            BoolExpr::Const(false) => Ok((state.constraints.clone(), false)),
-            condition => {
-                if bool_contains_gasleft(&condition) {
+        condition: SymBoolExpr,
+    ) -> Result<(Vec<SymBoolExpr>, bool), SymbolicError> {
+        match condition.as_const() {
+            Some(true) => Ok((state.constraints.clone(), true)),
+            Some(false) => Ok((state.constraints.clone(), false)),
+            None => {
+                if condition.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
-                let sat = self.solver.is_sat(&constraints)?;
+                let sat = self.solver.is_sat(&mut self.cx, &constraints)?;
                 Ok((constraints, sat))
             }
         }
     }
 
-    /// Implements the `take_loop_jump` symbolic executor helper.
     pub(super) fn take_loop_jump(
         &self,
         state: &mut PathState,
@@ -705,7 +669,6 @@ impl SymbolicExecutor {
         true
     }
 
-    /// Runs the `handle_log` symbolic executor helper.
     pub(super) fn handle_log(
         &mut self,
         state: &mut PathState,
@@ -716,7 +679,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         };
 
-        if let Some(template) = expected.template.clone() {
+        if let Some(template) = expected.template().cloned() {
             if !self.expected_emit_matches(state, &expected, &template, &log)? {
                 state.expected_emit = Some(expected);
                 state.record_log(log);
@@ -727,7 +690,7 @@ impl SymbolicExecutor {
                 state.expected_emit = Some(expected);
             }
         } else {
-            expected.template = Some(log.clone());
+            expected.set_template(log.clone());
             state.expected_emit = Some(expected);
         }
 
@@ -743,51 +706,18 @@ impl SymbolicExecutor {
         template: &SymbolicLog,
         actual: &SymbolicLog,
     ) -> Result<bool, SymbolicError> {
-        let mut conditions = Vec::new();
-        if let Some(expected_emitter) = &expected.emitter {
-            conditions.push(address_match_condition(expected_emitter, actual.emitter));
-        }
-        for idx in 0..expected.checks.topics.len() {
-            if !expected.checks.topics[idx] {
-                continue;
-            }
-            match (template.topics.get(idx), actual.topics.get(idx)) {
-                (Some(left), Some(right)) => {
-                    conditions
-                        .push(BoolExpr::eq(left.clone().into_expr(), right.clone().into_expr()));
-                }
-                (None, None) => {}
-                _ => return Ok(false),
-            }
-        }
-
-        if expected.checks.data {
-            conditions.push(BoolExpr::eq(
-                template.data_len.clone().into_expr(),
-                actual.data_len.clone().into_expr(),
-            ));
-            if template.data.len() != actual.data.len() {
-                return Ok(false);
-            }
-            conditions.extend(
-                template
-                    .data
-                    .iter()
-                    .cloned()
-                    .zip(actual.data.iter().cloned())
-                    .map(|(left, right)| BoolExpr::eq(left.into_expr(), right.into_expr())),
-            );
-        }
-
-        let condition = BoolExpr::and(conditions);
+        let Some(condition) = expected.match_condition(&mut self.cx, template, actual) else {
+            return Ok(false);
+        };
         let (match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
         if !match_sat {
             return Ok(false);
         }
 
+        let mismatch_condition = condition.not(&mut self.cx);
         let (mismatch_constraints, mismatch_sat) =
-            self.constraints_with_condition(state, condition.not())?;
+            self.constraints_with_condition(state, mismatch_condition)?;
         if mismatch_sat {
             state.constraints = mismatch_constraints;
             return Ok(false);
@@ -798,7 +728,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `call_concrete_target` symbolic executor helper.
     pub(super) fn call_concrete_target<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -807,30 +736,30 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
         kind: CallKind,
         to: Address,
-        target_word: Option<SymWord>,
-        value: SymWord,
-        gas: SymWord,
-        in_offset: SymWord,
+        target_word: Option<SymExpr>,
+        value: SymExpr,
+        gas: SymExpr,
+        in_offset: SymExpr,
         in_size: BoundedCopySize,
-        out_offset: SymWord,
+        out_offset: SymExpr,
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         if is_known_cheatcode(to) {
-            if !state.constrained_word(&value).is_some_and(|value| value.is_zero()) {
+            if !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
             }
-            let (in_size_word, in_size, has_symbolic_in_size) = bounded_copy_size_parts(&in_size);
+            let (in_size_word, in_size, has_symbolic_in_size) = in_size.parts(&mut self.cx);
             if in_size < 4 {
                 return Err(SymbolicError::Unsupported("short cheatcode CALL"));
             }
-            let in_offset = in_offset.into_usize("symbolic cheatcode CALL input offset")?;
-            if !self.assume_word_at_least(state, &in_size_word, 4)? {
+            let in_offset = in_offset.as_usize_or("symbolic cheatcode CALL input offset")?;
+            if !self.assume_expr_at_least(state, &in_size_word, 4)? {
                 return Ok(StepOutcome::AssumeRejected);
             }
 
             let selector = state
                 .memory
-                .read_concrete(in_offset, 4)?
+                .read_concrete(&mut self.cx, in_offset, 4)?
                 .try_into()
                 .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode selector"))?;
             if has_symbolic_in_size {
@@ -845,7 +774,7 @@ impl SymbolicExecutor {
                 if min_size > in_size {
                     return Err(SymbolicError::Unsupported("symbolic cheatcode CALL input size"));
                 }
-                if !self.assume_word_at_least(state, &in_size_word, min_size)? {
+                if !self.assume_expr_at_least(state, &in_size_word, min_size)? {
                     return Ok(StepOutcome::AssumeRejected);
                 }
             }
@@ -863,11 +792,26 @@ impl SymbolicExecutor {
                 return Ok(outcome);
             }
 
+            if to == CHEATCODE_ADDRESS
+                && let Some(outcome) = self.deploy_code_cheatcode_if_needed(
+                    executor,
+                    state,
+                    worklist,
+                    completed_paths,
+                    selector,
+                    in_offset,
+                    out_offset.clone(),
+                    &out_size,
+                )?
+            {
+                return Ok(outcome);
+            }
+
             let return_data = if to == CHEATCODE_ADDRESS {
                 match self
                     .handle_foundry_cheatcode(executor, state, selector, in_offset, in_size)?
                 {
-                    CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(ret),
+                    CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(&mut self.cx, ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),
                     CheatcodeOutcome::Failure => return Ok(StepOutcome::Failure),
@@ -879,40 +823,39 @@ impl SymbolicExecutor {
             };
 
             state.return_data = return_data;
-            let return_data = state.return_data.clone();
-            state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
-            state.stack.push(SymWord::Concrete(U256::from(1)))?;
+            state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+            state.stack.push(SymExpr::one(&mut self.cx))?;
             return Ok(StepOutcome::Continue);
         }
 
         if is_console(to) {
-            state.return_data = SymReturnData::default();
-            let return_data = state.return_data.clone();
-            state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
-            state.stack.push(SymWord::Concrete(U256::from(1)))?;
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+            state.stack.push(SymExpr::one(&mut self.cx))?;
             return Ok(StepOutcome::Continue);
         }
 
-        let call_input = call_input_from_memory(&state.memory, in_offset.clone(), &in_size);
+        let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         if !state.expected_calls.is_empty() {
-            let concrete_value = state.constrained_word(&value);
+            let concrete_value = state.constrained_word(&mut self.cx, &value);
             if !self.observe_expected_call(state, to, concrete_value, &gas, &call_input)? {
                 return Ok(StepOutcome::Failure);
             }
         }
         let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
         if !state.call_mocks.is_empty() {
-            let concrete_value = state.constrained_word(&value);
+            let concrete_value = state.constrained_word(&mut self.cx, &value);
             if let Some(mock) =
                 self.take_call_mock(state, code_address, concrete_value, &call_input)?
             {
                 if !matches!(kind, CallKind::DelegateCall) {
                     let _ = state.prank_for_next_call();
                 }
-                state.return_data = mock.return_data;
-                let return_data = state.return_data.clone();
-                state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
-                state.stack.push(SymWord::Concrete(U256::from(!mock.reverts)))?;
+                let (return_data, reverts) = mock.into_parts();
+                state.return_data = return_data;
+                state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+                let success = SymExpr::constant(&mut self.cx, U256::from(!reverts));
+                state.stack.push(success)?;
                 return Ok(StepOutcome::Continue);
             }
         }
@@ -930,64 +873,79 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         }
 
-        if is_supported_precompile(code_address) {
-            let input_len = bounded_copy_size_word(&in_size);
-            let input = call_input_from_memory(&state.memory, in_offset, &in_size);
-            match execute_symbolic_precompile(code_address, input, input_len)? {
+        let spec_id: SpecId = executor.spec_id().into();
+        if is_supported_precompile(code_address, spec_id) {
+            let input_len = in_size.size_word(&mut self.cx);
+            let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
+            if precompile_number_for_spec(code_address, spec_id) == Some(10) {
+                let input_bytes = input.materialize(&mut self.cx);
+                return self.execute_kzg_precompile_call(
+                    executor,
+                    state,
+                    worklist,
+                    kind,
+                    to,
+                    value,
+                    out_offset,
+                    &out_size,
+                    input_bytes,
+                    input_len,
+                );
+            }
+            match execute_symbolic_precompile(
+                &mut self.cx,
+                code_address,
+                input,
+                input_len,
+                spec_id,
+            )? {
                 Some(return_data) => {
                     state.return_data = return_data;
                     if matches!(kind, CallKind::Call) {
-                        state.world.transfer(executor, state.address, to, value);
+                        state.world.transfer(&mut self.cx, executor, state.address, to, value);
                     }
-                    let return_data = state.return_data.clone();
-                    state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
-                    state.stack.push(SymWord::Concrete(U256::from(1)))?;
+                    state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+                    state.stack.push(SymExpr::one(&mut self.cx))?;
                 }
                 None => {
-                    state.return_data = SymReturnData::default();
-                    let return_data = state.return_data.clone();
-                    state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
-                    state.stack.push(SymWord::zero())?;
+                    state.return_data = SymReturnData::empty(&mut self.cx);
+                    state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+                    state.stack.push(SymExpr::zero(&mut self.cx))?;
                 }
             }
             return Ok(StepOutcome::Continue);
         }
 
-        let child_code = state.world.extcode(executor, code_address)?;
+        let child_code = state.world.extcode(&mut self.cx, executor, code_address)?;
         if child_code.is_empty() {
             if matches!(kind, CallKind::Call) {
-                state.world.transfer(executor, state.address, to, value);
+                state.world.transfer(&mut self.cx, executor, state.address, to, value);
             }
-            state.return_data = SymReturnData::default();
-            let return_data = state.return_data.clone();
-            state.memory.copy_call_output_offset(out_offset, &out_size, &return_data)?;
-            state.stack.push(SymWord::Concrete(U256::from(1)))?;
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+            state.stack.push(SymExpr::one(&mut self.cx))?;
             return Ok(StepOutcome::Continue);
         }
 
-        let calldata = calldata_from_call_input(call_input, &in_size);
+        let calldata = in_size.calldata(&mut self.cx, call_input);
         let callee_address_word = state
             .world
             .symbolic_word_for_address(to)
             .or_else(|| {
                 target_word
                     .as_ref()
-                    .filter(|word| state.world.resolve_address(word) == Some(to))
+                    .filter(|expr| state.world.resolve_address(expr) == Some(to))
                     .cloned()
             })
-            .unwrap_or_else(|| SymWord::Concrete(address_word(to)));
-        if matches!(kind, CallKind::DelegateCall)
-            && (state.prank.next_caller.is_some()
-                || state.prank.next_origin.is_some()
-                || state.prank.persistent_caller.is_some()
-                || state.prank.persistent_origin.is_some())
-        {
+            .unwrap_or_else(|| SymExpr::constant(&mut self.cx, address_word(to)));
+        if matches!(kind, CallKind::DelegateCall) && state.prank.has_active() {
             return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
         }
         let (pranked_caller, pranked_caller_word, pranked_origin) = state.prank_for_next_call();
         let frame = match kind {
             CallKind::Call => {
                 let mut frame = CallFrame::new(
+                    &mut self.cx,
                     to,
                     code_address,
                     to,
@@ -1001,12 +959,14 @@ impl SymbolicExecutor {
                 frame
             }
             CallKind::StaticCall => {
+                let value = SymExpr::zero(&mut self.cx);
                 let mut frame = CallFrame::new(
+                    &mut self.cx,
                     to,
                     code_address,
                     to,
                     pranked_caller,
-                    SymWord::zero(),
+                    value,
                     true,
                     calldata,
                 );
@@ -1016,6 +976,7 @@ impl SymbolicExecutor {
             }
             CallKind::DelegateCall => {
                 let mut frame = CallFrame::new(
+                    &mut self.cx,
                     state.address,
                     code_address,
                     state.storage_address,
@@ -1030,6 +991,7 @@ impl SymbolicExecutor {
             }
             CallKind::CallCode => {
                 let mut frame = CallFrame::new(
+                    &mut self.cx,
                     state.address,
                     code_address,
                     state.storage_address,
@@ -1051,7 +1013,7 @@ impl SymbolicExecutor {
             child.origin_word = origin_word;
         }
         if matches!(kind, CallKind::Call) {
-            child.world.transfer(executor, state.address, to, value);
+            child.world.transfer(&mut self.cx, executor, state.address, to, value);
         }
         child.expected_revert = None;
         child.assume_no_revert_next_call = None;
@@ -1065,6 +1027,7 @@ impl SymbolicExecutor {
             let mut parent = state.clone();
             parent.constraints = outcome.state.constraints.clone();
             parent.next_symbol = outcome.state.next_symbol;
+            parent.inherit_branch_target_progress(&outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
                 && matches!(outcome.status, TopLevelCallStatus::Revert)
@@ -1105,14 +1068,13 @@ impl SymbolicExecutor {
                         parent.call_mocks = outcome.state.call_mocks.clone();
                         parent.function_mocks = outcome.state.function_mocks.clone();
                         parent.world = original_world.clone();
-                        parent.return_data = SymReturnData::default();
-                        let return_data = parent.return_data.clone();
-                        parent.memory.copy_call_output_offset(
+                        parent.return_data = SymReturnData::empty(&mut self.cx);
+                        parent.copy_call_output_offset(
+                            &mut self.cx,
                             out_offset.clone(),
                             &out_size,
-                            &return_data,
                         )?;
-                        parent.stack.push(SymWord::Concrete(U256::from(1)))?;
+                        parent.stack.push(SymExpr::one(&mut self.cx))?;
                         parents.push_back(parent);
                         continue;
                     }
@@ -1142,69 +1104,189 @@ impl SymbolicExecutor {
                 TopLevelCallStatus::Revert => {}
             }
             parent.return_data = outcome.return_data.clone();
-            let return_data = parent.return_data.clone();
-            parent.memory.copy_call_output_offset(out_offset.clone(), &out_size, &return_data)?;
-            parent.stack.push(SymWord::Concrete(U256::from(matches!(
-                outcome.status,
-                TopLevelCallStatus::Success
-            ))))?;
+            parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+            let success = SymExpr::constant(
+                &mut self.cx,
+                U256::from(matches!(outcome.status, TopLevelCallStatus::Success)),
+            );
+            parent.stack.push(success)?;
             parents.push_back(parent);
         }
 
-        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
+        let Some(first) = self.pop_next_path(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        spill_batch(parents, worklist, self.config.exploration_order);
+        worklist.extend(parents);
         Ok(StepOutcome::Continue)
     }
 
-    /// Implements the `prepare_value_transfer` symbolic executor helper.
+    #[expect(clippy::too_many_arguments)]
+    fn execute_kzg_precompile_call<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        kind: CallKind,
+        to: Address,
+        value: SymExpr,
+        out_offset: SymExpr,
+        out_size: &BoundedCopySize,
+        input: Vec<SymExpr>,
+        input_len: SymExpr,
+    ) -> Result<StepOutcome, SymbolicError> {
+        if let Some(outcome) = kzg_constrained_outcome(&mut self.cx, state, &input, &input_len)? {
+            self.apply_precompile_outcome(
+                executor, state, kind, to, value, out_offset, out_size, outcome,
+            )?;
+            return Ok(StepOutcome::Continue);
+        }
+
+        let success_condition = kzg_success_witness_condition(&mut self.cx, &input, &input_len);
+        let failure_condition =
+            kzg_failure_witness_condition(&mut self.cx, state, &input, &input_len);
+        let modeled_condition = SymBoolExpr::or(
+            &mut self.cx,
+            vec![success_condition.clone(), failure_condition.clone()],
+        );
+        let modeled_condition = modeled_condition.not(&mut self.cx);
+        let (_, residual_sat) = self.constraints_with_condition(state, modeled_condition)?;
+        if residual_sat {
+            self.defer_incomplete(KZG_RESIDUAL_REASON);
+        }
+
+        let (success_constraints, success_sat) =
+            self.constraints_with_condition(state, success_condition)?;
+
+        let (failure_constraints, failure_sat) =
+            self.constraints_with_condition(state, failure_condition)?;
+
+        match (success_sat, failure_sat) {
+            (true, true) => {
+                let mut failure = state.clone();
+                failure.constraints = failure_constraints;
+                self.apply_precompile_outcome(
+                    executor,
+                    &mut failure,
+                    kind,
+                    to,
+                    value.clone(),
+                    out_offset.clone(),
+                    out_size,
+                    None,
+                )?;
+                worklist.push_back(failure);
+
+                state.constraints = success_constraints;
+                let return_data = kzg_success_return_data(&mut self.cx);
+                self.apply_precompile_outcome(
+                    executor,
+                    state,
+                    kind,
+                    to,
+                    value,
+                    out_offset,
+                    out_size,
+                    Some(return_data),
+                )?;
+                Ok(StepOutcome::Continue)
+            }
+            (true, false) => {
+                state.constraints = success_constraints;
+                let return_data = kzg_success_return_data(&mut self.cx);
+                self.apply_precompile_outcome(
+                    executor,
+                    state,
+                    kind,
+                    to,
+                    value,
+                    out_offset,
+                    out_size,
+                    Some(return_data),
+                )?;
+                Ok(StepOutcome::Continue)
+            }
+            (false, true) => {
+                state.constraints = failure_constraints;
+                self.apply_precompile_outcome(
+                    executor, state, kind, to, value, out_offset, out_size, None,
+                )?;
+                Ok(StepOutcome::Continue)
+            }
+            (false, false) => Err(SymbolicError::Unsupported(KZG_RESIDUAL_REASON)),
+        }
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    /// Applies a precompile call result to the current symbolic state.
+    fn apply_precompile_outcome<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        kind: CallKind,
+        to: Address,
+        value: SymExpr,
+        out_offset: SymExpr,
+        out_size: &BoundedCopySize,
+        outcome: Option<SymReturnData>,
+    ) -> Result<(), SymbolicError> {
+        match outcome {
+            Some(return_data) => {
+                state.return_data = return_data;
+                if matches!(kind, CallKind::Call) {
+                    state.world.transfer(&mut self.cx, executor, state.address, to, value);
+                }
+                state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
+                state.stack.push(SymExpr::one(&mut self.cx))?;
+            }
+            None => {
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
+                state.stack.push(SymExpr::zero(&mut self.cx))?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn prepare_value_transfer<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
-        value: SymWord,
-        out_offset: SymWord,
+        value: SymExpr,
+        out_offset: SymExpr,
         out_size: &BoundedCopySize,
     ) -> Result<bool, SymbolicError> {
-        if state.constrained_word(&value).is_some_and(|value| value.is_zero()) {
+        if state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
             return Ok(true);
         }
 
-        let balance = state.world.balance_word_for_address(executor, state.address);
-        let can_pay = BoolExpr::cmp(BoolExprOp::Uge, balance.into_expr(), value.into_expr());
-        match can_pay {
-            BoolExpr::Const(true) => Ok(true),
-            BoolExpr::Const(false) => {
-                state.return_data = SymReturnData::default();
-                let return_data = state.return_data.clone();
-                state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
-                state.stack.push(SymWord::zero())?;
+        let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
+        match can_pay.as_const() {
+            Some(true) => Ok(true),
+            Some(false) => {
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
+                state.stack.push(SymExpr::zero(&mut self.cx))?;
                 Ok(false)
             }
-            can_pay => {
+            None => {
                 let mut success_constraints = state.constraints.clone();
                 success_constraints.push(can_pay.clone());
-                let success_sat = self.solver.is_sat(&success_constraints)?;
+                let success_sat = self.solver.is_sat(&mut self.cx, &success_constraints)?;
 
                 let mut failure_constraints = state.constraints.clone();
-                failure_constraints.push(can_pay.not());
-                let failure_sat = self.solver.is_sat(&failure_constraints)?;
+                failure_constraints.push(can_pay.not(&mut self.cx));
+                let failure_sat = self.solver.is_sat(&mut self.cx, &failure_constraints)?;
 
                 match (success_sat, failure_sat) {
                     (true, true) => {
                         let mut failure = state.clone();
                         failure.constraints = failure_constraints;
-                        failure.return_data = SymReturnData::default();
-                        let return_data = failure.return_data.clone();
-                        failure.memory.copy_call_output_offset(
-                            out_offset,
-                            out_size,
-                            &return_data,
-                        )?;
-                        failure.stack.push(SymWord::zero())?;
+                        failure.return_data = SymReturnData::empty(&mut self.cx);
+                        failure.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
+                        failure.stack.push(SymExpr::zero(&mut self.cx))?;
                         worklist.push_back(failure);
 
                         state.constraints = success_constraints;
@@ -1216,10 +1298,9 @@ impl SymbolicExecutor {
                     }
                     (false, true) => {
                         state.constraints = failure_constraints;
-                        state.return_data = SymReturnData::default();
-                        let return_data = state.return_data.clone();
-                        state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
-                        state.stack.push(SymWord::zero())?;
+                        state.return_data = SymReturnData::empty(&mut self.cx);
+                        state.copy_call_output_offset(&mut self.cx, out_offset, out_size)?;
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
                         Ok(false)
                     }
                     (false, false) => Ok(false),
@@ -1228,42 +1309,41 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `prepare_create_value_transfer` symbolic executor helper.
     pub(super) fn prepare_create_value_transfer<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
-        value: SymWord,
+        value: SymExpr,
     ) -> Result<bool, SymbolicError> {
-        if state.constrained_word(&value).is_some_and(|value| value.is_zero()) {
+        if state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
             return Ok(true);
         }
 
-        let balance = state.world.balance_word_for_address(executor, state.address);
-        let can_pay = BoolExpr::cmp(BoolExprOp::Uge, balance.into_expr(), value.into_expr());
-        match can_pay {
-            BoolExpr::Const(true) => Ok(true),
-            BoolExpr::Const(false) => {
-                state.return_data = SymReturnData::default();
-                state.stack.push(SymWord::zero())?;
+        let balance = state.world.balance_word_for_address(&mut self.cx, executor, state.address);
+        let can_pay = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, balance, value);
+        match can_pay.as_const() {
+            Some(true) => Ok(true),
+            Some(false) => {
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                state.stack.push(SymExpr::zero(&mut self.cx))?;
                 Ok(false)
             }
-            can_pay => {
+            None => {
                 let mut success_constraints = state.constraints.clone();
                 success_constraints.push(can_pay.clone());
-                let success_sat = self.solver.is_sat(&success_constraints)?;
+                let success_sat = self.solver.is_sat(&mut self.cx, &success_constraints)?;
 
                 let mut failure_constraints = state.constraints.clone();
-                failure_constraints.push(can_pay.not());
-                let failure_sat = self.solver.is_sat(&failure_constraints)?;
+                failure_constraints.push(can_pay.not(&mut self.cx));
+                let failure_sat = self.solver.is_sat(&mut self.cx, &failure_constraints)?;
 
                 match (success_sat, failure_sat) {
                     (true, true) => {
                         let mut failure = state.clone();
                         failure.constraints = failure_constraints;
-                        failure.return_data = SymReturnData::default();
-                        failure.stack.push(SymWord::zero())?;
+                        failure.return_data = SymReturnData::empty(&mut self.cx);
+                        failure.stack.push(SymExpr::zero(&mut self.cx))?;
                         worklist.push_back(failure);
 
                         state.constraints = success_constraints;
@@ -1275,8 +1355,8 @@ impl SymbolicExecutor {
                     }
                     (false, true) => {
                         state.constraints = failure_constraints;
-                        state.return_data = SymReturnData::default();
-                        state.stack.push(SymWord::zero())?;
+                        state.return_data = SymReturnData::empty(&mut self.cx);
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
                         Ok(false)
                     }
                     (false, false) => Ok(false),
@@ -1286,7 +1366,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `call_symbolic_target` symbolic executor helper.
     pub(super) fn call_symbolic_target<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1294,16 +1373,15 @@ impl SymbolicExecutor {
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
         kind: CallKind,
-        target: SymWord,
-        value: SymWord,
-        gas: SymWord,
-        in_offset: SymWord,
+        target: SymExpr,
+        value: SymExpr,
+        gas: SymExpr,
+        in_offset: SymExpr,
         in_size: BoundedCopySize,
-        out_offset: SymWord,
+        out_offset: SymExpr,
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
-        let target = target.into_expr();
-        let mut candidates = state.world.symbolic_call_targets(executor)?;
+        let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
         candidates.extend((1..=10).map(precompile_address));
         candidates.sort();
         candidates.dedup();
@@ -1315,11 +1393,16 @@ impl SymbolicExecutor {
 
         let candidate_constraints = candidates
             .iter()
-            .map(|address| BoolExpr::eq(target.clone(), Expr::Const(address_word(*address))))
+            .map(|address| {
+                let address = SymExpr::constant(&mut self.cx, address_word(*address));
+                SymBoolExpr::eq(&mut self.cx, target.clone(), address)
+            })
             .collect::<Vec<_>>();
         let mut outside_constraints = state.constraints.clone();
-        outside_constraints.extend(candidate_constraints.iter().cloned().map(BoolExpr::not));
-        let outside_sat = self.solver.is_sat(&outside_constraints)?;
+        outside_constraints.extend(
+            candidate_constraints.iter().cloned().map(|condition| condition.not(&mut self.cx)),
+        );
+        let outside_sat = self.solver.is_sat(&mut self.cx, &outside_constraints)?;
 
         if !self.config.symbolic_call_targets && outside_sat {
             return Err(SymbolicError::Unsupported("symbolic CALL target"));
@@ -1339,28 +1422,24 @@ impl SymbolicExecutor {
                     out_offset.clone(),
                     &out_size,
                 )? {
-                    let symbolic_target = SymWord::Expr(target);
+                    let symbolic_target = target;
                     let to = branch.world.symbolic_address_slot(symbolic_target);
-                    branch.world.transfer(executor, branch.address, to, value.clone());
-                    branch.return_data = SymReturnData::default();
-                    let return_data = branch.return_data.clone();
-                    branch.memory.copy_call_output_offset(
-                        out_offset.clone(),
-                        &out_size,
-                        &return_data,
-                    )?;
-                    branch.stack.push(SymWord::Concrete(U256::from(1)))?;
+                    branch.world.transfer(
+                        &mut self.cx,
+                        executor,
+                        branch.address,
+                        to,
+                        value.clone(),
+                    );
+                    branch.return_data = SymReturnData::empty(&mut self.cx);
+                    branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    branch.stack.push(SymExpr::one(&mut self.cx))?;
                     parents.push_back(branch);
                 }
             } else {
-                branch.return_data = SymReturnData::default();
-                let return_data = branch.return_data.clone();
-                branch.memory.copy_call_output_offset(
-                    out_offset.clone(),
-                    &out_size,
-                    &return_data,
-                )?;
-                branch.stack.push(SymWord::Concrete(U256::from(1)))?;
+                branch.return_data = SymReturnData::empty(&mut self.cx);
+                branch.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                branch.stack.push(SymExpr::one(&mut self.cx))?;
                 parents.push_back(branch);
             }
         }
@@ -1368,7 +1447,7 @@ impl SymbolicExecutor {
         for (to, constraint) in candidates.into_iter().zip(candidate_constraints) {
             let mut branch = state.clone();
             branch.constraints.push(constraint);
-            if !self.solver.is_sat(&branch.constraints)? {
+            if !self.solver.is_sat(&mut self.cx, &branch.constraints)? {
                 continue;
             }
 
@@ -1390,24 +1469,239 @@ impl SymbolicExecutor {
             )? {
                 StepOutcome::Continue => {
                     parents.push_back(branch);
-                    spill_batch(branch_worklist, &mut parents, self.config.exploration_order);
+                    parents.extend(branch_worklist);
                 }
                 StepOutcome::AssumeRejected => {}
                 outcome => return Ok(outcome),
             }
         }
 
-        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
+        let Some(first) = self.pop_next_path(&mut parents) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        spill_batch(parents, worklist, self.config.exploration_order);
+        worklist.extend(parents);
         Ok(StepOutcome::Continue)
     }
 }
 
-fn ensure_word_not_gasleft(word: &SymWord) -> Result<(), SymbolicError> {
-    if word.contains_gasleft() {
+const KZG_POINT_EVALUATION_INPUT_LEN: usize = 192;
+const KZG_VERSIONED_HASH_OFFSET: usize = 0;
+const KZG_Z_OFFSET: usize = 32;
+const KZG_Y_OFFSET: usize = 64;
+const KZG_COMMITMENT_OFFSET: usize = 96;
+const KZG_PROOF_OFFSET: usize = 144;
+
+const KZG_BLS_MODULUS: [u8; 32] =
+    hex!("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
+
+const KZG_SUCCESS_INPUT: [u8; KZG_POINT_EVALUATION_INPUT_LEN] = hex!(
+    "01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b"
+    "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000"
+    "1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9"
+    "8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7"
+    "a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+);
+
+const KZG_INVALID_PROOF: [u8; 48] = [0xff; 48];
+const KZG_ZERO_COMMITMENT: [u8; 48] = [0x00; 48];
+const KZG_ONE_COMMITMENT: [u8; 48] = [0x01; 48];
+const KZG_RESIDUAL_REASON: &str = "symbolic KZG point-evaluation precompile residual not modeled";
+
+fn kzg_success_return_data(cx: &mut SymCx) -> SymReturnData {
+    SymReturnData::from_concrete_bytes(cx, kzg_point_evaluation::RETURN_VALUE.to_vec())
+}
+
+fn kzg_constrained_outcome(
+    cx: &mut SymCx,
+    state: &PathState,
+    input: &[SymExpr],
+    input_len: &SymExpr,
+) -> Result<Option<Option<SymReturnData>>, SymbolicError> {
+    let Some(input_len) = state.constrained_usize(cx, input_len) else {
+        return Ok(None);
+    };
+    if input_len != KZG_POINT_EVALUATION_INPUT_LEN {
+        return Ok(Some(None));
+    }
+    if input_len > input.len() {
+        return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
+    }
+
+    if let Some(input) = constrained_bytes_at(cx, state, input, 0, input_len) {
+        return execute_precompile(cx, precompile_address(10), &input, SpecId::CANCUN).map(Some);
+    }
+
+    if constrained_byte(cx, state, &input[0])
+        .is_some_and(|version| version != kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG)
+    {
+        return Ok(Some(None));
+    }
+
+    if constrained_bytes_at(cx, state, input, KZG_Z_OFFSET, KZG_BLS_MODULUS.len())
+        .is_some_and(|z| z == KZG_BLS_MODULUS)
+        || constrained_bytes_at(cx, state, input, KZG_Y_OFFSET, KZG_BLS_MODULUS.len())
+            .is_some_and(|y| y == KZG_BLS_MODULUS)
+        || constrained_bytes_at(cx, state, input, KZG_PROOF_OFFSET, KZG_INVALID_PROOF.len())
+            .is_some_and(|proof| proof == KZG_INVALID_PROOF)
+    {
+        return Ok(Some(None));
+    }
+
+    if let Some(commitment) = constrained_bytes_at(cx, state, input, KZG_COMMITMENT_OFFSET, 48) {
+        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        for (idx, expected) in expected_hash.into_iter().enumerate() {
+            if constrained_byte(cx, state, &input[idx]).is_some_and(|actual| actual != expected) {
+                return Ok(Some(None));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn kzg_success_witness_condition(
+    cx: &mut SymCx,
+    input: &[SymExpr],
+    input_len: &SymExpr,
+) -> SymBoolExpr {
+    let len = expr_eq_condition(cx, input_len, KZG_POINT_EVALUATION_INPUT_LEN);
+    let bytes = bytes_eq_condition(cx, input, KZG_VERSIONED_HASH_OFFSET, &KZG_SUCCESS_INPUT);
+    SymBoolExpr::and(cx, vec![len, bytes])
+}
+
+fn kzg_failure_witness_condition(
+    cx: &mut SymCx,
+    state: &PathState,
+    input: &[SymExpr],
+    input_len: &SymExpr,
+) -> SymBoolExpr {
+    let len_192 = expr_eq_condition(cx, input_len, KZG_POINT_EVALUATION_INPUT_LEN);
+    let len_ne_192 = expr_ne_condition(cx, input_len, KZG_POINT_EVALUATION_INPUT_LEN);
+    let bad_version =
+        byte_ne_condition(cx, input, 0, kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG);
+    let bad_z = bytes_eq_condition(cx, input, KZG_Z_OFFSET, &KZG_BLS_MODULUS);
+    let bad_y = bytes_eq_condition(cx, input, KZG_Y_OFFSET, &KZG_BLS_MODULUS);
+    let bad_proof = bytes_eq_condition(cx, input, KZG_PROOF_OFFSET, &KZG_INVALID_PROOF);
+    let mut conditions = vec![
+        len_ne_192,
+        SymBoolExpr::and(cx, vec![len_192.clone(), bad_version]),
+        SymBoolExpr::and(cx, vec![len_192.clone(), bad_z]),
+        SymBoolExpr::and(cx, vec![len_192.clone(), bad_y]),
+        SymBoolExpr::and(cx, vec![len_192.clone(), bad_proof]),
+    ];
+
+    if let Some(commitment) = constrained_bytes_at(cx, state, input, KZG_COMMITMENT_OFFSET, 48) {
+        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        let mismatch = kzg_versioned_hash_mismatch_condition(cx, input, &expected_hash);
+        conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), mismatch]));
+    }
+
+    let expected_hash = &KZG_SUCCESS_INPUT[KZG_VERSIONED_HASH_OFFSET..KZG_Z_OFFSET];
+    let commitment = &KZG_SUCCESS_INPUT[KZG_COMMITMENT_OFFSET..KZG_PROOF_OFFSET];
+    let commitment_eq = bytes_eq_condition(cx, input, KZG_COMMITMENT_OFFSET, commitment);
+    let hash_byte_mismatch = byte_eq_condition(cx, input, 1, expected_hash[1] ^ 1);
+    conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), commitment_eq, hash_byte_mismatch]));
+
+    for commitment in [&KZG_ZERO_COMMITMENT, &KZG_ONE_COMMITMENT] {
+        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(commitment);
+        let commitment_eq = bytes_eq_condition(cx, input, KZG_COMMITMENT_OFFSET, commitment);
+        let mismatch = kzg_versioned_hash_mismatch_condition(cx, input, &expected_hash);
+        conditions.push(SymBoolExpr::and(cx, vec![len_192.clone(), commitment_eq, mismatch]));
+    }
+
+    SymBoolExpr::or(cx, conditions)
+}
+
+fn kzg_versioned_hash_mismatch_condition(
+    cx: &mut SymCx,
+    input: &[SymExpr],
+    expected_hash: &[u8; 32],
+) -> SymBoolExpr {
+    bytes_ne_condition(cx, input, KZG_VERSIONED_HASH_OFFSET, expected_hash)
+}
+
+fn expr_eq_condition(cx: &mut SymCx, expr: &SymExpr, value: usize) -> SymBoolExpr {
+    SymBoolExpr::eq_word_const(cx, expr, U256::from(value))
+}
+
+fn expr_ne_condition(cx: &mut SymCx, expr: &SymExpr, value: usize) -> SymBoolExpr {
+    let condition = expr_eq_condition(cx, expr, value);
+    condition.not(cx)
+}
+
+fn byte_eq_condition(cx: &mut SymCx, input: &[SymExpr], offset: usize, value: u8) -> SymBoolExpr {
+    match input.get(offset) {
+        Some(expr) => expr_eq_condition(cx, expr, value as usize),
+        None => SymBoolExpr::constant(cx, false),
+    }
+}
+
+fn byte_ne_condition(cx: &mut SymCx, input: &[SymExpr], offset: usize, value: u8) -> SymBoolExpr {
+    match input.get(offset) {
+        Some(expr) => expr_ne_condition(cx, expr, value as usize),
+        None => SymBoolExpr::constant(cx, false),
+    }
+}
+
+fn bytes_eq_condition(
+    cx: &mut SymCx,
+    input: &[SymExpr],
+    offset: usize,
+    bytes: &[u8],
+) -> SymBoolExpr {
+    let Some(end) = offset.checked_add(bytes.len()) else {
+        return SymBoolExpr::constant(cx, false);
+    };
+    if end > input.len() {
+        return SymBoolExpr::constant(cx, false);
+    }
+    let conditions = input[offset..end]
+        .iter()
+        .zip(bytes)
+        .map(|(expr, byte)| expr_eq_condition(cx, expr, *byte as usize))
+        .collect();
+    SymBoolExpr::and(cx, conditions)
+}
+
+fn bytes_ne_condition(
+    cx: &mut SymCx,
+    input: &[SymExpr],
+    offset: usize,
+    bytes: &[u8],
+) -> SymBoolExpr {
+    let Some(end) = offset.checked_add(bytes.len()) else {
+        return SymBoolExpr::constant(cx, false);
+    };
+    if end > input.len() {
+        return SymBoolExpr::constant(cx, false);
+    }
+    let conditions = input[offset..end]
+        .iter()
+        .zip(bytes)
+        .map(|(expr, byte)| expr_ne_condition(cx, expr, *byte as usize))
+        .collect();
+    SymBoolExpr::or(cx, conditions)
+}
+
+fn constrained_bytes_at(
+    cx: &mut SymCx,
+    state: &PathState,
+    input: &[SymExpr],
+    offset: usize,
+    len: usize,
+) -> Option<Vec<u8>> {
+    let end = offset.checked_add(len)?;
+    let bytes = input.get(offset..end)?;
+    bytes.iter().map(|byte| constrained_byte(cx, state, byte)).collect()
+}
+
+fn constrained_byte(cx: &mut SymCx, state: &PathState, byte: &SymExpr) -> Option<u8> {
+    state.constrained_word(cx, byte).and_then(|byte| u8::try_from(byte).ok())
+}
+
+fn ensure_expr_not_gasleft(expr: &SymExpr) -> Result<(), SymbolicError> {
+    if expr.contains_gasleft() {
         Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"))
     } else {
         Ok(())

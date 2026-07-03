@@ -1,10 +1,6 @@
 use alloy_primitives::{Address, hex};
-use foundry_cli::utils::parse_fee_token_address;
 use foundry_common::abi::get_func;
-use tempo_contracts::precompiles::{
-    IAccountKeychain::{CallScope, SelectorRule},
-    PATH_USD_ADDRESS,
-};
+use tempo_contracts::precompiles::IAccountKeychain::{CallScope, SelectorRule};
 
 // Shared Tempo policy flag grammar used by both `cast keychain` and
 // `cast wallet session`. Keeping it here avoids duplicating parsing behavior
@@ -134,14 +130,6 @@ fn split_selector_rule_parts(s: &str) -> Vec<&str> {
 
     parts.push(&s[start..]);
     parts
-}
-
-/// Parse a policy token label or address into an address.
-pub(crate) fn parse_policy_token(s: &str) -> Result<Address, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "pathusd" | "path_usd" | "path-usd" | "usd" => Ok(PATH_USD_ADDRESS),
-        _ => parse_fee_token_address(s).map_err(|e| e.to_string()),
-    }
 }
 
 /// Parse a period string like `10m`, `7d`, or `3600s`.
@@ -283,12 +271,6 @@ mod tests {
         assert_eq!(scope.selectorRules.len(), 2);
         assert_eq!(scope.selectorRules[0].selector.0, keccak256(b"transfer(address,uint256)")[..4]);
         assert_eq!(scope.selectorRules[1].selector.0, keccak256(b"approve(address,uint256)")[..4]);
-    }
-
-    #[test]
-    fn parse_policy_token_path_usd() {
-        assert_eq!(parse_policy_token("PathUSD").unwrap(), PATH_USD_ADDRESS);
-        assert_eq!(parse_policy_token("path-usd").unwrap(), PATH_USD_ADDRESS);
     }
 
     #[test]

@@ -15,8 +15,6 @@ use foundry_wallets as _;
 
 pub mod args;
 pub mod cmd;
-pub mod diagnostic;
-pub mod introspect;
 pub mod opts;
 
 pub mod coverage;
@@ -35,6 +33,7 @@ pub use runner::ContractRunner;
 
 mod progress;
 pub mod result;
+mod symbolic_minimizer;
 
 // TODO: remove
 pub use foundry_common::traits::TestFilter;

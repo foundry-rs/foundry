@@ -21,7 +21,9 @@ use foundry_cli::{
     utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::print_resolved_fee_token_selection,
+    FoundryTransactionBuilder,
+    provider::ProviderBuilder,
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use tempo_alloy::TempoNetwork;
@@ -133,9 +135,16 @@ impl BatchMakeTxArgs {
             }
 
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
-            let (tx, _) = tx_builder.build(from).await?;
+            let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            let fee_token = resolve_and_set_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                Some(from),
+            )
+            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let raw_tx =
                 alloy_primitives::hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
@@ -143,9 +152,16 @@ impl BatchMakeTxArgs {
         }
 
         if ethsign {
-            let (tx, _) = tx_builder.build(config.sender).await?;
+            let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            let fee_token = resolve_and_set_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                Some(config.sender),
+            )
+            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -158,10 +174,17 @@ impl BatchMakeTxArgs {
         };
 
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
-            let (tx, _) =
+            let (mut tx, _) =
                 tx_builder.build_with_access_key(access_key.wallet_address, access_key).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            let fee_token = resolve_and_set_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                Some(access_key.wallet_address),
+            )
+            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -174,9 +197,16 @@ impl BatchMakeTxArgs {
             alloy_primitives::hex::encode(raw_tx)
         } else {
             tx::validate_from_address(eth.wallet.from, Signer::address(&signer))?;
-            let (tx, _) = tx_builder.build(&signer).await?;
+            let (mut tx, _) = tx_builder.build(&signer).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            let fee_token = resolve_and_set_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                Some(Signer::address(&signer)),
+            )
+            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;
             alloy_primitives::hex::encode(envelope.encoded_2718())
         };

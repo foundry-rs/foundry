@@ -121,9 +121,11 @@ pub(super) async fn register(
             &signer,
             access_key,
             Some(chain),
+            None,
             send_tx.cast_async,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     } else {
@@ -132,10 +134,12 @@ pub(super) async fn register(
             provider,
             tx,
             Some(chain),
+            None,
             send_tx.cast_async,
             send_tx.sync,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     }

@@ -12,7 +12,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::TempoHardfork;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_evm_traces::TraceMode;
+use foundry_evm_traces::TraceRequirements;
 use revm::{context::Transaction, state::Bytecode};
 use std::ops::{Deref, DerefMut};
 
@@ -26,7 +26,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         env: (EvmEnvFor<FEN>, TxEnvFor<FEN>),
         fork: CreateFork,
         version: Option<EvmVersion>,
-        trace_mode: TraceMode,
+        trace_requirements: TraceRequirements,
         networks: NetworkConfigs,
         create2_deployer: Address,
         state_overrides: Option<StateOverride>,
@@ -36,7 +36,10 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         // is enabled, tracing will be enabled only for the targeted transaction
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| {
-                stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
+                stack
+                    .trace_requirements(trace_requirements)
+                    .networks(networks)
+                    .create2_deployer(create2_deployer)
             })
             .spec_id_opt(version.map(evm_spec_id::<SpecFor<FEN>>))
             .build(env.0, env.1, db);

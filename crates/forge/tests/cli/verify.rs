@@ -260,6 +260,56 @@ forgetest!(can_verify_random_contract_sepolia, |prj, cmd| {
     verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
 });
 
+// tests that `verify-contract --verifier etherscan` also submits to Sourcify on Sepolia
+forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| {
+    if let Some(info) = EnvExternalities::sepolia_etherscan() {
+        test_debug!("verifying on {}", info.chain);
+        add_unique(&prj);
+        add_verify_target(&prj);
+        let contract_path = "src/Verify.sol:Verify";
+
+        let deploy_output = cmd
+            .forge_fuse()
+            .arg("create")
+            .args(info.create_args())
+            .args([contract_path, "--broadcast"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let address = utils::parse_deployed_address(deploy_output.as_str())
+            .unwrap_or_else(|| panic!("Failed to parse deployer {deploy_output}"));
+
+        let output = cmd
+            .forge_fuse()
+            .arg("verify-contract")
+            .root_arg()
+            .args([
+                "--chain-id",
+                info.chain.as_ref(),
+                &address,
+                contract_path,
+                "--etherscan-api-key",
+                info.etherscan.as_str(),
+                "--verifier",
+                info.verifier.as_str(),
+            ])
+            .assert_success()
+            .get_output()
+            .stderr_lossy();
+
+        assert!(output.contains("Verifying on etherscan"), "Etherscan run missing: {output}");
+        assert!(
+            output.contains("Verification Job ID")
+                || output.contains("Contract source code already fully verified"),
+            "Sourcify submission did not succeed: {output}"
+        );
+        assert!(
+            !output.contains("sourcify verification failed"),
+            "Sourcify failure warning logged: {output}"
+        );
+    }
+});
+
 // tests `create --verify on Sepolia testnet if correct env vars are set
 // SEPOLIA_RPC_URL=https://rpc.sepolia.org
 // TEST_PRIVATE_KEY=0x...
@@ -267,6 +317,40 @@ forgetest!(can_verify_random_contract_sepolia, |prj, cmd| {
 forgetest!(can_create_verify_random_contract_sepolia_etherscan, |prj, cmd| {
     // Implicitly tests `--verifier etherscan` on Sepolia testnet
     create_verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
+});
+
+// tests that `create --verify --verifier etherscan` also submits to Sourcify on Sepolia
+forgetest!(can_create_verify_sepolia_etherscan_also_runs_sourcify, |prj, cmd| {
+    if let Some(info) = EnvExternalities::sepolia_etherscan() {
+        test_debug!("verifying on {}", info.chain);
+        add_single_verify_target_file(&prj);
+
+        let contract_path = "src/Verify.sol:Verify";
+        let output = cmd
+            .arg("create")
+            .args(info.create_args())
+            .args([
+                contract_path,
+                "--etherscan-api-key",
+                info.etherscan.as_str(),
+                "--verify",
+                "--broadcast",
+            ])
+            .assert_success()
+            .get_output()
+            .stderr_lossy();
+
+        assert!(output.contains("Verifying on etherscan"), "Etherscan run missing: {output}");
+        assert!(
+            output.contains("Verification Job ID")
+                || output.contains("Contract source code already fully verified"),
+            "Sourcify submission did not succeed: {output}"
+        );
+        assert!(
+            !output.contains("sourcify verification failed"),
+            "Sourcify failure warning logged: {output}"
+        );
+    }
 });
 
 // tests `create --verify --verifier sourcify` on Sepolia testnet
@@ -371,6 +455,8 @@ Error: No known Etherscan API URL for chain `4202`. To fix this, please:
         .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+
+Verifying on blockscout...
 Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
 
 "#]]);

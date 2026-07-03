@@ -27,9 +27,11 @@ use ed25519_consensus::{
     Signature as Ed25519Signature, SigningKey as Ed25519SigningKey,
     VerificationKey as Ed25519VerificationKey,
 };
+use tempo_primitives::transaction::{KeychainSignature, PrimitiveSignature, TempoSignature};
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
+const PRIVATE_KEY_SIGNER_CACHE_LIMIT: usize = 64;
 
 impl Cheatcode for createWallet_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
@@ -67,6 +69,20 @@ impl Cheatcode for signWithNonceUnsafeCall {
         let nonce: U256 = self.nonce;
         let sig: alloy_primitives::Signature = sign_with_nonce(&pk, &digest, &nonce)?;
         Ok(encode_full_sig(sig))
+    }
+}
+
+impl Cheatcode for signKeychainCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { privateKey, account, digest } = self;
+        sign_keychain(state, privateKey, account, digest)
+    }
+}
+
+impl Cheatcode for signKeychainAdminCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { privateKey, account, digest } = self;
+        sign_keychain(state, privateKey, account, digest)
     }
 }
 
@@ -109,7 +125,7 @@ impl Cheatcode for deriveKey_3Call {
 impl Cheatcode for rememberKeyCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
-        let wallet = parse_wallet(privateKey)?;
+        let wallet = with_private_key_signer(state, privateKey, |wallet| Ok(wallet.clone()))?;
         let address = inject_wallet(state, wallet);
         Ok(address.abi_encode())
     }
@@ -153,17 +169,17 @@ fn inject_wallet<FEN: FoundryEvmNetwork>(
 }
 
 impl Cheatcode for sign_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, digest } = self;
-        let sig = sign(privateKey, digest)?;
+        let sig = sign_cached(state, privateKey, digest)?;
         Ok(encode_full_sig(sig))
     }
 }
 
 impl Cheatcode for signCompact_1Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, digest } = self;
-        let sig = sign(privateKey, digest)?;
+        let sig = sign_cached(state, privateKey, digest)?;
         Ok(encode_compact_sig(sig))
     }
 }
@@ -256,12 +272,13 @@ fn create_wallet<FEN: FoundryEvmNetwork>(
     label: Option<&str>,
     state: &mut Cheatcodes<FEN>,
 ) -> Result {
-    let key = parse_private_key(private_key)?;
-    let addr = alloy_signer::utils::secret_key_to_address(&key);
-
-    let pub_key = key.verifying_key().as_affine().to_encoded_point(false);
-    let pub_key_x = U256::from_be_bytes((*pub_key.x().unwrap()).into());
-    let pub_key_y = U256::from_be_bytes((*pub_key.y().unwrap()).into());
+    let (addr, pub_key_x, pub_key_y) = with_private_key_signer(state, private_key, |wallet| {
+        let addr = wallet.address();
+        let pub_key = wallet.credential().verifying_key().as_affine().to_encoded_point(false);
+        let pub_key_x = U256::from_be_bytes((*pub_key.x().unwrap()).into());
+        let pub_key_y = U256::from_be_bytes((*pub_key.y().unwrap()).into());
+        Ok((addr, pub_key_x, pub_key_y))
+    })?;
 
     if let Some(label) = label {
         state.labels.insert(addr, label.into());
@@ -293,6 +310,33 @@ fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature
     let sig = wallet.sign_hash_sync(digest)?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
     Ok(sig)
+}
+
+fn sign_cached<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    private_key: &U256,
+    digest: &B256,
+) -> Result<alloy_primitives::Signature> {
+    with_private_key_signer(state, private_key, |wallet| {
+        let sig = wallet.sign_hash_sync(digest)?;
+        debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
+        Ok(sig)
+    })
+}
+
+fn sign_keychain<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    private_key: &U256,
+    account: &Address,
+    digest: &B256,
+) -> Result {
+    let signing_hash = KeychainSignature::signing_hash(*digest, *account);
+    let inner = sign_cached(state, private_key, &signing_hash)?;
+    let signature = TempoSignature::Keychain(KeychainSignature::new(
+        *account,
+        PrimitiveSignature::Secp256k1(inner),
+    ));
+    Ok(signature.to_bytes().abi_encode())
 }
 
 /// Signs `digest` on secp256k1 using a user-supplied ephemeral nonce `k` (no RFC6979).
@@ -486,6 +530,26 @@ pub(super) fn parse_wallet(private_key: &U256) -> Result<PrivateKeySigner> {
     parse_private_key(private_key).map(PrivateKeySigner::from)
 }
 
+pub(super) fn with_private_key_signer<FEN: FoundryEvmNetwork, R>(
+    state: &mut Cheatcodes<FEN>,
+    private_key: &U256,
+    f: impl FnOnce(&PrivateKeySigner) -> Result<R>,
+) -> Result<R> {
+    if !state.private_key_signers.contains_key(private_key)
+        && state.private_key_signers.len() < PRIVATE_KEY_SIGNER_CACHE_LIMIT
+    {
+        let wallet = parse_wallet(private_key)?;
+        state.private_key_signers.insert(*private_key, wallet);
+    }
+
+    if let Some(wallet) = state.private_key_signers.get(private_key) {
+        f(wallet)
+    } else {
+        let wallet = parse_wallet(private_key)?;
+        f(&wallet)
+    }
+}
+
 fn derive_key_str(mnemonic: &str, path: &str, index: u32, language: &str) -> Result {
     let private_key = derive_private_key_with_language(mnemonic, path, index, language)
         .map_err(|e| fmt_err!("{e}"))?;
@@ -546,8 +610,17 @@ fn derive_wallets<W: Wordlist>(
 mod tests {
     use super::*;
     use alloy_primitives::{FixedBytes, hex::FromHex};
+    use alloy_sol_types::SolCall;
     use k256::elliptic_curve::Curve;
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
+    use tempo_contracts::precompiles::{IAccountKeychain, ISignatureVerifier};
+    use tempo_hardfork::TempoHardfork;
+    use tempo_precompiles::{
+        Precompile,
+        account_keychain::{AccountKeychain, KeyRestrictions, SignatureType},
+        signature_verifier::SignatureVerifier,
+        storage::{StorageCtx, hashmap::HashMapStorageProvider},
+    };
 
     #[test]
     fn test_sign_p256() {
@@ -656,6 +729,179 @@ mod tests {
         let err = sign_with_nonce(&pk_u256, &digest, &n_u256).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("invalid nonce scalar"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn test_sign_keychain_encodes_v2_signature_for_account() {
+        let private_key = U256::from(0xB0Bu64);
+        let account = Address::repeat_byte(0x11);
+        let digest = B256::from([0x22; 32]);
+        let mut state = Cheatcodes::default();
+
+        let result = sign_keychain(&mut state, &private_key, &account, &digest).unwrap();
+        let signature = Vec::<u8>::abi_decode(&result).unwrap();
+
+        assert_eq!(signature.len(), 86);
+        assert_eq!(signature[0], 0x04);
+        assert_eq!(Address::from_slice(&signature[1..21]), account);
+
+        let parsed = TempoSignature::from_bytes(&signature).unwrap();
+        assert!(parsed.is_v2_keychain());
+
+        let keychain = parsed.as_keychain().unwrap();
+        let expected_key = parse_wallet(&private_key).unwrap().address();
+        assert_eq!(keychain.user_address, account);
+        assert_eq!(keychain.key_id(&digest).unwrap(), expected_key);
+    }
+
+    #[test]
+    fn private_key_signers_are_cached_for_repeated_lookup() {
+        let private_key = U256::from(0xB0Bu64);
+        let mut state = Cheatcodes::default();
+
+        let first =
+            with_private_key_signer(&mut state, &private_key, |wallet| Ok(wallet.address()))
+                .unwrap();
+        assert_eq!(state.private_key_signers.len(), 1);
+
+        let second =
+            with_private_key_signer(&mut state, &private_key, |wallet| Ok(wallet.address()))
+                .unwrap();
+        assert_eq!(state.private_key_signers.len(), 1);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_sign_keychain_matches_t6_signature_verifier_state() {
+        let root_pk = U256::from(0xA11CEu64);
+        let access_pk = U256::from(0xB0Bu64);
+        let admin_pk = U256::from(0xC0FFEEu64);
+        let revoked_pk = U256::from(0xBADu64);
+        let expired_pk = U256::from(0xE441u64);
+        let unknown_pk = U256::from(0xFACEu64);
+
+        let root = parse_wallet(&root_pk).unwrap().address();
+        let access_key = parse_wallet(&access_pk).unwrap().address();
+        let admin_key = parse_wallet(&admin_pk).unwrap().address();
+        let revoked_key = parse_wallet(&revoked_pk).unwrap().address();
+        let expired_key = parse_wallet(&expired_pk).unwrap().address();
+
+        let hash = B256::from([0x44; 32]);
+        let admin_hash = B256::from([0x66; 32]);
+
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T6);
+        storage.set_timestamp(U256::from(1_000u64));
+        StorageCtx::enter(&mut storage, || {
+            let mut keychain = AccountKeychain::new();
+            keychain.initialize()?;
+            keychain.set_tx_origin(root)?;
+
+            authorize_t6_access_key(&mut keychain, root, access_key, u64::MAX)?;
+            authorize_t6_access_key(&mut keychain, root, revoked_key, u64::MAX)?;
+            authorize_t6_access_key(&mut keychain, root, expired_key, 1_005)?;
+            keychain.authorize_admin_key(root, admin_key, SignatureType::Secp256k1, None)?;
+            keychain.revoke_key(root, IAccountKeychain::revokeKeyCall { keyId: revoked_key })?;
+
+            assert!(verify_keychain(root, hash, keychain_signature(&access_pk, root, hash)));
+            assert!(!verify_keychain(root, hash, keychain_signature(&revoked_pk, root, hash)));
+            assert!(!verify_keychain(root, hash, keychain_signature(&unknown_pk, root, hash)));
+            assert!(!verify_keychain(
+                Address::repeat_byte(0x99),
+                hash,
+                keychain_signature(&access_pk, root, hash)
+            ));
+            assert!(verify_keychain_admin(
+                root,
+                admin_hash,
+                keychain_signature(&admin_pk, root, admin_hash)
+            ));
+            assert!(verify_keychain_admin(
+                root,
+                admin_hash,
+                keychain_signature(&root_pk, root, admin_hash)
+            ));
+            assert!(!verify_keychain_admin(
+                root,
+                admin_hash,
+                keychain_signature(&access_pk, root, admin_hash)
+            ));
+            assert!(!verify_keychain_admin(
+                Address::repeat_byte(0x88),
+                admin_hash,
+                keychain_signature(&admin_pk, root, admin_hash)
+            ));
+            assert_keychain_signature_reverts(root, hash, vec![0x04]);
+
+            Ok::<_, eyre::Report>(())
+        })
+        .unwrap();
+
+        storage.set_timestamp(U256::from(1_006u64));
+        StorageCtx::enter(&mut storage, || {
+            assert!(!verify_keychain(root, hash, keychain_signature(&expired_pk, root, hash)));
+            Ok::<_, eyre::Report>(())
+        })
+        .unwrap();
+    }
+
+    fn authorize_t6_access_key(
+        keychain: &mut AccountKeychain,
+        account: Address,
+        key_id: Address,
+        expiry: u64,
+    ) -> eyre::Result<()> {
+        keychain.authorize_key(
+            account,
+            key_id,
+            SignatureType::Secp256k1,
+            KeyRestrictions {
+                expiry,
+                enforceLimits: false,
+                limits: vec![],
+                allowAnyCalls: true,
+                allowedCalls: vec![],
+            },
+            None,
+        )?;
+        Ok(())
+    }
+
+    fn keychain_signature(private_key: &U256, account: Address, hash: B256) -> Vec<u8> {
+        let mut state = Cheatcodes::default();
+        Vec::<u8>::abi_decode(&sign_keychain(&mut state, private_key, &account, &hash).unwrap())
+            .unwrap()
+    }
+
+    fn verify_keychain(account: Address, hash: B256, signature: Vec<u8>) -> bool {
+        let calldata =
+            ISignatureVerifier::verifyKeychainCall { account, hash, signature: signature.into() }
+                .abi_encode();
+
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
+        assert!(!output.is_revert(), "verifyKeychain reverted: {:?}", output.bytes);
+        ISignatureVerifier::verifyKeychainCall::abi_decode_returns(&output.bytes).unwrap()
+    }
+
+    fn verify_keychain_admin(account: Address, hash: B256, signature: Vec<u8>) -> bool {
+        let calldata = ISignatureVerifier::verifyKeychainAdminCall {
+            account,
+            hash,
+            signature: signature.into(),
+        }
+        .abi_encode();
+
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
+        assert!(!output.is_revert(), "verifyKeychainAdmin reverted: {:?}", output.bytes);
+        ISignatureVerifier::verifyKeychainAdminCall::abi_decode_returns(&output.bytes).unwrap()
+    }
+
+    fn assert_keychain_signature_reverts(account: Address, hash: B256, signature: Vec<u8>) {
+        let calldata =
+            ISignatureVerifier::verifyKeychainCall { account, hash, signature: signature.into() }
+                .abi_encode();
+
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
+        assert!(output.is_revert(), "malformed keychain signature should revert");
     }
 
     #[test]

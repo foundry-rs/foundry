@@ -5,7 +5,7 @@ use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, HaltReasonFor, PrecompilesFor, SpecFor, TxEnvFor,
+        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
@@ -22,13 +22,12 @@ use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
-use itertools::Itertools;
 use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
     context::{Block, BlockEnv, CfgEnv, ContextTr, JournalInner, Transaction},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
-    database::{CacheDB, DatabaseRef, EmptyDB},
+    database::{AccountState, CacheDB, DatabaseRef, EmptyDB},
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
@@ -309,6 +308,14 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
+
+    /// Drops cached account info for `address` on the active fork so the next read re-fetches it
+    /// from the node (used after out-of-band mutations like `anvil_setBalance` via `vm.rpc`).
+    fn invalidate_fork_cache_account(&mut self, address: Address);
+
+    /// Like [`invalidate_fork_cache_account`](Self::invalidate_fork_cache_account), but for a
+    /// single storage slot.
+    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256);
 
     /// Revokes persistent status from the given account.
     fn remove_persistent_account(&mut self, account: &Address) -> bool;
@@ -832,7 +839,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Returns true if the address is a precompile
     pub fn is_existing_precompile(&self, addr: &Address) -> bool {
-        self.inner.precompiles().addresses().contains(addr)
+        self.inner.precompile_addresses().contains(addr)
     }
 
     /// Sets the initial journaled state to use when initializing forks
@@ -1544,6 +1551,35 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         self.inner.persistent_accounts.insert(account)
     }
 
+    fn invalidate_fork_cache_account(&mut self, address: Address) {
+        let Some(fork_db) = self.active_fork_db_mut() else { return };
+        trace!(?address, "invalidate fork cache account");
+        fork_db.db.data().accounts.write().remove(&address);
+        // Keep the local entry if it holds in-script modifications (e.g. `vm.deal`).
+        if fork_db
+            .cache
+            .accounts
+            .get(&address)
+            .is_some_and(|account| account.account_state == AccountState::None)
+        {
+            fork_db.cache.accounts.remove(&address);
+        }
+    }
+
+    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256) {
+        let Some(fork_db) = self.active_fork_db_mut() else { return };
+        trace!(?address, ?slot, "invalidate fork cache storage");
+        if let Some(storage) = fork_db.db.data().storage.write().get_mut(&address) {
+            storage.remove(&slot);
+        }
+        // Keep the local slot if the account holds in-script modifications.
+        if let Some(account) = fork_db.cache.accounts.get_mut(&address)
+            && account.account_state == AccountState::None
+        {
+            account.storage.remove(&slot);
+        }
+    }
+
     fn remove_persistent_account(&mut self, account: &Address) -> bool {
         trace!(?account, "remove persistent account");
         self.inner.persistent_accounts.remove(account)
@@ -1958,12 +1994,12 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.issued_local_fork_ids.is_empty()
     }
 
-    pub fn precompiles(&self) -> PrecompilesFor<FEN> {
+    pub fn precompile_addresses(&self) -> AddressSet {
         let evm = FEN::EvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(self.spec_id), Default::default()),
         );
-        evm.precompiles().clone()
+        evm.precompiles().addresses().copied().collect()
     }
 
     /// Returns a new, empty, `JournaledState` with set precompiles
@@ -1973,7 +2009,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
             journal_inner.set_spec_id(self.spec_id.into());
             journal_inner
         };
-        let precompile_addresses: AddressSet = self.precompiles().addresses().copied().collect();
+        let precompile_addresses = self.precompile_addresses();
         journal.warm_addresses.set_precompile_addresses(&precompile_addresses);
         journal
     }

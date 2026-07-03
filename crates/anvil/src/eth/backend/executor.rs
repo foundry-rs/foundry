@@ -17,7 +17,7 @@ use alloy_evm::{
     Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, GasOutput, OnStateHook, StateDB, TxResult,
+        ExecutableTx, GasOutput, StateDB, TxResult,
     },
     eth::{
         EthTxResult,
@@ -118,8 +118,6 @@ pub struct AnvilBlockExecutor<E> {
     gas_used: u64,
     /// Blob gas used by the block.
     blob_gas_used: u64,
-    /// Optional state change hook.
-    state_hook: Option<Box<dyn OnStateHook>>,
 }
 
 impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
@@ -137,7 +135,7 @@ impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
 
 impl<E> AnvilBlockExecutor<E> {
     /// Creates a new [`AnvilBlockExecutor`].
-    pub fn new(evm: E, parent_hash: B256, spec_id: SpecId) -> Self {
+    pub const fn new(evm: E, parent_hash: B256, spec_id: SpecId) -> Self {
         Self {
             evm,
             parent_hash,
@@ -146,7 +144,6 @@ impl<E> AnvilBlockExecutor<E> {
             receipts: Vec::new(),
             gas_used: 0,
             blob_gas_used: 0,
-            state_hook: None,
         }
     }
 }
@@ -175,9 +172,6 @@ where
                 )
                 .map_err(BlockExecutionError::other)?;
 
-            if let Some(hook) = &mut self.state_hook {
-                hook.on_state(&result.state);
-            }
             self.evm.db_mut().commit(result.state);
         }
         Ok(())
@@ -221,10 +215,6 @@ where
             #[cfg_attr(not(feature = "optimism"), allow(unused_variables))]
             sender,
         } = output;
-
-        if let Some(hook) = &mut self.state_hook {
-            hook.on_state(&state);
-        }
 
         let gas_used = result.tx_gas_used();
         self.gas_used += gas_used;

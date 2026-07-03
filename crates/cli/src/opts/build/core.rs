@@ -94,11 +94,6 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub offline: bool,
 
-    /// Use the Yul intermediate representation compilation pipeline.
-    #[arg(long, help_heading = "Compiler options")]
-    #[serde(skip)]
-    pub via_ir: bool,
-
     /// Changes compilation to only use literal content and not URLs.
     #[arg(long, help_heading = "Compiler options")]
     #[serde(skip)]
@@ -246,10 +241,6 @@ impl Provider for BuildOpts {
             dict.insert("deny".to_string(), figment::value::Value::serialize(deny)?);
         }
 
-        if self.via_ir {
-            dict.insert("via_ir".to_string(), true.into());
-        }
-
         if self.use_literal_content {
             dict.insert("use_literal_content".to_string(), true.into());
         }
@@ -282,6 +273,18 @@ impl Provider for BuildOpts {
 
         if let Some(optimize) = self.compiler.optimize {
             dict.insert("optimizer".to_string(), optimize.into());
+        }
+
+        if self.compiler.via_ir {
+            dict.insert("via_ir".to_string(), true.into());
+        }
+
+        if self.compiler.via_ssa_cfg {
+            dict.insert("via_ssa_cfg".to_string(), true.into());
+        }
+
+        if self.compiler.experimental {
+            dict.insert("experimental".to_string(), true.into());
         }
 
         if !self.compiler.extra_output.is_empty() {

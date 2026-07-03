@@ -63,7 +63,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
         Ok(())
     }
 
-    async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()> {
+    async fn submit(
+        &mut self,
+        args: VerifyArgs,
+        context: VerificationContext,
+    ) -> Result<Option<VerifyCheckArgs>> {
         let (etherscan, verify_args) = self.prepare_verify_request(&args, &context).await?;
 
         if !args.skip_is_verified_check
@@ -75,7 +79,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 verify_args.address.to_checksum(None)
             )?;
 
-            return Ok(());
+            return Ok(None);
         }
 
         trace!(?verify_args, "submitting verification request");
@@ -116,14 +120,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         return Err(eyre!("Could not detect deployment: {}", resp.result));
                     }
 
-                    sh_err!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
-                        `{}`",
+                    warn!("Failed verify submission: {:?}", resp);
+                    eyre::bail!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
                         resp.message,
                         resp.result
-                    )?;
-                    warn!("Failed verify submission: {:?}", resp);
-                    std::process::exit(1);
+                    );
                 }
 
                 Ok(Some(resp))
@@ -139,21 +141,16 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 url
             )?;
             sh_println!("{}\t{}", resp.result, url)?;
-
-            if args.watch {
-                let check_args = VerifyCheckArgs {
-                    id: resp.result,
-                    etherscan: args.etherscan,
-                    retry: args.retry,
-                    verifier: args.verifier,
-                };
-                return self.check(check_args).await;
-            }
+            Ok(Some(VerifyCheckArgs {
+                id: resp.result,
+                etherscan: args.etherscan,
+                retry: args.retry,
+                verifier: args.verifier,
+            }))
         } else {
             sh_status!("Contract source code already verified")?;
+            Ok(None)
         }
-
-        Ok(())
     }
 
     /// Executes the command to check verification status on Etherscan

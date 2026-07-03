@@ -54,9 +54,7 @@ fn sablier_v2_core() {
 
     // This test reverts due to memory limit without isolation. This revert is not reached with
     // isolation because memory is divided between separate EVMs created by inner calls.
-    if cfg!(feature = "isolate-by-default") {
-        tester = tester.args(["--nmt", "test_RevertWhen_LoopCalculationOverflowsBlockGasLimit"]);
-    }
+    tester = tester.args(["--nmt", "test_RevertWhen_LoopCalculationOverflowsBlockGasLimit"]);
 
     tester.run();
 }
@@ -70,9 +68,7 @@ fn solady() {
     // This test expects the mover contract created via CREATE2 to be selfdestructed within the
     // same transaction. In isolation mode, each top-level call runs as a separate transaction
     // context, so the selfdestruct doesn't clear the code as expected by the test.
-    if cfg!(feature = "isolate-by-default") {
-        tester = tester.args(["--nmt", "testSafeMoveETHViaMover"]);
-    }
+    tester = tester.args(["--nmt", "testSafeMoveETHViaMover"]);
 
     tester.run();
 }
@@ -80,9 +76,10 @@ fn solady() {
 // <https://github.com/pcaversaccio/snekmate>
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
-#[cfg(not(feature = "isolate-by-default"))]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "1a54931129f2814cbbd7ddbafb4005707f8a5bf8")
+    ExtTester::new("pcaversaccio", "snekmate", "df2816d6a5ecdb8dcc1257e22089422825fd5e27")
+        .fuzz_runs(256)
+        .python_package("git+https://github.com/vyperlang/vyper@v0.5.0a3")
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])

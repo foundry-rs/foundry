@@ -10,7 +10,7 @@ use alloy_signer::{Signature, Signer};
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, parse_etherscan_license_type};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{
@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::parse_tokens,
     provider::ProviderBuilder,
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_resolved_fee_token_selection},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -89,6 +89,20 @@ pub struct CreateArgs {
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
+    /// The Etherscan license type code or SPDX identifier to include with the verification
+    /// request.
+    ///
+    /// Accepts either an Etherscan numeric license code or a common SPDX identifier such as `MIT`.
+    /// This is only used for Etherscan-style verifiers when `--verify` is enabled.
+    #[arg(
+        long,
+        requires = "verify",
+        value_name = "LICENSE",
+        help_heading = "Verifier options",
+        value_parser = parse_etherscan_license_type,
+    )]
+    license_type: Option<String>,
+
     /// Timeout to use for broadcasting transactions.
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
@@ -148,6 +162,7 @@ impl CreateArgs {
         N::ReceiptResponse: serde::Serialize,
     {
         let mut config = self.load_config()?;
+        let resolve_unknown_fee_token_symbol = !config.eth_rpc_curl;
 
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
@@ -240,6 +255,7 @@ impl CreateArgs {
                 Some(browser),
                 resolved_lane,
                 expires_at,
+                resolve_unknown_fee_token_symbol,
             )
             .await
         } else if self.unlocked {
@@ -258,6 +274,7 @@ impl CreateArgs {
                 None,
                 resolved_lane,
                 expires_at,
+                resolve_unknown_fee_token_symbol,
             )
             .await
         } else if let Some(ak) = access_key {
@@ -280,6 +297,7 @@ impl CreateArgs {
                 None,
                 resolved_lane,
                 expires_at,
+                resolve_unknown_fee_token_symbol,
             )
             .await
         } else {
@@ -305,6 +323,7 @@ impl CreateArgs {
                 None,
                 resolved_lane,
                 expires_at,
+                resolve_unknown_fee_token_symbol,
             )
             .await
         }
@@ -350,8 +369,8 @@ impl CreateArgs {
             libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
-            via_ir: self.build.via_ir,
-            license_type: None,
+            via_ir: self.build.compiler.via_ir,
+            license_type: self.license_type.clone(),
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -399,6 +418,7 @@ impl CreateArgs {
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
         expires_at: Option<u64>,
+        resolve_unknown_fee_token_symbol: bool,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -569,9 +589,25 @@ impl CreateArgs {
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
         if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    resolve_unknown_fee_token_symbol.then_some(&provider),
+                    Some(chain),
+                    &mut deployer.tx,
+                )
+                .await?;
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
+        } else {
+            let fee_token = resolve_and_set_fee_token(
+                resolve_unknown_fee_token_symbol.then_some(&provider),
+                Some(chain),
+                &mut deployer.tx,
+                Some(deployer_address),
+            )
+            .await?;
+            maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token)
+                .await?;
         }
-        print_resolved_fee_token_selection(Some(chain), deployer.tx.fee_token())?;
 
         // Deploy the actual contract
         let (deployed_contract, receipt) = if let Some(browser) = browser_signer {
@@ -674,8 +710,8 @@ impl CreateArgs {
             libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier,
-            via_ir: self.build.via_ir,
-            license_type: None,
+            via_ir: self.build.compiler.via_ir,
+            license_type: self.license_type,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -898,10 +934,39 @@ mod tests {
             "10",
             "--delay",
             "30",
+            "--license-type",
+            "13",
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
     }
+
+    #[test]
+    fn can_parse_create_license_type_spdx() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "MIT",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn errors_on_invalid_create_license_type() {
+        let err = CreateArgs::try_parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "definitely-not-a-license",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("unsupported Etherscan license type"));
+    }
+
     #[test]
     fn can_parse_chain_id() {
         let args: CreateArgs = CreateArgs::parse_from([

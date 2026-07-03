@@ -69,6 +69,33 @@ contract SymbolicPrecompiles is Test {
         assertEq(invalidOut.length, 0);
     }
 
+    function checkKzgPointEvaluationPrecompile(uint256) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            hex"73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000",
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        (bool ok, bytes memory out) = address(0x0a).staticcall(input);
+        assert(ok);
+        assertEq(
+            out,
+            hex"000000000000000000000000000000000000000000000000000000000000100073eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
+        );
+
+        bytes memory shortInput = new bytes(191);
+        (bool shortOk, bytes memory shortOut) = address(0x0a).staticcall(shortInput);
+        assert(!shortOk);
+        assertEq(shortOut.length, 0);
+
+        input[0] = 0x02;
+        (bool mismatchOk, bytes memory mismatchOut) = address(0x0a).staticcall(input);
+        assert(!mismatchOk);
+        assertEq(mismatchOut.length, 0);
+    }
+
     function checkEcrecoverPrecompile(uint256) public {
         bytes32 digest = keccak256("foundry-symbolic-precompile");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, digest);
@@ -112,6 +139,12 @@ contract SymbolicPrecompiles is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkBlake2fPrecompile(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkKzgPointEvaluationPrecompile(uint256)
 "#]],
     );
     assert_relevant_lines(
@@ -381,4 +414,307 @@ contract SymbolicPrecompileInputSize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic precompile CALL input size"), "{stdout}");
+});
+
+forgetest_init!(symbolic_kzg_precompile_models_symbolic_witnesses, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_kzg_precompile_models_symbolic_witnesses because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicKzgPrecompileInput.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicKzgPrecompileInput is Test {
+    function checkSymbolicKzgInvalidWitnessReturnsCounterexample(bytes32 z) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            z,
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        (bool ok,) = address(0x0a).staticcall(input);
+        assert(ok);
+    }
+
+    function checkSymbolicKzgSuccessWitnessReturnsCounterexample(
+        bytes32 versionedHash,
+        bytes32 z,
+        bytes32 y,
+        bytes32 commitmentPrefix,
+        bytes16 commitmentSuffix,
+        bytes32 proofPrefix,
+        bytes16 proofSuffix
+    ) public {
+        bytes memory input = abi.encodePacked(
+            versionedHash,
+            z,
+            y,
+            commitmentPrefix,
+            commitmentSuffix,
+            proofPrefix,
+            proofSuffix
+        );
+
+        (bool ok,) = address(0x0a).staticcall(input);
+        if (ok) assert(false);
+    }
+
+    function checkSymbolicKzgVersionedHashMismatchReturnsCounterexample(bytes31 digestTail) public {
+        bytes memory input = abi.encodePacked(
+            bytes1(0x01),
+            digestTail,
+            hex"73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000",
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        (bool ok,) = address(0x0a).staticcall(input);
+        assert(ok);
+    }
+
+    function checkSymbolicKzgProofInvalidWitnessReturnsCounterexample(
+        bytes32 proofPrefix,
+        bytes16 proofSuffix
+    ) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            hex"73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000",
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            proofPrefix,
+            proofSuffix
+        );
+
+        (bool ok,) = address(0x0a).staticcall(input);
+        assert(ok);
+    }
+
+    function checkSymbolicKzgCommitmentMismatchReturnsCounterexample(
+        bytes32 commitmentPrefix,
+        bytes16 commitmentSuffix
+    ) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            hex"73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000",
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            commitmentPrefix,
+            commitmentSuffix,
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        (bool ok,) = address(0x0a).staticcall(input);
+        assert(ok);
+    }
+
+    function checkSymbolicKzgKnownVersionMismatchFails(bytes32 z) public {
+        bytes memory input = abi.encodePacked(
+            hex"02e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            z,
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        (bool ok, bytes memory out) = address(0x0a).staticcall(input);
+        assert(!ok);
+        assertEq(out.length, 0);
+    }
+
+    function checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256) public {
+        bytes1[48] memory commitment;
+        bytes1[48] memory proof;
+        bytes memory commitmentBytes =
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7";
+        bytes memory proofBytes =
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c";
+
+        for (uint256 i; i < 48; ++i) {
+            commitment[i] = commitmentBytes[i];
+            proof[i] = proofBytes[i];
+        }
+
+        (bool ok,) = address(0x0a).staticcall(
+            abi.encodePacked(
+                hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+                uint256(0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000),
+                uint256(0x1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9),
+                commitment,
+                proof
+            )
+        );
+
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgPrecompileInput"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicKzgKnownVersionMismatchFails(bytes32)
+[FAIL: panic: assertion failed (0x01); counterexample:
+checkSymbolicKzgCommitmentMismatchReturnsCounterexample(bytes32,bytes16)
+checkSymbolicKzgInvalidWitnessReturnsCounterexample(bytes32)
+checkSymbolicKzgProofInvalidWitnessReturnsCounterexample(bytes32,bytes16)
+checkSymbolicKzgSuccessWitnessReturnsCounterexample(bytes32,bytes32,bytes32,bytes32,bytes16,bytes32,bytes16)
+checkSymbolicKzgVersionedHashMismatchReturnsCounterexample(bytes31)
+checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256)
+"#]],
+    );
+    assert!(!stdout.contains("symbolic KZG point-evaluation precompile"), "{stdout}");
+});
+
+forgetest_init!(symbolic_kzg_precompile_explores_invalid_symbolic_length, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_kzg_precompile_explores_invalid_symbolic_length because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicKzgInvalidLength.t.sol",
+        r#"
+contract SymbolicKzgInvalidLength {
+    function checkKzgInvalidLengthIsNotDropped(uint8 size) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            hex"73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000",
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        bool ok;
+        assembly {
+            ok := staticcall(gas(), 0x0a, add(input, 0x20), size, 0, 0)
+        }
+
+        if (!ok) assert(size == 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgInvalidLength"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed (0x01); counterexample:
+checkKzgInvalidLengthIsNotDropped(uint8)
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_kzg_precompile_inactive_before_cancun, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_kzg_precompile_inactive_before_cancun because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicPreCancunKzg.t.sol",
+        r#"
+contract SymbolicPreCancunKzg {
+    function checkAddress0aIsEmptyAccountBeforeCancun(uint256) public {
+        bytes memory input = new bytes(191);
+        (bool ok, bytes memory out) = address(0x0a).staticcall(input);
+
+        assert(ok);
+        assert(out.length == 0);
+
+        uint256 codeSize;
+        bytes32 codeHash;
+        assembly {
+            codeSize := extcodesize(0x0a)
+            codeHash := extcodehash(0x0a)
+        }
+
+        assert(codeSize == 0);
+        assert(codeHash == bytes32(0));
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--evm-version",
+            "shanghai",
+            "--match-contract",
+            "SymbolicPreCancunKzg",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkAddress0aIsEmptyAccountBeforeCancun(uint256)
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_kzg_precompile_residual_reports_incomplete, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_kzg_precompile_residual_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicKzgResidual.t.sol",
+        r#"
+contract SymbolicKzgResidual {
+    function checkUnmodeledKzgResidual(bytes32 z) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            z,
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        address(0x0a).staticcall(input);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgResidual"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        stdout.contains("symbolic KZG point-evaluation precompile residual not modeled"),
+        "{stdout}"
+    );
 });

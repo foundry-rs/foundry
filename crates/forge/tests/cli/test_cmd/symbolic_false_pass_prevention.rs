@@ -47,8 +47,16 @@ contract SymbolicFalsePassPrevention is Test {
         assert(result == 0);
     }
 
-    function checkKzgPrecompileFailsClosed() public {
-        (bool ok,) = address(0x0a).staticcall("");
+    function checkKzgPrecompileInvalidWitnessCounterexample(bytes32 z) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            z,
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        (bool ok,) = address(0x0a).staticcall(input);
         assert(ok);
     }
 
@@ -105,9 +113,20 @@ contract SymbolicFalsePassPrevention is Test {
         assert(gas.gasTotalUsed == 0);
     }
 
+    function checkLastFrameGasFailsClosed() public view {
+        (bool success, bytes memory data) = address(vm).staticcall(abi.encodeWithSignature("lastFrameGas()"));
+        assert(success && data.length != 0);
+    }
+
     function checkSnapshotGasLastCallFailsClosed() public {
         uint256 gasUsed = vm.snapshotGasLastCall("name");
         assert(gasUsed == 0);
+    }
+
+    function checkSnapshotGasLastFrameFailsClosed() public {
+        (bool success, bytes memory data) =
+            address(vm).call(abi.encodeWithSignature("snapshotGasLastFrame(string)", "name"));
+        assert(success && data.length != 0);
     }
 
     function checkStopSnapshotGasFailsClosed() public {
@@ -128,9 +147,10 @@ contract SymbolicFalsePassPrevention is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkConcreteAddmodMulmodUseUnboundedIntermediate()
-unsupported symbolic execution feature: symbolic ADDMOD unbounded intermediate not modeled
-unsupported symbolic execution feature: symbolic MULMOD unbounded intermediate not modeled
-unsupported symbolic execution feature: KZG point-evaluation precompile not modeled
+[FAIL: panic: assertion failed (0x01); counterexample:
+checkSymbolicAddmodFailsClosed(uint256)
+checkSymbolicMulmodFailsClosed(uint256)
+checkKzgPrecompileInvalidWitnessCounterexample(bytes32)
 unsupported symbolic execution feature: symbolic bn254 precompile validity not modeled
 unsupported symbolic execution feature: symbolic blake2f precompile final flag not modeled
 unsupported symbolic execution feature: symbolic vm.setEvmVersion not modeled
@@ -139,8 +159,11 @@ unsupported symbolic execution feature: symbolic vm.expectSafeMemory not modeled
 unsupported symbolic execution feature: symbolic vm.expectSafeMemoryCall not modeled
 unsupported symbolic execution feature: symbolic vm.stopExpectSafeMemory not modeled
 unsupported symbolic execution feature: symbolic vm.lastCallGas not modeled
+unsupported symbolic execution feature: symbolic vm.lastFrameGas not modeled
 unsupported symbolic execution feature: symbolic vm.snapshotGasLastCall not modeled
+unsupported symbolic execution feature: symbolic vm.snapshotGasLastFrame not modeled
 unsupported symbolic execution feature: symbolic vm.stopSnapshotGas not modeled
 "#]],
     );
+    assert!(!stdout.contains("symbolic KZG point-evaluation precompile"), "{stdout}");
 });

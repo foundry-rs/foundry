@@ -60,7 +60,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::{
+    TempoHardfork,
+    constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
+};
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
@@ -553,7 +556,7 @@ impl NodeConfig {
     /// In Tempo mode, uses the hardfork-specific base fee (10 gwei pre-T1, 20 gwei T1+).
     pub fn get_base_fee(&self) -> u64 {
         let default = if self.networks.is_tempo() {
-            TempoHardfork::from(self.get_hardfork()).base_fee()
+            tempo_default_base_fee(TempoHardfork::from(self.get_hardfork()))
         } else {
             INITIAL_BASE_FEE
         };
@@ -567,7 +570,7 @@ impl NodeConfig {
     /// In Tempo mode, defaults to the hardfork-specific base fee.
     pub fn get_gas_price(&self) -> u128 {
         let default = if self.networks.is_tempo() {
-            TempoHardfork::from(self.get_hardfork()).base_fee() as u128
+            tempo_default_base_fee(TempoHardfork::from(self.get_hardfork())) as u128
         } else {
             INITIAL_GAS_PRICE
         };
@@ -1569,6 +1572,10 @@ latest block number: {latest_block}"
 
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
     }
+}
+
+const fn tempo_default_base_fee(hardfork: TempoHardfork) -> u64 {
+    if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE }
 }
 
 /// If the fork choice is a block number, simply return it with an empty list of transactions.

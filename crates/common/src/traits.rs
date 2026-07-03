@@ -19,15 +19,32 @@ pub trait TestFilter: Send + Sync {
     /// Returns whether the test should be included for the given contract.
     ///
     /// `contract_id` is the full artifact identifier (`path:Contract`).
-    fn matches_test_function_in_contract(&self, _contract_id: &str, func: &Function) -> bool {
-        func.is_any_test() && self.matches_test(&func.signature())
+    fn matches_test_function_kind_in_contract(
+        &self,
+        _contract_id: &str,
+        func: &Function,
+        kind: TestFunctionKind,
+    ) -> bool {
+        kind.is_any_test() && self.matches_test(&func.signature())
+    }
+
+    /// Returns whether the test should be included for the given contract.
+    ///
+    /// `contract_id` is the full artifact identifier (`path:Contract`).
+    fn matches_test_function_in_contract(&self, contract_id: &str, func: &Function) -> bool {
+        self.matches_test_function_kind_in_contract(contract_id, func, func.test_function_kind())
     }
 }
 
 impl<'a> dyn TestFilter + 'a {
+    /// Returns `true` if the function kind is runnable and matches the given filter.
+    pub fn matches_test_function_kind(&self, func: &Function, kind: TestFunctionKind) -> bool {
+        kind.is_any_test() && self.matches_test(&func.signature())
+    }
+
     /// Returns `true` if the function is a test function that matches the given filter.
     pub fn matches_test_function(&self, func: &Function) -> bool {
-        func.is_any_test() && self.matches_test(&func.signature())
+        self.matches_test_function_kind(func, func.test_function_kind())
     }
 }
 
@@ -52,7 +69,7 @@ impl TestFilter for EmptyTestFilter {
 pub trait TestFunctionExt {
     /// Returns the kind of test function.
     fn test_function_kind(&self) -> TestFunctionKind {
-        TestFunctionKind::classify(self.tfe_as_str(), self.tfe_has_inputs())
+        TestFunctionKind::classify(self.tfe_as_str(), self.tfe_has_inputs(), false)
     }
 
     /// Returns `true` if this function is a `setUp` function.
@@ -175,7 +192,7 @@ pub enum TestFunctionKind {
 
 impl TestFunctionKind {
     /// Classify a function.
-    pub fn classify(name: &str, has_inputs: bool) -> Self {
+    pub fn classify(name: &str, has_inputs: bool, symbolic_entrypoints: bool) -> Self {
         match () {
             _ if name.starts_with("test") => {
                 let should_fail = name.starts_with("testFail");
@@ -189,6 +206,11 @@ impl TestFunctionKind {
                 Self::InvariantTest
             }
             _ if name.starts_with("table") => Self::TableTest,
+            _ if symbolic_entrypoints
+                && (name.starts_with("check") || name.starts_with("prove")) =>
+            {
+                Self::SymbolicTest
+            }
             _ if name.eq_ignore_ascii_case("setup") && !has_inputs => Self::Setup,
             _ if name.eq_ignore_ascii_case("afterinvariant") => Self::AfterInvariant,
             _ if name.starts_with("fixture") => Self::Fixture,
@@ -318,10 +340,26 @@ mod tests {
     #[test]
     fn test_setup_classification() {
         // setUp() with no params should be classified as Setup
-        assert_eq!(TestFunctionKind::classify("setUp", false), TestFunctionKind::Setup);
+        assert_eq!(TestFunctionKind::classify("setUp", false, false), TestFunctionKind::Setup);
 
         // setUp(bytes memory) with params should NOT be classified as Setup
         // This is common in Gnosis Safe/Zodiac modules
-        assert_eq!(TestFunctionKind::classify("setUp", true), TestFunctionKind::Unknown);
+        assert_eq!(TestFunctionKind::classify("setUp", true, false), TestFunctionKind::Unknown);
+    }
+
+    #[test]
+    fn test_symbolic_classification() {
+        assert_eq!(
+            TestFunctionKind::classify("checkSymbolic", true, true),
+            TestFunctionKind::SymbolicTest
+        );
+        assert_eq!(
+            TestFunctionKind::classify("proveSymbolic", false, true),
+            TestFunctionKind::SymbolicTest
+        );
+        assert_eq!(
+            TestFunctionKind::classify("checkSymbolic", true, false),
+            TestFunctionKind::Unknown
+        );
     }
 }

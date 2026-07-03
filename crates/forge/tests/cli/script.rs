@@ -1,9 +1,12 @@
 //! Contains various tests related to `forge script`.
 
-use crate::{constants::TEMPLATE_CONTRACT, utils::generate_large_runtime_contract};
+use crate::{
+    constants::TEMPLATE_CONTRACT,
+    utils::{assert_debug_dump_identifies_contract, generate_large_runtime_contract},
+};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, Bytes, address, hex};
+use alloy_primitives::{Address, Bytes, U256, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
@@ -42,6 +45,83 @@ contract ContractScript is Script {
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
 );
+
+forgetest_async!(script_debug_dump_identifies_contracts_loaded_from_fork, |prj, cmd| {
+    prj.add_source(
+        "ScriptForkDebugTarget.sol",
+        r#"
+contract ScriptForkDebugTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) public {
+        value = newValue;
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    let create_output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "./src/ScriptForkDebugTarget.sol:ScriptForkDebugTarget",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk,
+            "--broadcast",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let create_output: Value = serde_json::from_slice(&create_output).unwrap();
+    let deployed = create_output["deployedTo"].as_str().unwrap().to_owned();
+
+    prj.add_script(
+        "DebugRemote.s.sol",
+        &format!(
+            r#"
+interface IScriptForkDebugTarget {{
+    function set(uint256 newValue) external;
+    function value() external view returns (uint256);
+}}
+
+contract DebugRemote {{
+    IScriptForkDebugTarget private target = IScriptForkDebugTarget({deployed});
+
+    function setUp() public {{
+        target.set(7);
+        require(target.value() == 7, "setup value");
+    }}
+
+    function run() public {{
+        target.set(19);
+        require(target.value() == 19, "value");
+    }}
+}}
+"#
+        ),
+    );
+
+    let dump_path = prj.root().join("script_dump.json");
+    cmd.forge_fuse().args([
+        "script",
+        "script/DebugRemote.s.sol:DebugRemote",
+        "--fork-url",
+        rpc.as_str(),
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&dump_path, &deployed, "ScriptForkDebugTarget");
+});
 
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
@@ -307,7 +387,9 @@ Simulated On-chain Traces:
 
 Chain 1
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -411,7 +493,9 @@ Simulated On-chain Traces:
 
 Chain 1
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -1232,7 +1316,9 @@ Script ran successfully.
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -1354,7 +1440,9 @@ Script ran successfully.
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -1896,7 +1984,9 @@ success: bool true
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -1988,7 +2078,7 @@ contract SimpleScript is Script {
     .assert_success()
     .stdout_eq(str![[r#"
 {"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
-{"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH"}
+{"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
@@ -2040,7 +2130,9 @@ success: bool true
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -2255,7 +2347,9 @@ Script ran successfully.
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -2584,7 +2678,9 @@ Simulated On-chain Traces:
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -2859,7 +2955,9 @@ Simulated On-chain Traces:
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -2981,7 +3079,9 @@ Script ran successfully.
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -3320,7 +3420,9 @@ Simulated On-chain Traces:
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -3457,6 +3559,42 @@ contract SaltedSrcScript is Script {
     assert_eq!(tx["arguments"][0], "SaltedSrc");
 });
 
+// Regression: `type(Foo).creationCode` in scripts must not be rewritten to `vm.getCode(...)`.
+// The injected cheatcode is `view`, so using it in a `pure` script helper breaks compilation.
+forgetest_init!(can_build_script_creation_code_in_pure_function, |prj, cmd| {
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "CreationCode.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+
+contract CreationCodeScript is Script {
+    function run() public {
+        vm.broadcast();
+        (bool ok,) = address(0).call(_getCreationCode());
+        ok;
+    }
+
+    function _getCreationCode() internal pure returns (bytes memory) {
+        return type(Token).creationCode;
+    }
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
+});
+
 forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
@@ -3519,7 +3657,9 @@ Simulated On-chain Traces:
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -3871,4 +4011,61 @@ forgetest_async!(script_check_contract_sizes_honors_config_limit, |prj, cmd| {
     cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stderr_eq(str![[r#""#]]);
+});
+
+// Regression test for https://github.com/foundry-rs/foundry/issues/15207: the broadcast simulation
+// must observe an `anvil_setBalance` done via `vm.rpc` earlier in the same script.
+forgetest_async!(can_broadcast_with_vm_rpc_set_balance_on_fork, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    // Default genesis balance is 100 ETH; fund above the broadcast amount so the send only succeeds
+    // if the simulation observes the mutation.
+    prj.add_script(
+        "FundViaRpc.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract FundViaRpc is Script {
+    address constant SENDER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+    address constant RECIPIENT = 0x000000000000000000000000000000000000dEaD;
+
+    function run() external {
+        uint256 fundedAmount = 1000 ether;
+        uint256 sendAmount = 500 ether;
+
+        vm.deal(SENDER, fundedAmount);
+
+        // Fund the account on the forked node directly, bypassing the fork cache.
+        vm.rpc(
+            "anvil_setBalance",
+            string.concat("[\"", vm.toString(SENDER), "\", \"", vm.toString(fundedAmount), "\"]")
+        );
+
+        vm.startBroadcast(SENDER);
+        (bool ok,) = RECIPIENT.call{value: sendAmount}("");
+        require(ok, "send failed");
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .args([
+            "FundViaRpc",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--sender",
+            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+            "--broadcast",
+            "--unlocked",
+        ])
+        .assert_success();
+
+    // The broadcast transaction must actually have landed on-chain.
+    let recipient = address!("0x000000000000000000000000000000000000dEaD");
+    let balance = api.balance(recipient, None).await.unwrap();
+    assert_eq!(balance, U256::from(500) * U256::from(10).pow(U256::from(18)));
 });

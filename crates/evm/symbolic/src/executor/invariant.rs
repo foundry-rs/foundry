@@ -2,7 +2,6 @@ use super::*;
 
 impl SymbolicExecutor {
     #[expect(clippy::too_many_arguments)]
-    /// Computes the `execute_invariant_check` symbolic executor helper result.
     pub(super) fn execute_invariant_check<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -13,15 +12,17 @@ impl SymbolicExecutor {
         after_invariant: Option<&Function>,
         completed_paths: &mut usize,
     ) -> Result<Vec<InvariantCheckOutcome>, SymbolicError> {
-        let calldata = SymbolicCalldata::selector_only(invariant)?;
+        let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
+        let call_data = calldata.call_data(&mut self.cx);
+        let constraints = calldata.into_constraints();
         let outcomes = self.execute_sequence_call(
             executor,
             state,
             invariant_address,
             sender,
             invariant,
-            calldata.call_data(),
-            calldata.constraints,
+            call_data,
+            constraints,
             completed_paths,
         )?;
 
@@ -43,15 +44,17 @@ impl SymbolicExecutor {
                 continue;
             };
 
-            let after_calldata = SymbolicCalldata::selector_only(after_invariant)?;
+            let after_calldata = SymbolicCalldata::selector_only(&mut self.cx, after_invariant)?;
+            let calldata = after_calldata.call_data(&mut self.cx);
+            let constraints = after_calldata.constraints().to_vec();
             for after_outcome in self.execute_sequence_call(
                 executor,
                 outcome.state.clone(),
                 invariant_address,
                 sender,
                 after_invariant,
-                after_calldata.call_data(),
-                after_calldata.constraints.clone(),
+                calldata,
+                constraints,
                 completed_paths,
             )? {
                 checked.push(InvariantCheckOutcome {
@@ -63,7 +66,6 @@ impl SymbolicExecutor {
         Ok(checked)
     }
 
-    /// Implements the `invariant_return_failed` symbolic executor helper.
     pub(super) fn invariant_return_failed(
         &mut self,
         invariant: &Function,
@@ -76,19 +78,19 @@ impl SymbolicExecutor {
         if invariant.outputs.len() != 1 || invariant.outputs[0].selector_type().as_ref() != "bool" {
             return Ok(false);
         }
-        if return_data.len < 32 {
+        if return_data.len() < 32 {
             return Ok(true);
         }
 
-        let pass = return_data.load_word(0)?.nonzero_bool();
-        let fail = pass.clone().not();
-        match fail {
-            BoolExpr::Const(true) => Ok(true),
-            BoolExpr::Const(false) => Ok(false),
-            fail => {
+        let pass = return_data.load_word(&mut self.cx, 0)?.nonzero_bool(&mut self.cx);
+        let fail = pass.clone().not(&mut self.cx);
+        match fail.as_const() {
+            Some(true) => Ok(true),
+            Some(false) => Ok(false),
+            None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(fail);
-                if self.solver.is_sat(&constraints)? {
+                if self.solver.is_sat(&mut self.cx, &constraints)? {
                     state.constraints = constraints;
                     Ok(true)
                 } else {
@@ -100,7 +102,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Computes the `execute_sequence_call` symbolic executor helper result.
     pub(super) fn execute_sequence_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -109,17 +110,25 @@ impl SymbolicExecutor {
         sender: Address,
         _function: &Function,
         calldata: SymCalldata,
-        constraints: Vec<BoolExpr>,
+        constraints: Vec<SymBoolExpr>,
         completed_paths: &mut usize,
     ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
-        state.world.clear_transient_storage();
-        let code = state.world.extcode(executor, target)?;
-        let jumpdests = analyze_jumpdests(&code);
+        state.world.clear_transaction_scoped_state();
+        let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
         state.origin = sender;
-        state.origin_word = SymWord::Concrete(address_word(sender));
-        state.frame =
-            CallFrame::new(target, target, target, sender, SymWord::zero(), false, calldata);
+        state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
+        let callvalue = SymExpr::zero(&mut self.cx);
+        state.frame = CallFrame::new(
+            &mut self.cx,
+            target,
+            target,
+            target,
+            sender,
+            callvalue,
+            false,
+            calldata,
+        );
         state.constraints.extend(constraints);
 
         let mut worklist = VecDeque::from([state]);
@@ -127,7 +136,10 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = pop_worklist(&mut worklist, self.config.exploration_order) {
+        while let Some(mut state) = match self.config.exploration_order {
+            SymbolicExplorationOrder::Bfs => worklist.pop_front(),
+            SymbolicExplorationOrder::Dfs => worklist.pop_back(),
+        } {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
@@ -142,7 +154,7 @@ impl SymbolicExecutor {
                 }
                 state.depth += 1;
 
-                let Some(op) = code.opcode(state.pc)? else {
+                let Some(op) = code.opcode(&mut self.cx, state.pc)? else {
                     *completed_paths += 1;
                     outcomes.push(TopLevelCallOutcome {
                         status: if state.expectations_satisfied() {
@@ -156,11 +168,11 @@ impl SymbolicExecutor {
                     break;
                 };
 
-                let _step_span = trace_span!("symbolic_step", pc = state.pc - 1, op).entered();
+                let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
                 match self.step(
                     executor,
                     &code,
-                    &jumpdests,
+                    code.jump_table(),
                     &mut state,
                     &mut worklist,
                     completed_paths,
@@ -206,17 +218,16 @@ impl SymbolicExecutor {
         Ok(outcomes)
     }
 
-    /// Runs the `materialize_sequence` symbolic executor helper.
     pub(super) fn materialize_sequence(
         &mut self,
         steps: &[SequenceStepTemplate],
         state: &PathState,
     ) -> Result<Vec<SymbolicInvariantStep>, SymbolicError> {
-        let model = self.solver.model(&state.constraints)?;
+        let model = self.solver.model(&mut self.cx, &state.constraints)?;
         steps
             .iter()
             .map(|step| {
-                let args = step.calldata.model_to_args(&model)?;
+                let args = step.calldata.model_to_args(&mut self.cx, &model)?;
                 let calldata = Bytes::from(step.function.abi_encode_input(&args)?);
                 Ok(SymbolicInvariantStep {
                     sender: step.sender,

@@ -32,11 +32,15 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
-    provider::{ProviderBuilder, try_get_http_provider},
+    provider::{
+        ProviderBuilder,
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+        try_get_http_provider,
+    },
     shell,
     tempo::{
         KeyEntry, KeysFile, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization,
-        print_fee_token_selection, tempo_home,
+        maybe_print_fee_token, resolve_and_set_fee_token, tempo_home,
     },
 };
 use foundry_config::Config;
@@ -107,6 +111,7 @@ where
     /// 1. Nonce synchronization: Waits for the provider's nonce to catch up to the expected
     ///    transaction nonce when doing sequential broadcast
     /// 2. Gas estimation: Re-estimates gas right before broadcasting for chains that require it
+    #[allow(clippy::too_many_arguments)]
     pub async fn prepare(
         &mut self,
         provider: &RootProvider<N>,
@@ -115,6 +120,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
+        chain: Option<Chain>,
     ) -> Result<()> {
         let (tx, access_key_authorization) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
@@ -173,6 +179,13 @@ where
             .await?;
         }
 
+        let fee_token = if let Some(sponsor) = tempo_sponsor {
+            sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
+            None
+        } else {
+            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
+        };
+
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
@@ -182,8 +195,9 @@ where
         if let Some(sponsor) = tempo_sponsor {
             let from = tx.from().expect("no sender");
             sponsor.attach_and_print::<N>(tx, from).await?;
+        } else {
+            maybe_print_fee_token(Some(provider), fee_token).await?;
         }
-        print_fee_token_selection(tx.fee_token())?;
 
         Ok(())
     }
@@ -245,6 +259,7 @@ where
     ///
     /// This is a convenience method that combines [`prepare`](Self::prepare) and
     /// [`send`](Self::send) into a single call.
+    #[allow(clippy::too_many_arguments)]
     pub async fn prepare_and_send(
         mut self,
         provider: Arc<RootProvider<N>>,
@@ -253,6 +268,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
+        chain: Option<Chain>,
     ) -> Result<TxHash> {
         self.prepare(
             &provider,
@@ -261,6 +277,7 @@ where
             estimate_via_rpc,
             estimate_multiplier,
             tempo_sponsor,
+            chain,
         )
         .await?;
 
@@ -599,83 +616,81 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         )
                     }
                     (false, _, _) => {
-                        let mut fees = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let fees = estimate_eip1559_fees(
+                            &provider,
+                            self.script_config.config.eip1559_fee_estimate,
+                        )
+                        .await
+                        .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
-                        // When using --browser, the browser wallet may override the
-                        // priority fee with its own estimate (from
-                        // eth_maxPriorityFeePerGas) without adjusting maxFeePerGas,
-                        // leading to maxPriorityFeePerGas > maxFeePerGas.
-                        // This is common on OP Stack chains (e.g. Base) where
-                        // eth_feeHistory returns empty reward arrays, causing the
-                        // estimator to fall back to a 1 wei priority fee.
-                        if matches!(&send_kind, SendTransactionsKind::Raw { browser: Some(_), .. })
-                            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
-                            && suggested_tip > fees.max_priority_fee_per_gas
-                        {
-                            fees.max_fee_per_gas += suggested_tip - fees.max_priority_fee_per_gas;
-                            fees.max_priority_fee_per_gas = suggested_tip;
-                        }
+                        // Browser wallets may suggest their own tip; query it best-effort.
+                        let browser_suggested_tip = if matches!(
+                            &send_kind,
+                            SendTransactionsKind::Raw { browser: Some(_), .. }
+                        ) {
+                            provider.get_max_priority_fee_per_gas().await.ok()
+                        } else {
+                            None
+                        };
 
-                        if let Some(gas_price) = self.args.with_gas_price {
-                            fees.max_fee_per_gas = gas_price.to();
-                        }
+                        let fees = resolve_broadcast_eip1559_fees(
+                            fees,
+                            self.args.with_gas_price.map(|p| p.to()),
+                            self.args.priority_gas_price.map(|p| p.to()),
+                            browser_suggested_tip,
+                        )?;
 
-                        if let Some(priority_gas_price) = self.args.priority_gas_price {
-                            fees.max_priority_fee_per_gas = priority_gas_price.to();
-                        }
-
-                        (None, Some(fees))
+                        (None, Some(fees.estimation()))
                     }
                 };
 
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
-                let transactions = sequence
-                    .transactions
-                    .iter()
-                    .skip(already_broadcasted)
-                    .map(|tx_with_metadata| {
-                        let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
+                let sequence_chain = sequence.chain;
+                let mut transactions = Vec::with_capacity(
+                    sequence.transactions.len().saturating_sub(already_broadcasted),
+                );
+                for tx_with_metadata in sequence.transactions.iter().skip(already_broadcasted) {
+                    let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
-                        let kind = match tx_with_metadata.tx().clone() {
-                            TransactionMaybeSigned::Signed { tx, .. } => {
-                                if tempo_sponsor.is_some() {
-                                    eyre::bail!(
-                                        "cannot attach Tempo sponsor signature to an already signed script transaction"
-                                    );
-                                }
-                                SendTransactionKind::Signed(tx)
+                    let kind = match tx_with_metadata.tx().clone() {
+                        TransactionMaybeSigned::Signed { tx, .. } => {
+                            if tempo_sponsor.is_some() {
+                                eyre::bail!(
+                                    "cannot attach Tempo sponsor signature to an already signed script transaction"
+                                );
                             }
-                            TransactionMaybeSigned::Unsigned(mut tx) => {
-                                let from = tx.from().expect("No sender for onchain transaction!");
+                            SendTransactionKind::Signed(tx)
+                        }
+                        TransactionMaybeSigned::Unsigned(mut tx) => {
+                            let from = tx.from().expect("No sender for onchain transaction!");
 
-                                tx.set_chain_id(sequence.chain);
+                            tx.set_chain_id(sequence_chain);
 
-                                // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
-                                // alloy
-                                if tx.kind().is_none() {
-                                    tx.set_create();
-                                }
-
-                                if let Some(gas_price) = gas_price {
-                                    tx.set_gas_price(gas_price);
-                                } else {
-                                    let eip1559_fees = eip1559_fees.expect("was set above");
-                                    tx.set_max_priority_fee_per_gas(
-                                        eip1559_fees.max_priority_fee_per_gas,
-                                    );
-                                    tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
-                                }
-
-                                self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
-
-                                send_kind.for_sender(sequence.chain, &from, tx)?
+                            // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
+                            // alloy
+                            if tx.kind().is_none() {
+                                tx.set_create();
                             }
-                        };
 
-                        Ok((kind, is_fixed_gas_limit))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                            if let Some(gas_price) = gas_price {
+                                tx.set_gas_price(gas_price);
+                            } else {
+                                let eip1559_fees = eip1559_fees.expect("was set above");
+                                tx.set_max_priority_fee_per_gas(
+                                    eip1559_fees.max_priority_fee_per_gas,
+                                );
+                                tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
+                            }
+
+                            self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
+
+                            send_kind.for_sender(sequence_chain, &from, tx)?
+                        }
+                    };
+
+                    transactions.push((kind, is_fixed_gas_limit));
+                }
 
                 let estimate_via_rpc = has_different_gas_calc(sequence.chain)
                     || self.script_config.evm_opts.networks.is_tempo()
@@ -695,6 +710,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
                 let mut index = already_broadcasted;
+                let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     seq_progress.inner.write().set_status(&format!(
@@ -718,6 +734,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
                                             tempo_sponsor.as_deref(),
+                                            Some(sequence_chain.into()),
                                         )
                                         .await;
                                     (res, kind, *is_fixed_gas_limit, 0, None)
@@ -763,6 +780,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
                                             tempo_sponsor.as_deref(),
+                                            Some(sequence_chain.into()),
                                         )
                                         .await;
                                     (
@@ -1212,12 +1230,17 @@ impl BundledState<TempoEvmNetwork> {
         // Build the batch transaction request
         let nonce = provider.get_transaction_count(sender).await?;
 
-        // Get gas prices - batch transactions are Tempo-only, always use EIP-1559 style fees
-        let fees = provider.estimate_eip1559_fees().await?;
-        let max_fee_per_gas =
-            self.args.with_gas_price.map(|p| p.to()).unwrap_or(fees.max_fee_per_gas);
-        let max_priority_fee_per_gas =
-            self.args.priority_gas_price.map(|p| p.to()).unwrap_or(fees.max_priority_fee_per_gas);
+        // Batch transactions are Tempo-only and always use EIP-1559 style fees.
+        let fees = estimate_eip1559_fees(&provider, self.script_config.config.eip1559_fee_estimate)
+            .await?;
+        let fees = resolve_broadcast_eip1559_fees(
+            fees,
+            self.args.with_gas_price.map(|p| p.to()),
+            self.args.priority_gas_price.map(|p| p.to()),
+            None,
+        )?;
+        let max_fee_per_gas = fees.max_fee_per_gas;
+        let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
         let mut batch_tx = TempoTransactionRequest {
             inner: TransactionRequest {
@@ -1238,6 +1261,24 @@ impl BundledState<TempoEvmNetwork> {
             ..Default::default()
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
+        let fee_token = if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    Some(provider.as_ref()),
+                    Some(Chain::from_named(NamedChain::Tempo)),
+                    &mut batch_tx,
+                )
+                .await?;
+            None
+        } else {
+            resolve_and_set_fee_token(
+                Some(provider.as_ref()),
+                Some(Chain::from_named(NamedChain::Tempo)),
+                &mut batch_tx,
+                Some(sender),
+            )
+            .await?
+        };
 
         if let BatchSigner::TempoKeychain(_, ak) = &batch_signer {
             batch_tx.key_id = Some(ak.key_address);
@@ -1258,8 +1299,9 @@ impl BundledState<TempoEvmNetwork> {
 
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
+        } else {
+            maybe_print_fee_token(Some(provider.as_ref()), fee_token).await?;
         }
-        print_fee_token_selection(batch_tx.fee_token())?;
 
         // Sign and send.
         let tx_hash = match batch_signer {
@@ -1576,7 +1618,18 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
+        sender
+            .prepare(
+                &provider,
+                false,
+                true,
+                false,
+                100,
+                None,
+                Some(Chain::from_named(NamedChain::Mainnet)),
+            )
+            .await
+            .unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _, _) => {

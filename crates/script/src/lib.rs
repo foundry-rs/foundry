@@ -13,7 +13,6 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner};
-use alloy_chains::{Chain, NamedChain};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
@@ -37,16 +36,16 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
     shell,
-    tempo::resolve_fee_token,
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
-    Config, figment,
+    Config, Eip1559FeeEstimatePreset, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
     },
 };
+use foundry_debugger::DebuggerLayout;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -62,7 +61,7 @@ use foundry_evm::{
     },
     opts::EvmOpts,
     revm::interpreter::InstructionResult,
-    traces::{TraceMode, Traces},
+    traces::{TraceRequirements, Traces},
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
@@ -129,6 +128,16 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub legacy: bool,
 
+    /// How to estimate EIP-1559 fees: `low`, `market` (default), or `aggressive`.
+    ///
+    /// The preset sets the priority-fee percentile and the `maxFeePerGas` buffer
+    /// (`low`: `base_fee * 1.5`, others: `* 2`); `low`'s tighter buffer is more
+    /// likely to stall if the base fee rises. `--with-gas-price` and
+    /// `--priority-gas-price` override only `maxFeePerGas` and
+    /// `maxPriorityFeePerGas` respectively. Ignored for `--legacy`.
+    #[arg(long = "estimate", value_name = "PRESET")]
+    pub eip1559_fee_estimate: Option<Eip1559FeeEstimatePreset>,
+
     /// Broadcasts the transactions.
     #[arg(long)]
     pub broadcast: bool,
@@ -182,6 +191,10 @@ pub struct ScriptArgs {
     /// Takes precedence over broadcast.
     #[arg(long)]
     pub debug: bool,
+
+    /// Debugger layout to use.
+    #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    pub debug_layout: Option<DebuggerLayout>,
 
     /// Dumps all debugger steps to file.
     #[arg(
@@ -298,20 +311,15 @@ impl ScriptArgs {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
-            if let Ok(signers) = script_wallets.signers()
-                && signers.len() == 1
-            {
-                evm_opts.sender = signers[0];
+            let addresses = script_wallets.addresses();
+            if addresses.len() == 1 {
+                evm_opts.sender = addresses[0];
             } else if let Some(signer) = browser_wallet.as_ref().map(|b| b.address()) {
                 evm_opts.sender = signer
             }
         }
 
         tempo.resolve_expires();
-
-        // Resolve the fee token: default only when the active EVM network is Tempo.
-        let chain = evm_opts.networks.is_tempo().then(|| Chain::from_named(NamedChain::Tempo));
-        tempo.fee_token = resolve_fee_token(chain, tempo.fee_token);
 
         let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
@@ -338,30 +346,39 @@ impl ScriptArgs {
             eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
         }
 
+        // Box each branch's future to keep its large async state off `run_script`'s future;
+        // otherwise `run_command` trips `clippy::large_stack_frames` by a small margin.
         if is_tempo {
             let batch = self.batch;
-            let bundled = match self.prepare_bundled::<TempoEvmNetwork>(config, evm_opts).await? {
-                Some(bundled) => bundled,
-                None => return Ok(()),
-            };
-            // batch mode owns its own pending recovery inside broadcast_batch(); running the
-            // generic wait_for_pending() first would race with that and could double-process
-            // an already-confirmed batch hash.
-            let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
-            let broadcasted =
-                if batch { bundled.broadcast_batch().await? } else { bundled.broadcast().await? };
-            if broadcasted.args.verify {
-                broadcasted.verify().await?;
-            }
-            return Ok(());
+            return Box::pin(async move {
+                let bundled =
+                    match self.prepare_bundled::<TempoEvmNetwork>(config, evm_opts).await? {
+                        Some(bundled) => bundled,
+                        None => return Ok(()),
+                    };
+                // batch mode owns its own pending recovery inside broadcast_batch(); running the
+                // generic wait_for_pending() first would race with that and could double-process
+                // an already-confirmed batch hash.
+                let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
+                let broadcasted = if batch {
+                    bundled.broadcast_batch().await?
+                } else {
+                    bundled.broadcast().await?
+                };
+                if broadcasted.args.verify {
+                    broadcasted.verify().await?;
+                }
+                Ok(())
+            })
+            .await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await;
+            return Box::pin(self.run_generic_script::<OpEvmNetwork>(config, evm_opts)).await;
         }
 
-        self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
+        Box::pin(self.run_generic_script::<EthEvmNetwork>(config, evm_opts)).await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -432,8 +449,10 @@ impl ScriptArgs {
 
             let size_limits = pre_simulation
                 .script_config
-                .config
+                .evm_opts
+                .env
                 .code_size_limit
+                .or(pre_simulation.script_config.config.code_size_limit)
                 .map(ContractSizeLimits::with_runtime_limit)
                 .unwrap_or_default();
             pre_simulation.args.check_contract_sizes(
@@ -663,6 +682,13 @@ impl Provider for ScriptArgs {
             dict.insert("transaction_timeout".to_string(), timeout.into());
         }
 
+        if let Some(preset) = self.eip1559_fee_estimate {
+            dict.insert(
+                "eip1559_fee_estimate".to_string(),
+                figment::value::Value::from(preset.to_string()),
+            );
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -676,6 +702,8 @@ pub struct ScriptResult<N: Network> {
     pub traces: Traces,
     pub gas_used: u64,
     pub labeled_addresses: AddressHashMap<String>,
+    #[serde(skip)]
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
@@ -694,6 +722,7 @@ impl<N: Network> Default for ScriptResult<N> {
             traces: Default::default(),
             gas_used: Default::default(),
             labeled_addresses: Default::default(),
+            debug_bytecodes: Default::default(),
             transactions: Default::default(),
             returned: Default::default(),
             exit_reason: Default::default(),
@@ -839,7 +868,9 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
-                    .trace_mode(if debug { TraceMode::Debug } else { TraceMode::Call })
+                    .trace_requirements(
+                        TraceRequirements::none().with_calls(true).with_debug(debug),
+                    )
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
@@ -870,13 +901,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
+        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
+            .with_debug_bytecodes(debug))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, address};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
@@ -1261,6 +1294,22 @@ mod tests {
         assert_eq!(args.evm.env.code_size_limit, Some(50000));
     }
 
+    /// `--code-size-limit` on the CLI should be used by `check_contract_sizes`, not silently
+    /// ignored in favour of the foundry.toml value (which defaults to None → EIP-170's 24576).
+    #[test]
+    fn cli_code_size_limit_is_honoured_by_check() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--code-size-limit",
+            "2147483647",
+        ]);
+        // The CLI flag must land in evm_opts so that the size_limits computation in run() picks
+        // it up via `.evm_opts.env.code_size_limit.or(config.code_size_limit)`.
+        assert_eq!(args.evm.env.code_size_limit, Some(2147483647));
+    }
+
     #[test]
     fn can_extract_script_etherscan_key() {
         let temp = tempdir().unwrap();
@@ -1429,6 +1478,16 @@ mod tests {
         let args =
             ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
         assert!(args.priority_gas_price.is_some());
+    }
+
+    #[test]
+    fn test_eip1559_fee_estimate() {
+        // Defaults to unset (config provides `market`).
+        let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1"]);
+        assert!(args.eip1559_fee_estimate.is_none());
+
+        let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--estimate", "aggressive"]);
+        assert_eq!(args.eip1559_fee_estimate, Some(Eip1559FeeEstimatePreset::Aggressive));
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5910>

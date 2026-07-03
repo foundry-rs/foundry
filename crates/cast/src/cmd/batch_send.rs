@@ -147,10 +147,12 @@ impl BatchSendArgs {
                 provider,
                 tx,
                 Some(chain),
+                None,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
+                !config.eth_rpc_curl,
             )
             .await
             .map(drop)
@@ -173,9 +175,11 @@ impl BatchSendArgs {
                     &signer,
                     access_key,
                     Some(chain),
+                    None,
                     send_tx.cast_async,
                     send_tx.confirmations,
                     timeout,
+                    !config.eth_rpc_curl,
                 )
                 .await?;
             } else {
@@ -194,10 +198,12 @@ impl BatchSendArgs {
                     provider,
                     tx_request,
                     Some(chain),
+                    None,
                     send_tx.cast_async,
                     send_tx.sync,
                     send_tx.confirmations,
                     timeout,
+                    !config.eth_rpc_curl,
                 )
                 .await?;
             }

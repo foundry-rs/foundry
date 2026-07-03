@@ -7,8 +7,9 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
-    SettingsOverrides, SolcReq, SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout,
+    CompilationRestrictions, Config, Eip1559FeeEstimatePreset, FsPermissions, FuzzConfig,
+    FuzzCorpusConfig, InvariantConfig, SettingsOverrides, SolcReq, SymbolicConfig,
+    SymbolicExplorationOrder, SymbolicStorageLayout,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -79,6 +80,7 @@ ffi = false
 live_logs = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
+eip1559_fee_estimate = "market"
 prompt_timeout = 120
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
@@ -96,6 +98,8 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
+via_ssa_cfg = false
+experimental = false
 ast = false
 no_storage_caching = false
 no_rpc_rate_limit = false
@@ -104,7 +108,7 @@ bytecode_hash = "ipfs"
 cbor_metadata = true
 sparse_mode = false
 build_info = false
-isolate = false
+isolate = true
 disable_block_gas_limit = false
 enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
@@ -121,6 +125,11 @@ script_execution_protection = true
 
 [profile.default.symbolic]
 enabled = false
+seed_corpus = false
+use_fuzz_corpus = false
+corpus_seed_limit = 32
+use_fuzz_frontiers = false
+frontier_limit = 256
 solver = "z3"
 timeout = 30
 max_depth = 10000
@@ -167,11 +176,7 @@ prefer_compact = "all"
 single_line_imports = false
 
 [lint]
-severity = [
-    "high",
-    "medium",
-    "low",
-]
+severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
@@ -209,6 +214,7 @@ max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 9830400
 max_fuzz_dictionary_literals = 6553600
 gas_report_samples = 256
+frontier_limit = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
@@ -217,12 +223,23 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
+corpus_random_sequence_weight = 10
+payable_value_weight = 0
+mutation_weight_splice = 1
+mutation_weight_repeat = 1
+mutation_weight_interleave = 1
+mutation_weight_prefix = 1
+mutation_weight_suffix = 1
+mutation_weight_abi = 1
+mutation_weight_cmp = 1
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
 [invariant]
 runs = 256
 depth = 500
+min_depth = 1
+depth_mode = "fixed"
 workers = 1
 fail_on_revert = false
 call_override = false
@@ -235,6 +252,7 @@ max_fuzz_dictionary_literals = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
+frontier_limit = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
@@ -243,6 +261,15 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
+corpus_random_sequence_weight = 10
+payable_value_weight = 15
+mutation_weight_splice = 1
+mutation_weight_repeat = 1
+mutation_weight_interleave = 1
+mutation_weight_prefix = 1
+mutation_weight_suffix = 1
+mutation_weight_abi = 1
+mutation_weight_cmp = 1
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -344,6 +371,14 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         },
         symbolic: SymbolicConfig {
             enabled: true,
+            seed_corpus: true,
+            use_fuzz_corpus: true,
+            corpus_seed_limit: 17,
+            use_fuzz_frontiers: true,
+            frontier_limit: 11,
+            frontier_ids: vec![4, 9],
+            frontier_pcs: vec![123, 456],
+            frontier_selectors: vec!["0x12345678".to_string(), "deadbeef".to_string()],
             solver: "custom-z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
@@ -373,6 +408,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         live_logs: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset::Market,
         prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -447,6 +483,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
+        experimental: false,
+        via_ssa_cfg: false,
         networks: Default::default(),
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
@@ -672,8 +710,11 @@ forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
     prj.initialize_default_contracts();
-    let config = prj.config_from_output(["--via-ir", "--no-metadata"]);
+    let config =
+        prj.config_from_output(["--via-ir", "--experimental", "--via-ssa-cfg", "--no-metadata"]);
     assert!(config.via_ir);
+    assert!(config.experimental);
+    assert!(config.via_ssa_cfg);
     assert_eq!(config.cbor_metadata, false);
     assert_eq!(config.bytecode_hash, BytecodeHash::None);
 });
@@ -1341,7 +1382,6 @@ contract CounterTest {
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
     prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(DEFAULT_CONFIG);
@@ -1431,6 +1471,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_fuzz_dictionary_literals": 6553600,
     "gas_report_samples": 256,
     "corpus_dir": null,
+    "frontier_dir": null,
+    "frontier_limit": 256,
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
@@ -1439,6 +1481,15 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
+    "corpus_random_sequence_weight": 10,
+    "payable_value_weight": 0,
+    "mutation_weight_splice": 1,
+    "mutation_weight_repeat": 1,
+    "mutation_weight_interleave": 1,
+    "mutation_weight_prefix": 1,
+    "mutation_weight_suffix": 1,
+    "mutation_weight_abi": 1,
+    "mutation_weight_cmp": 1,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -1446,6 +1497,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "invariant": {
     "runs": 256,
     "depth": 500,
+    "min_depth": 1,
+    "depth_mode": "fixed",
     "workers": 1,
     "fail_on_revert": false,
     "call_override": false,
@@ -1459,6 +1512,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
     "corpus_dir": null,
+    "frontier_dir": null,
+    "frontier_limit": 256,
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
@@ -1467,6 +1522,15 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
+    "corpus_random_sequence_weight": 10,
+    "payable_value_weight": 15,
+    "mutation_weight_splice": 1,
+    "mutation_weight_repeat": 1,
+    "mutation_weight_interleave": 1,
+    "mutation_weight_prefix": 1,
+    "mutation_weight_suffix": 1,
+    "mutation_weight_abi": 1,
+    "mutation_weight_cmp": 1,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
@@ -1477,6 +1541,11 @@ forgetest_init!(test_default_config, |prj, cmd| {
   },
   "symbolic": {
     "enabled": false,
+    "seed_corpus": false,
+    "use_fuzz_corpus": false,
+    "corpus_seed_limit": 32,
+    "use_fuzz_frontiers": false,
+    "frontier_limit": 256,
     "solver": "z3",
     "timeout": 30,
     "max_depth": 10000,
@@ -1506,12 +1575,15 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "mutation": {
     "include_operators": [],
     "exclude_operators": [],
-    "timeout": null
+    "timeout": null,
+    "optimizer_runs": null,
+    "via_ir": null
   },
   "ffi": false,
   "live_logs": false,
   "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
+  "eip1559_fee_estimate": "market",
   "prompt_timeout": 120,
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
@@ -1534,6 +1606,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "names": false,
   "sizes": false,
   "via_ir": false,
+  "via_ssa_cfg": false,
+  "experimental": false,
   "ast": false,
   "rpc_storage_caching": {
     "chains": "all",
@@ -1571,11 +1645,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "single_line_imports": false
   },
   "lint": {
-    "severity": [
-      "high",
-      "medium",
-      "low"
-    ],
+    "severity": [],
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
@@ -1613,7 +1683,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
       "path": "out"
     }
   ],
-  "isolate": false,
+  "isolate": true,
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
   "labels": {},

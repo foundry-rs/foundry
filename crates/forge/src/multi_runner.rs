@@ -3,10 +3,10 @@
 use crate::{
     ContractRunner, TestFilter,
     progress::TestsProgress,
-    result::SuiteResult,
+    result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
-        count_runnable_invariant_campaign_anchors, is_symbolic_entrypoint,
+        count_runnable_invariant_campaign_anchors,
     },
 };
 use alloy_json_abi::{Function, JsonAbi};
@@ -14,7 +14,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
-    ContractsByArtifact, ContractsByArtifactBuilder, TestFunctionExt, get_contract_name,
+    ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, TestFunctionKind,
+    get_contract_name,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -25,12 +26,15 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::RevertDecoder,
-    executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
+    executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fork::CreateFork,
-    fuzz::strategies::LiteralsDictionary,
-    inspectors::CheatsConfig,
+    fuzz::{
+        BasicTxDetails,
+        strategies::{EnumBounds, LiteralsDictionary},
+    },
+    inspectors::{CheatsConfig, EdgeIndexMap},
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode},
+    traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
 
@@ -41,7 +45,7 @@ use std::{
     collections::BTreeMap,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
+    sync::{Arc, Mutex, mpsc},
     time::Instant,
 };
 
@@ -72,6 +76,10 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub analysis: Arc<solar::sema::Compiler>,
     /// Literals dictionary for fuzzing.
     pub fuzz_literals: LiteralsDictionary,
+    /// Literals dictionary for invariant fuzzing.
+    pub invariant_literals: LiteralsDictionary,
+    /// Variant counts for project enums, used to constrain fuzzed enum inputs.
+    pub enum_bounds: EnumBounds,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -95,17 +103,12 @@ impl<FEN: FoundryEvmNetwork> DerefMut for MultiContractRunner<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
-    fn matches_test_function(
-        &self,
-        filter: &dyn TestFilter,
-        contract_id: &str,
-        func: &Function,
-    ) -> bool {
-        matches_test_function(filter, contract_id, func, self.config.symbolic.enabled)
-    }
-
-    fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-        matches_artifact(filter, id, abi, self.config.symbolic.enabled)
+    fn test_function_matcher(&self) -> TestFunctionMatcher<'_> {
+        TestFunctionMatcher::new(
+            &self.config,
+            &self.inline_config,
+            self.tcfg.symbolic_artifact_replay.as_ref(),
+        )
     }
 
     /// Returns an iterator over all contracts that match the filter.
@@ -113,7 +116,8 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = (&'a ArtifactId, &'a TestContract)> + 'b {
-        self.contracts.iter().filter(|&(id, c)| self.matches_artifact(filter, id, &c.abi))
+        let matcher = self.test_function_matcher();
+        self.contracts.iter().filter(move |&(id, c)| matcher.matches_contract(filter, id, &c.abi))
     }
 
     /// Returns an iterator over all test functions that match the filter.
@@ -121,11 +125,12 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
+        let matcher = self.test_function_matcher();
         self.matching_contracts(filter).flat_map(move |(id, c)| {
             let identifier = id.identifier();
             c.abi
                 .functions()
-                .filter(move |func| self.matches_test_function(filter, &identifier, func))
+                .filter(move |func| matcher.matches_test_function(filter, &identifier, func))
         })
     }
 
@@ -134,30 +139,47 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
+        let matcher = self.test_function_matcher();
         self.contracts
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| {
-                func.is_any_test() || (self.config.symbolic.enabled && is_symbolic_entrypoint(func))
+            .flat_map(move |(id, c)| {
+                let identifier = id.identifier();
+                c.abi
+                    .functions()
+                    .filter(move |func| matcher.test_function_kind(&identifier, func).is_any_test())
             })
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(&self, filter: &dyn TestFilter) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+        let matcher = self.test_function_matcher();
         self.matching_contracts(filter)
-            .map(|(id, c)| {
+            .map(move |(id, c)| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let identifier = id.identifier();
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| self.matches_test_function(filter, &identifier, func))
+                    .filter(|func| {
+                        let kind = matcher.test_function_kind(&identifier, func);
+                        (!self.tcfg.fuzz_only
+                            || matches!(
+                                kind,
+                                TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                            ))
+                            && filter.matches_test_function_kind_in_contract(
+                                &identifier,
+                                func,
+                                kind,
+                            )
+                    })
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
             })
+            .filter(|(_, _, tests)| !tests.is_empty())
             .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
                 acc.entry(source).or_default().insert(name, tests);
                 acc
@@ -361,6 +383,40 @@ pub struct ShowmapConfig {
     /// Optional override for the corpus directory to replay from.
     /// When unset, the per-test corpus dir derived from config is used.
     pub corpus_dir: Option<PathBuf>,
+    /// Whether replay should emit showmap files.
+    pub emit_files: bool,
+}
+
+pub type FuzzMinimizeEdgeIndices = Arc<Mutex<BTreeMap<String, Arc<Mutex<EdgeIndexMap>>>>>;
+
+/// CLI-only options that switch fuzz/invariant tests into single-entry replay
+/// mode for corpus minimization.
+#[derive(Clone, Debug)]
+pub struct FuzzMinimizeConfig {
+    /// Entry to replay.
+    pub input: Arc<[BasicTxDetails]>,
+    /// Shared edge-index assignments for all candidate replays in this minimization invocation,
+    /// namespaced by matched target.
+    pub evm_edge_indices: FuzzMinimizeEdgeIndices,
+    /// Shared replay observations collected from matched fuzz/invariant tests.
+    pub observations: Arc<Mutex<Vec<FuzzMinimizeObservation>>>,
+}
+
+/// Replay observation for one matched minimization target.
+#[derive(Clone, Debug)]
+pub struct FuzzMinimizeObservation {
+    /// Stable target identity for this minimization run.
+    pub target: String,
+    /// Replay result for this target.
+    pub observation: ReplayObservation,
+}
+
+#[derive(Clone, Debug)]
+pub struct SymbolicArtifactReplayConfig {
+    /// Artifact payload to replay.
+    pub artifact: SymbolicCounterexampleArtifact,
+    /// Path the artifact was loaded from, used in diagnostics.
+    pub path: PathBuf,
 }
 
 /// Configuration for the test runner.
@@ -390,6 +446,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
     pub decode_internal: InternalTraceMode,
+    /// Whether to record every opcode step without debugger snapshots.
+    pub record_all_steps: bool,
     /// Whether to enable call isolation.
     pub isolation: bool,
     /// Whether to exit early on test failure or if test run interrupted.
@@ -401,6 +459,15 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     /// When set, fuzz/invariant tests run in corpus replay mode and emit
     /// AFL-`afl-showmap`-style files instead of running a campaign.
     pub showmap: Option<ShowmapConfig>,
+    /// When set, fuzz/invariant tests replay one candidate input and record minimization facts.
+    pub fuzz_minimize: Option<FuzzMinimizeConfig>,
+    /// Run only fuzz and invariant tests.
+    pub fuzz_only: bool,
+    /// Replay persisted fuzz failures without running a new fuzz campaign.
+    pub fuzz_failure_replay: bool,
+
+    /// When set, run only the matching test and replay this artifact's concrete payload.
+    pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -418,6 +485,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         // self.line_coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
+        // self.record_all_steps = N/A;
 
         // TODO: self.evm_opts
         self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
@@ -434,10 +502,11 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         let inspector = executor.inspector_mut();
         // inspector.set_env(&self.env);
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
-            cheatcodes.config =
-                Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
+            let mut config = cheatcodes.config.clone_with(&self.config, self.evm_opts.clone());
+            config.isolate = self.isolation;
+            cheatcodes.config = Arc::new(config);
         }
-        inspector.tracing(self.trace_mode());
+        inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.networks(self.evm_opts.networks);
@@ -457,20 +526,22 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         artifact_id: &ArtifactId,
         db: Backend<FEN>,
     ) -> Executor<FEN> {
-        let cheats_config = Arc::new(CheatsConfig::new(
+        let mut cheats_config = CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),
             Some(known_contracts),
             Some(artifact_id.clone()),
             None,
             false,
-        ));
+        );
+        cheats_config.isolate = self.isolation;
+        let cheats_config = Arc::new(cheats_config);
         ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
                     .cheatcodes(cheats_config)
-                    .trace_mode(self.trace_mode())
+                    .trace_requirements(self.trace_requirements())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .networks(self.evm_opts.networks)
@@ -483,10 +554,11 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .build(self.evm_env.clone(), self.tx_env.clone(), db)
     }
 
-    fn trace_mode(&self) -> TraceMode {
-        TraceMode::default()
+    const fn trace_requirements(&self) -> TraceRequirements {
+        TraceRequirements::none()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
+            .with_all_steps(self.record_all_steps)
             .with_verbosity(self.evm_opts.verbosity)
     }
 }
@@ -504,12 +576,16 @@ pub struct MultiContractRunnerBuilder {
     pub fork: Option<CreateFork>,
     /// Project config.
     pub config: Arc<Config>,
+    /// Parsed inline configuration.
+    pub inline_config: Arc<InlineConfig>,
     /// Whether or not to collect line coverage info
     pub line_coverage: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
     pub decode_internal: InternalTraceMode,
+    /// Whether to record every opcode step without debugger snapshots.
+    pub record_all_steps: bool,
     /// Whether to enable call isolation
     pub isolation: bool,
     /// Whether to exit early on test failure.
@@ -518,12 +594,21 @@ pub struct MultiContractRunnerBuilder {
     pub multi_network: MultiNetworkConfig,
     /// Showmap replay mode (CLI-only, off by default).
     pub showmap: Option<ShowmapConfig>,
+    /// Fuzz minimization replay mode (CLI-only, off by default).
+    pub fuzz_minimize: Option<FuzzMinimizeConfig>,
+    /// Run only fuzz and invariant tests.
+    pub fuzz_only: bool,
+    /// Replay persisted fuzz failures without running a new fuzz campaign.
+    pub fuzz_failure_replay: bool,
+    /// Symbolic artifact replay mode (CLI-only, off by default).
+    pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
 
 impl MultiContractRunnerBuilder {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: Arc<Config>, inline_config: Arc<InlineConfig>) -> Self {
         Self {
             config,
+            inline_config,
             sender: Default::default(),
             initial_balance: Default::default(),
             fork: Default::default(),
@@ -531,14 +616,42 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
+            record_all_steps: Default::default(),
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
+            fuzz_minimize: None,
+            fuzz_only: false,
+            fuzz_failure_replay: false,
+            symbolic_artifact_replay: None,
         }
     }
 
     pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
         self.showmap = showmap;
+        self
+    }
+
+    pub fn with_fuzz_minimize(mut self, fuzz_minimize: Option<FuzzMinimizeConfig>) -> Self {
+        self.fuzz_minimize = fuzz_minimize;
+        self
+    }
+
+    pub const fn with_fuzz_only(mut self, fuzz_only: bool) -> Self {
+        self.fuzz_only = fuzz_only;
+        self
+    }
+
+    pub const fn with_fuzz_failure_replay(mut self, fuzz_failure_replay: bool) -> Self {
+        self.fuzz_failure_replay = fuzz_failure_replay;
+        self
+    }
+
+    pub fn with_symbolic_artifact_replay(
+        mut self,
+        replay: Option<SymbolicArtifactReplayConfig>,
+    ) -> Self {
+        self.symbolic_artifact_replay = replay;
         self
     }
 
@@ -569,6 +682,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
+        self
+    }
+
+    pub const fn set_record_all_steps(mut self, enable: bool) -> Self {
+        self.record_all_steps = enable;
         self
     }
 
@@ -618,19 +736,23 @@ impl MultiContractRunnerBuilder {
         )?;
 
         let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
+        let inline_config = self.inline_config;
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
+        let test_matcher = TestFunctionMatcher::new(
+            &self.config,
+            &inline_config,
+            self.symbolic_artifact_replay.as_ref(),
+        );
+        let empty_filter = EmptyTestFilter::default();
 
         for (id, contract) in linked_contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else { continue };
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                && abi.functions().any(|func| {
-                    func.name.is_any_test()
-                        || self.config.symbolic.enabled && is_symbolic_entrypoint(func)
-                })
+                && test_matcher.matches_contract(&empty_filter, id, abi.borrow())
             {
                 linker.ensure_linked(contract, id)?;
 
@@ -677,11 +799,24 @@ impl MultiContractRunnerBuilder {
         })?;
 
         let analysis = Arc::new(analysis);
+        // Enum variant counts used to constrain fuzzed enum inputs to valid values.
+        let enum_bounds = EnumBounds::collect(&analysis);
+        let fuzz_max_literals = self.config.fuzz.dictionary.max_fuzz_dictionary_literals;
+        let invariant_max_literals = self.config.invariant.dictionary.max_fuzz_dictionary_literals;
         let fuzz_literals = LiteralsDictionary::new(
             Some(analysis.clone()),
             Some(self.config.project_paths()),
-            self.config.fuzz.dictionary.max_fuzz_dictionary_literals,
+            fuzz_max_literals,
         );
+        let invariant_literals = if invariant_max_literals == fuzz_max_literals {
+            fuzz_literals.clone()
+        } else {
+            LiteralsDictionary::new(
+                Some(analysis.clone()),
+                Some(self.config.project_paths()),
+                invariant_max_literals,
+            )
+        };
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -691,6 +826,8 @@ impl MultiContractRunnerBuilder {
             libraries,
             analysis,
             fuzz_literals,
+            invariant_literals,
+            enum_bounds,
 
             tcfg: TestRunnerConfig {
                 evm_opts,
@@ -701,11 +838,16 @@ impl MultiContractRunnerBuilder {
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
-                inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
+                record_all_steps: self.record_all_steps,
+                inline_config,
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
                 showmap: self.showmap,
+                fuzz_minimize: self.fuzz_minimize,
+                fuzz_only: self.fuzz_only,
+                fuzz_failure_replay: self.fuzz_failure_replay,
+                symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,
             },
 
@@ -714,20 +856,68 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-pub fn matches_artifact(
-    filter: &dyn TestFilter,
-    id: &ArtifactId,
-    abi: &JsonAbi,
-    symbolic_enabled: bool,
-) -> bool {
-    matches_contract(
-        filter,
-        &id.source,
-        &id.name,
-        &id.identifier(),
-        abi.functions(),
-        symbolic_enabled,
-    )
+#[derive(Clone, Copy)]
+pub(crate) struct TestFunctionMatcher<'a> {
+    config: &'a Config,
+    inline_config: &'a InlineConfig,
+    symbolic_artifact_replay: Option<&'a SymbolicArtifactReplayConfig>,
+}
+
+impl<'a> TestFunctionMatcher<'a> {
+    pub(crate) const fn new(
+        config: &'a Config,
+        inline_config: &'a InlineConfig,
+        symbolic_artifact_replay: Option<&'a SymbolicArtifactReplayConfig>,
+    ) -> Self {
+        Self { config, inline_config, symbolic_artifact_replay }
+    }
+
+    fn symbolic_tests_enabled(&self, contract_id: &str) -> bool {
+        self.symbolic_artifact_replay.is_some_and(|artifact| {
+            artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
+        }) || self.inline_config.contract_symbolic_enabled(
+            &self.config.profile,
+            contract_id,
+            self.config.symbolic.enabled,
+        )
+    }
+
+    pub(crate) fn test_function_kind(
+        &self,
+        contract_id: &str,
+        func: &Function,
+    ) -> TestFunctionKind {
+        TestFunctionKind::classify(
+            func.name.as_str(),
+            !func.inputs.is_empty(),
+            self.symbolic_tests_enabled(contract_id),
+        )
+    }
+
+    pub(crate) fn matches_test_function(
+        &self,
+        filter: &dyn TestFilter,
+        contract_id: &str,
+        func: &Function,
+    ) -> bool {
+        filter.matches_test_function_kind_in_contract(
+            contract_id,
+            func,
+            self.test_function_kind(contract_id, func),
+        )
+    }
+
+    pub(crate) fn matches_contract(
+        &self,
+        filter: &dyn TestFilter,
+        id: &ArtifactId,
+        abi: &JsonAbi,
+    ) -> bool {
+        let identifier = id.identifier();
+        matches_contract(filter, &id.source, &id.name, &identifier, abi.functions(), |func| {
+            self.test_function_kind(&identifier, func)
+        })
+    }
 }
 
 pub(crate) fn matches_contract(
@@ -736,39 +926,35 @@ pub(crate) fn matches_contract(
     contract_name: &str,
     contract_id: &str,
     functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
-    symbolic_enabled: bool,
+    test_function_kind: impl Fn(&Function) -> TestFunctionKind,
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
-        && functions
-            .into_iter()
-            .any(|func| matches_test_function(filter, contract_id, func.borrow(), symbolic_enabled))
-}
-
-fn matches_test_function(
-    filter: &dyn TestFilter,
-    contract_id: &str,
-    func: &Function,
-    symbolic_enabled: bool,
-) -> bool {
-    if symbolic_enabled && is_symbolic_entrypoint(func) {
-        filter.matches_test(&func.signature())
-    } else {
-        filter.matches_test_function_in_contract(contract_id, func)
-    }
+        && functions.into_iter().any(|func| {
+            let func = func.borrow();
+            filter.matches_test_function_kind_in_contract(
+                contract_id,
+                func,
+                test_function_kind(func),
+            )
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_common::EmptyTestFilter;
+    use foundry_common::TestFunctionExt;
 
     #[test]
-    fn matches_contract_includes_symbolic_entrypoints_when_enabled() {
+    fn matches_contract_uses_provided_function_kind() {
         let filter = EmptyTestFilter::default();
         let path = Path::new("test/Symbolic.t.sol");
         let func = Function::parse("checkFilteredCompile(uint256)").unwrap();
 
-        assert!(matches_contract(&filter, path, "Symbolic", "Symbolic", [func.clone()], true));
-        assert!(!matches_contract(&filter, path, "Symbolic", "Symbolic", [func], false));
+        assert!(matches_contract(&filter, path, "Symbolic", "Symbolic", [func.clone()], |_| {
+            TestFunctionKind::SymbolicTest
+        },));
+        assert!(!matches_contract(&filter, path, "Symbolic", "Symbolic", [func], |func| {
+            func.test_function_kind()
+        }));
     }
 }

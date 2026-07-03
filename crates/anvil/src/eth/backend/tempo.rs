@@ -13,11 +13,11 @@ use foundry_evm::core::tempo::{
     initialize_tempo_genesis_at_hardfork,
 };
 use revm::{
-    context::journaled_state::JournalCheckpoint,
+    context::{BlockEnv, journaled_state::JournalCheckpoint},
     state::{AccountInfo, Bytecode},
 };
 use std::collections::HashMap;
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
@@ -29,6 +29,7 @@ use tempo_precompiles::{
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
 };
+use tempo_primitives::TempoBlockEnv;
 
 use super::db::Db;
 
@@ -41,11 +42,11 @@ const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 pub struct AnvilStorageProvider<'a> {
     db: &'a mut dyn Db,
     chain_id: u64,
-    timestamp: U256,
-    block_number: u64,
+    block_env: TempoBlockEnv,
     gas_used: u64,
     gas_refunded: i64,
     reservoir: u64,
+    tip1060_storage_credits_enabled: bool,
     transient: HashMap<(Address, U256), U256>,
     hardfork: TempoHardfork,
 }
@@ -61,11 +62,18 @@ impl<'a> AnvilStorageProvider<'a> {
         Self {
             db,
             chain_id,
-            timestamp,
-            block_number,
+            block_env: TempoBlockEnv {
+                inner: BlockEnv {
+                    timestamp,
+                    number: U256::from(block_number),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             gas_used: 0,
             gas_refunded: 0,
             reservoir: 0,
+            tip1060_storage_credits_enabled: hardfork.is_t7(),
             transient: HashMap::new(),
             hardfork,
         }
@@ -81,12 +89,8 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         self.chain_id
     }
 
-    fn timestamp(&self) -> U256 {
-        self.timestamp
-    }
-
-    fn block_number(&self) -> u64 {
-        self.block_number
+    fn block_env(&self) -> &TempoBlockEnv {
+        &self.block_env
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), TempoPrecompileError> {
@@ -186,10 +190,6 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         self.gas_refunded = self.gas_refunded.saturating_add(gas);
     }
 
-    fn beneficiary(&self) -> Address {
-        Address::ZERO
-    }
-
     fn is_static(&self) -> bool {
         false
     }
@@ -204,6 +204,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
 
     fn amsterdam_eip8037_enabled(&self) -> bool {
         false
+    }
+
+    fn set_tip1060_storage_credits(&mut self, enabled: bool) {
+        self.tip1060_storage_credits_enabled = enabled && self.hardfork.is_t7();
     }
 }
 
