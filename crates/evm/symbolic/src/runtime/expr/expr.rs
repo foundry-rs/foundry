@@ -279,7 +279,7 @@ pub(crate) fn mask_low_bits(mask: U256) -> Option<usize> {
 }
 
 fn power_of_two_shift(value: U256) -> Option<usize> {
-    if value <= U256::from(1) || !(value & (value - U256::from(1))).is_zero() {
+    if value <= U256::from(1) || !value.is_power_of_two() {
         return None;
     }
     Some(value.bit_len() - 1)
