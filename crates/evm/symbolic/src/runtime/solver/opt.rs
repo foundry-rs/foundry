@@ -210,9 +210,15 @@ impl SymBoolExpr {
     }
 }
 
-pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]) {
+pub(super) fn write_smt_assertions(
+    out: &mut String,
+    constraints: &[SymBoolExpr],
+) -> Result<(), SymbolicError> {
     if constraints.is_empty() {
-        return;
+        return Ok(());
+    }
+    if constraints.iter().any(SymBoolExpr::contains_gasleft) {
+        return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
     }
 
     let plan = SmtCsePlan::new(constraints);
@@ -220,7 +226,7 @@ pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]
         for constraint in constraints {
             let _ = writeln!(out, "(assert {})", constraint.smt());
         }
-        return;
+        return Ok(());
     }
 
     let writer = SmtCseWriter { plan: &plan };
@@ -244,6 +250,7 @@ pub(super) fn write_smt_assertions(out: &mut String, constraints: &[SymBoolExpr]
         writer.write_bool(out, constraint, None, None);
         out.push_str(")\n");
     }
+    Ok(())
 }
 
 #[derive(Default)]

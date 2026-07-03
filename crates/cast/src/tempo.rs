@@ -6,7 +6,7 @@ use alloy_provider::Provider;
 use eyre::Result;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::FoundryTransactionBuilder;
-use foundry_config::Chain;
+use foundry_config::{Chain, Eip1559FeeEstimatePreset};
 use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
@@ -49,6 +49,7 @@ pub(crate) async fn fill_access_key_transaction<P>(
     tx: &mut <TempoNetwork as Network>::TransactionRequest,
     access_key: &TempoAccessKeyConfig,
     chain: Chain,
+    eip1559_fee_estimate: Eip1559FeeEstimatePreset,
 ) -> Result<()>
 where
     P: Provider<TempoNetwork>,
@@ -67,7 +68,7 @@ where
     if tx.nonce().is_none() {
         tx.set_nonce(provider.get_transaction_count(access_key.wallet_address).await?);
     }
-    fill_transaction_gas_fees(provider, tx, chain.is_legacy(), false).await?;
+    fill_transaction_gas_fees(provider, tx, chain.is_legacy(), false, eip1559_fee_estimate).await?;
     if tx.gas_limit().is_none() {
         tx.set_gas_limit(provider.estimate_gas(tx.clone()).await?);
     }

@@ -535,9 +535,6 @@ impl SymbolicExecutor {
                     }
                     Some(false) => {}
                     None => {
-                        if cond.contains_gasleft() {
-                            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-                        }
                         let op_pc = state.pc.saturating_sub(1);
                         let _branch_span = trace_span!("jumpi_branch", pc = op_pc, dest).entered();
                         let true_cond = cond.nonzero_bool(&mut self.cx);

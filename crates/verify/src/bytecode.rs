@@ -485,6 +485,30 @@ impl VerifyBytecodeArgs {
         }
 
         if self.ignore.is_none_or(|b| !b.is_runtime()) {
+            // Runtime verification can only re-deploy local bytecode for direct `CREATE` and the
+            // default `CREATE2` deployer, so skip custom factory deployments.
+            if let TxKind::Call(to) = ConsensusTransaction::kind(&transaction)
+                && to != DEFAULT_CREATE2_DEPLOYER
+            {
+                let message = format!(
+                    "Runtime bytecode verification is not supported for this contract: its \
+                     creation transaction calls custom factory {to}. forge can only verify \
+                     runtime bytecode for direct CREATE transactions and calls to the default \
+                     CREATE2 deployer; skipping runtime bytecode verification."
+                );
+                if shell::is_json() {
+                    json_results.push(JsonResult {
+                        bytecode_type: BytecodeType::Runtime,
+                        match_type: None,
+                        message: Some(message),
+                    });
+                    sh_println!("{}", serde_json::to_string(&json_results)?)?;
+                } else {
+                    sh_warn!("{message}")?;
+                }
+                return Ok(());
+            }
+
             // Get contract creation block.
             let simulation_block = match self.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
