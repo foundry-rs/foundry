@@ -1,3 +1,11 @@
+note[todo]: unresolved `todo` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │ //@compile-flags: --only-lint todo
+   │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo
+
 note[todo]: unresolved `ToDo` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
