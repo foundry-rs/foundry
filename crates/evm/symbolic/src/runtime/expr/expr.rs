@@ -506,7 +506,7 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => Self::zero(cx),
                 // `a / 1 => a`.
                 (_, SymExprKind::Const(value)) if *value == U256::from(1) => left,
-                // `(a - (a & (2**n - 1))) / 2**n => a >> n`.
+                // `(a - (a & (2**n - 1))) u/ 2**n => a >> n`.
                 (
                     SymExprKind::BinOp(SymBinOp::Sub, value, low_bits),
                     SymExprKind::Const(divisor),
@@ -517,7 +517,7 @@ impl SymExpr {
                     let shift = Self::constant(cx, U256::from(shift));
                     Self::binop(cx, SymBinOp::Shr, value.clone(), shift)
                 }
-                // `a / 2**n => a >> n`.
+                // `a u/ 2**n => a >> n`.
                 (_, SymExprKind::Const(divisor))
                     if binop == SymBinOp::UDiv
                         && let Some(shift) = power_of_two_shift(*divisor) =>
@@ -536,7 +536,7 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => Self::zero(cx),
                 // `a % 1 => 0`.
                 (_, SymExprKind::Const(value)) if *value == U256::from(1) => Self::zero(cx),
-                // `a % 2**n => a & (2**n - 1)`.
+                // `a u% 2**n => a & (2**n - 1)`.
                 (_, SymExprKind::Const(divisor))
                     if binop == SymBinOp::URem
                         && let Some(bits) = power_of_two_shift(*divisor) =>
