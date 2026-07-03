@@ -5,7 +5,7 @@
 //! `callTracer` does not record opcode-level steps, so [`CallTrace::steps`] is left empty;
 //! everything the call-tree view needs (calls, value, gas, logs, revert reasons) is preserved.
 
-use alloy_primitives::{Bytes, LogData};
+use alloy_primitives::{Bytes, LogData, U256};
 use alloy_rpc_types::trace::geth::{CallFrame, CallLogFrame};
 use foundry_evm::traces::{
     CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, TraceMemberOrder,
@@ -31,7 +31,20 @@ fn push_frame(
     let idx = nodes.len();
 
     let success = frame.error.is_none() && frame.revert_reason.is_none();
-    let status = Some(status_from_frame(frame));
+
+    // A `SELFDESTRUCT` frame is not an ordinary call: geth encodes `from` as the destructed
+    // contract, `to` as the refund target and `value` as the transferred balance (the inverse of
+    // `CallTraceNode::geth_selfdestruct_call_trace`). Mirror the local trace representation, which
+    // records the selfdestruct through the dedicated fields and an
+    // `InstructionResult::SelfDestruct` status, so the destructed contract (not the
+    // beneficiary) is identified and `is_selfdestruct` holds. The transferred balance lives in
+    // `selfdestruct_transferred_value`, so the call `value` stays zero.
+    let is_selfdestruct = frame.typ == "SELFDESTRUCT";
+    let status = if is_selfdestruct {
+        Some(InstructionResult::SelfDestruct)
+    } else {
+        Some(status_from_frame(frame))
+    };
 
     // `callTracer` reports an unclassified halt (invalid opcode, a provider-specific quirk) only in
     // the `error` string. When the frame failed but returned no data, surface that string (or the
@@ -49,13 +62,13 @@ fn push_frame(
         depth,
         success,
         caller: frame.from,
-        address: frame.to.unwrap_or_default(),
+        address: if is_selfdestruct { frame.from } else { frame.to.unwrap_or_default() },
         maybe_precompile: None,
-        selfdestruct_address: None,
-        selfdestruct_refund_target: None,
-        selfdestruct_transferred_value: None,
+        selfdestruct_address: is_selfdestruct.then_some(frame.from),
+        selfdestruct_refund_target: if is_selfdestruct { frame.to } else { None },
+        selfdestruct_transferred_value: if is_selfdestruct { frame.value } else { None },
         kind: call_kind(&frame.typ),
-        value: frame.value.unwrap_or_default(),
+        value: if is_selfdestruct { U256::ZERO } else { frame.value.unwrap_or_default() },
         data: frame.input.clone(),
         output,
         gas_used: frame.gas_used.saturating_to(),
@@ -162,6 +175,35 @@ fn call_log(log: &CallLogFrame) -> CallLog {
 mod tests {
     use super::*;
     use alloy_primitives::{U256, address, b256, bytes};
+
+    /// A geth `callTracer` `SELFDESTRUCT` frame encodes `from` as the destructed contract, `to` as
+    /// the refund target and `value` as the transferred balance (the inverse of
+    /// `CallTraceNode::geth_selfdestruct_call_trace`). It must convert into a node that identifies
+    /// the destructed contract (not the beneficiary) and carries the selfdestruct fields, so
+    /// `is_selfdestruct()` holds and the status renders as `[SelfDestruct]`.
+    #[test]
+    fn converts_selfdestruct_frame() {
+        let destructed = address!("1111111111111111111111111111111111111111");
+        let beneficiary = address!("2222222222222222222222222222222222222222");
+        let frame = CallFrame {
+            from: destructed,
+            to: Some(beneficiary),
+            value: Some(U256::from(9u64)),
+            typ: "SELFDESTRUCT".to_string(),
+            ..Default::default()
+        };
+
+        let arena = call_frame_to_arena(&frame);
+        let trace = &arena.nodes()[0].trace;
+
+        // The destructed contract is the identified address, not the refund target.
+        assert_eq!(trace.address, destructed);
+        assert_eq!(trace.selfdestruct_address, Some(destructed));
+        assert_eq!(trace.selfdestruct_refund_target, Some(beneficiary));
+        assert_eq!(trace.selfdestruct_transferred_value, Some(U256::from(9u64)));
+        assert_eq!(trace.status, Some(InstructionResult::SelfDestruct));
+        assert!(trace.is_selfdestruct());
+    }
 
     /// A nested `callTracer` frame (root CALL -> child STATICCALL) with a log on the root,
     /// mirroring a real `debug_traceCall` response, must convert into a well-formed two-node
