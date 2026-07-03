@@ -239,7 +239,7 @@ fn fallback_partial_model_satisfies_known_constraints(
 
 fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit_exprs(&mut |expr| {
-        if let Some(var) = expr.kind().eval_var() {
+        if let Some(var) = expr.kind().get_eval_var() {
             vars.insert(var);
         }
         ControlFlow::<()>::Continue(())
@@ -365,11 +365,13 @@ fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<
     }
     match masked.kind() {
         SymExprKind::BinOp(SymBinOp::And, left, right) => match (left.kind(), right.kind()) {
-            (_, SymExprKind::Const(mask)) if left.kind().var().is_some_and(|name| &name == var) => {
+            (_, SymExprKind::Const(mask))
+                if left.kind().get_var().is_some_and(|name| &name == var) =>
+            {
                 Some(*mask)
             }
             (SymExprKind::Const(mask), _)
-                if right.kind().var().is_some_and(|name| &name == var) =>
+                if right.kind().get_var().is_some_and(|name| &name == var) =>
             {
                 Some(*mask)
             }

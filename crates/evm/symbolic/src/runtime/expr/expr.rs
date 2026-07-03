@@ -136,7 +136,7 @@ pub(crate) fn symbolic_create_address_word(
 ) -> SymExpr {
     let name =
         stable_symbol(cx, "create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
-    let word = SymExpr::var(cx, name);
+    let word = SymExpr::get_var(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
     word
 }
@@ -153,7 +153,7 @@ pub(crate) fn symbolic_create2_address_word(
         "create2_address",
         format!("{creator_identity}:{salt:?}:{initcode_identity}").as_bytes(),
     );
-    let word = SymExpr::var(cx, name);
+    let word = SymExpr::get_var(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
     word
 }
@@ -353,7 +353,7 @@ pub(in crate::runtime) enum SymExprKind {
 }
 
 impl SymExprKind {
-    pub(in crate::runtime) const fn var(&self) -> Option<Symbol> {
+    pub(in crate::runtime) const fn get_var(&self) -> Option<Symbol> {
         match self {
             Self::Var(symbol)
             | Self::GasLeft(symbol)
@@ -363,7 +363,7 @@ impl SymExprKind {
         }
     }
 
-    pub(in crate::runtime) const fn eval_var(&self) -> Option<Symbol> {
+    pub(in crate::runtime) const fn get_eval_var(&self) -> Option<Symbol> {
         match self {
             Self::Var(symbol) | Self::GasLeft(symbol) | Self::Hash { name: symbol, .. } => {
                 Some(*symbol)
@@ -379,8 +379,8 @@ impl SymExpr {
     }
 
     #[cfg(test)]
-    pub(crate) fn var_name<'a>(&self, cx: &'a SymCx) -> Option<&'a str> {
-        self.kind().var().map(|symbol| cx.symbol_name(symbol))
+    pub(crate) fn get_var_name<'a>(&self, cx: &'a SymCx) -> Option<&'a str> {
+        self.kind().get_var().map(|symbol| cx.symbol_name(symbol))
     }
 
     #[cfg(test)]
@@ -430,12 +430,12 @@ impl SymExpr {
         Self::from_kind(cx, SymExprKind::Const(value))
     }
 
-    pub(crate) fn named_var(cx: &mut SymCx, name: &str) -> Self {
+    pub(crate) fn var(cx: &mut SymCx, name: &str) -> Self {
         let symbol = cx.intern(name);
-        Self::var(cx, symbol)
+        Self::get_var(cx, symbol)
     }
 
-    pub(crate) fn var(cx: &mut SymCx, symbol: Symbol) -> Self {
+    pub(crate) fn get_var(cx: &mut SymCx, symbol: Symbol) -> Self {
         Self::from_kind(cx, SymExprKind::Var(symbol))
     }
 
@@ -1047,7 +1047,7 @@ impl SymExpr {
         model: &M,
     ) -> Result<U256, SymbolicError> {
         let kind = self.kind();
-        if let Some(var) = kind.eval_var() {
+        if let Some(var) = kind.get_eval_var() {
             return Ok(model.value(var).unwrap_or_default());
         }
         Ok(match kind {
@@ -1221,7 +1221,7 @@ impl SymExpr {
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
         let _ = self.visit(&mut |expr| {
-            if let Some(var) = expr.kind().eval_var() {
+            if let Some(var) = expr.kind().get_eval_var() {
                 vars.insert(var);
             }
             ControlFlow::<()>::Continue(())
@@ -1682,7 +1682,7 @@ impl SymExpr {
 
     pub(in crate::runtime::expr) fn write_smt(&self, cx: &SymCx, out: &mut String) {
         let kind = self.kind();
-        if let Some(var) = kind.var() {
+        if let Some(var) = kind.get_var() {
             out.push_str(cx.symbol_name(var));
             return;
         }

@@ -1,14 +1,12 @@
 use super::{hashcons::HashCons, *};
+use alloy_primitives::map::DefaultHashBuilder;
 use inturn::unsync::Interner;
-use std::collections::hash_map::RandomState;
-
-type SymbolInterner = Interner<Symbol, RandomState>;
 
 pub(crate) struct SymCx {
     words: HashCons<SymExprKind>,
     bools: HashCons<SymBoolExprKind>,
     bytes: HashCons<SymBytesKind>,
-    symbols: SymbolInterner,
+    symbols: Interner<Symbol, DefaultHashBuilder>,
     cache: SymCxCache,
 }
 
@@ -37,7 +35,7 @@ impl SymCx {
             words,
             bools,
             bytes,
-            symbols: SymbolInterner::with_hasher(RandomState::default()),
+            symbols: Interner::with_hasher(DefaultHashBuilder::default()),
             cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
         }
     }
@@ -111,8 +109,8 @@ mod tests {
     #[test]
     fn hashconses_word_expressions() {
         let mut cx = SymCx::new();
-        let x = SymExpr::named_var(&mut cx, "x");
-        let y = SymExpr::named_var(&mut cx, "y");
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
 
         let first = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
         let second = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
@@ -123,7 +121,7 @@ mod tests {
     #[test]
     fn hashconses_bool_expressions() {
         let mut cx = SymCx::new();
-        let x = SymExpr::named_var(&mut cx, "x");
+        let x = SymExpr::var(&mut cx, "x");
 
         let upper = SymExpr::constant(&mut cx, U256::from(7));
         let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), upper.clone());
@@ -135,7 +133,7 @@ mod tests {
     #[test]
     fn simplifies_shift_right_over_or_at_construction() {
         let mut cx = SymCx::new();
-        let x = SymExpr::named_var(&mut cx, "x").low_byte(&mut cx);
+        let x = SymExpr::var(&mut cx, "x").low_byte(&mut cx);
         let low = SymExpr::constant(&mut cx, U256::from(0xff));
         let shift = SymExpr::constant(&mut cx, U256::from(8));
         let high = SymExpr::binop(&mut cx, SymBinOp::Shl, x.clone(), shift.clone());
@@ -148,8 +146,8 @@ mod tests {
     #[test]
     fn simplifies_masked_or_at_construction() {
         let mut cx = SymCx::new();
-        let x = SymExpr::named_var(&mut cx, "x").low_byte(&mut cx);
-        let y = SymExpr::named_var(&mut cx, "y").low_byte(&mut cx);
+        let x = SymExpr::var(&mut cx, "x").low_byte(&mut cx);
+        let y = SymExpr::var(&mut cx, "y").low_byte(&mut cx);
         let shift = SymExpr::constant(&mut cx, U256::from(8));
         let high = SymExpr::binop(&mut cx, SymBinOp::Shl, x, shift);
         let word = SymExpr::binop(&mut cx, SymBinOp::Or, high, y.clone());

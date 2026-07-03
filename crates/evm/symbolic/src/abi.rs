@@ -444,7 +444,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
     }
 
     pub(super) fn fresh_word(&mut self, name: &str) -> SymExpr {
-        SymExpr::named_var(self.cx, name)
+        SymExpr::var(self.cx, name)
     }
 
     pub(super) fn fresh_byte(

@@ -1,13 +1,11 @@
+use alloy_primitives::map::DefaultHashBuilder;
 use hashbrown::{HashTable, hash_table::Entry};
 use std::{
-    collections::hash_map::DefaultHasher,
     fmt,
-    hash::{BuildHasher, BuildHasherDefault, Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
     ptr,
     sync::{Arc, Weak},
 };
-
-type HashBuilder = BuildHasherDefault<DefaultHasher>;
 
 /// Shared handle for a hash-consed value.
 ///
@@ -73,9 +71,9 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
 /// The table stores weak references so interned values disappear when the rest of
 /// the symbolic state stops using them. `make` only looks up and inserts; dead
 /// weak entries are ignored and left in the table until the context is dropped.
-pub(in crate::runtime) struct HashCons<T> {
+pub(in crate::runtime) struct HashCons<T, S = DefaultHashBuilder> {
     table: HashTable<HashConsEntry<T>>,
-    hash_builder: HashBuilder,
+    hash_builder: S,
 }
 
 struct HashConsEntry<T> {
@@ -91,15 +89,23 @@ impl<T> HashConsEntry<T> {
 
 impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
-        Self { table: HashTable::new(), hash_builder: HashBuilder::default() }
+        Self::with_hasher(DefaultHashBuilder::default())
     }
+}
 
+impl<T, S> HashCons<T, S> {
+    pub(in crate::runtime) const fn with_hasher(hash_builder: S) -> Self {
+        Self { table: HashTable::new(), hash_builder }
+    }
+}
+
+impl<T, S: BuildHasher> HashCons<T, S> {
     fn hash<Q: Hash + ?Sized>(&self, value: &Q) -> u64 {
         self.hash_builder.hash_one(value)
     }
 }
 
-impl<T: Eq + Hash> HashCons<T> {
+impl<T: Eq + Hash, S: BuildHasher> HashCons<T, S> {
     pub(in crate::runtime) fn make(&mut self, value: T) -> HashConsed<T> {
         let hash = self.hash(&value);
         let mut found = None;
@@ -179,6 +185,5 @@ mod tests {
 
         assert_ne!(first, second);
         assert_eq!(first.value(), second.value());
-        assert_eq!(first.cached_hash(), second.cached_hash());
     }
 }

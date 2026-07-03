@@ -485,7 +485,7 @@ impl SmtCseWriter<'_> {
         }
 
         let kind = expr.kind();
-        if let Some(var) = kind.var() {
+        if let Some(var) = kind.get_var() {
             out.push_str(self.cx.symbol_name(var));
             return;
         }

@@ -539,7 +539,7 @@ impl SymBoolExpr {
 
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         let _ = self.visit_exprs(&mut |expr| {
-            if let Some(var) = expr.kind().var() {
+            if let Some(var) = expr.kind().get_var() {
                 vars.insert(var);
             }
             ControlFlow::<()>::Continue(())
@@ -548,7 +548,7 @@ impl SymBoolExpr {
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
         let _ = self.visit_exprs(&mut |expr| {
-            if let Some(var) = expr.kind().eval_var() {
+            if let Some(var) = expr.kind().get_eval_var() {
                 vars.insert(var);
             }
             ControlFlow::<()>::Continue(())

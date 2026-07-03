@@ -278,7 +278,7 @@ impl PathState {
         expr.collect_eval_vars(&mut vars);
         let mut model = SymbolicModel::default();
         for var in vars {
-            let var_expr = SymExpr::var(cx, var);
+            let var_expr = SymExpr::get_var(cx, var);
             let value = self.constraints.iter().find_map(|constraint| {
                 constraint.forces_expr_const_with_context(&var_expr, &self.constraints)
             })?;
@@ -626,7 +626,7 @@ impl PathState {
     pub(crate) fn fresh_word(&mut self, cx: &mut SymCx, prefix: &'static str) -> SymExpr {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymExpr::named_var(cx, &format!("{prefix}_{id}"))
+        SymExpr::var(cx, &format!("{prefix}_{id}"))
     }
 
     pub(crate) fn fresh_gasleft(&mut self, cx: &mut SymCx) -> SymExpr {
@@ -1658,7 +1658,7 @@ impl SymbolicWorld {
     ) -> Result<SymExpr, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
             let name = stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes());
-            return Ok(SymExpr::var(cx, name));
+            return Ok(SymExpr::get_var(cx, name));
         }
         if let Some(key) = concrete_key {
             return executor
@@ -1677,7 +1677,7 @@ impl SymbolicWorld {
             Ok(SymExpr::zero(cx))
         } else {
             let name = stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes());
-            Ok(SymExpr::var(cx, name))
+            Ok(SymExpr::get_var(cx, name))
         }
     }
 
