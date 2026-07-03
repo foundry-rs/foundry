@@ -48,10 +48,20 @@ pub(crate) fn emit_symbolic_regressions(
                 SymbolicCounterexampleArtifactKind::Sequence => "sequence",
             },
         );
-        if !seen_tests.insert(key) {
+        let suffix = if seen_tests.insert(key) {
+            None
+        } else if let Some(suffix) = handler_regression_suffix(&artifact_ref.path) {
+            Some(suffix)
+        } else {
             continue;
-        }
-        emitted.push(emit_symbolic_regression(config, regression, &artifact_ref.path, &artifact)?);
+        };
+        emitted.push(emit_symbolic_regression(
+            config,
+            regression,
+            &artifact_ref.path,
+            &artifact,
+            suffix.as_deref(),
+        )?);
     }
     Ok(emitted)
 }
@@ -157,6 +167,7 @@ fn emit_symbolic_regression(
     regression: &SymbolicRegressionConfig,
     artifact_path: &Path,
     artifact: &SymbolicCounterexampleArtifact,
+    suffix: Option<&str>,
 ) -> Result<SymbolicRegression> {
     let (source, contract) = artifact_source_and_contract(artifact_path, artifact)?;
 
@@ -164,7 +175,10 @@ fn emit_symbolic_regression(
         artifact.test.test.split_once('(').map_or(artifact.test.test.as_str(), |(name, _)| name);
     let contract_ident = sanitize_identifier(contract);
     let test_ident = sanitize_identifier(test_name);
-    let generated_contract = format!("{contract_ident}_{test_ident}_SymbolicRegression");
+    let generated_contract = suffix.map_or_else(
+        || format!("{contract_ident}_{test_ident}_SymbolicRegression"),
+        |suffix| format!("{contract_ident}_{test_ident}_{suffix}_SymbolicRegression"),
+    );
     let vm_interface = format!("{generated_contract}_Vm");
     let generated_test = format!("test_regression_{test_ident}_symbolic");
     let default_path = config.test.join("regressions").join(format!("{generated_contract}.t.sol"));
@@ -321,6 +335,11 @@ fn sanitize_identifier(value: &str) -> String {
         ident.insert(0, '_');
     }
     ident
+}
+
+fn handler_regression_suffix(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    stem.starts_with("handler-").then(|| sanitize_identifier(&stem))
 }
 
 fn relative_solidity_import(from_dir: &Path, to_file: &Path) -> String {

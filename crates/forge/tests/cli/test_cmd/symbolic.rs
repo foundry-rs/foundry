@@ -1886,6 +1886,95 @@ contract SymbolicRegressionHandler is Test {
     assert!(stdout.contains("assertion failed"), "{stdout}");
 });
 
+forgetest_init!(symbolic_emits_multiple_handler_assertion_regressions, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_multiple_handler_assertion_regressions because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicRegressionMultipleHandlers.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionMultipleHandlersFirst {
+    uint256 sink;
+
+    function boomFirst(uint256 x) external {
+        sink = x;
+        if (x == 7) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicRegressionMultipleHandlersSecond {
+    uint256 sink;
+
+    function boomSecond(uint256 x) external {
+        sink = x;
+        if (x == 11) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicRegressionMultipleHandlers is Test {
+    SymbolicRegressionMultipleHandlersFirst first;
+    SymbolicRegressionMultipleHandlersSecond second;
+
+    function setUp() public {
+        first = new SymbolicRegressionMultipleHandlersFirst();
+        second = new SymbolicRegressionMultipleHandlersSecond();
+        targetContract(address(first));
+        targetContract(address(second));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_ok",
+            "--symbolic-invariant-depth",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(stdout.contains("Assertion Tests: 2 assertion bug(s) found"), "{stdout}");
+    assert_eq!(stderr.matches("Regression test:").count(), 2, "{stderr}");
+
+    let regressions_dir = prj.root().join("test/regressions");
+    let regressions = std::fs::read_dir(&regressions_dir)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regressions_dir.display()))
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "sol"))
+        .collect::<Vec<_>>();
+    assert_eq!(regressions.len(), 2, "{regressions:?}");
+    assert!(
+        regressions.iter().any(|path| path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("_handler_")),
+        "{regressions:?}"
+    );
+});
+
 forgetest_init!(symbolic_json_reports_minimized_sequence_counterexample, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
