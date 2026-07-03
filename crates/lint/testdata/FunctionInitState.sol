@@ -25,6 +25,18 @@ contract Oracle {
     uint256 public price = 3;
 }
 
+contract OracleChild is Oracle {}
+
+library Clock {
+    function stamp(uint256 value) internal view returns (uint256) {
+        return value + block.timestamp;
+    }
+
+    function pureStamp(uint256 value) internal pure returns (uint256) {
+        return value + 1;
+    }
+}
+
 library Consts {
     uint256 internal constant LC = 3;
 }
@@ -48,6 +60,21 @@ contract InitFromFunction is Base {
 
     // an external call to another contract's getter reads that contract's state
     uint256 public fromExternalGetter = Oracle(address(0x1234)).price(); //~NOTE: state variable initializer
+
+    // the getter is inherited: it is not among the child's own items
+    uint256 public fromInheritedGetter = OracleChild(address(0x1234)).price(); //~NOTE: state variable initializer
+
+    using Clock for uint256;
+
+    // a `using for` call binds the library function to the value type
+    uint256 public fromUsingView = uint256(5).stamp(); //~NOTE: state variable initializer
+
+    uint256 public fromUsingPure = uint256(5).pureStamp();
+
+    // only the overload the call dispatches to matters: `mix(1)` is the pure one
+    uint256 public fromPureOverload = mix(1);
+
+    uint256 public fromViewOverload = mix(1, 2); //~NOTE: state variable initializer
 
     uint256 public immutable fromNonPureImmutable = set(); //~NOTE: state variable initializer
 
@@ -83,6 +110,14 @@ contract InitFromFunction is Base {
 
     function double(uint256 value) internal pure returns (uint256) {
         return value * 2;
+    }
+
+    function mix(uint256 x) internal pure returns (uint256) {
+        return x + 1;
+    }
+
+    function mix(uint256 x, uint256 y) internal view returns (uint256) {
+        return x + y + seed;
     }
 
     function localIsFine() external view returns (uint256) {
