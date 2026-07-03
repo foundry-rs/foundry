@@ -2459,11 +2459,35 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
     let masked = SymExpr::binop(&mut cx, SymBinOp::And, x, mask.clone());
     let actual = SymExpr::binop(&mut cx, SymBinOp::And, masked.clone(), mask);
     assert_eq!(actual, masked);
+    let mask_value = (U256::from(1) << 128) - U256::from(1);
+    let mask = SymExpr::constant(&mut cx, mask_value);
+    let x = SymExpr::var(&mut cx, "x");
+    let left_masked = SymExpr::binop(&mut cx, SymBinOp::And, mask.clone(), x.clone());
+    let right_masked = SymExpr::binop(&mut cx, SymBinOp::And, x, mask);
+    assert_eq!(left_masked, right_masked);
     let six = SymExpr::constant(&mut cx, U256::from(6));
     let seven = SymExpr::constant(&mut cx, U256::from(7));
     let actual = SymExpr::binop(&mut cx, SymBinOp::Mul, six, seven);
     let forty_two = SymExpr::constant(&mut cx, U256::from(42));
     assert_eq!(actual, forty_two);
+    let x = SymExpr::var(&mut cx, "x");
+    let scale = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), scale);
+    let shift = SymExpr::constant(&mut cx, U256::from(128));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::Shl, x, shift);
+    assert_eq!(actual, expected);
+    let x = SymExpr::var(&mut cx, "x");
+    let divisor = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::UDiv, x.clone(), divisor);
+    let shift = SymExpr::constant(&mut cx, U256::from(128));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::Shr, x, shift);
+    assert_eq!(actual, expected);
+    let x = SymExpr::var(&mut cx, "x");
+    let divisor = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::URem, x.clone(), divisor);
+    let mask = SymExpr::constant(&mut cx, (U256::from(1) << 128) - U256::from(1));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::And, x, mask);
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -2616,6 +2640,63 @@ fn exact_modular_arithmetic_smt_widens_before_modulo() {
     assert!(mulmod.contains("((_ zero_extend 256) b)"));
     assert!(mulmod.contains("bvmul"));
     assert!(mulmod.contains("((_ extract 255 0)"));
+}
+
+#[test]
+fn power_of_two_modular_arithmetic_uses_low_mask() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
+    let modulus = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let mulmod = SymExpr::ternop(&mut cx, SymTernOp::MulMod, a, b, modulus);
+
+    let smt = mulmod.smt();
+    assert!(smt.contains("bvand"));
+    assert!(smt.contains("bvmul"));
+    assert!(!smt.contains("bvurem"));
+
+    let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(3))]);
+    assert_eq!(
+        mulmod.eval_model(&model).unwrap(),
+        U256::MAX.mul_mod(U256::from(3), U256::from(1) << 128)
+    );
+}
+
+#[test]
+fn low_masked_power_of_two_division_simplifies_to_shift() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let mask = SymExpr::constant(&mut cx, (U256::from(1) << 128) - U256::from(1));
+    let low = SymExpr::binop(&mut cx, SymBinOp::And, x.clone(), mask);
+    let numerator = SymExpr::binop(&mut cx, SymBinOp::Sub, x.clone(), low);
+    let divisor = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let shift = SymExpr::constant(&mut cx, U256::from(128));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::Shr, x, shift);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn low_masked_words_preserve_unsigned_ordering() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let mask = SymExpr::constant(&mut cx, (U256::from(1) << 128) - U256::from(1));
+    let low = SymExpr::binop(&mut cx, SymBinOp::And, x.clone(), mask);
+
+    assert_eq!(
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), low.clone()).as_const(),
+        Some(false)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, low.clone(), x.clone()).as_const(),
+        Some(false)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, low.clone(), x.clone()).as_const(),
+        Some(true)
+    );
+    assert_eq!(SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x, low).as_const(), Some(true));
 }
 
 #[test]
