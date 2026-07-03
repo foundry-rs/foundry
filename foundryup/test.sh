@@ -82,7 +82,7 @@ check_eq "bootstrap execs the installed Rust binary with original args" \
   "$(cat "$exec_marker")"
 check_eq "bootstrap replaces the launcher with the Rust binary" \
   "foundryup 0.0.5 (test 2020)" "$("$FOUNDRY_BIN_PATH")"
-check_eq "bootstrap keeps stdout clean (installer chatter on stderr)" "" "$out"
+check_eq "bootstrap keeps stdout clean (installer chatter dropped)" "" "$out"
 teardown_case
 
 # --- loop guard -----------------------------------------------------------

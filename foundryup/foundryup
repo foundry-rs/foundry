@@ -100,9 +100,10 @@ bootstrap() {
   # Install into the staging FOUNDRY_DIR so the installer never overwrites this
   # running script. FOUNDRYUP_VERSION pins the Rust foundryup release; both are
   # scoped to this invocation so they never leak into the user's environment.
-  # Installer output (incl. PATH instructions) is sent to stderr.
+  # Drop stdout: it's post-install PATH advice for the temporary staging dir.
+  # Errors/warnings go to stderr and are preserved.
   if ! env FOUNDRY_DIR="$_stage" FOUNDRYUP_VERSION="$FOUNDRYUP_BOOTSTRAP_VERSION" \
-    sh "$_init" -y 1>&2; then
+    sh "$_init" -y >/dev/null; then
     err "the Rust foundryup installer failed"
   fi
 
