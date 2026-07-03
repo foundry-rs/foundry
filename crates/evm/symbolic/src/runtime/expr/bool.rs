@@ -550,6 +550,9 @@ impl SymBoolExpr {
                 | SymExprKind::Hash { name: var, .. } => {
                     vars.insert(var.clone());
                 }
+                SymExprKind::GasLeft(id) => {
+                    vars.insert(SymExpr::gas_left_symbol(*id));
+                }
                 _ => {}
             }
             ControlFlow::<()>::Continue(())
@@ -561,6 +564,9 @@ impl SymBoolExpr {
             match expr.kind() {
                 SymExprKind::Var(var) | SymExprKind::Hash { name: var, .. } => {
                     vars.insert(var.clone());
+                }
+                SymExprKind::GasLeft(id) => {
+                    vars.insert(SymExpr::gas_left_symbol(*id));
                 }
                 _ => {}
             }
