@@ -146,6 +146,10 @@ impl SymBoolExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => Self::constant(cx, false),
                 // `MAX < a => false`.
                 (SymExprKind::Const(value), _) if *value == U256::MAX => Self::constant(cx, false),
+                // `a < a & low_mask => false`.
+                _ if low_masked_source_any(&right).as_ref() == Some(&left) => {
+                    Self::constant(cx, false)
+                }
                 _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
             },
             SymCmpOp::Ugt => match (left.kind(), right.kind()) {
@@ -159,6 +163,10 @@ impl SymBoolExpr {
                 (SymExprKind::Const(value), _) if value.is_zero() => Self::constant(cx, false),
                 // `a > MAX => false`.
                 (_, SymExprKind::Const(value)) if *value == U256::MAX => Self::constant(cx, false),
+                // `a & low_mask > a => false`.
+                _ if low_masked_source_any(&left).as_ref() == Some(&right) => {
+                    Self::constant(cx, false)
+                }
                 _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
             },
             SymCmpOp::Ule => match (left.kind(), right.kind()) {
@@ -172,6 +180,10 @@ impl SymBoolExpr {
                 (SymExprKind::Const(value), _) if value.is_zero() => Self::constant(cx, true),
                 // `a <= MAX => true`.
                 (_, SymExprKind::Const(value)) if *value == U256::MAX => Self::constant(cx, true),
+                // `a & low_mask <= a => true`.
+                _ if low_masked_source_any(&left).as_ref() == Some(&right) => {
+                    Self::constant(cx, true)
+                }
                 _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
             },
             SymCmpOp::Uge => match (left.kind(), right.kind()) {
@@ -185,6 +197,10 @@ impl SymBoolExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => Self::constant(cx, true),
                 // `MAX >= a => true`.
                 (SymExprKind::Const(value), _) if *value == U256::MAX => Self::constant(cx, true),
+                // `a >= a & low_mask => true`.
+                _ if low_masked_source_any(&right).as_ref() == Some(&left) => {
+                    Self::constant(cx, true)
+                }
                 _ => Self::from_kind(cx, SymBoolExprKind::Cmp(op, left, right)),
             },
             SymCmpOp::Slt | SymCmpOp::Sgt => match (left.kind(), right.kind()) {
