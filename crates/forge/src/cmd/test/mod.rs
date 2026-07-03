@@ -12,6 +12,10 @@ use crate::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
         SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
     },
+    symbolic_regression::{
+        SymbolicRegressionConfig, attach_symbolic_regressions, collect_symbolic_artifacts,
+        emit_symbolic_regressions,
+    },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -669,6 +673,24 @@ pub struct TestArgs {
         ],
     )]
     pub replay_symbolic_artifact: Option<PathBuf>,
+
+    /// Emit Solidity regression tests for confirmed symbolic counterexamples.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_EMIT_REGRESSION")]
+    pub emit_regression: bool,
+
+    /// File or directory for generated symbolic regression tests.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_REGRESSION_OUT",
+        value_name = "PATH",
+        value_hint = ValueHint::AnyPath,
+        requires = "emit_regression"
+    )]
+    pub regression_out: Option<PathBuf>,
+
+    /// Overwrite existing generated symbolic regression tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_REGRESSION_OVERWRITE", requires = "emit_regression")]
+    pub regression_overwrite: bool,
 
     /// Run fuzz tests symbolically and persist non-failing concrete inputs to the fuzz corpus.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SEED_CORPUS")]
@@ -2076,6 +2098,16 @@ impl TestArgs {
         }
     }
 
+    fn symbolic_regression_config(&self, config: &Config) -> Option<SymbolicRegressionConfig> {
+        self.emit_regression.then(|| SymbolicRegressionConfig {
+            out: self
+                .regression_out
+                .clone()
+                .map(|path| if path.is_relative() { config.root.join(path) } else { path }),
+            overwrite: self.regression_overwrite,
+        })
+    }
+
     /// Run all tests that matches the filter predicate from a test runner
     async fn run_tests_inner<FEN: FoundryEvmNetwork>(
         &self,
@@ -2089,6 +2121,7 @@ impl TestArgs {
         if self.list {
             return list(runner, filter);
         }
+        let symbolic_regression = self.symbolic_regression_config(&config);
 
         trace!(target: "forge::test", "running all tests");
 
@@ -2177,13 +2210,27 @@ impl TestArgs {
                     }
                 }
             }
+            if let Some(regression) = &symbolic_regression {
+                for suite_result in results.values_mut() {
+                    let artifacts = collect_symbolic_artifacts(suite_result);
+                    let regressions = emit_symbolic_regressions(&config, regression, &artifacts)?;
+                    attach_symbolic_regressions(suite_result, &regressions);
+                }
+            }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             let kc = runner.known_contracts.clone();
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
-            let results = runner.test_collect(filter)?;
+            let mut results = runner.test_collect(filter)?;
+            if let Some(regression) = &symbolic_regression {
+                for suite_result in results.values_mut() {
+                    let artifacts = collect_symbolic_artifacts(suite_result);
+                    let regressions = emit_symbolic_regressions(&config, regression, &artifacts)?;
+                    attach_symbolic_regressions(suite_result, &regressions);
+                }
+            }
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             let kc = runner.known_contracts.clone();
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
@@ -2537,6 +2584,21 @@ impl TestArgs {
             // Print suite summary.
             if !silent && has_tests {
                 sh_println!("{}", suite_result.summary())?;
+            }
+
+            if let Some(regression) = &symbolic_regression {
+                let artifacts = collect_symbolic_artifacts(&suite_result);
+                let regressions = emit_symbolic_regressions(&config, regression, &artifacts)?;
+                attach_symbolic_regressions(&mut suite_result, &regressions);
+                if !silent {
+                    for regression in regressions {
+                        sh_warn!(
+                            "Regression test: {} (from {})",
+                            regression.path.display(),
+                            regression.artifact.display()
+                        )?;
+                    }
+                }
             }
 
             // Add the suite result to the outcome.

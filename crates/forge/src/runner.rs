@@ -1210,6 +1210,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         kind: SymbolicCounterexampleArtifactKind,
         calls: Vec<SymbolicCounterexampleCall>,
     ) -> Option<SymbolicArtifactRef> {
+        self.persist_symbolic_counterexample_artifact_with_replay_semantics(
+            test_name,
+            artifact_file_name,
+            symbolic,
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
+            kind,
+            calls,
+        )
+    }
+
+    fn persist_symbolic_counterexample_artifact_with_replay_semantics(
+        &self,
+        test_name: &str,
+        artifact_file_name: &str,
+        symbolic: &SymbolicResult,
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
+        kind: SymbolicCounterexampleArtifactKind,
+        calls: Vec<SymbolicCounterexampleCall>,
+    ) -> Option<SymbolicArtifactRef> {
         let dir = self
             .config
             .cache_path
@@ -1224,9 +1245,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 test: test_name.to_string(),
             },
             symbolic,
-            SymbolicCounterexampleReplaySemantics {
-                fail_on_revert: self.config.invariant.fail_on_revert,
-            },
+            replay_semantics,
             calls,
         );
 
@@ -1248,6 +1267,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         artifact_file_name: &str,
         call_sequence: &[BaseCounterExample],
     ) -> Option<SymbolicArtifactRef> {
+        self.persist_invariant_sequence_counterexample_artifact_with_replay_semantics(
+            test_name,
+            artifact_file_name,
+            call_sequence,
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
+        )
+    }
+
+    fn persist_invariant_sequence_counterexample_artifact_with_replay_semantics(
+        &self,
+        test_name: &str,
+        artifact_file_name: &str,
+        call_sequence: &[BaseCounterExample],
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
+    ) -> Option<SymbolicArtifactRef> {
         if call_sequence.is_empty() {
             return None;
         }
@@ -1266,6 +1302,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             test_name,
             artifact_file_name,
             calls,
+            replay_semantics,
         )
     }
 
@@ -1274,6 +1311,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         test_name: &str,
         artifact_file_name: &str,
         calls: Vec<SymbolicCounterexampleCall>,
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
     ) -> Option<SymbolicArtifactRef> {
         if calls.is_empty() {
             return None;
@@ -1292,10 +1330,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             None,
         );
 
-        self.persist_symbolic_counterexample_artifact(
+        self.persist_symbolic_counterexample_artifact_with_replay_semantics(
             test_name,
             artifact_file_name,
             &symbolic_result,
+            replay_semantics,
             SymbolicCounterexampleArtifactKind::Sequence,
             calls,
         )
@@ -1458,6 +1497,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             test_name,
             &format!("original__{artifact_file_name}"),
             minimization.original_calls.clone(),
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
         );
         let minimized_artifact = self.persist_invariant_sequence_counterexample_artifact(
             test_name,
@@ -3752,11 +3794,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &current_settings,
                     );
                 }
-                let artifact = self.persist_invariant_sequence_counterexample_artifact(
-                    &invariant_contract.anchor().signature(),
-                    &format!("handler-{reverter}-{selector}"),
-                    &counterexample_calls,
-                );
+                let artifact = self
+                    .persist_invariant_sequence_counterexample_artifact_with_replay_semantics(
+                        &invariant_contract.anchor().signature(),
+                        &format!("handler-{reverter}-{selector}"),
+                        &counterexample_calls,
+                        SymbolicCounterexampleReplaySemantics { fail_on_revert: true },
+                    );
 
                 let counterexample = if counterexample_calls.is_empty() {
                     None
