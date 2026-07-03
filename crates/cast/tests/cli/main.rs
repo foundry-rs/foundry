@@ -6049,6 +6049,86 @@ casttest!(curl_call_debug_trace_call_forwards_overrides, |_prj, cmd| {
     assert!(output.contains("blockOverrides"), "expected block overrides in params:\n{output}");
 });
 
+// tests that `--curl` forwards the scalar transaction fields into the call object, so the
+// printed request runs the same call as the non-curl command
+casttest!(curl_call_debug_trace_call_forwards_tx_fields, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--rpc-url",
+            rpc,
+            "--debug-trace-call",
+            "--from",
+            "0x000000000000000000000000000000000000beef",
+            "--value",
+            "1ether",
+            "--gas-limit",
+            "12345",
+            "--nonce",
+            "7",
+            "--curl",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
+    assert!(
+        output.contains("0x000000000000000000000000000000000000beef"),
+        "expected the from address in params:\n{output}"
+    );
+    assert!(
+        output.contains("0xde0b6b3a7640000"),
+        "expected the value (1 ether) in params:\n{output}"
+    );
+    assert!(output.contains("0x3039"), "expected the gas limit (12345) in params:\n{output}");
+    assert!(output.contains("nonce"), "expected the nonce in params:\n{output}");
+});
+
+// tests that `--labels` / `--disable-labels` are accepted with `--debug-trace-call`, which
+// forwards them to the trace renderer like `--trace` does
+casttest!(call_labels_accepted_with_debug_trace_call, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    cmd.args([
+        "call",
+        to,
+        "number()(uint256)",
+        "--rpc-url",
+        rpc,
+        "--debug-trace-call",
+        "--labels",
+        "0xdead000000000000000000000000000000000000:Counter",
+        "--disable-labels",
+        "--curl",
+    ])
+    .assert_success();
+});
+
+// tests that `--labels` still requires one of the trace modes
+casttest!(call_labels_rejected_without_trace_mode, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    cmd.args([
+        "call",
+        to,
+        "number()(uint256)",
+        "--rpc-url",
+        rpc,
+        "--labels",
+        "0xdead000000000000000000000000000000000000:Counter",
+        "--curl",
+    ])
+    .assert_failure();
+});
+
 // tests that the --jwt-secret flag outputs a valid curl command with Authorization header
 casttest!(curl_rpc_with_jwt, |_prj, cmd| {
     let rpc = "https://eth.example.com";

@@ -122,7 +122,7 @@ pub struct CallArgs {
     debug_trace_call: bool,
 
     /// Disables the labels in the traces.
-    /// Can only be set with `--trace`.
+    /// Can only be set with `--trace` or `--debug-trace-call`.
     #[arg(long, default_value_t = false, requires = "trace")]
     disable_labels: bool,
 
@@ -141,7 +141,7 @@ pub struct CallArgs {
     decode_internal: bool,
 
     /// Labels to apply to the traces; format: `address:label`.
-    /// Can only be used with `--trace`.
+    /// Can only be used with `--trace` or `--debug-trace-call`.
     #[arg(long, requires = "trace")]
     labels: Vec<String>,
 
@@ -619,11 +619,27 @@ impl CallArgs {
             }
         }).transpose()?;
 
-        // Build eth_call params
-        let call_object = serde_json::json!({
+        // Build eth_call params. `--curl` builds the request offline, so the fields the
+        // RPC-backed builder would resolve against the node (fee style, blob sidecars,
+        // authorization lists) are left to the node's defaults; the scalar fields given on the
+        // command line are forwarded as-is so the printed request runs the same call as the
+        // non-curl command.
+        let mut call_object = serde_json::json!({
             "to": to,
             "data": format!("0x{}", hex::encode(&data)),
         });
+        if let Some(from) = self.wallet.from {
+            call_object["from"] = serde_json::json!(from);
+        }
+        if let Some(value) = self.tx.value {
+            call_object["value"] = serde_json::json!(value);
+        }
+        if let Some(gas_limit) = self.tx.gas_limit {
+            call_object["gas"] = serde_json::json!(gas_limit);
+        }
+        if let Some(nonce) = self.tx.nonce {
+            call_object["nonce"] = serde_json::json!(nonce);
+        }
 
         let block_param = self
             .block
