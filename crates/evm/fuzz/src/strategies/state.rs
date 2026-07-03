@@ -140,6 +140,10 @@ impl InvariantFuzzState {
     }
 
     pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
+        if fuzzer.collected_values.is_empty() {
+            return;
+        }
+
         let mut dict = self.inner.borrow_mut();
         for value in fuzzer.collected_values.drain(..) {
             dict.insert_value(value);
@@ -159,6 +163,10 @@ impl InvariantFuzzState {
         run_depth: u32,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
+        if logs.is_empty() && result.is_empty() && state_changeset.is_empty() {
+            return;
+        }
+
         let mut dict = self.inner.borrow_mut();
         let targets = fuzzed_contracts.targets();
         let (target_contract, target_function) = if logs.is_empty() && result.is_empty() {
@@ -417,7 +425,9 @@ impl FuzzDictionary {
         }
 
         // Insert samples collected from current call in fuzz dictionary.
-        self.insert_sample_values(samples, run_depth);
+        if !samples.is_empty() {
+            self.insert_sample_values(samples, run_depth);
+        }
     }
 
     fn decode_log_events(
@@ -468,7 +478,7 @@ impl FuzzDictionary {
             // Insert push bytes.
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
-            if self.config.include_storage {
+            if self.config.include_storage && !account.storage.is_empty() {
                 let slot_identifier_key = targets.get(address).and_then(|contract| {
                     contract.storage_layout.as_ref().map(|layout| {
                         let key = Arc::as_ptr(layout) as usize;
