@@ -533,6 +533,9 @@ impl FuzzDictionary {
         let Some(code) = &account_info.code else {
             return;
         };
+        if self.addresses.contains(address) {
+            return;
+        }
         self.insert_address(*address);
         if self.values_full() {
             return;
