@@ -281,14 +281,20 @@ impl VerifyBytecodeArgs {
         let source_code = match &etherscan {
             Some(etherscan) => match etherscan.contract_source_code(self.address).await {
                 Ok(source_code) => {
-                    // Check if the contract name matches.
-                    if let Some(name) =
-                        source_code.items.first().map(|item| item.contract_name.clone())
-                        && name != self.contract.name
-                    {
-                        eyre::bail!("Contract name mismatch");
+                    if let Some(metadata) = source_code.items.first() {
+                        // Check if the contract name matches.
+                        if metadata.contract_name != self.contract.name {
+                            eyre::bail!("Contract name mismatch");
+                        }
+                        Some(source_code)
+                    } else {
+                        if !shell::is_json() {
+                            sh_warn!(
+                                "Block explorer returned no source metadata. Continuing with the local project configuration; compiler settings mismatches will not be reported."
+                            )?;
+                        }
+                        None
                     }
-                    Some(source_code)
                 }
                 Err(err) => {
                     if has_explorer_config {

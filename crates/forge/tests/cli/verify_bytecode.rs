@@ -388,10 +388,6 @@ forgetest_async!(flaky_can_verify_bytecode_fails_on_source_mismatch, |prj, cmd| 
 // local project and an RPC endpoint.
 // <https://github.com/foundry-rs/foundry/issues/13479>
 forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
-    cmd.unset_env("ETHERSCAN_API_KEY");
-    cmd.unset_env("VERIFIER_API_KEY");
-    cmd.unset_env("VERIFIER_URL");
-
     foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
@@ -401,8 +397,11 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
     let pk = alloy_primitives::hex::encode(wallet.credential().to_bytes());
 
     // Deploy the template contract; first tx of the default dev account.
+    cmd.forge_fuse();
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
     let output = cmd
-        .forge_fuse()
         .args([
             "create",
             "./src/Counter.sol:Counter",
@@ -423,8 +422,11 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
 
     // The local anvil chain has no block explorer: the command must still verify the runtime
     // bytecode and only warn about the unavailable explorer data.
+    cmd.forge_fuse();
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
     let assert = cmd
-        .forge_fuse()
         .args(["verify-bytecode", &address, "Counter", "--rpc-url", rpc.as_str()])
         .assert_success();
     let output = assert.get_output();
@@ -436,8 +438,11 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
 
     // `--ignore runtime` must skip the runtime fallback as well: with no creation data either,
     // there is nothing left to verify.
+    cmd.forge_fuse();
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
     let assert = cmd
-        .forge_fuse()
         .args([
             "verify-bytecode",
             &address,
@@ -457,15 +462,18 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
 
     // An explicitly configured but broken verifier must surface an error instead of being
     // silently treated as "no explorer".
-    cmd.forge_fuse()
-        .args([
-            "verify-bytecode",
-            &address,
-            "Counter",
-            "--rpc-url",
-            rpc.as_str(),
-            "--verifier-url",
-            "this-is-not-a-url",
-        ])
-        .assert_failure();
+    cmd.forge_fuse();
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("VERIFIER_API_KEY");
+    cmd.unset_env("VERIFIER_URL");
+    cmd.args([
+        "verify-bytecode",
+        &address,
+        "Counter",
+        "--rpc-url",
+        rpc.as_str(),
+        "--verifier-url",
+        "this-is-not-a-url",
+    ])
+    .assert_failure();
 });
