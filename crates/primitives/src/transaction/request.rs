@@ -711,6 +711,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "optimism")]
     fn test_deposit_typed_tx_roundtrip() {
         let deposit_tx = TxDeposit {
             from: Address::random(),
