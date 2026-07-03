@@ -216,7 +216,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                 }
             }
             InlineConfigItem::DisableLine(ids) => {
-                let start = src[..comment_range.start].rfind('\n').map_or(0, |i| i);
+                let start = src[..comment_range.start].rfind('\n').unwrap_or(0);
                 let end = src[comment_range.end..]
                     .find('\n')
                     .map_or(src.len(), |i| comment_range.end + i);

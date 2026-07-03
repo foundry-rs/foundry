@@ -78,7 +78,13 @@ pub struct CoverageArgs {
 
 impl CoverageArgs {
     fn report_path(&self, root: &Path, default_file_name: &str) -> PathBuf {
-        root.join(self.report_file.as_deref().unwrap_or_else(|| Path::new(default_file_name)))
+        let report_file =
+            (self.file_report_count() == 1).then_some(self.report_file.as_deref()).flatten();
+        root.join(report_file.unwrap_or_else(|| Path::new(default_file_name)))
+    }
+
+    fn file_report_count(&self) -> usize {
+        self.report.iter().filter(|kind| kind.writes_report_file()).count()
     }
 
     pub async fn run(mut self) -> Result<()> {
@@ -294,18 +300,6 @@ impl CoverageArgs {
             }
         }
 
-        if self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
-            let reporter = CoverageAttributionReporter::new(
-                self.report_path(project_root, "coverage-attribution.json"),
-            );
-            reporter.report(
-                &report,
-                &outcome,
-                filter.paths().root.as_path(),
-                filter.args().coverage_pattern_inverse.as_ref(),
-            )?;
-        }
-
         // Filter out ignored sources from the report.
         if let Some(not_re) = &filter.args().coverage_pattern_inverse {
             let file_root = filter.paths().root.as_path();
@@ -317,6 +311,13 @@ impl CoverageArgs {
 
         // Output final reports.
         self.report(&report)?;
+
+        if self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
+            let reporter = CoverageAttributionReporter::new(
+                self.report_path(project_root, "coverage-attribution.json"),
+            );
+            reporter.report(&report, &outcome)?;
+        }
 
         // Check for test failures after generating coverage report.
         // This ensures coverage data is written even when tests fail.
@@ -353,6 +354,12 @@ pub enum CoverageReportKind {
     Bytecode,
     /// JSON report mapping each test to the source items it covers.
     Attribution,
+}
+
+impl CoverageReportKind {
+    const fn writes_report_file(&self) -> bool {
+        matches!(self, Self::Lcov | Self::Attribution)
+    }
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

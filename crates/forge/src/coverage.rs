@@ -232,13 +232,7 @@ impl CoverageAttributionReporter {
     }
 
     /// Writes per-test coverage attribution for the provided outcome.
-    pub fn report(
-        &self,
-        report: &CoverageReport,
-        outcome: &TestOutcome,
-        file_root: &Path,
-        coverage_pattern_inverse: Option<&regex::Regex>,
-    ) -> eyre::Result<()> {
+    pub fn report(&self, report: &CoverageReport, outcome: &TestOutcome) -> eyre::Result<()> {
         let known_contracts = outcome
             .known_contracts
             .as_ref()
@@ -246,13 +240,7 @@ impl CoverageAttributionReporter {
 
         let payload = AttributionReport {
             version: 1,
-            tests: AttributionTests {
-                report,
-                outcome,
-                known_contracts,
-                file_root,
-                coverage_pattern_inverse,
-            },
+            tests: AttributionTests { report, outcome, known_contracts },
         };
         let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
         serde_json::to_writer(&mut out, &payload)?;
@@ -302,8 +290,6 @@ struct AttributionTests<'a> {
     report: &'a CoverageReport,
     outcome: &'a TestOutcome,
     known_contracts: &'a foundry_common::ContractsByArtifact,
-    file_root: &'a Path,
-    coverage_pattern_inverse: Option<&'a regex::Regex>,
 }
 
 impl Serialize for AttributionTests<'_> {
@@ -321,13 +307,7 @@ impl Serialize for AttributionTests<'_> {
                     test: test.clone(),
                     status: test_status_name(result.status),
                     kind: test_kind_name(&result.kind),
-                    covered: attributed_items(
-                        self.report,
-                        self.known_contracts,
-                        result,
-                        self.file_root,
-                        self.coverage_pattern_inverse,
-                    ),
+                    covered: attributed_items(self.report, self.known_contracts, result),
                 })?;
             }
         }
@@ -340,8 +320,6 @@ fn attributed_items(
     report: &CoverageReport,
     known_contracts: &foundry_common::ContractsByArtifact,
     result: &TestResult,
-    file_root: &Path,
-    coverage_pattern_inverse: Option<&regex::Regex>,
 ) -> Vec<AttributionItem> {
     type AttributionItemKey = (
         String,
@@ -388,9 +366,6 @@ fn attributed_items(
             else {
                 continue;
             };
-            if !include_source(source_path, file_root, coverage_pattern_inverse) {
-                continue;
-            }
 
             let source = source_path.display().to_string();
             let contract = item.loc.contract_name.to_string();
@@ -429,16 +404,6 @@ fn attributed_items(
     }
 
     items.into_values().collect()
-}
-
-fn include_source(
-    source_path: &Path,
-    file_root: &Path,
-    coverage_pattern_inverse: Option<&regex::Regex>,
-) -> bool {
-    let Some(not_re) = coverage_pattern_inverse else { return true };
-    let path = source_path.strip_prefix(file_root).unwrap_or(source_path);
-    !not_re.is_match(&path.to_string_lossy())
 }
 
 fn coverage_item_kind_fields(

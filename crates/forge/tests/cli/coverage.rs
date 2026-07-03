@@ -1960,6 +1960,50 @@ contract AContractTest is DSTest {
     }));
 });
 
+forgetest!(attribution_report_with_lcov_uses_default_paths, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage")
+        .args(["--report=attribution", "--report=lcov", "--report-file", "combined.out"])
+        .assert_success();
+
+    assert!(prj.root().join("coverage-attribution.json").exists());
+    assert!(prj.root().join("lcov.info").exists());
+    assert!(!prj.root().join("combined.out").exists());
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10172>
 forgetest!(constructor_with_args, |prj, cmd| {
     prj.insert_ds_test();

@@ -351,8 +351,7 @@ impl Precompile for Blake2f {
 fn decode_blake2f<'a>(data: &'a [u8]) -> alloy_sol_types::Result<Vec<String>> {
     let mut decoder = abi::Decoder::new(data);
     let rounds = u32::from_be_bytes(decoder.take_slice(4)?.try_into().unwrap());
-    let u64_le_list =
-        |x: &'a [u8]| x.chunks_exact(8).map(|x| u64::from_le_bytes(x.try_into().unwrap()));
+    let u64_le_list = |x: &'a [u8]| x.as_chunks::<8>().0.iter().map(|x| u64::from_le_bytes(*x));
     let h = u64_le_list(decoder.take_slice(64)?);
     let m = u64_le_list(decoder.take_slice(128)?);
     let t = u64_le_list(decoder.take_slice(16)?);
