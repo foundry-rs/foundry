@@ -81,17 +81,26 @@ impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
-            // A call: only the overloads the call can dispatch to matter, so judge the callee
-            // here with the argument count and walk the base and the arguments manually,
-            // skipping the default walk that would re-judge the callee without it.
+            // A call: the type checker already resolved the one function it dispatches to
+            // (overload selection by argument types, override shadowing, `super.` and the
+            // qualified forms), so judge that target alone and walk the rest manually,
+            // skipping the default walk that would re-judge the callee by name matching.
             ExprKind::Call(callee, args, _) => {
-                let arg_count = args.len();
+                if let Some(function_id) = self.resolved_callee(callee) {
+                    self.judge_function(function_id);
+                }
                 match &callee.peel_parens().kind {
+                    // The callee name can also resolve to a variable: a call through a
+                    // function pointer stored in state reads that variable.
                     ExprKind::Ident(resolutions) => {
-                        self.judge_resolutions(resolutions, Some(arg_count));
+                        for res in *resolutions {
+                            if let Res::Item(ItemId::Variable(variable_id)) = res {
+                                self.judge_variable(*variable_id);
+                            }
+                        }
                     }
-                    ExprKind::Member(base, member) => {
-                        self.judge_member(base, member, Some(arg_count));
+                    // The receiver of a member call can read state itself.
+                    ExprKind::Member(base, _) => {
                         let _ = self.visit_expr(base);
                     }
                     _ => {
@@ -112,9 +121,9 @@ impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
                 }
                 return ControlFlow::Continue(());
             }
-            // A plain reference (a function passed as a value has no call arity to filter on).
-            ExprKind::Ident(resolutions) => self.judge_resolutions(resolutions, None),
-            ExprKind::Member(base, member) => self.judge_member(base, member, None),
+            // A plain reference to a name outside a call position.
+            ExprKind::Ident(resolutions) => self.judge_resolutions(resolutions),
+            ExprKind::Member(base, member) => self.judge_member(base, member),
             _ => {}
         }
         self.walk_expr(expr)
@@ -122,21 +131,33 @@ impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
 }
 
 impl ImpureRefFinder<'_> {
-    fn judge_resolutions(&mut self, resolutions: &[Res], arity: Option<usize>) {
+    /// The single function a call dispatches to. `type_of_expr` on the callee is the function
+    /// the type checker resolved, so overload selection by argument types, override shadowing,
+    /// `super.` and the qualified and `using for` forms are already accounted for.
+    fn resolved_callee(&self, callee: &Expr<'_>) -> Option<FunctionId> {
+        let ty = self.gcx.type_of_expr(callee.peel_parens().id)?;
+        match ty.kind {
+            TyKind::Fn(function_ty) => function_ty.function_id,
+            _ => None,
+        }
+    }
+
+    fn judge_resolutions(&mut self, resolutions: &[Res]) {
         for res in resolutions {
             match res {
                 Res::Item(ItemId::Variable(variable_id)) => self.judge_variable(*variable_id),
                 Res::Item(ItemId::Function(function_id)) => {
-                    self.judge_function(*function_id, arity);
+                    self.judge_function(*function_id);
                 }
                 _ => {}
             }
         }
     }
 
-    /// Judges a qualified or external access (`Base.viewFn()`, `Oracle(addr).price()`,
-    /// `value.attachedFn()`): the member ident carries no resolution, so type the base.
-    fn judge_member(&mut self, base: &Expr<'_>, member: &solar::ast::Ident, arity: Option<usize>) {
+    /// Judges a qualified or external member read outside a call position (`Base.stateVar`,
+    /// a function used as a value): the member ident carries no resolution, so type the base
+    /// and scan by name. Calls never come here, their target is resolved from the callee type.
+    fn judge_member(&mut self, base: &Expr<'_>, member: &solar::ast::Ident) {
         let Some(ty) = self.gcx.type_of_expr(base.peel_parens().id) else { return };
         // A contract name used as the base is a type-namespace item, so its type comes wrapped
         // as `Type(Contract(..))`, while a contract-typed value comes bare.
@@ -167,22 +188,21 @@ impl ImpureRefFinder<'_> {
                                 .name
                                 .is_some_and(|name| name.name == member.name) =>
                         {
-                            self.judge_function(*function_id, arity);
+                            self.judge_function(*function_id);
                         }
                         _ => {}
                     }
                 }
             }
         } else {
-            // A `using for` call: the bound library function is a member of the value type,
-            // with the receiver as its first parameter.
+            // A `using for` binding read as a value: the bound library function is a member of
+            // the value type.
             for member_entry in self.gcx.members_of(ty, self.source, Some(self.contract)) {
                 if member_entry.name == member.name
                     && let TyKind::Fn(function_ty) = member_entry.ty.kind
                     && let Some(function_id) = function_ty.function_id
                 {
-                    let receiver = usize::from(member_entry.attached);
-                    self.judge_function(function_id, arity.map(|count| count + receiver));
+                    self.judge_function(function_id);
                 }
             }
         }
@@ -196,14 +216,11 @@ impl ImpureRefFinder<'_> {
         }
     }
 
-    /// A non-pure function observes the same partial state. Overload sets are filtered by
-    /// arity when the reference is a call. A variable referenced through its synthesized
-    /// getter is judged as a read of the variable itself, so a public constant stays fine.
-    fn judge_function(&mut self, function_id: FunctionId, arity: Option<usize>) {
+    /// A non-pure function observes the same partial state. A variable referenced through its
+    /// synthesized getter is judged as a read of the variable itself, so a public constant
+    /// stays fine.
+    fn judge_function(&mut self, function_id: FunctionId) {
         let function = self.hir.function(function_id);
-        if arity.is_some_and(|count| function.parameters.len() != count) {
-            return;
-        }
         if let Some(variable_id) = function.gettee {
             self.judge_variable(variable_id);
         } else if function.state_mutability != StateMutability::Pure {

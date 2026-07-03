@@ -27,6 +27,21 @@ contract Oracle {
 
 contract OracleChild is Oracle {}
 
+contract OverrideBase {
+    function maybePure() public view virtual returns (uint256) {
+        return address(this).balance;
+    }
+}
+
+contract OverrideChild is OverrideBase {
+    function maybePure() public pure override returns (uint256) {
+        return 1;
+    }
+
+    // `super` bypasses the local pure override and resolves to the base's view declaration
+    uint256 public fromSuperCall = super.maybePure(); //~NOTE: state variable initializer
+}
+
 library Clock {
     function stamp(uint256 value) internal view returns (uint256) {
         return value + block.timestamp;
@@ -76,6 +91,22 @@ contract InitFromFunction is Base {
 
     uint256 public fromViewOverload = mix(1, 2); //~NOTE: state variable initializer
 
+    // a same-arity overload pair differing by parameter type: `typed(1)` is the pure one
+    uint256 public fromPureSameArityOverload = typed(1);
+
+    uint256 public fromViewSameArityOverload = typed("s"); //~NOTE: state variable initializer
+
+    // dispatch selects the child's pure override, not the view base declaration behind it
+    uint256 public fromPureOverride = OverrideChild(address(0x1234)).maybePure();
+
+    // typed through the base, the resolved declaration is the base's own view one
+    uint256 public fromBaseTypedOverride = OverrideBase(address(0x1234)).maybePure(); //~NOTE: state variable initializer
+
+    // a call through a function pointer stored in state reads that variable
+    uint256 public fromPointerCall = fnPtr(); //~NOTE: state variable initializer
+
+    function() internal pure returns (uint256) internal fnPtr = noState;
+
     uint256 public immutable fromNonPureImmutable = set(); //~NOTE: state variable initializer
 
     uint256 public fromLiteral = 5;
@@ -118,6 +149,18 @@ contract InitFromFunction is Base {
 
     function mix(uint256 x, uint256 y) internal view returns (uint256) {
         return x + y + seed;
+    }
+
+    function typed(uint256 x) internal pure returns (uint256) {
+        return x + 1;
+    }
+
+    function typed(string memory) internal view returns (uint256) {
+        return seed;
+    }
+
+    function noState() internal pure returns (uint256) {
+        return 4;
     }
 
     function localIsFine() external view returns (uint256) {

@@ -1,6 +1,14 @@
 note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
    ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
    │
+LL │     uint256 public fromSuperCall = super.maybePure();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
 LL │     uint256 public fromNonPure = set();
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
@@ -75,6 +83,30 @@ note[function-init-state]: state variable initializer depends on a non-pure func
    │
 LL │     uint256 public fromViewOverload = mix(1, 2);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromViewSameArityOverload = typed("s");
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromBaseTypedOverride = OverrideBase(address(0x1234)).maybePure();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public fromPointerCall = fnPtr();
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/function-init-state
 
