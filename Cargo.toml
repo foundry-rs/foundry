@@ -537,8 +537,8 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-## Temporary dependency on foundry-rs/foundry-core#104 until foundry-compilers is released.
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "3e01874cb1e7f43d2554dc05fb1823687bdc3ab8" }
+## Temporary dependency on foundry-rs/foundry-core#104 plus Solar compatibility until foundry-compilers is released.
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "ff9ff83db48c81915ba99753d4a4bd0333bcfdbb" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
@@ -620,10 +620,10 @@ tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529a
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
 
 # solar
-solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
-solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
-solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
-solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
+solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "e284edd80eb43988989313e9b9a286fedc3e7c9e" }
+solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "e284edd80eb43988989313e9b9a286fedc3e7c9e" }
+solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "e284edd80eb43988989313e9b9a286fedc3e7c9e" }
+solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "e284edd80eb43988989313e9b9a286fedc3e7c9e" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
