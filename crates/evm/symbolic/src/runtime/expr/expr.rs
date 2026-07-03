@@ -293,12 +293,6 @@ pub(in crate::runtime::expr) fn low_masked_source(expr: &SymExpr, bits: usize) -
         {
             Some(left)
         }
-        // `low_mask & a => a`.
-        SymExprKind::BinOp(SymBinOp::And, left, right)
-            if left.as_const().and_then(mask_low_bits) == Some(bits) =>
-        {
-            Some(right)
-        }
         _ => None,
     }
 }
@@ -310,12 +304,6 @@ pub(in crate::runtime::expr) fn low_masked_source_any(expr: &SymExpr) -> Option<
             if right.as_const().and_then(mask_low_bits).is_some() =>
         {
             Some(left)
-        }
-        // `low_mask & a => a`.
-        SymExprKind::BinOp(SymBinOp::And, left, right)
-            if left.as_const().and_then(mask_low_bits).is_some() =>
-        {
-            Some(right)
         }
         _ => None,
     }

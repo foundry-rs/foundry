@@ -2459,6 +2459,12 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
     let masked = SymExpr::binop(&mut cx, SymBinOp::And, x, mask.clone());
     let actual = SymExpr::binop(&mut cx, SymBinOp::And, masked.clone(), mask);
     assert_eq!(actual, masked);
+    let mask_value = (U256::from(1) << 128) - U256::from(1);
+    let mask = SymExpr::constant(&mut cx, mask_value);
+    let x = SymExpr::var(&mut cx, "x");
+    let left_masked = SymExpr::binop(&mut cx, SymBinOp::And, mask.clone(), x.clone());
+    let right_masked = SymExpr::binop(&mut cx, SymBinOp::And, x, mask);
+    assert_eq!(left_masked, right_masked);
     let six = SymExpr::constant(&mut cx, U256::from(6));
     let seven = SymExpr::constant(&mut cx, U256::from(7));
     let actual = SymExpr::binop(&mut cx, SymBinOp::Mul, six, seven);
