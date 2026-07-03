@@ -4,7 +4,7 @@ use crate::{
         send::{cast_send, cast_send_with_access_key},
     },
     tempo,
-    tx::{SendTxOpts, TxParams},
+    tx::{SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_signer::Signer;
@@ -137,6 +137,15 @@ pub(super) async fn register(
         .await?;
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
+        // Fill only the fees; the provider fills nonce and gas limit.
+        fill_transaction_gas_fees(
+            &provider,
+            &mut tx,
+            chain.is_legacy(),
+            false,
+            config.eip1559_fee_estimate,
+        )
+        .await?;
         cast_send(
             provider,
             tx,

@@ -5,7 +5,7 @@ use crate::{
         tip20::mine,
     },
     tempo,
-    tx::{CastTxSender, SendTxOpts, TxParams},
+    tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_network::Network;
 use alloy_primitives::{Address, B256};
@@ -240,6 +240,15 @@ async fn register(
         }
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
+        // Fill only the fees; the provider fills nonce and gas limit.
+        fill_transaction_gas_fees(
+            &provider,
+            &mut tx,
+            chain.is_legacy(),
+            false,
+            config.eip1559_fee_estimate,
+        )
+        .await?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send`, so report the selection here.
             let fee_token = resolve_and_set_fee_token(

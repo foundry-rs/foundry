@@ -577,6 +577,16 @@ impl Erc20Subcommand {
                                 .await?;
                             sponsor.attach_and_print::<N>(&mut tx, from).await?;
                         }
+                    } else {
+                        // Fill only the fees; the provider fills nonce and gas limit.
+                        fill_transaction_gas_fees(
+                            &$provider,
+                            &mut tx,
+                            chain.is_legacy(),
+                            false,
+                            config.eip1559_fee_estimate,
+                        )
+                        .await?;
                     }
                     cast_send(
                         $provider,
