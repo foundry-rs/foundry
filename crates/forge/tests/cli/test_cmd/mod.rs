@@ -1126,6 +1126,15 @@ contract EIP2935Test is Test {
         assertEq(vm.load(HISTORY, bytes32(parent % 8191)), bytes32(0), "replaced history slot");
     }
 
+    function testRollDoesNotExposeSeededHistorySlotAfterEtch() public {
+        vm.etch(HISTORY, hex"00");
+
+        uint256 parent = 8191 * 1000 + 12;
+        vm.roll(parent + 1);
+
+        assertEq(vm.load(HISTORY, bytes32(parent % 8191)), bytes32(0), "replaced seeded history slot");
+    }
+
     function testSetBlockhashDoesNotPopulateReplacedHistoryContract() public {
         vm.etch(HISTORY, hex"00");
 

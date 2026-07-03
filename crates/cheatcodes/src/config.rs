@@ -42,6 +42,8 @@ pub struct CheatsConfig {
     pub root: PathBuf,
     /// Absolute Path to broadcast dir i.e project_root/broadcast
     pub broadcast: PathBuf,
+    /// Whether isolated test execution is enabled.
+    pub isolate: bool,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
@@ -92,6 +94,7 @@ impl CheatsConfig {
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
             root: config.root.clone(),
             broadcast: config.root.clone().join(&config.broadcast),
+            isolate: config.isolate,
             evm_opts,
             labels: config.labels.clone(),
             available_artifacts,
@@ -234,6 +237,7 @@ impl Default for CheatsConfig {
             root: Default::default(),
             bind_json_path: PathBuf::default().join("utils").join("jsonBindings.sol"),
             broadcast: Default::default(),
+            isolate: Config::default().isolate,
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),

@@ -18,12 +18,17 @@ use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
 };
-use foundry_config::{Config, CoverageConfig, CoverageReportKind, parse_lcov_version};
+use foundry_config::{
+    Config, CoverageConfig, CoverageReportKind, InlineConfig, parse_lcov_version,
+};
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use globset::{Glob, GlobSetBuilder};
 use rayon::prelude::*;
 use semver::Version;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, test);
@@ -311,6 +316,7 @@ impl CoverageArgs {
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
+        let inline_config = Arc::new(InlineConfig::new_parsed(output, &config)?);
         let outcome = self
             .test
             .run_tests(
@@ -319,7 +325,7 @@ impl CoverageArgs {
                 evm_opts,
                 output,
                 &filter,
-                TestExecutionOptions::coverage(),
+                TestExecutionOptions::coverage(inline_config),
             )
             .await?;
 

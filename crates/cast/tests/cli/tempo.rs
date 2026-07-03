@@ -9,10 +9,10 @@ use alloy_sol_types::{SolEvent, SolValue};
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
-use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::precompiles::{
     IReceivePolicyGuard, ITIP20, ITIP403Registry, TIP403_REGISTRY_ADDRESS,
 };
+use tempo_hardfork::TempoHardfork;
 
 fn json_success_data(output: &str) -> serde_json::Value {
     let envelope: serde_json::Value =

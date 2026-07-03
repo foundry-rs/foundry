@@ -103,6 +103,84 @@ forge test --symbolic-seed-corpus --fuzz-corpus-dir fuzz_corpus
 Forge symbolically executes matching fuzz tests, reuses their normal corpus
 layout, and writes a successful concrete input as a seed for later fuzz runs.
 
+Symbolic execution can import the same Foundry fuzz corpus as path-priority
+hints for fuzz tests:
+
+```sh
+forge test --symbolic-use-fuzz-corpus --fuzz-corpus-dir fuzz_corpus
+```
+
+Imported corpus entries are bounded by `symbolic.corpus_seed_limit` and only
+guide branch order; they do not prune feasible symbolic paths. JSON output
+records the per-test corpus directory, import counts, and seed files that
+matched a symbolic calldata variant under `symbolic.corpus_seeds.used`.
+
+Fuzzing can also record branch frontier artifacts for later targeted symbolic
+follow-up:
+
+```sh
+forge test --match-test test_hard_branch --fuzz-frontier-dir fuzz_frontiers
+```
+
+For example, a fuzz run may pass after reaching `feeMultiplier == 100` at a
+`feeMultiplier < 100` guard; the frontier gives symbolic execution the replay
+calldata and comparison site needed to solve the adjacent missed branch.
+
+Forge writes one bounded artifact per fuzz test at
+`<fuzz_frontier_dir>/<contract>/<test>/branch-frontiers.json`. The artifact
+uses schema `foundry:fuzz.branch-frontiers@v1` and records the test signature,
+configured record limit, and a `frontiers` array. Each frontier contains:
+
+- a stable record index (`id`) within the artifact
+- fuzz replay metadata (`seed`, `run`, `worker`) when available
+- the concrete one-call sequence that reached the site
+- the EVM comparison site (`address`, `pc`, `opcode`, `opcode_name`)
+- concrete operands (`lhs`, `rhs`), the comparison result, and an
+  `operand_delta` priority score interpreted according to opcode signedness
+- whether the call also expanded the worker's coverage map (`new_coverage`),
+  present only when edge coverage is collected via a corpus directory, edge
+  coverage metrics, or sancov, and omitted otherwise
+
+Frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default 256).
+It reuses the fuzzer's comparison-operand inspector and does not store traces.
+
+Symbolic execution can consume those artifacts to solve the opposite side of
+captured comparisons and write replay-confirmed inputs into the fuzz corpus:
+
+```sh
+forge test --match-test test_hard_branch \
+  --fuzz-frontier-dir fuzz_frontiers \
+  --fuzz-corpus-dir fuzz_corpus \
+  --symbolic-use-fuzz-frontiers
+```
+
+Forge imports up to `symbolic.frontier_limit` records (default 256), replays the
+recorded one-call seed as a path-priority hint, constrains symbolic execution to
+flip the captured comparison result, and persists only candidates that replay
+with the expected concrete outcome.
+
+To focus solver time on specific captured sites, pass frontier artifact IDs,
+comparison PCs, or calldata selectors:
+
+```sh
+forge test --match-test test_hard_branch \
+  --fuzz-frontier-dir fuzz_frontiers \
+  --fuzz-corpus-dir fuzz_corpus \
+  --symbolic-use-fuzz-frontiers \
+  --symbolic-frontier-ids 3,7 \
+  --symbolic-frontier-pcs 128,412 \
+  --symbolic-frontier-selectors 0x12345678
+```
+
+`symbolic.frontier_ids`, `symbolic.frontier_pcs`, and
+`symbolic.frontier_selectors` default to `[]`, meaning any value for that
+dimension. Non-empty filters compose conjunctively, so the example imports only
+records matching one of the requested IDs, one of the requested PCs, and one of
+the requested selectors. Forge keeps the artifact order as the priority order
+after filtering, imports up to `symbolic.frontier_limit` records, reports how
+many records were imported or skipped by target filters, and warns if a
+requested target cannot be imported.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
@@ -263,6 +341,9 @@ default_array_lengths = []
 default_bytes_lengths = []
 max_calldata_bytes = 4096
 invariant_depth = 10
+frontier_ids = []
+frontier_pcs = []
+frontier_selectors = []
 symbolic_call_targets = false
 dump_smt = false
 storage_layout = "solidity"
@@ -364,8 +445,7 @@ when symbolic tests run. This also applies when these values come from inline
 settings before running symbolic tests from untrusted projects.
 Timeouts and portfolio cancellation terminate only the direct solver child
 process. Wrapper commands should forward termination to any subprocesses they
-spawn and close inherited stdout/stderr so descendant solvers do not outlive the
-cancelled query.
+spawn so descendant solvers do not outlive the cancelled query.
 
 Halmos-style annotations are accepted as compatibility input and translated into
 the same internal config:

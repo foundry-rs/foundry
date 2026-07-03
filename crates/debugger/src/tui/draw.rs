@@ -1,6 +1,9 @@
 //! TUI draw implementation.
 
-use super::context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext};
+use super::{
+    context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext},
+    storage::{StorageAccess, storage_access_at},
+};
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
@@ -17,10 +20,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use revm::bytecode::opcode;
-use revm_inspectors::tracing::types::{
-    CallKind, DecodedInternalCall, DecodedTraceStep, StorageChange, StorageChangeReason,
-};
+use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -109,25 +109,47 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        // Split the app vertically to construct all the panes.
-        let [op_pane, variables_pane, stack_pane, memory_pane, src_pane] = Layout::new(
+        if footer_height > 0 {
+            self.draw_footer(f, footer);
+        }
+
+        if self.show_source {
+            // Split the app vertically to construct all the panes.
+            let [op_pane, variables_pane, stack_pane, memory_pane, src_pane] = Layout::new(
+                Direction::Vertical,
+                [
+                    Constraint::Ratio(1, 7),
+                    Constraint::Ratio(1, 7),
+                    Constraint::Ratio(1, 7),
+                    Constraint::Ratio(1, 7),
+                    Constraint::Ratio(3, 7),
+                ],
+            )
+            .split(app)[..] else {
+                unreachable!()
+            };
+
+            self.draw_src(f, src_pane);
+            self.draw_op_list(f, op_pane);
+            self.draw_variables(f, variables_pane);
+            self.draw_stack(f, stack_pane);
+            self.draw_buffer(f, memory_pane);
+            return;
+        }
+
+        let [op_pane, variables_pane, stack_pane, memory_pane] = Layout::new(
             Direction::Vertical,
             [
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(3, 7),
+                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 5),
+                Constraint::Ratio(1, 5),
+                Constraint::Ratio(2, 5),
             ],
         )
         .split(app)[..] else {
             unreachable!()
         };
 
-        if footer_height > 0 {
-            self.draw_footer(f, footer);
-        }
-        self.draw_src(f, src_pane);
         self.draw_op_list(f, op_pane);
         self.draw_variables(f, variables_pane);
         self.draw_stack(f, stack_pane);
@@ -168,12 +190,18 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        // Split left pane in 2 vertically to opcode list and source.
-        let [op_pane, src_pane] =
-            Layout::new(Direction::Vertical, [Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
-                .split(app_left)[..]
-        else {
-            unreachable!()
+        let (op_pane, src_pane) = if self.show_source {
+            // Split left pane in 2 vertically to opcode list and source.
+            let [op_pane, src_pane] = Layout::new(
+                Direction::Vertical,
+                [Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)],
+            )
+            .split(app_left)[..] else {
+                unreachable!()
+            };
+            (op_pane, Some(src_pane))
+        } else {
+            (app_left, None)
         };
 
         // Split right pane vertically to construct variables, stack and memory.
@@ -188,7 +216,9 @@ impl TUIContext<'_> {
         if footer_height > 0 {
             self.draw_footer(f, footer);
         }
-        self.draw_src(f, src_pane);
+        if let Some(src_pane) = src_pane {
+            self.draw_src(f, src_pane);
+        }
         self.draw_op_list(f, op_pane);
         self.draw_variables(f, variables_pane);
         self.draw_stack(f, stack_pane);
@@ -196,17 +226,26 @@ impl TUIContext<'_> {
     }
 
     fn footer_height(&self) -> u16 {
-        let status_or_input = u16::from(
-            self.pc_input.is_some()
-                || self.buffer_offset_input.is_some()
-                || self.opcode_search_input.is_some()
-                || self.status.is_some(),
-        );
+        let status_or_input = if self.command_input.is_some() {
+            3
+        } else {
+            u16::from(
+                self.pc_input.is_some()
+                    || self.buffer_offset_input.is_some()
+                    || self.opcode_search_input.is_some()
+                    || self.status.is_some(),
+            )
+        };
         let shortcuts = if self.show_shortcuts { 3 } else { 0 };
         status_or_input + shortcuts
     }
 
     fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
+        if let Some(input) = &self.command_input {
+            self.draw_command_prompt(f, area, input);
+            return;
+        }
+
         let mut lines = Vec::with_capacity(self.footer_height() as usize);
 
         if let Some(input) = &self.pc_input {
@@ -256,19 +295,39 @@ impl TUIContext<'_> {
             lines.push(Line::from(Span::styled(status.text.as_str(), style)));
         }
 
-        let l1 =
-            "[q] quit | [j/k] op | [a/s] jump | [c/C] call | [g/G] start/end | [p] PC | [o] offset";
-        let l2 = "[/] search | [n/N] repeat | [l] layout | [b] buffer | [t] labels | [m] decode | [h] help";
-        let l3 = "[J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint";
-        let dimmed = Style::new().add_modifier(Modifier::DIM);
         if self.show_shortcuts {
-            lines.push(Line::from(Span::styled(l1, dimmed)));
-            lines.push(Line::from(Span::styled(l2, dimmed)));
-            lines.push(Line::from(Span::styled(l3, dimmed)));
+            lines.extend(shortcut_lines());
         }
 
         let paragraph =
             Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: false });
+        f.render_widget(paragraph, area);
+    }
+
+    fn draw_command_prompt(&self, f: &mut Frame<'_>, area: Rect, input: &str) {
+        let shortcuts = if self.show_shortcuts { 3 } else { 0 };
+        let [prompt, shortcuts_area] = Layout::new(
+            Direction::Vertical,
+            [Constraint::Length(3), Constraint::Length(shortcuts)],
+        )
+        .split(area)[..] else {
+            unreachable!()
+        };
+
+        let prompt_line = command_prompt_line(input, prompt.width.saturating_sub(2));
+        let block = Block::default().title("Command").borders(Borders::ALL);
+        let paragraph = Paragraph::new(prompt_line).block(block);
+        f.render_widget(paragraph, prompt);
+
+        if self.show_shortcuts {
+            self.draw_shortcuts(f, shortcuts_area);
+        }
+    }
+
+    fn draw_shortcuts(&self, f: &mut Frame<'_>, area: Rect) {
+        let paragraph = Paragraph::new(shortcut_lines())
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
@@ -554,27 +613,7 @@ impl TUIContext<'_> {
     }
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
-        let step = self.current_step();
-        if let Some(change) = step.storage_change.as_deref() {
-            return Some(storage_access_line(change));
-        }
-
-        // `revm-inspectors` records `storage_change` from journal entries, so warm `SLOAD`s do not
-        // get one. Debug mode records full stack snapshots before each opcode; the following step's
-        // stack contains the loaded value after this `SLOAD` executes.
-        if step.op.get() == opcode::SLOAD {
-            let key = step.stack.as_deref()?.last().copied()?;
-            let value = self
-                .debug_steps()
-                .get(self.current_step.checked_add(1)?)?
-                .stack
-                .as_deref()?
-                .last()
-                .copied()?;
-            return Some(sload_storage_access_line(key, value));
-        }
-
-        None
+        storage_access_at(self.debug_steps(), self.current_step).map(storage_access_line)
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
@@ -967,6 +1006,78 @@ fn variables_title(
     title
 }
 
+fn shortcut_lines() -> Vec<Line<'static>> {
+    let dimmed = Style::new().add_modifier(Modifier::DIM);
+    vec![
+        Line::from(Span::styled(
+            "[q] quit | [j/k] op | [a/s] jump | [c/C] call | [g/G] start/end | [p] PC | [o] offset",
+            dimmed,
+        )),
+        Line::from(Span::styled(
+            "[/] search | [:] command | [n/N] repeat | [l] layout | [b] buffer | [v] source",
+            dimmed,
+        )),
+        Line::from(Span::styled(
+            "[t] labels | [m] decode | [h] help | [J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint",
+            dimmed,
+        )),
+    ]
+}
+
+const COMMAND_PROMPT_HINT: &str = "  Enter: run | Esc: cancel | help: command list";
+
+fn command_prompt_line(input: &str, width: u16) -> Line<'static> {
+    let width = width as usize;
+    let fixed_width = 2;
+    let hint_width = text_width(COMMAND_PROMPT_HINT);
+    let input_width = text_width(input);
+    let include_hint = fixed_width + input_width + hint_width <= width;
+    let input_width = if include_hint {
+        width.saturating_sub(fixed_width + hint_width)
+    } else {
+        width.saturating_sub(fixed_width)
+    };
+
+    let mut spans = vec![
+        Span::styled(":", Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(input_tail(input, input_width)),
+        Span::styled("█", Style::new().fg(Color::Cyan)),
+    ];
+    if include_hint {
+        spans.push(Span::styled(COMMAND_PROMPT_HINT, Style::new().add_modifier(Modifier::DIM)));
+    }
+    Line::from(spans)
+}
+
+/// Returns the rendered display width of `text` in terminal cells.
+fn text_width(text: &str) -> usize {
+    Span::raw(text).width()
+}
+
+fn input_tail(input: &str, max_width: usize) -> String {
+    if text_width(input) <= max_width {
+        return input.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "<".to_string();
+    }
+
+    // Reserve one cell for the leading `<` truncation indicator, then keep the widest
+    // suffix that fits in the remaining width.
+    let tail_width = max_width - 1;
+    let mut start = input.len();
+    for (idx, _) in input.char_indices().rev() {
+        if text_width(&input[idx..]) > tail_width {
+            break;
+        }
+        start = idx;
+    }
+    format!("<{}", &input[start..])
+}
+
 fn step_notice_title(line: &str) -> &'static str {
     if line.starts_with(PRECOMPILE_NOTICE_PREFIX) { "precompile call" } else { "decoded step" }
 }
@@ -990,34 +1101,8 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     Line::from(spans)
 }
 
-fn storage_access_line(change: &StorageChange) -> Line<'static> {
-    let op = match change.reason {
-        StorageChangeReason::SLOAD => "SLOAD",
-        StorageChangeReason::SSTORE => "SSTORE",
-    };
-
-    let text = match (change.reason, change.had_value) {
-        (StorageChangeReason::SSTORE, Some(previous)) => format!(
-            "storage {op} slot {}: {} -> {}",
-            hex_u256(change.key),
-            hex_u256(previous),
-            hex_u256(change.value)
-        ),
-        _ => format!("storage {op} slot {} = {}", hex_u256(change.key), hex_u256(change.value)),
-    };
-
-    Line::from(Span::styled(text, Style::new().fg(Color::Yellow)))
-}
-
-fn sload_storage_access_line(key: U256, value: U256) -> Line<'static> {
-    Line::from(Span::styled(
-        format!("storage SLOAD slot {} = {}", hex_u256(key), hex_u256(value)),
-        Style::new().fg(Color::Yellow),
-    ))
-}
-
-fn hex_u256(value: U256) -> String {
-    format!("{value:#x}")
+fn storage_access_line(access: StorageAccess) -> Line<'static> {
+    Line::from(Span::styled(access.describe(), Style::new().fg(Color::Yellow)))
 }
 
 fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) -> String {
@@ -1209,7 +1294,7 @@ fn hex_digits(n: usize) -> usize {
 mod tests {
     use super::TUIContext;
     use crate::{
-        DebugNode,
+        DebugNode, DebuggerLayout,
         debugger::{DebuggerContext, DebuggerStats},
         op::OpcodeParam,
     };
@@ -1341,6 +1426,73 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn hidden_source_pane_omits_source_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_source = false;
+        let backend = TestBackend::new(220, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("Contract call"));
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn command_prompt_draws_in_bordered_block() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.command_input = Some("pc 0".to_string());
+        let backend = TestBackend::new(120, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_footer(f, Rect::new(0, 0, 120, 6))).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Command"));
+        assert!(screen.contains(":pc 0"));
+        assert!(screen.contains("Enter: run"));
+        assert!(screen.contains("[:] command"));
+    }
+
+    #[test]
+    fn command_prompt_line_clips_long_input_to_tail() {
+        let input = "continue 0123456789abcdef";
+        let line = super::command_prompt_line(input, 12);
+        let text = line_text(&line);
+
+        assert!(line.width() <= 12);
+        assert_eq!(text, ":<789abcdef█");
+        assert!(!text.contains("Enter: run"));
+    }
+
+    #[test]
+    fn command_prompt_line_clips_wide_unicode_to_width() {
+        // Full-width characters render two cells each, so clipping must respect display
+        // width rather than character count.
+        let input = "界界界界界界界界";
+        let line = super::command_prompt_line(input, 8);
+
+        assert!(line.width() <= 8);
     }
 
     #[test]
@@ -1585,30 +1737,33 @@ mod tests {
 
     #[test]
     fn storage_access_line_formats_sload() {
-        let change = StorageChange {
+        let mut step = trace_step(Vec::new());
+        step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
             value: U256::from(42),
             had_value: None,
             reason: StorageChangeReason::SLOAD,
-        };
+        }));
+        let steps = [step];
+        let access = super::storage_access_at(&steps, 0).unwrap();
 
-        assert_eq!(
-            line_text(&super::storage_access_line(&change)),
-            "storage SLOAD slot 0x1 = 0x2a"
-        );
+        assert_eq!(line_text(&super::storage_access_line(access)), "storage SLOAD slot 0x1 = 0x2a");
     }
 
     #[test]
     fn storage_access_line_formats_sstore_with_previous_value() {
-        let change = StorageChange {
+        let mut step = trace_step(Vec::new());
+        step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
             value: U256::from(42),
             had_value: Some(U256::from(7)),
             reason: StorageChangeReason::SSTORE,
-        };
+        }));
+        let steps = [step];
+        let access = super::storage_access_at(&steps, 0).unwrap();
 
         assert_eq!(
-            line_text(&super::storage_access_line(&change)),
+            line_text(&super::storage_access_line(access)),
             "storage SSTORE slot 0x1: 0x7 -> 0x2a"
         );
     }

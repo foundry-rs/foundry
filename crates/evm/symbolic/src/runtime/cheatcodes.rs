@@ -31,6 +31,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | pauseGasMeteringCall::SELECTOR
         | resumeGasMeteringCall::SELECTOR
         | resetGasMeteringCall::SELECTOR
+        | isIsolateModeCall::SELECTOR
         | lastCallGasCall::SELECTOR
         | lastFrameGasCall::SELECTOR
         | stopExpectSafeMemoryCall::SELECTOR
@@ -271,29 +272,38 @@ pub(crate) const fn abi_static_input_size(words: usize) -> usize {
     4 + words * 32
 }
 
-pub(crate) fn abi_bytes_return(bytes: Vec<SymExpr>) -> SymReturnData {
-    abi_bytes_return_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
+pub(crate) fn abi_bytes_return(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymReturnData {
+    let len = SymExpr::constant(cx, U256::from(bytes.len()));
+    abi_bytes_return_with_len(cx, len, bytes)
 }
 
-pub(crate) fn abi_bytes_return_with_len(len: SymExpr, bytes: Vec<SymExpr>) -> SymReturnData {
-    let mut out = SymExpr::constant(U256::from(32)).into_byte_exprs();
-    out.extend(len.into_byte_exprs());
+pub(crate) fn abi_bytes_return_with_len(
+    cx: &mut SymCx,
+    len: SymExpr,
+    bytes: Vec<SymExpr>,
+) -> SymReturnData {
+    let mut out = SymExpr::constant(cx, U256::from(32)).into_byte_exprs(cx);
+    out.extend(len.into_byte_exprs(cx));
     out.extend(bytes.iter().cloned());
-    out.resize(64 + bytes.len().next_multiple_of(32), SymExpr::zero());
-    SymReturnData::from_byte_exprs(out)
+    out.resize_with(64 + bytes.len().next_multiple_of(32), || SymExpr::zero(cx));
+    SymReturnData::from_byte_exprs(cx, out)
 }
 
-pub(crate) fn abi_concrete_bytes_return(bytes: &[u8]) -> SymReturnData {
-    abi_bytes_return(bytes.iter().map(|byte| SymExpr::constant(U256::from(*byte))).collect())
+pub(crate) fn abi_concrete_bytes_return(cx: &mut SymCx, bytes: &[u8]) -> SymReturnData {
+    let bytes = bytes.iter().map(|byte| SymExpr::constant(cx, U256::from(*byte))).collect();
+    abi_bytes_return(cx, bytes)
 }
 
-pub(crate) fn abi_concrete_value_return(value: DynSolValue) -> SymReturnData {
-    SymReturnData::from_byte_exprs(
-        value.abi_encode().into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
-    )
+pub(crate) fn abi_concrete_value_return(cx: &mut SymCx, value: DynSolValue) -> SymReturnData {
+    let bytes = value
+        .abi_encode()
+        .into_iter()
+        .map(|byte| SymExpr::constant(cx, U256::from(byte)))
+        .collect();
+    SymReturnData::from_byte_exprs(cx, bytes)
 }
 
-pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData {
+pub(crate) fn recorded_logs_return_data(cx: &mut SymCx, logs: Vec<SymbolicLog>) -> SymReturnData {
     let value = SymbolicAbiValue::Array {
         elements: logs
             .into_iter()
@@ -303,7 +313,7 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                     .iter()
                     .cloned()
                     .map(|topic| SymbolicAbiValue::FixedBytes {
-                        bytes: topic.into_bytes(),
+                        bytes: topic.into_bytes(cx),
                         size: 32,
                     })
                     .collect();
@@ -312,38 +322,40 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                         SymbolicAbiValue::Array { elements: topics },
                         SymbolicAbiValue::Bytes { len: data_len, bytes: data },
                         SymbolicAbiValue::Address {
-                            word: SymExpr::constant(address_word(emitter)),
+                            word: SymExpr::constant(cx, address_word(emitter)),
                         },
                     ],
                 }
             })
             .collect(),
     };
-    SymReturnData::from_bytes(encode_sequence(std::iter::once(&value)))
+    let bytes = encode_sequence(cx, std::iter::once(&value));
+    SymReturnData::from_bytes(cx, bytes)
 }
 
 pub(crate) fn recorded_logs_json_return_data(
+    cx: &mut SymCx,
     logs: Vec<SymbolicLog>,
 ) -> Result<SymReturnData, SymbolicError> {
     let mut bytes = Vec::new();
-    push_ascii(&mut bytes, "[");
+    push_ascii(cx, &mut bytes, "[");
     for (log_idx, log) in logs.into_iter().enumerate() {
         let (topics, data_len, data, emitter) = log.into_parts();
         if log_idx > 0 {
-            push_ascii(&mut bytes, ",");
+            push_ascii(cx, &mut bytes, ",");
         }
-        push_ascii(&mut bytes, "{\"topics\":[");
+        push_ascii(cx, &mut bytes, "{\"topics\":[");
         for (topic_idx, topic) in topics.iter().cloned().enumerate() {
             if topic_idx > 0 {
-                push_ascii(&mut bytes, ",");
+                push_ascii(cx, &mut bytes, ",");
             }
-            push_ascii(&mut bytes, "\"0x");
-            push_hex_word(&mut bytes, topic);
-            push_ascii(&mut bytes, "\"");
+            push_ascii(cx, &mut bytes, "\"0x");
+            push_hex_word(cx, &mut bytes, topic);
+            push_ascii(cx, &mut bytes, "\"");
         }
-        push_ascii(&mut bytes, "],\"data\":\"0x");
+        push_ascii(cx, &mut bytes, "],\"data\":\"0x");
 
-        let len = data_len.into_concrete("symbolic vm.getRecordedLogsJson data length").and_then(
+        let len = data_len.as_const_or("symbolic vm.getRecordedLogsJson data length").and_then(
             |len| {
                 usize::try_from(len).map_err(|_| {
                     SymbolicError::Unsupported("symbolic vm.getRecordedLogsJson data length")
@@ -354,269 +366,291 @@ pub(crate) fn recorded_logs_json_return_data(
             return Err(SymbolicError::Unsupported("symbolic vm.getRecordedLogsJson data length"));
         }
         for idx in 0..len {
-            push_hex_byte(&mut bytes, data.byte(idx));
+            let byte = data.byte(cx, idx);
+            push_hex_byte(cx, &mut bytes, byte);
         }
 
-        push_ascii(&mut bytes, "\",\"emitter\":\"");
-        push_ascii(&mut bytes, &format!("{emitter}"));
-        push_ascii(&mut bytes, "\"}");
+        push_ascii(cx, &mut bytes, "\",\"emitter\":\"");
+        push_ascii(cx, &mut bytes, &format!("{emitter}"));
+        push_ascii(cx, &mut bytes, "\"}");
     }
-    push_ascii(&mut bytes, "]");
-    Ok(abi_bytes_return(bytes))
+    push_ascii(cx, &mut bytes, "]");
+    Ok(abi_bytes_return(cx, bytes))
 }
 
 pub(crate) fn accesses_return_data(
+    cx: &mut SymCx,
     record: Option<&AccessRecord>,
     target: Address,
 ) -> SymReturnData {
     let reads = record.map(|record| record.read_slots(target)).unwrap_or_default();
     let writes = record.map(|record| record.write_slots(target)).unwrap_or_default();
-    let values = [storage_slots_abi_array(reads), storage_slots_abi_array(writes)];
-    SymReturnData::from_bytes(encode_sequence(values.iter()))
+    let values = [storage_slots_abi_array(cx, reads), storage_slots_abi_array(cx, writes)];
+    let bytes = encode_sequence(cx, values.iter());
+    SymReturnData::from_bytes(cx, bytes)
 }
 
 pub(crate) fn complete_cheatcode_call(
+    cx: &mut SymCx,
     state: &mut PathState,
     out_offset: SymExpr,
     out_size: &BoundedCopySize,
     return_data: SymReturnData,
 ) -> Result<(), SymbolicError> {
     state.return_data = return_data;
-    state.copy_call_output_offset(out_offset, out_size)?;
-    state.stack.push(SymExpr::constant(U256::from(1)))?;
+    state.copy_call_output_offset(cx, out_offset, out_size)?;
+    state.stack.push(SymExpr::one(cx))?;
     Ok(())
 }
 
-pub(crate) fn storage_slots_abi_array(slots: Vec<SymExpr>) -> SymbolicAbiValue {
+pub(crate) fn storage_slots_abi_array(cx: &mut SymCx, slots: Vec<SymExpr>) -> SymbolicAbiValue {
     SymbolicAbiValue::Array {
         elements: slots
             .into_iter()
-            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: slot.into_bytes(), size: 32 })
+            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: slot.into_bytes(cx), size: 32 })
             .collect(),
     }
 }
 
-pub(crate) fn push_ascii(out: &mut Vec<SymExpr>, value: &str) {
-    out.extend(value.bytes().map(|byte| SymExpr::constant(U256::from(byte))));
+pub(crate) fn push_ascii(cx: &mut SymCx, out: &mut Vec<SymExpr>, value: &str) {
+    out.extend(value.bytes().map(|byte| SymExpr::constant(cx, U256::from(byte))));
 }
 
-pub(crate) fn push_hex_word(out: &mut Vec<SymExpr>, word: SymExpr) {
-    for byte in word.into_byte_exprs() {
-        push_hex_byte(out, byte);
+pub(crate) fn push_hex_word(cx: &mut SymCx, out: &mut Vec<SymExpr>, word: SymExpr) {
+    for byte in word.into_byte_exprs(cx) {
+        push_hex_byte(cx, out, byte);
     }
 }
 
-pub(crate) fn push_hex_byte(out: &mut Vec<SymExpr>, byte: SymExpr) {
-    let byte = byte.low_byte();
+pub(crate) fn push_hex_byte(cx: &mut SymCx, out: &mut Vec<SymExpr>, byte: SymExpr) {
+    let byte = byte.low_byte(cx);
     let (high, low) = if let Some(value) = byte.as_const() {
         (
-            SymExpr::constant(U256::from(value.to::<u8>() >> 4)),
-            SymExpr::constant(U256::from(value.to::<u8>() & 0x0f)),
+            SymExpr::constant(cx, U256::from(value.to::<u8>() >> 4)),
+            SymExpr::constant(cx, U256::from(value.to::<u8>() & 0x0f)),
         )
     } else {
         let expr = byte;
+        let shift = SymExpr::constant(cx, U256::from(4));
+        let mask = SymExpr::constant(cx, U256::from(0x0f));
         (
-            SymExpr::op(SymExprOp::Shr, expr.clone(), SymExpr::constant(U256::from(4))),
-            SymExpr::op(SymExprOp::And, expr, SymExpr::constant(U256::from(0x0f))),
+            SymExpr::binop(cx, SymBinOp::Shr, expr.clone(), shift),
+            SymExpr::binop(cx, SymBinOp::And, expr, mask),
         )
     };
-    out.push(hex_nibble_ascii(high));
-    out.push(hex_nibble_ascii(low));
+    out.push(hex_nibble_ascii(cx, high));
+    out.push(hex_nibble_ascii(cx, low));
 }
 
-pub(crate) fn hex_nibble_ascii(nibble: SymExpr) -> SymExpr {
-    let nibble = nibble.low_byte();
+pub(crate) fn hex_nibble_ascii(cx: &mut SymCx, nibble: SymExpr) -> SymExpr {
+    let nibble = nibble.low_byte(cx);
     if let Some(value) = nibble.as_const() {
         let nibble = value.to::<u8>() & 0x0f;
         let byte = if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) };
-        SymExpr::constant(U256::from(byte))
+        SymExpr::constant(cx, U256::from(byte))
     } else {
-        SymExpr::ite(
-            SymBoolExpr::cmp(SymBoolExprOp::Ult, nibble.clone(), SymExpr::constant(U256::from(10))),
-            SymExpr::op(SymExprOp::Add, nibble.clone(), SymExpr::constant(U256::from(b'0'))),
-            SymExpr::op(SymExprOp::Add, nibble, SymExpr::constant(U256::from(b'a' - 10))),
-        )
+        let ten = SymExpr::constant(cx, U256::from(10));
+        let condition = SymBoolExpr::cmp(cx, SymCmpOp::Ult, nibble.clone(), ten);
+        let zero = SymExpr::constant(cx, U256::from(b'0'));
+        let digit = SymExpr::binop(cx, SymBinOp::Add, nibble.clone(), zero);
+        let alpha_base = SymExpr::constant(cx, U256::from(b'a' - 10));
+        let alpha = SymExpr::binop(cx, SymBinOp::Add, nibble, alpha_base);
+        SymExpr::ite(cx, condition, digit, alpha)
     }
 }
 
 pub(crate) fn read_abi_word_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
 ) -> Result<SymExpr, SymbolicError> {
-    memory.load_word(args_offset + index * 32)
+    memory.load_word(cx, args_offset + index * 32)
 }
 
 pub(crate) fn read_abi_concrete_word_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<U256, SymbolicError> {
-    read_abi_word_arg(memory, args_offset, index)?.into_concrete(reason)
+    read_abi_word_arg(cx, memory, args_offset, index)?.as_const_or(reason)
 }
 
 pub(crate) fn read_abi_constrained_word_arg(
+    cx: &mut SymCx,
     state: &PathState,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<U256, SymbolicError> {
-    let word = read_abi_word_arg(&state.memory, args_offset, index)?;
-    state.expect_constrained_word(word, reason)
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    state.expect_constrained_word(cx, word, reason)
 }
 
 pub(crate) fn read_abi_constrained_address_arg(
+    cx: &mut SymCx,
     state: &PathState,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<Address, SymbolicError> {
-    Ok(word_to_address(read_abi_constrained_word_arg(state, args_offset, index, reason)?))
+    Ok(word_to_address(read_abi_constrained_word_arg(cx, state, args_offset, index, reason)?))
 }
 
 pub(crate) fn read_abi_address_or_symbolic_slot_arg(
+    cx: &mut SymCx,
     state: &mut PathState,
     args_offset: usize,
     index: usize,
 ) -> Result<Address, SymbolicError> {
-    let word = read_abi_word_arg(&state.memory, args_offset, index)?;
-    Ok(state.address_or_symbolic_slot(word))
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    Ok(state.address_or_symbolic_slot(cx, word))
 }
 
 pub(crate) fn read_abi_address_word_or_symbolic_slot_arg(
+    cx: &mut SymCx,
     state: &mut PathState,
     args_offset: usize,
     index: usize,
 ) -> Result<(Address, SymExpr), SymbolicError> {
-    let word = read_abi_word_arg(&state.memory, args_offset, index)?;
-    let address = state.address_or_symbolic_slot(word.clone());
+    let word = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    let address = state.address_or_symbolic_slot(cx, word.clone());
     Ok((address, word))
 }
 
 pub(crate) fn read_abi_address_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<Address, SymbolicError> {
-    Ok(word_to_address(read_abi_concrete_word_arg(memory, args_offset, index, reason)?))
+    Ok(word_to_address(read_abi_concrete_word_arg(cx, memory, args_offset, index, reason)?))
 }
 
 pub(crate) fn read_abi_bool_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<bool, SymbolicError> {
-    Ok(!read_abi_concrete_word_arg(memory, args_offset, index, reason)?.is_zero())
+    Ok(!read_abi_concrete_word_arg(cx, memory, args_offset, index, reason)?.is_zero())
 }
 
 pub(crate) fn read_abi_u64_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<u64, SymbolicError> {
-    let value = read_abi_concrete_word_arg(memory, args_offset, index, reason)?;
+    let value = read_abi_concrete_word_arg(cx, memory, args_offset, index, reason)?;
     u64::try_from(value).map_err(|_| SymbolicError::Unsupported(reason))
 }
 
 pub(crate) fn read_abi_u32_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<u32, SymbolicError> {
-    let value = read_abi_concrete_word_arg(memory, args_offset, index, reason)?;
+    let value = read_abi_concrete_word_arg(cx, memory, args_offset, index, reason)?;
     u32::try_from(value).map_err(|_| SymbolicError::Unsupported(reason))
 }
 
 pub(crate) fn read_abi_bytes4_words_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
 ) -> Vec<SymExpr> {
-    memory.read_byte_exprs(args_offset + index * 32, 4)
+    memory.read_byte_exprs(cx, args_offset + index * 32, 4)
 }
 
 pub(crate) fn read_abi_dynamic_bytes_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<Vec<u8>, SymbolicError> {
-    let offset = usize::try_from(read_abi_concrete_word_arg(memory, args_offset, index, reason)?)
-        .map_err(|_| SymbolicError::Unsupported(reason))?;
+    let offset =
+        usize::try_from(read_abi_concrete_word_arg(cx, memory, args_offset, index, reason)?)
+            .map_err(|_| SymbolicError::Unsupported(reason))?;
     let len_offset = args_offset.checked_add(offset).ok_or(SymbolicError::Unsupported(reason))?;
     let data_offset = len_offset.checked_add(32).ok_or(SymbolicError::Unsupported(reason))?;
-    let len = memory.load_word(len_offset)?.into_usize(reason)?;
-    memory.read_concrete(data_offset, len)
+    let len = memory.load_word(cx, len_offset)?.as_usize_or(reason)?;
+    memory.read_concrete(cx, data_offset, len)
 }
 
 pub(crate) fn read_abi_symbolic_dynamic_bytes_arg(
+    cx: &mut SymCx,
     state: &PathState,
     args_offset: usize,
     index: usize,
     max_len: usize,
     reason: &'static str,
 ) -> Result<SymBytes, SymbolicError> {
-    let offset = read_abi_word_arg(&state.memory, args_offset, index)?;
-    let offset = state.expect_constrained_usize(offset, reason)?;
+    let offset = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    let offset = state.expect_constrained_usize(cx, offset, reason)?;
     let len_offset = args_offset.checked_add(offset).ok_or(SymbolicError::Unsupported(reason))?;
-    let len = state.memory.load_word(len_offset)?;
-    let len = state.expect_constrained_usize(len, reason)?;
+    let len = state.memory.load_word(cx, len_offset)?;
+    let len = state.expect_constrained_usize(cx, len, reason)?;
     if len > max_len {
         return Err(SymbolicError::Unsupported(reason));
     }
     let data_offset = len_offset.checked_add(32).ok_or(SymbolicError::Unsupported(reason))?;
-    Ok(state.memory.read_bytes(data_offset, len))
+    Ok(state.memory.read_bytes(cx, data_offset, len))
 }
 
 pub(crate) fn read_abi_symbolic_dynamic_byte_exprs_arg(
+    cx: &mut SymCx,
     state: &PathState,
     args_offset: usize,
     index: usize,
     max_len: usize,
     reason: &'static str,
 ) -> Result<Vec<SymExpr>, SymbolicError> {
-    Ok(read_abi_symbolic_dynamic_bytes_arg(state, args_offset, index, max_len, reason)?
-        .materialize())
+    Ok(read_abi_symbolic_dynamic_bytes_arg(cx, state, args_offset, index, max_len, reason)?
+        .materialize(cx))
 }
 
 pub(crate) fn read_abi_dynamic_return_data_arg(
+    cx: &mut SymCx,
     state: &PathState,
     args_offset: usize,
     index: usize,
     max_len: usize,
     reason: &'static str,
 ) -> Result<SymReturnData, SymbolicError> {
-    Ok(SymReturnData::from_bytes(read_abi_symbolic_dynamic_bytes_arg(
-        state,
-        args_offset,
-        index,
-        max_len,
-        reason,
-    )?))
+    let bytes =
+        read_abi_symbolic_dynamic_bytes_arg(cx, state, args_offset, index, max_len, reason)?;
+    Ok(SymReturnData::from_bytes(cx, bytes))
 }
 
 pub(crate) fn read_abi_symbolic_dynamic_bytes_array_arg(
+    cx: &mut SymCx,
     state: &PathState,
     args_offset: usize,
     index: usize,
     max_array_len: usize,
     max_bytes_len: usize,
 ) -> Result<Vec<SymReturnData>, SymbolicError> {
-    let offset = read_abi_word_arg(&state.memory, args_offset, index)?;
-    let offset = state.expect_constrained_usize(offset, "symbolic vm.mockCalls returns offset")?;
+    let offset = read_abi_word_arg(cx, &state.memory, args_offset, index)?;
+    let offset =
+        state.expect_constrained_usize(cx, offset, "symbolic vm.mockCalls returns offset")?;
     let array_offset = args_offset
         .checked_add(offset)
         .ok_or(SymbolicError::Unsupported("symbolic vm.mockCalls returns offset"))?;
     let array_data_offset = array_offset
         .checked_add(32)
         .ok_or(SymbolicError::Unsupported("symbolic vm.mockCalls returns offset"))?;
-    let len = state.memory.load_word(array_offset)?;
-    let len = state.expect_constrained_usize(len, "symbolic vm.mockCalls returns length")?;
+    let len = state.memory.load_word(cx, array_offset)?;
+    let len = state.expect_constrained_usize(cx, len, "symbolic vm.mockCalls returns length")?;
     if len > max_array_len {
         return Err(SymbolicError::Unsupported("symbolic vm.mockCalls returns length"));
     }
@@ -627,46 +661,53 @@ pub(crate) fn read_abi_symbolic_dynamic_bytes_array_arg(
             .checked_add(32)
             .and_then(|offset| offset.checked_add(value_idx.saturating_mul(32)))
             .ok_or(SymbolicError::Unsupported("symbolic vm.mockCalls returns element offset"))?;
-        let value_offset = state.memory.load_word(head_offset)?;
+        let value_offset = state.memory.load_word(cx, head_offset)?;
         let value_offset = state.expect_constrained_usize(
+            cx,
             value_offset,
             "symbolic vm.mockCalls returns element offset",
         )?;
         let len_offset = array_data_offset
             .checked_add(value_offset)
             .ok_or(SymbolicError::Unsupported("symbolic vm.mockCalls returns element offset"))?;
-        let value_len = state.memory.load_word(len_offset)?;
-        let value_len = state
-            .expect_constrained_usize(value_len, "symbolic vm.mockCalls returns element length")?;
+        let value_len = state.memory.load_word(cx, len_offset)?;
+        let value_len = state.expect_constrained_usize(
+            cx,
+            value_len,
+            "symbolic vm.mockCalls returns element length",
+        )?;
         if value_len > max_bytes_len {
             return Err(SymbolicError::Unsupported("symbolic vm.mockCalls returns element length"));
         }
         let data_offset = len_offset
             .checked_add(32)
             .ok_or(SymbolicError::Unsupported("symbolic vm.mockCalls returns element offset"))?;
-        values.push(SymReturnData::from_bytes(state.memory.read_bytes(data_offset, value_len)));
+        let bytes = state.memory.read_bytes(cx, data_offset, value_len);
+        values.push(SymReturnData::from_bytes(cx, bytes));
     }
 
     Ok(values)
 }
 
 pub(crate) fn read_abi_string_arg(
+    cx: &mut SymCx,
     memory: &SymMemory,
     args_offset: usize,
     index: usize,
     reason: &'static str,
 ) -> Result<String, SymbolicError> {
-    String::from_utf8(read_abi_dynamic_bytes_arg(memory, args_offset, index, reason)?)
+    String::from_utf8(read_abi_dynamic_bytes_arg(cx, memory, args_offset, index, reason)?)
         .map_err(|_| SymbolicError::Unsupported(reason))
 }
 
 pub(crate) fn decode_cheatcode_args(
+    cx: &mut SymCx,
     state: &PathState,
     in_offset: usize,
     in_size: usize,
     tys: Vec<DynSolType>,
 ) -> Result<Vec<DynSolValue>, SymbolicError> {
-    let data = state.memory.read_concrete(in_offset + 4, in_size.saturating_sub(4))?;
+    let data = state.memory.read_concrete(cx, in_offset + 4, in_size.saturating_sub(4))?;
     let value = DynSolType::Tuple(tys)
         .abi_decode_sequence(&data)
         .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode ABI decode"))?;
@@ -762,7 +803,10 @@ pub(crate) const fn dyn_address(value: &DynSolValue) -> Result<Address, Symbolic
     }
 }
 
-pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert, SymbolicError> {
+pub(crate) fn dyn_potential_revert(
+    cx: &mut SymCx,
+    value: &DynSolValue,
+) -> Result<ExpectedRevert, SymbolicError> {
     let DynSolValue::Tuple(values) = value else {
         return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"));
     };
@@ -771,8 +815,9 @@ pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert
     };
 
     let reverter = dyn_address(reverter)?;
-    let reverter = (reverter != Address::ZERO).then(|| SymExpr::constant(address_word(reverter)));
-    let revert_data = SymBytes::concrete(dyn_bytes(revert_data)?);
+    let reverter =
+        (reverter != Address::ZERO).then(|| SymExpr::constant(cx, address_word(reverter)));
+    let revert_data = SymBytes::concrete(cx, dyn_bytes(revert_data)?);
     let data = if dyn_bool(partial_match)? {
         ExpectedRevertData::prefix(revert_data)
     } else {
@@ -782,12 +827,13 @@ pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert
 }
 
 pub(crate) fn dyn_potential_reverts(
+    cx: &mut SymCx,
     value: &DynSolValue,
 ) -> Result<Vec<ExpectedRevert>, SymbolicError> {
     let DynSolValue::Array(values) = value else {
         return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"));
     };
-    values.iter().map(dyn_potential_revert).collect()
+    values.iter().map(|value| dyn_potential_revert(cx, value)).collect()
 }
 
 pub(crate) fn dyn_address_array(value: &DynSolValue) -> Result<Vec<Address>, SymbolicError> {
@@ -907,6 +953,7 @@ pub(crate) fn private_key_address(private_key: U256) -> Result<Address, Symbolic
 }
 
 pub(crate) fn sign_hash_words(
+    cx: &mut SymCx,
     private_key: U256,
     digest: U256,
 ) -> Result<Vec<SymExpr>, SymbolicError> {
@@ -916,13 +963,14 @@ pub(crate) fn sign_hash_words(
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.sign"))?;
     Ok(vec![
-        SymExpr::constant(U256::from(sig.v() as u64 + 27)),
-        SymExpr::constant(sig.r()),
-        SymExpr::constant(sig.s()),
+        SymExpr::constant(cx, U256::from(sig.v() as u64 + 27)),
+        SymExpr::constant(cx, sig.r()),
+        SymExpr::constant(cx, sig.s()),
     ])
 }
 
 pub(crate) fn sign_compact_hash_words(
+    cx: &mut SymCx,
     private_key: U256,
     digest: U256,
 ) -> Result<Vec<SymExpr>, SymbolicError> {
@@ -932,7 +980,7 @@ pub(crate) fn sign_compact_hash_words(
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.signCompact"))?;
     let y_parity = U256::from(sig.v() as u64) << 255;
-    Ok(vec![SymExpr::constant(sig.r()), SymExpr::constant(sig.s() | y_parity)])
+    Ok(vec![SymExpr::constant(cx, sig.r()), SymExpr::constant(cx, sig.s() | y_parity)])
 }
 
 pub(crate) fn derive_private_key<W: Wordlist>(

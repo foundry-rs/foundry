@@ -28,14 +28,15 @@ impl SymExpr {
 
 fn is_hard_arith_node(expr: &SymExpr) -> bool {
     match expr.kind() {
-        SymExprKind::Op(SymExprOp::Mul, left, right) => left.contains_var() && right.contains_var(),
-        SymExprKind::Op(
-            SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
+        SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+            left.contains_var() && right.contains_var()
+        }
+        SymExprKind::BinOp(
+            SymBinOp::UDiv | SymBinOp::URem | SymBinOp::SDiv | SymBinOp::SRem,
             left,
             right,
         ) => left.contains_var() || right.contains_var(),
-        SymExprKind::AddMod { left, right, modulus }
-        | SymExprKind::MulMod { left, right, modulus } => {
+        SymExprKind::TernOp(_, left, right, modulus) => {
             left.contains_var() || right.contains_var() || modulus.contains_var()
         }
         _ => false,
@@ -82,7 +83,7 @@ pub(crate) fn hard_arith_fallback_model(constraints: &[SymBoolExpr]) -> Option<S
         .iter()
         .map(|var| fallback_candidates_for_var(var.as_str(), constraints, &constants))
         .collect::<Option<Vec<_>>>()?;
-    let searched_vars = vars.iter().copied().collect::<SymbolicVars>();
+    let searched_vars = vars.iter().cloned().collect::<SymbolicVars>();
     let constraint_vars = constraints
         .iter()
         .map(|constraint| {
@@ -191,7 +192,7 @@ impl FallbackSearch<'_> {
         }
 
         for candidate in &self.candidates[index] {
-            model.insert(self.vars[index], *candidate);
+            model.insert(self.vars[index].clone(), *candidate);
             if fallback_partial_model_satisfies_known_constraints(
                 self.constraints,
                 self.constraint_vars,
@@ -225,7 +226,7 @@ fn fallback_partial_model_satisfies_known_constraints(
 ) -> bool {
     constraints.iter().zip(constraint_vars).all(|(constraint, vars)| {
         !vars.is_subset(searched_vars)
-            || !vars.iter().all(|var| model.contains_name(*var))
+            || !vars.iter().all(|var| model.contains_name(var.clone()))
             || constraint.eval_model(model).unwrap_or(false)
     })
 }
@@ -233,13 +234,12 @@ fn fallback_partial_model_satisfies_known_constraints(
 fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit_exprs(&mut |expr| {
         if let SymExprKind::Var(var) = expr.kind() {
-            vars.insert(*var);
+            vars.insert(var.clone());
         }
         ControlFlow::<()>::Continue(())
     });
 }
 
-#[cfg(test)]
 pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
     let mut vars = SymbolicVars::default();
     let mut constants = HashSet::<U256>::default();
@@ -250,7 +250,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     let mut constants = constants.into_iter().collect::<Vec<_>>();
     constants.sort_unstable();
 
-    let var = if vars.len() == 1 { *vars.iter().next()? } else { return None };
+    let var = if vars.len() == 1 { vars.iter().next()?.clone() } else { return None };
     let hints = MaskHints::for_var(var.as_str(), constraints);
     if (hints.one & hints.zero) != U256::ZERO {
         return None;
@@ -287,7 +287,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     candidates.sort_unstable();
     for candidate in candidates {
         let mut model = SymbolicModel::default();
-        model.insert(var, candidate);
+        model.insert(var.clone(), candidate);
         if constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(false)) {
             return Some(model);
         }
@@ -333,7 +333,9 @@ impl MaskHints {
                     self.apply_bool(var, value, false);
                 }
             }
-            SymBoolExprKind::Eq(left, right) => self.apply_equality(var, left, right, inverted),
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                self.apply_equality(var, left, right, inverted)
+            }
             SymBoolExprKind::Cmp(_, _, _) | SymBoolExprKind::And(_) => {}
         }
     }
@@ -356,7 +358,7 @@ fn zero_mask_equality(var: &str, masked: &SymExpr, zero: &SymExpr) -> Option<U25
         return None;
     }
     match masked.kind() {
-        SymExprKind::Op(SymExprOp::And, left, right) => match (left.kind(), right.kind()) {
+        SymExprKind::BinOp(SymBinOp::And, left, right) => match (left.kind(), right.kind()) {
             (SymExprKind::Var(name), SymExprKind::Const(mask))
             | (SymExprKind::Const(mask), SymExprKind::Var(name))
                 if name.as_str() == var =>

@@ -10,7 +10,7 @@ use alloy_signer::{Signature, Signer};
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, parse_etherscan_license_type};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{
@@ -88,6 +88,20 @@ pub struct CreateArgs {
     /// the browser.
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
+
+    /// The Etherscan license type code or SPDX identifier to include with the verification
+    /// request.
+    ///
+    /// Accepts either an Etherscan numeric license code or a common SPDX identifier such as `MIT`.
+    /// This is only used for Etherscan-style verifiers when `--verify` is enabled.
+    #[arg(
+        long,
+        requires = "verify",
+        value_name = "LICENSE",
+        help_heading = "Verifier options",
+        value_parser = parse_etherscan_license_type,
+    )]
+    license_type: Option<String>,
 
     /// Timeout to use for broadcasting transactions.
     #[arg(long, env = "ETH_TIMEOUT")]
@@ -355,8 +369,8 @@ impl CreateArgs {
             libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
-            via_ir: self.build.via_ir,
-            license_type: None,
+            via_ir: self.build.compiler.via_ir,
+            license_type: self.license_type.clone(),
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -696,8 +710,8 @@ impl CreateArgs {
             libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier,
-            via_ir: self.build.via_ir,
-            license_type: None,
+            via_ir: self.build.compiler.via_ir,
+            license_type: self.license_type,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -920,10 +934,39 @@ mod tests {
             "10",
             "--delay",
             "30",
+            "--license-type",
+            "13",
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
     }
+
+    #[test]
+    fn can_parse_create_license_type_spdx() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "MIT",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn errors_on_invalid_create_license_type() {
+        let err = CreateArgs::try_parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "definitely-not-a-license",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("unsupported Etherscan license type"));
+    }
+
     #[test]
     fn can_parse_chain_id() {
         let args: CreateArgs = CreateArgs::parse_from([

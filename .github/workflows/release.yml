@@ -230,7 +230,7 @@ jobs:
         run: |
           cargo install cross --locked \
             --git https://github.com/cross-rs/cross \
-            --rev baf457efc2555225af47963475bd70e8d2f5993f
+            --rev 64b5bb4d3d34de062552b9a2093affe77b4ad16a
 
       - name: Build binaries
         env:
