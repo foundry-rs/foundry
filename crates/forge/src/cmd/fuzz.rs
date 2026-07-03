@@ -19,8 +19,6 @@ use foundry_common::{
     shell::{OutputMode, Shell},
 };
 use foundry_config::Config;
-#[cfg(test)]
-use foundry_evm::executors::ReplayFailure;
 use foundry_evm::{
     executors::{CorpusDirEntry, ReplayObservation, ShowmapDomain, read_corpus_tree},
     fuzz::BasicTxDetails,
@@ -1233,6 +1231,7 @@ fn merge_new_edge_vec(cumulative: &mut Vec<u8>, candidate: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::executors::ReplayFailure;
 
     fn decoder_with_functions(functions: Vec<Function>) -> CorpusDecoder {
         let mut decoder = CorpusDecoder::default();
