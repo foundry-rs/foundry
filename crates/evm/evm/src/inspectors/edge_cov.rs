@@ -347,15 +347,22 @@ impl EdgeCovInspector {
         };
 
         let site = CmpSiteKey::new(&cmp);
-        if let Some(count) = self.cmp_site_counts.get_mut(&site) {
-            if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
-                return;
+        let can_insert_site = self.cmp_site_counts.len() < MAX_CMP_LOG_SITES;
+        match self.cmp_site_counts.entry(site) {
+            Entry::Occupied(mut entry) => {
+                let count = entry.get_mut();
+                if *count >= MAX_CMP_OBSERVATIONS_PER_SITE {
+                    return;
+                }
+                *count += 1;
+                cmp_log.push(cmp);
             }
-            *count += 1;
-            cmp_log.push(cmp);
-        } else if self.cmp_site_counts.len() < MAX_CMP_LOG_SITES {
-            self.cmp_site_counts.insert(site, 1);
-            cmp_log.push(cmp);
+            Entry::Vacant(entry) => {
+                if can_insert_site {
+                    entry.insert(1);
+                    cmp_log.push(cmp);
+                }
+            }
         }
     }
 
