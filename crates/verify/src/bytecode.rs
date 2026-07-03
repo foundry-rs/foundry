@@ -203,9 +203,9 @@ impl VerifyBytecodeArgs {
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
-        // Whether the user explicitly configured a block explorer. Client setup errors are only
-        // treated as "no explorer available" when nothing was configured: an explicitly provided
-        // verifier or API key that fails to resolve must still surface as an error.
+        // Whether a block explorer is configured for this chain. Client setup errors are only
+        // treated as "no explorer available" when no usable verifier, verifier URL, or resolved
+        // API key is configured.
         let has_explorer_config = self.verifier.verifier.is_some()
             || self.verifier.verifier_url.is_some()
             || self.verifier.verifier_api_key.is_some()
