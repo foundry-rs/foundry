@@ -28,6 +28,8 @@ abstract contract EmptyBlockBase {
 
     // Virtual middle hook stays exempt even when it also overrides.
     function middleHook() internal virtual {}
+
+    function _authorizeUpgrade(address newImplementation) internal virtual {}
 }
 
 contract EmptyBlockWithArg {
@@ -45,6 +47,9 @@ contract EmptyBlock is EmptyBlockBase, EmptyBlockWithArg {
 
     // Payable with an empty body is an intentional ether sink.
     function deposit() external payable {}
+
+    // Payable with a return value silently returns the default: an unfinished stub.
+    function payableReturns() external payable returns (uint256) {} //~WARN: empty function body
 
     function emptyPublic() public {} //~WARN: empty function body
 
@@ -64,11 +69,15 @@ contract EmptyBlock is EmptyBlockBase, EmptyBlockWithArg {
     // Overriding a parent declaration with an empty, non-virtual body is dead code.
     function toImplement() external override {} //~WARN: empty function body
 
-    // The modifier body runs, but the function itself is still empty.
-    function withModifier() public noop {} //~WARN: empty function body
+    // The modifier carries the behavior: `initializer`-style and `onlyOwner`-style guards
+    // commonly wrap an intentionally empty body.
+    function withModifier() public noop {}
 
     // Virtual override: still an extension hook, exempt.
     function middleHook() internal virtual override {}
+
+    // The UUPS pattern: the modifier is the whole point of the function.
+    function _authorizeUpgrade(address newImplementation) internal override noop {}
 
     function nonEmpty() public {
         value = 1;

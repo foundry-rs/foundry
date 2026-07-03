@@ -17,6 +17,14 @@ LL │     function libEmpty(uint256 x) internal pure {}
 warning[empty-block]: empty function body
    ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
    │
+LL │     function payableReturns() external payable returns (uint256) {}
+   │                                                                  ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/empty-block
+
+warning[empty-block]: empty function body
+   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
+   │
 LL │     function emptyPublic() public {}
    │                                   ━━
    │
@@ -75,14 +83,6 @@ warning[empty-block]: empty function body
    │
 LL │     function toImplement() external override {}
    │                                              ━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/empty-block
-
-warning[empty-block]: empty function body
-   ╭▸ ROOT/testdata/EmptyBlock.sol:LL:CC
-   │
-LL │     function withModifier() public noop {}
-   │                                         ━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/empty-block
 

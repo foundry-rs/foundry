@@ -14,7 +14,8 @@ Bodies whose emptiness is the behavior are exempt:
 - constructors: an empty body is how a contract calls base constructors (`constructor() Base(1) {}`) or is simply made deployable;
 - `receive` and `fallback`: the empty body is what accepts plain ether transfers or unknown calls;
 - `virtual` functions: an empty body is the intentional default of an extension hook meant to be overridden;
-- `payable` functions: an empty body is an intentional ether sink (`function deposit() external payable {}`).
+- functions with modifiers: the modifier carries the behavior, as in `initialize() external initializer {}` or `_authorizeUpgrade(address) internal override onlyOwner {}`;
+- `payable` functions without return values: an empty body is an intentional ether sink (`function deposit() external payable {}`). With a return value the body silently returns the default, which reads as an unfinished stub and is reported.
 
 Functions without a body (interface members, abstract declarations) never fire, and an empty modifier body is a solc compile error (2883), so it never reaches the linter. Empty blocks nested inside a non-empty body (`if (x) {}`) are out of scope.
 
