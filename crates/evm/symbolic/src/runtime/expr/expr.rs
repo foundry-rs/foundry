@@ -1,8 +1,4 @@
-use super::{
-    hashcons::{HashConsHasher, HashConsed},
-    *,
-};
-use std::hash::BuildHasher;
+use super::{hashcons::HashConsed, *};
 
 pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();
@@ -757,7 +753,9 @@ impl SymExpr {
             // Put less complex operands, like constants, on the RHS.
             std::cmp::Ordering::Less => (right, left),
             std::cmp::Ordering::Greater => (left, right),
-            std::cmp::Ordering::Equal if right.order_hash() < left.order_hash() => (right, left),
+            std::cmp::Ordering::Equal if right.kind.stable_hash_cmp(&left.kind).is_lt() => {
+                (right, left)
+            }
             std::cmp::Ordering::Equal => (left, right),
         }
     }
@@ -770,11 +768,6 @@ impl SymExpr {
             SymExprKind::TernOp(..) => 3,
             _ => 4,
         }
-    }
-
-    fn order_hash(&self) -> u64 {
-        const HASHER: HashConsHasher = HashConsHasher::with_seed(0);
-        HASHER.hash_one(&self.kind)
     }
 
     fn and_const(cx: &mut SymCx, expr: Self, mask: U256) -> Self {

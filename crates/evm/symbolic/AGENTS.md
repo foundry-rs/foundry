@@ -47,9 +47,10 @@ scoped to the modeled EVM surface and configured bounds.
   Use `SymExpr::get_var(cx, symbol)` when you already have a `Symbol`.
 - `HashConsed` equality is pointer equality. Structural equality is enforced by
   `HashCons::make`; do not add ad hoc deep equality on handles.
-- `HashCons` is generic over its hasher and defaults to Alloy/foldhash
-  `FixedState` for stable expression hashes. Do not expose raw cached hash
-  accessors just to order expressions.
+- `HashCons` owns an Alloy/foldhash `FixedState` and stores the cached
+  structural hash in each handle. Use hashcons-local helpers for stable
+  expression ordering; do not expose raw cached hash accessors just to order
+  expressions.
 - `SymExpr::binop` must accept both EVM operand orders because simplification
   happens before commutative canonicalization.
 - Normalized commutative word ops put simpler operands on the RHS; constants end

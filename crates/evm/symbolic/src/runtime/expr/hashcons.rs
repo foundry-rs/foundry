@@ -1,6 +1,7 @@
 use alloy_primitives::map::foldhash::fast::FixedState;
 use hashbrown::{HashTable, hash_table::Entry};
 use std::{
+    cmp::Ordering,
     fmt,
     hash::{BuildHasher, Hash, Hasher},
     sync::{Arc, Weak},
@@ -20,6 +21,11 @@ struct HashConsedInner<T> {
 }
 
 impl<T> HashConsed<T> {
+    #[inline]
+    pub(in crate::runtime::expr) fn stable_hash_cmp(&self, other: &Self) -> Ordering {
+        self.inner.hash.cmp(&other.inner.hash)
+    }
+
     #[inline]
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
@@ -80,16 +86,16 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
     }
 }
 
-pub(in crate::runtime::expr) type HashConsHasher = FixedState;
+type HashConsHasher = FixedState;
 
 /// Hash-consing table for sharing structurally equal immutable values.
 ///
 /// The table stores weak references so interned values disappear when the rest of
 /// the symbolic state stops using them. `make` only looks up and inserts; dead
 /// weak entries are ignored and left in the table until the context is dropped.
-pub(in crate::runtime) struct HashCons<T, S = HashConsHasher> {
+pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
-    hash_builder: S,
+    hash_builder: HashConsHasher,
 }
 
 struct HashConsEntry<T> {
@@ -105,23 +111,15 @@ impl<T> HashConsEntry<T> {
 
 impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
-        Self::with_hasher(HashConsHasher::default())
+        Self { table: HashTable::new(), hash_builder: HashConsHasher::default() }
     }
-}
 
-impl<T, S> HashCons<T, S> {
-    pub(in crate::runtime) const fn with_hasher(hash_builder: S) -> Self {
-        Self { table: HashTable::new(), hash_builder }
-    }
-}
-
-impl<T, S: BuildHasher> HashCons<T, S> {
     fn hash<Q: Hash + ?Sized>(&self, value: &Q) -> u64 {
         self.hash_builder.hash_one(value)
     }
 }
 
-impl<T: Eq + Hash, S: BuildHasher> HashCons<T, S> {
+impl<T: Eq + Hash> HashCons<T> {
     pub(in crate::runtime) fn make(&mut self, value: T) -> HashConsed<T> {
         let hash = self.hash(&value);
         let mut found = None;
