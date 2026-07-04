@@ -787,6 +787,15 @@ fn minimize_uint(
         return true;
     }
 
+    let one = U256::from(1);
+    if current > one && accept_candidate(value, DynSolValue::Uint(one, bits), try_value) {
+        return true;
+    }
+
+    if minimize_uint_by_search(value, current, bits, try_value) {
+        return true;
+    }
+
     let bit_limit = bits.min(256);
     for bit in (0..bit_limit).rev() {
         let mask = U256::from(1) << bit;
@@ -799,7 +808,7 @@ fn minimize_uint(
         }
     }
 
-    minimize_uint_by_search(value, current, bits, try_value)
+    false
 }
 
 fn minimize_uint_by_search(
