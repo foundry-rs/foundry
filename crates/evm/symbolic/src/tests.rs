@@ -2163,6 +2163,27 @@ fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
 }
 
 #[test]
+fn symbolic_storage_key_equality_compares_mapping_key_words() {
+    let mut cx = SymCx::new();
+    let left_owner = SymExpr::var(&mut cx, "left_owner");
+    let right_owner = SymExpr::var(&mut cx, "right_owner");
+    let slot = SymExpr::constant(&mut cx, U256::from(3));
+
+    let mut left_key_bytes = left_owner.clone().into_byte_exprs(&mut cx);
+    left_key_bytes.extend(slot.clone().into_byte_exprs(&mut cx));
+    let left = keccak_word(&mut cx, left_key_bytes);
+
+    let mut right_key_bytes = right_owner.clone().into_byte_exprs(&mut cx);
+    right_key_bytes.extend(slot.into_byte_exprs(&mut cx));
+    let right = keccak_word(&mut cx, right_key_bytes);
+
+    let condition = left.storage_key_eq(&mut cx, &right);
+    let expected = SymBoolExpr::eq(&mut cx, left_owner, right_owner);
+
+    assert_eq!(condition, expected);
+}
+
+#[test]
 fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
     let mut cx = SymCx::new();
     let owner = SymExpr::var(&mut cx, "owner");
@@ -2459,11 +2480,35 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
     let masked = SymExpr::binop(&mut cx, SymBinOp::And, x, mask.clone());
     let actual = SymExpr::binop(&mut cx, SymBinOp::And, masked.clone(), mask);
     assert_eq!(actual, masked);
+    let mask_value = (U256::from(1) << 128) - U256::from(1);
+    let mask = SymExpr::constant(&mut cx, mask_value);
+    let x = SymExpr::var(&mut cx, "x");
+    let left_masked = SymExpr::binop(&mut cx, SymBinOp::And, mask.clone(), x.clone());
+    let right_masked = SymExpr::binop(&mut cx, SymBinOp::And, x, mask);
+    assert_eq!(left_masked, right_masked);
     let six = SymExpr::constant(&mut cx, U256::from(6));
     let seven = SymExpr::constant(&mut cx, U256::from(7));
     let actual = SymExpr::binop(&mut cx, SymBinOp::Mul, six, seven);
     let forty_two = SymExpr::constant(&mut cx, U256::from(42));
     assert_eq!(actual, forty_two);
+    let x = SymExpr::var(&mut cx, "x");
+    let scale = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), scale);
+    let shift = SymExpr::constant(&mut cx, U256::from(128));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::Shl, x, shift);
+    assert_eq!(actual, expected);
+    let x = SymExpr::var(&mut cx, "x");
+    let divisor = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::UDiv, x.clone(), divisor);
+    let shift = SymExpr::constant(&mut cx, U256::from(128));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::Shr, x, shift);
+    assert_eq!(actual, expected);
+    let x = SymExpr::var(&mut cx, "x");
+    let divisor = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::URem, x.clone(), divisor);
+    let mask = SymExpr::constant(&mut cx, (U256::from(1) << 128) - U256::from(1));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::And, x, mask);
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -2616,6 +2661,63 @@ fn exact_modular_arithmetic_smt_widens_before_modulo() {
     assert!(mulmod.contains("((_ zero_extend 256) b)"));
     assert!(mulmod.contains("bvmul"));
     assert!(mulmod.contains("((_ extract 255 0)"));
+}
+
+#[test]
+fn power_of_two_modular_arithmetic_uses_low_mask() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
+    let modulus = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let mulmod = SymExpr::ternop(&mut cx, SymTernOp::MulMod, a, b, modulus);
+
+    let smt = mulmod.smt();
+    assert!(smt.contains("bvand"));
+    assert!(smt.contains("bvmul"));
+    assert!(!smt.contains("bvurem"));
+
+    let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(3))]);
+    assert_eq!(
+        mulmod.eval_model(&model).unwrap(),
+        U256::MAX.mul_mod(U256::from(3), U256::from(1) << 128)
+    );
+}
+
+#[test]
+fn low_masked_power_of_two_division_simplifies_to_shift() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let mask = SymExpr::constant(&mut cx, (U256::from(1) << 128) - U256::from(1));
+    let low = SymExpr::binop(&mut cx, SymBinOp::And, x.clone(), mask);
+    let numerator = SymExpr::binop(&mut cx, SymBinOp::Sub, x.clone(), low);
+    let divisor = SymExpr::constant(&mut cx, U256::from(1) << 128);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let shift = SymExpr::constant(&mut cx, U256::from(128));
+    let expected = SymExpr::binop(&mut cx, SymBinOp::Shr, x, shift);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn low_masked_words_preserve_unsigned_ordering() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let mask = SymExpr::constant(&mut cx, (U256::from(1) << 128) - U256::from(1));
+    let low = SymExpr::binop(&mut cx, SymBinOp::And, x.clone(), mask);
+
+    assert_eq!(
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), low.clone()).as_const(),
+        Some(false)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, low.clone(), x.clone()).as_const(),
+        Some(false)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, low.clone(), x.clone()).as_const(),
+        Some(true)
+    );
+    assert_eq!(SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x, low).as_const(), Some(true));
 }
 
 #[test]
@@ -2955,6 +3057,40 @@ fn solver_normalizes_checked_mul_guard_with_context_bound() {
 
     assert_eq!(
         normalize_constraints_for_solver(&mut cx, &constraints),
+        vec![SymBoolExpr::constant(&mut cx, false)]
+    );
+}
+
+#[test]
+fn solver_normalizes_mask_equality_with_context_bound() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let mask = (U256::from(1) << 160) - U256::from(1);
+    let mask_expr = SymExpr::constant(&mut cx, mask);
+    let masked = SymExpr::binop(&mut cx, SymBinOp::And, a.clone(), mask_expr);
+    let same_value = SymBoolExpr::eq(&mut cx, masked, a.clone());
+    let upper = SymExpr::constant(&mut cx, U256::from(1) << 160);
+    let bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, a, upper);
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &[bounded.clone(), same_value]),
+        vec![bounded]
+    );
+}
+
+#[test]
+fn solver_normalizes_negated_mask_equality_with_context_bound() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let mask = (U256::from(1) << 160) - U256::from(1);
+    let mask_expr = SymExpr::constant(&mut cx, mask);
+    let masked = SymExpr::binop(&mut cx, SymBinOp::And, a.clone(), mask_expr);
+    let different_value = SymBoolExpr::eq(&mut cx, masked, a.clone()).not(&mut cx);
+    let upper = SymExpr::constant(&mut cx, U256::from(1) << 160);
+    let bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, a, upper);
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &[bounded, different_value]),
         vec![SymBoolExpr::constant(&mut cx, false)]
     );
 }
@@ -3477,6 +3613,47 @@ fn is_sat_uses_single_var_witness_before_solver() {
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
     assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn gasleft_can_use_single_var_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("gasleft-single-var");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let gas = SymExpr::gas_left(&mut cx, 0);
+    let limit = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, gas, limit)];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn gasleft_fails_at_smt_emission() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("gasleft-smt");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let gas = SymExpr::gas_left(&mut cx, 0);
+    let x = SymExpr::var(&mut cx, "x");
+    let constraints = vec![SymBoolExpr::eq(&mut cx, gas, x)];
+
+    let err = solver.is_sat(&mut cx, &constraints).unwrap_err();
+    assert!(matches!(err, SymbolicError::Unsupported("GAS/gasleft() not modeled")));
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 1);
     assert_eq!(counted_solver_invocations(&marker), 0);
     let _ = std::fs::remove_file(&marker);
 }
