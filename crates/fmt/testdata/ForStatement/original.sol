@@ -38,5 +38,7 @@ contract ForStatement {
         
         for (;;) doIt();
         for (;;) { doIt(); doIt(); }
+        
+        while (c) for (;;) x();
     }
 }
