@@ -31,10 +31,7 @@ use alloy_transport::TransportErrorKind;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
-use foundry_block_explorers::{
-    Client,
-    contract::{ContractMetadata, SourceCodeEntry},
-};
+use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{coerce_value, encode_function_args, encode_function_args_packed, get_event, get_func},
     compile::etherscan_project,
@@ -53,7 +50,6 @@ use rayon::prelude::*;
 use serde::Serialize;
 use std::{
     borrow::Cow,
-    collections::HashMap,
     fmt::Write,
     io,
     marker::PhantomData,
@@ -2264,7 +2260,7 @@ impl SimpleCast {
     ) -> Result<String> {
         let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
-        Ok(format_etherscan_source(&metadata))
+        Ok(metadata.source_code())
     }
 
     /// Fetches the source code of verified contracts from etherscan and expands the resulting
@@ -2511,28 +2507,6 @@ fn explorer_client(
     builder.build().map_err(Into::into)
 }
 
-/// Formats a verified contract's source deterministically, joining its items.
-fn format_etherscan_source(metadata: &ContractMetadata) -> String {
-    metadata.items.iter().map(|item| format_sources(item.sources())).collect::<Vec<_>>().join("\n")
-}
-
-/// Sorts sources by path so output is stable across runs, prefixing each with a `// File: <path>`
-/// header when there are multiple. A single source is emitted verbatim.
-fn format_sources(sources: HashMap<String, SourceCodeEntry>) -> String {
-    let mut sources = sources.into_iter().collect::<Vec<_>>();
-    sources.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-    if let [(_, entry)] = sources.as_slice() {
-        return entry.content.clone();
-    }
-
-    sources
-        .into_iter()
-        .map(|(path, entry)| format!("// File: {path}\n{}", entry.content))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Tests for the `eth_getLogs` chunking/bisection helpers, kept in a separate module so they can
 /// use the provider-based [`Cast`] (the `tests` module aliases `Cast` to `SimpleCast`).
 #[cfg(test)]
@@ -2659,27 +2633,8 @@ mod logs_bisecting {
 
 #[cfg(test)]
 mod tests {
-    use super::{DynSolValue, SimpleCast as Cast, format_sources, serialize_value_as_json};
+    use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
     use alloy_primitives::hex;
-    use std::collections::HashMap;
-
-    #[test]
-    fn format_sources_single_file_verbatim() {
-        let sources = HashMap::from([("Contract".to_string(), "contract A {}".into())]);
-        assert_eq!(format_sources(sources), "contract A {}");
-    }
-
-    #[test]
-    fn format_sources_multi_file_sorted_with_headers() {
-        let sources = HashMap::from([
-            ("src/B.sol".to_string(), "contract B {}".into()),
-            ("src/A.sol".to_string(), "contract A {}".into()),
-        ]);
-        assert_eq!(
-            format_sources(sources),
-            "// File: src/A.sol\ncontract A {}\n// File: src/B.sol\ncontract B {}"
-        );
-    }
 
     #[test]
     fn simple_selector() {
