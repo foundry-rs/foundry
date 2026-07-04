@@ -484,20 +484,14 @@ impl SmtCseWriter<'_> {
             return;
         }
 
-        let kind = expr.kind();
-        if let Some(var) = kind.get_var() {
-            out.push_str(self.cx.symbol_name(var));
-            return;
-        }
-
-        match kind {
+        match expr.kind() {
             SymExprKind::Const(value) => {
                 let _ = write!(out, "(_ bv{value} 256)");
             }
-            SymExprKind::Var(_)
-            | SymExprKind::GasLeft(_)
-            | SymExprKind::Keccak { .. }
-            | SymExprKind::Hash { .. } => unreachable!("symbolic leaf handled above"),
+            SymExprKind::Var(symbol)
+            | SymExprKind::GasLeft(symbol)
+            | SymExprKind::Keccak { name: symbol, .. }
+            | SymExprKind::Hash { name: symbol, .. } => out.push_str(self.cx.symbol_name(*symbol)),
             SymExprKind::Not(value) => {
                 out.push_str("(bvnot ");
                 self.write_expr(out, value, skip_expr, skip_bool);

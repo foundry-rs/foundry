@@ -1681,19 +1681,14 @@ impl SymExpr {
     }
 
     pub(in crate::runtime::expr) fn write_smt(&self, cx: &SymCx, out: &mut String) {
-        let kind = self.kind();
-        if let Some(var) = kind.get_var() {
-            out.push_str(cx.symbol_name(var));
-            return;
-        }
-        match kind {
+        match self.kind() {
             SymExprKind::Const(value) => {
                 let _ = write!(out, "(_ bv{value} 256)");
             }
-            SymExprKind::Var(_)
-            | SymExprKind::GasLeft(_)
-            | SymExprKind::Keccak { .. }
-            | SymExprKind::Hash { .. } => unreachable!("symbolic leaf handled above"),
+            SymExprKind::Var(symbol)
+            | SymExprKind::GasLeft(symbol)
+            | SymExprKind::Keccak { name: symbol, .. }
+            | SymExprKind::Hash { name: symbol, .. } => out.push_str(cx.symbol_name(*symbol)),
             SymExprKind::Not(value) => {
                 out.push_str("(bvnot ");
                 value.write_smt(cx, out);
