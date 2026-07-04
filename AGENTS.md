@@ -49,6 +49,11 @@ the fixed cheatcode address and are dispatched through the cheatcode inspector.
 Custom network behavior for `anvil`, `forge`, and `cast` is implemented through
 the EVM networks crate.
 
+For symbolic execution work under `crates/evm/symbolic`, read
+`crates/evm/symbolic/AGENTS.md` before editing. It documents the crate's
+internal executor/runtime/expression structure, symbolic result semantics, and
+focused verification commands.
+
 ## Testing
 
 - Add tests for code changes that fix behavior or add functionality.
