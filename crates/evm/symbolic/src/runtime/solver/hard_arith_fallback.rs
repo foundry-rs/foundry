@@ -364,19 +364,11 @@ fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<
         return None;
     }
     match masked.kind() {
-        SymExprKind::BinOp(SymBinOp::And, left, right) => match (left.kind(), right.kind()) {
-            (_, SymExprKind::Const(mask))
-                if left.kind().get_var().is_some_and(|name| &name == var) =>
-            {
-                Some(*mask)
-            }
-            (SymExprKind::Const(mask), _)
-                if right.kind().get_var().is_some_and(|name| &name == var) =>
-            {
-                Some(*mask)
-            }
-            _ => None,
-        },
+        SymExprKind::BinOp(SymBinOp::And, left, right)
+            if left.kind().get_var().is_some_and(|name| &name == var) =>
+        {
+            right.as_const()
+        }
         _ => None,
     }
 }

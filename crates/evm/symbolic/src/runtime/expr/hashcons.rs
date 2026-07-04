@@ -1,9 +1,8 @@
-use alloy_primitives::map::DefaultHashBuilder;
+use alloy_primitives::map::foldhash::fast::FixedState;
 use hashbrown::{HashTable, hash_table::Entry};
 use std::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
-    ptr,
     sync::{Arc, Weak},
 };
 
@@ -21,14 +20,12 @@ struct HashConsedInner<T> {
 }
 
 impl<T> HashConsed<T> {
-    pub(in crate::runtime) fn cached_hash(&self) -> u64 {
-        self.inner.hash
-    }
-
+    #[inline]
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
     }
 
+    #[inline]
     pub(in crate::runtime) fn into_value(self) -> T
     where
         T: Clone,
@@ -41,22 +38,39 @@ impl<T> HashConsed<T> {
 }
 
 impl<T> Clone for HashConsed<T> {
+    #[inline]
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone() }
     }
 }
 
 impl<T> PartialEq for HashConsed<T> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        ptr::addr_eq(Arc::as_ptr(&self.inner), Arc::as_ptr(&other.inner))
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
 impl<T> Eq for HashConsed<T> {}
 
 impl<T> Hash for HashConsed<T> {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.cached_hash().hash(state);
+        self.inner.hash.hash(state);
+    }
+}
+
+impl<T: PartialOrd> PartialOrd for HashConsed<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.value().partial_cmp(other.value())
+    }
+}
+
+impl<T: Ord> Ord for HashConsed<T> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.value().cmp(other.value())
     }
 }
 
@@ -66,12 +80,14 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
     }
 }
 
+pub(in crate::runtime::expr) type HashConsHasher = FixedState;
+
 /// Hash-consing table for sharing structurally equal immutable values.
 ///
 /// The table stores weak references so interned values disappear when the rest of
 /// the symbolic state stops using them. `make` only looks up and inserts; dead
 /// weak entries are ignored and left in the table until the context is dropped.
-pub(in crate::runtime) struct HashCons<T, S = DefaultHashBuilder> {
+pub(in crate::runtime) struct HashCons<T, S = HashConsHasher> {
     table: HashTable<HashConsEntry<T>>,
     hash_builder: S,
 }
@@ -89,7 +105,7 @@ impl<T> HashConsEntry<T> {
 
 impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
-        Self::with_hasher(DefaultHashBuilder::default())
+        Self::with_hasher(HashConsHasher::default())
     }
 }
 
@@ -147,7 +163,7 @@ mod tests {
         let second = table.make("same".to_string());
 
         assert_eq!(first, second);
-        assert_eq!(first.cached_hash(), second.cached_hash());
+        assert_eq!(first.inner.hash, second.inner.hash);
     }
 
     #[test]

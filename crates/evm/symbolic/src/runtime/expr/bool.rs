@@ -304,11 +304,6 @@ impl SymBoolExpr {
             {
                 Some(left)
             }
-            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
-                if left.as_const().is_some_and(|value| value.is_zero()) =>
-            {
-                Some(right)
-            }
             _ => None,
         }
     }
@@ -331,25 +326,17 @@ impl SymBoolExpr {
         context: &[Self],
     ) -> Option<U256> {
         match self.kind() {
-            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => match (left.kind(), right.kind()) {
-                (_, SymExprKind::Const(value)) => left.equality_forces_const(*value, expr, context),
-                (SymExprKind::Const(value), _) => {
-                    right.equality_forces_const(*value, expr, context)
-                }
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => match right.kind() {
+                SymExprKind::Const(value) => left.equality_forces_const(*value, expr, context),
                 _ => None,
             },
             SymBoolExprKind::Not(value) => match value.kind() {
-                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
-                    match (left.kind(), right.kind()) {
-                        (_, SymExprKind::Const(value)) if value.is_zero() => {
-                            left.nonzero_forces_const(expr, context)
-                        }
-                        (SymExprKind::Const(value), _) if value.is_zero() => {
-                            right.nonzero_forces_const(expr, context)
-                        }
-                        _ => None,
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => match right.kind() {
+                    SymExprKind::Const(value) if value.is_zero() => {
+                        left.nonzero_forces_const(expr, context)
                     }
-                }
+                    _ => None,
+                },
                 SymBoolExprKind::Not(value) => value.forces_expr_const_with_context(expr, context),
                 _ => None,
             },

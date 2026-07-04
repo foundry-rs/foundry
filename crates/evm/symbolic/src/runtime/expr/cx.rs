@@ -119,6 +119,24 @@ mod tests {
     }
 
     #[test]
+    fn commutative_ops_place_constants_on_rhs() {
+        let mut cx = SymCx::new();
+        let constant_value = U256::from(7);
+
+        for op in [SymBinOp::Add, SymBinOp::Mul, SymBinOp::And, SymBinOp::Or, SymBinOp::Xor] {
+            let x = SymExpr::var(&mut cx, "x");
+            let constant = SymExpr::constant(&mut cx, constant_value);
+            let expr = SymExpr::binop(&mut cx, op, constant, x.clone());
+            let SymExprKind::BinOp(actual_op, left, right) = expr.kind() else {
+                panic!("expected binary expression");
+            };
+            assert_eq!(*actual_op, op);
+            assert_eq!(left, &x);
+            assert_eq!(right.as_const(), Some(constant_value));
+        }
+    }
+
+    #[test]
     fn hashconses_bool_expressions() {
         let mut cx = SymCx::new();
         let x = SymExpr::var(&mut cx, "x");

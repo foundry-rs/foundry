@@ -1,4 +1,8 @@
-use super::{hashcons::HashConsed, *};
+use super::{
+    hashcons::{HashConsHasher, HashConsed},
+    *,
+};
+use std::hash::BuildHasher;
 
 pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();
@@ -749,11 +753,28 @@ impl SymExpr {
         left: Self,
         right: Self,
     ) -> (Self, Self) {
-        if right.kind.cached_hash() < left.kind.cached_hash() {
-            (right, left)
-        } else {
-            (left, right)
+        match left.complexity().cmp(&right.complexity()) {
+            // Put less complex operands, like constants, on the RHS.
+            std::cmp::Ordering::Less => (right, left),
+            std::cmp::Ordering::Greater => (left, right),
+            std::cmp::Ordering::Equal if right.order_hash() < left.order_hash() => (right, left),
+            std::cmp::Ordering::Equal => (left, right),
         }
+    }
+
+    fn complexity(&self) -> usize {
+        match self.kind() {
+            SymExprKind::Const(_) => 0,
+            SymExprKind::Not(_) => 1,
+            SymExprKind::BinOp(..) => 2,
+            SymExprKind::TernOp(..) => 3,
+            _ => 4,
+        }
+    }
+
+    fn order_hash(&self) -> u64 {
+        const HASHER: HashConsHasher = HashConsHasher::with_seed(0);
+        HASHER.hash_one(&self.kind)
     }
 
     fn and_const(cx: &mut SymCx, expr: Self, mask: U256) -> Self {
@@ -786,22 +807,18 @@ impl SymExpr {
                 // `(a << n) & low_mask(n) => 0`.
                 Self::zero(cx)
             }
-            SymExprKind::BinOp(SymBinOp::And, left, right) => match (left.kind(), right.kind()) {
-                (SymExprKind::Const(value), _) if *value == mask => {
-                    // `(mask & a) & mask => a & mask`.
-                    Self::and_const(cx, right.clone(), mask)
-                }
-                (_, SymExprKind::Const(value)) if *value == mask => {
+            SymExprKind::BinOp(SymBinOp::And, left, right) => {
+                if right.as_const() == Some(mask) {
                     // `(a & mask) & mask => a & mask`.
                     Self::and_const(cx, left.clone(), mask)
-                }
-                // `(a & a) & mask => a & mask`.
-                _ if left == right => Self::and_const(cx, left.clone(), mask),
-                _ => {
+                } else if left == right {
+                    // `(a & a) & mask => a & mask`.
+                    Self::and_const(cx, left.clone(), mask)
+                } else {
                     let mask = Self::constant(cx, mask);
                     Self::from_kind(cx, SymExprKind::BinOp(SymBinOp::And, expr, mask))
                 }
-            },
+            }
             _ => {
                 let mask = Self::constant(cx, mask);
                 Self::from_kind(cx, SymExprKind::BinOp(SymBinOp::And, expr, mask))
@@ -945,11 +962,8 @@ impl SymExpr {
 
     fn low_word_fragment(&self) -> Option<(Self, usize)> {
         let SymExprKind::BinOp(SymBinOp::And, left, right) = self.kind() else { return None };
-        if let Some(mask) = right.as_const() {
-            return mask_low_bits(mask).map(|bits| (left.clone(), bits));
-        }
-        let mask = left.as_const()?;
-        mask_low_bits(mask).map(|bits| (right.clone(), bits))
+        let mask = right.as_const()?;
+        mask_low_bits(mask).map(|bits| (left.clone(), bits))
     }
 
     fn shifted_high_word_fragment(&self) -> Option<(Self, usize)> {
@@ -965,11 +979,8 @@ impl SymExpr {
 
     fn shifted_low_fragment_source(&self) -> Option<(Self, usize, usize)> {
         let SymExprKind::BinOp(SymBinOp::And, left, right) = self.kind() else { return None };
-        if let Some(mask) = right.as_const() {
-            return Self::shifted_low_fragment_source_with_mask(left, mask);
-        }
-        let mask = left.as_const()?;
-        Self::shifted_low_fragment_source_with_mask(right, mask)
+        let mask = right.as_const()?;
+        Self::shifted_low_fragment_source_with_mask(left, mask)
     }
 
     fn shifted_low_fragment_source_with_mask(
@@ -1301,8 +1312,6 @@ impl SymExpr {
             SymExprKind::BinOp(SymBinOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
                     left.unsigned_bits().min(mask.bit_len())
-                } else if let Some(mask) = left.as_const() {
-                    right.unsigned_bits().min(mask.bit_len())
                 } else {
                     256
                 }
@@ -1360,11 +1369,6 @@ impl SymExpr {
                 if right.as_const() == Some(U256::from(0xff)) =>
             {
                 left.strip_low_byte_mask()
-            }
-            SymExprKind::BinOp(SymBinOp::And, left, right)
-                if left.as_const() == Some(U256::from(0xff)) =>
-            {
-                right.strip_low_byte_mask()
             }
             _ => self,
         }
