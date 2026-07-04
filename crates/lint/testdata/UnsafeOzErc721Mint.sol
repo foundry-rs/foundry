@@ -115,6 +115,24 @@ contract SafeOverride is ERC721 {
     }
 }
 
+// A `_mint` override delegating to the base with its own guard (the capped/pausable
+// pattern): the receiver check belongs to this override's callers, and `_safeMint` here
+// would re-enter the override through the virtual dispatch.
+contract CappedNft is ERC721 {
+    uint256 internal total;
+    uint256 internal constant CAP = 10;
+
+    function _mint(address to, uint256 tokenId) internal override {
+        require(total < CAP, "cap");
+        total++;
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
 contract MiddleSafe is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         _owners[tokenId] = to;

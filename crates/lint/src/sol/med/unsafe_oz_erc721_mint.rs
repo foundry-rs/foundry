@@ -33,6 +33,13 @@ impl<'hir> LateLintPass<'hir> for UnsafeOzErc721Mint {
         {
             return;
         }
+        // A user `_mint` override is part of the mint primitive itself: `super._mint` there is
+        // delegation (the capped/pausable pattern), the receiver check belongs to the
+        // override's callers, and `_safeMint` there would re-enter the override through the
+        // virtual dispatch.
+        if func.name.is_some_and(|name| name.as_str() == "_mint") && func.override_ {
+            return;
+        }
         // `ERC721._mint` credits the token without calling `onERC721Received`, so minting to a
         // contract that cannot handle ERC721 tokens locks the token; `_safeMint` performs the
         // check. Flag calls that resolve to a `_mint` declared in an ERC721 contract.
