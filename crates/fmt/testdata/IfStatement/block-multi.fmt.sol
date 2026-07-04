@@ -202,6 +202,79 @@ contract IfStatement {
                 execute();
             }
         }
+
+        if (true) {
+            if (true) {
+                doIt();
+                doIt();
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                execute(); /* comment */
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                /* comment */
+                execute();
+            }
+        }
+
+        if (condition) {
+            if (
+                condition /* comment */
+            ) {
+                execute();
+            }
+        }
+
+        if (condition) {
+            if ( /* comment */
+                condition
+            ) {
+                execute();
+            }
+        }
+
+        if (condition) {
+            if (condition) { /* comment */ }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) {
+                    execute(); /* comment */
+                }
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) {
+                    /* comment */
+                    execute();
+                }
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (
+                    condition /* comment */
+                ) {
+                    execute();
+                }
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) { /* comment */ }
+            }
+        }
     }
 
     function test_nestedBkocks() public {

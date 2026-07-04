@@ -53,7 +53,9 @@ contract IfStatement {
         if (
             // comment16
             condition /* comment17 */
-        ) execute();
+        ) {
+            execute();
+        }
 
         if (condition) execute();
         else executeElse();
@@ -152,6 +154,69 @@ contract IfStatement {
             if (condition) {
                 execute();
                 execute();
+            }
+        }
+
+        if (true) {
+            if (true) {
+                doIt();
+                doIt();
+            }
+        }
+
+        if (condition) if (condition) execute(); /* comment */
+
+        if (condition) {
+            if (condition) {
+                /* comment */
+                execute();
+            }
+        }
+
+        if (condition) {
+            if (
+                condition /* comment */
+            ) {
+                execute();
+            }
+        }
+
+        if (condition) {
+            if ( /* comment */
+                condition
+            ) {
+                execute();
+            }
+        }
+
+        if (condition) {
+            if (condition) { /* comment */ }
+        }
+
+        if (condition) if (condition) if (condition) execute(); /* comment */
+
+        if (condition) {
+            if (condition) {
+                if (condition) {
+                    /* comment */
+                    execute();
+                }
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (
+                    condition /* comment */
+                ) {
+                    execute();
+                }
+            }
+        }
+
+        if (condition) {
+            if (condition) {
+                if (condition) { /* comment */ }
             }
         }
     }

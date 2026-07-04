@@ -50,5 +50,11 @@ contract ForStatement {
             doIt();
             doIt();
         }
+
+        while (c) {
+            for (;;) {
+                x();
+            }
+        }
     }
 }

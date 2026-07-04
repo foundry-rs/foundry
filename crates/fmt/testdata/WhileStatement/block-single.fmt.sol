@@ -49,11 +49,15 @@ contract WhileStatement {
 
         while ( // comment1
             condition
-        ) doIt();
+        ) {
+            doIt();
+        }
 
         while (
             condition // comment2
-        ) doIt();
+        ) {
+            doIt();
+        }
 
         while (
             someLongVariableName < 10 && someLongVariableName < 11
