@@ -105,6 +105,14 @@ LL │     uint256 public fromBaseTypedOverride = OverrideBase(address(0x1234)).
 note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
    ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
    │
+LL │     function() external view returns (uint256) internal refBaseTyped = OverrideBase(address(0x1234)).maybePure;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
 LL │     uint256 public fromPointerCall = fnPtr();
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │

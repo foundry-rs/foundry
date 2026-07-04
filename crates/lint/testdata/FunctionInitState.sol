@@ -102,6 +102,12 @@ contract InitFromFunction is Base {
     // typed through the base, the resolved declaration is the base's own view one
     uint256 public fromBaseTypedOverride = OverrideBase(address(0x1234)).maybePure(); //~NOTE: state variable initializer
 
+    // a member reference used as a value selects the child's pure override, like a call would
+    function() external view returns (uint256) internal refPureOverride = OverrideChild(address(0x1234)).maybePure;
+
+    // the same reference typed through the base selects the base's own view declaration
+    function() external view returns (uint256) internal refBaseTyped = OverrideBase(address(0x1234)).maybePure; //~NOTE: state variable initializer
+
     // a call through a function pointer stored in state reads that variable
     uint256 public fromPointerCall = fnPtr(); //~NOTE: state variable initializer
 

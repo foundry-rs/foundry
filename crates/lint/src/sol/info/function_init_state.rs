@@ -86,7 +86,7 @@ impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
             // qualified forms), so judge that target alone and walk the rest manually,
             // skipping the default walk that would re-judge the callee by name matching.
             ExprKind::Call(callee, args, _) => {
-                if let Some(function_id) = self.resolved_callee(callee) {
+                if let Some(function_id) = self.resolved_function(callee) {
                     self.judge_function(function_id);
                 }
                 match &callee.peel_parens().kind {
@@ -123,7 +123,16 @@ impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
             }
             // A plain reference to a name outside a call position.
             ExprKind::Ident(resolutions) => self.judge_resolutions(resolutions),
-            ExprKind::Member(base, member) => self.judge_member(base, member),
+            // A member reference used as a value has a resolved target too (`x.f` selects an
+            // override like `x.f()` would): judge it when the type checker gives one, and
+            // scan by name only when there is no resolved function.
+            ExprKind::Member(base, member) => {
+                if let Some(function_id) = self.resolved_function(expr) {
+                    self.judge_function(function_id);
+                } else {
+                    self.judge_member(base, member);
+                }
+            }
             _ => {}
         }
         self.walk_expr(expr)
@@ -131,11 +140,12 @@ impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
 }
 
 impl ImpureRefFinder<'_> {
-    /// The single function a call dispatches to. `type_of_expr` on the callee is the function
-    /// the type checker resolved, so overload selection by argument types, override shadowing,
-    /// `super.` and the qualified and `using for` forms are already accounted for.
-    fn resolved_callee(&self, callee: &Expr<'_>) -> Option<FunctionId> {
-        let ty = self.gcx.type_of_expr(callee.peel_parens().id)?;
+    /// The single function an expression resolves to, for a callee or for a member reference
+    /// used as a value. `type_of_expr` is the function the type checker resolved, so overload
+    /// selection by argument types, override shadowing, `super.` and the qualified and
+    /// `using for` forms are already accounted for.
+    fn resolved_function(&self, expr: &Expr<'_>) -> Option<FunctionId> {
+        let ty = self.gcx.type_of_expr(expr.peel_parens().id)?;
         match ty.kind {
             TyKind::Fn(function_ty) => function_ty.function_id,
             _ => None,
@@ -154,9 +164,9 @@ impl ImpureRefFinder<'_> {
         }
     }
 
-    /// Judges a qualified or external member read outside a call position (`Base.stateVar`,
-    /// a function used as a value): the member ident carries no resolution, so type the base
-    /// and scan by name. Calls never come here, their target is resolved from the callee type.
+    /// Judges a member read with no resolved function type (`Base.stateVar`): the member
+    /// ident carries no resolution, so type the base and scan by name. Calls and function
+    /// references never come here, their target is resolved from the expression type.
     fn judge_member(&mut self, base: &Expr<'_>, member: &solar::ast::Ident) {
         let Some(ty) = self.gcx.type_of_expr(base.peel_parens().id) else { return };
         // A contract name used as the base is a type-namespace item, so its type comes wrapped
