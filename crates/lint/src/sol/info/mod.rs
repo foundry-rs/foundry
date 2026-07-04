@@ -54,6 +54,9 @@ use event_fields::EVENT_FIELDS;
 mod unused_error;
 use unused_error::UNUSED_ERROR;
 
+mod incorrect_using_for;
+use incorrect_using_for::INCORRECT_USING_FOR;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -74,4 +77,5 @@ register_lints!(
     (MissingInheritance, project, (MISSING_INHERITANCE)),
     (EventFields, early, (EVENT_FIELDS)),
     (UnusedError, project, (UNUSED_ERROR)),
+    (IncorrectUsingFor, late, (INCORRECT_USING_FOR)),
 );
