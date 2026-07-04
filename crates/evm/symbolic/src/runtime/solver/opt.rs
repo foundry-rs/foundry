@@ -167,14 +167,18 @@ const fn expr_ternop_key(op: SymTernOp) -> u8 {
 }
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
-pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
-    if constraints.iter().any(|constraint| match constraint.kind() {
-        SymBoolExprKind::Const(false) => true,
-        SymBoolExprKind::Not(inner) => constraints.contains(inner),
-        _ => {
-            let negated = constraint.clone().not(cx);
-            constraints.contains(&negated)
-        }
+pub(super) fn constraints_are_directly_unsat(constraints: &[SymBoolExpr]) -> bool {
+    if constraints
+        .iter()
+        .any(|constraint| matches!(constraint.kind(), SymBoolExprKind::Const(false)))
+    {
+        return true;
+    }
+
+    let constraint_set: HashSet<_> = constraints.iter().collect();
+    if constraints.iter().any(|constraint| {
+        let SymBoolExprKind::Not(inner) = constraint.kind() else { return false };
+        constraint_set.contains(inner)
     }) {
         return true;
     }
