@@ -5,9 +5,11 @@ pragma solidity ^0.8.18;
 // Tests for `unsafe-oz-erc721-mint`: `ERC721._mint` credits a token without checking that the
 // recipient can receive it (no `onERC721Received` call), so minting to a non-receiver contract
 // locks the token; `_safeMint` performs the check. A call is flagged when it resolves to a
-// function named `_mint` declared in a contract named exactly `ERC721` or `ERC721Upgradeable`,
-// wherever that base sits in the inheritance chain. Calls to `_safeMint`, calls made inside the
-// canonical `_safeMint` wrapper, and `_mint` functions of other contracts stay clean.
+// function named `_mint` declared in a contract named exactly `ERC721`, `ERC721Upgradeable`,
+// `ERC721Consecutive` or `ERC721ConsecutiveUpgradeable` (the v4 Consecutive extensions forward
+// to the base without the check), wherever that contract sits in the inheritance chain. Calls
+// to `_safeMint`, calls made inside the canonical `_safeMint` wrapper, and `_mint` functions
+// of other contracts stay clean.
 
 // Minimal mirror of OpenZeppelin's ERC721: unchecked `_mint`, checking `_safeMint`.
 contract ERC721 {
@@ -68,6 +70,23 @@ contract IndirectNft is BaseNft {
 }
 
 contract UpgradeableNft is ERC721Upgradeable {
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// Mirror of OZ v4's ERC721Consecutive: it overrides `_mint` with a construction guard and
+// forwards to the base without a receiver check, so its `_mint` is as unsafe as the base's.
+// Its own `super._mint` sits inside a `_mint` override and stays exempt.
+contract ERC721Consecutive is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(address(this).code.length > 0, "no construction mint");
+        super._mint(to, tokenId);
+    }
+}
+
+// A consumer of the extension resolves `_mint` to the Consecutive override: still unchecked.
+contract ConsecutiveNft is ERC721Consecutive {
     function mint(address to, uint256 id) external {
         _mint(to, id); //~WARN: `ERC721._mint` does not check
     }

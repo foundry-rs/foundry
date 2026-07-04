@@ -90,10 +90,10 @@ impl MintCallFinder<'_, '_, '_, '_> {
     }
 
     /// Whether `function_id` is a function named `_mint` declared in a non-library contract
-    /// named exactly like an OZ ERC721 base. Extensions (`ERC721Enumerable`, ...) inherit
-    /// `_mint` rather than redeclare it, so resolution still lands on the canonical base; exact
-    /// names avoid flagging a safe override just because its contract name contains the
-    /// substring `ERC721`.
+    /// named exactly like an OZ contract carrying the unchecked `_mint`. Most extensions
+    /// (`ERC721Enumerable`, ...) inherit `_mint` rather than redeclare it, so resolution still
+    /// lands on the canonical base; exact names avoid flagging a safe override just because
+    /// its contract name contains the substring `ERC721`.
     fn is_erc721_mint(&self, function_id: FunctionId) -> bool {
         let function = self.hir.function(function_id);
         function.name.is_some_and(|name| name.as_str() == "_mint")
@@ -104,7 +104,15 @@ impl MintCallFinder<'_, '_, '_, '_> {
     }
 }
 
-/// The OpenZeppelin contracts that declare the unchecked `_mint`.
+/// The OpenZeppelin contracts whose `_mint` skips the receiver check. `ERC721` and
+/// `ERC721Upgradeable` declare the unchecked `_mint`; in the v4 line, `ERC721Consecutive` and
+/// `ERC721ConsecutiveUpgradeable` override it with a construction guard that forwards to the
+/// base through `super._mint`, still without a receiver check, so resolving to them is just
+/// as unsafe. In v5 the Consecutive extension overrides `_update` instead, and the two extra
+/// names match nothing.
 fn is_canonical_erc721(name: &str) -> bool {
-    matches!(name, "ERC721" | "ERC721Upgradeable")
+    matches!(
+        name,
+        "ERC721" | "ERC721Upgradeable" | "ERC721Consecutive" | "ERC721ConsecutiveUpgradeable"
+    )
 }
