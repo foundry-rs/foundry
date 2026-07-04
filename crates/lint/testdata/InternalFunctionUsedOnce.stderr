@@ -1,0 +1,40 @@
+note[internal-function-used-once]: this internal function is used only once; consider inlining it into its caller
+   ╭▸ ROOT/testdata/InternalFunctionUsedOnce.sol:LL:CC
+   │
+LL │     function onceQualified(uint256 v) internal pure returns (uint256) {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/internal-function-used-once
+
+note[internal-function-used-once]: this internal function is used only once; consider inlining it into its caller
+   ╭▸ ROOT/testdata/InternalFunctionUsedOnce.sol:LL:CC
+   │
+LL │     function attachedOnce(uint256 v) internal pure returns (uint256) {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/internal-function-used-once
+
+note[internal-function-used-once]: this internal function is used only once; consider inlining it into its caller
+   ╭▸ ROOT/testdata/InternalFunctionUsedOnce.sol:LL:CC
+   │
+LL │     function helper(uint256 v) internal pure returns (uint256) {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/internal-function-used-once
+
+note[internal-function-used-once]: this internal function is used only once; consider inlining it into its caller
+   ╭▸ ROOT/testdata/InternalFunctionUsedOnce.sol:LL:CC
+   │
+LL │     function pointed(uint256 v) internal pure returns (uint256) {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/internal-function-used-once
+
+note[internal-function-used-once]: this internal function is used only once; consider inlining it into its caller
+   ╭▸ ROOT/testdata/InternalFunctionUsedOnce.sol:LL:CC
+   │
+LL │ function freeOnce(uint256 v) pure returns (uint256) {
+   │ ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/internal-function-used-once
+

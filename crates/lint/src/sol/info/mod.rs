@@ -54,6 +54,9 @@ use event_fields::EVENT_FIELDS;
 mod unused_error;
 use unused_error::UNUSED_ERROR;
 
+mod internal_function_used_once;
+use internal_function_used_once::INTERNAL_FUNCTION_USED_ONCE;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -74,4 +77,5 @@ register_lints!(
     (MissingInheritance, project, (MISSING_INHERITANCE)),
     (EventFields, early, (EVENT_FIELDS)),
     (UnusedError, project, (UNUSED_ERROR)),
+    (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE)),
 );
