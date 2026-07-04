@@ -1,0 +1,16 @@
+note[cyclomatic-complexity]: this function has a cyclomatic complexity above 11; consider splitting it into smaller functions
+   ╭▸ ROOT/testdata/CyclomaticComplexity.sol:LL:CC
+   │
+LL │     function elevenBranches(uint256 x) internal {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cyclomatic-complexity
+
+note[cyclomatic-complexity]: this function has a cyclomatic complexity above 11; consider splitting it into smaller functions
+   ╭▸ ROOT/testdata/CyclomaticComplexity.sol:LL:CC
+   │
+LL │     function mixedForms(uint256 x) internal {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cyclomatic-complexity
+
