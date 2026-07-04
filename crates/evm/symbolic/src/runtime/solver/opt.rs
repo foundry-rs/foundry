@@ -640,6 +640,16 @@ impl ConstraintContext {
 
     fn normalize_bool(&self, cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolExpr {
         match expr.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
+                if self.masked_word_eq_self(left, right) =>
+            {
+                // `x & mask == x => true` when the current context proves `x <= mask`.
+                SymBoolExpr::constant(cx, true)
+            }
+            SymBoolExprKind::Not(value) if self.masked_eq_self_condition(value) => {
+                // `x & mask != x => false` when the current context proves `x <= mask`.
+                SymBoolExpr::constant(cx, false)
+            }
             _ if expr
                 .zero_check_operand()
                 .is_some_and(|left| self.word_bool_always_true(cx, left)) =>
@@ -657,6 +667,32 @@ impl ConstraintContext {
             }
             _ => expr,
         }
+    }
+
+    fn masked_eq_self_condition(&self, expr: &SymBoolExpr) -> bool {
+        match expr.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                self.masked_word_eq_self(left, right)
+            }
+            _ => false,
+        }
+    }
+
+    fn masked_word_eq_self(&self, left: &SymExpr, right: &SymExpr) -> bool {
+        self.masked_word_side_eq_self(left, right) || self.masked_word_side_eq_self(right, left)
+    }
+
+    fn masked_word_side_eq_self(&self, masked: &SymExpr, value: &SymExpr) -> bool {
+        let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else { return false };
+        let Some((source, mask)) = right
+            .as_const()
+            .map(|mask| (left, mask))
+            .or_else(|| left.as_const().map(|mask| (right, mask)))
+        else {
+            return false;
+        };
+        let Some(bits) = mask_low_bits(mask) else { return false };
+        source == value && self.unsigned_bits(value) <= bits
     }
 
     fn record_upper_bound_constraint(&mut self, constraint: &SymBoolExpr) {

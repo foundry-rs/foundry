@@ -2163,6 +2163,27 @@ fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
 }
 
 #[test]
+fn symbolic_storage_key_equality_compares_mapping_key_words() {
+    let mut cx = SymCx::new();
+    let left_owner = SymExpr::var(&mut cx, "left_owner");
+    let right_owner = SymExpr::var(&mut cx, "right_owner");
+    let slot = SymExpr::constant(&mut cx, U256::from(3));
+
+    let mut left_key_bytes = left_owner.clone().into_byte_exprs(&mut cx);
+    left_key_bytes.extend(slot.clone().into_byte_exprs(&mut cx));
+    let left = keccak_word(&mut cx, left_key_bytes);
+
+    let mut right_key_bytes = right_owner.clone().into_byte_exprs(&mut cx);
+    right_key_bytes.extend(slot.into_byte_exprs(&mut cx));
+    let right = keccak_word(&mut cx, right_key_bytes);
+
+    let condition = left.storage_key_eq(&mut cx, &right);
+    let expected = SymBoolExpr::eq(&mut cx, left_owner, right_owner);
+
+    assert_eq!(condition, expected);
+}
+
+#[test]
 fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
     let mut cx = SymCx::new();
     let owner = SymExpr::var(&mut cx, "owner");
@@ -3036,6 +3057,40 @@ fn solver_normalizes_checked_mul_guard_with_context_bound() {
 
     assert_eq!(
         normalize_constraints_for_solver(&mut cx, &constraints),
+        vec![SymBoolExpr::constant(&mut cx, false)]
+    );
+}
+
+#[test]
+fn solver_normalizes_mask_equality_with_context_bound() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let mask = (U256::from(1) << 160) - U256::from(1);
+    let mask_expr = SymExpr::constant(&mut cx, mask);
+    let masked = SymExpr::binop(&mut cx, SymBinOp::And, a.clone(), mask_expr);
+    let same_value = SymBoolExpr::eq(&mut cx, masked, a.clone());
+    let upper = SymExpr::constant(&mut cx, U256::from(1) << 160);
+    let bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, a, upper);
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &[bounded.clone(), same_value]),
+        vec![bounded]
+    );
+}
+
+#[test]
+fn solver_normalizes_negated_mask_equality_with_context_bound() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let mask = (U256::from(1) << 160) - U256::from(1);
+    let mask_expr = SymExpr::constant(&mut cx, mask);
+    let masked = SymExpr::binop(&mut cx, SymBinOp::And, a.clone(), mask_expr);
+    let different_value = SymBoolExpr::eq(&mut cx, masked, a.clone()).not(&mut cx);
+    let upper = SymExpr::constant(&mut cx, U256::from(1) << 160);
+    let bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, a, upper);
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &[bounded, different_value]),
         vec![SymBoolExpr::constant(&mut cx, false)]
     );
 }
