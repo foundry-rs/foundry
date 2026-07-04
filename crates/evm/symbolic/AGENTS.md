@@ -85,18 +85,17 @@ For focused symbolic changes, run:
 
 ```bash
 cargo fmt --all
-cargo check --locked -p foundry-evm-symbolic
-cargo cl --locked -p foundry-evm-symbolic
-cargo nextest run --locked -p foundry-evm-symbolic
+cargo check -p foundry-evm-symbolic
+cargo nextest run -p foundry-evm-symbolic
 git diff --check
 ```
 
 For Forge integration behavior, prefer focused CLI tests such as:
 
 ```bash
-cargo nextest run --locked -p forge --test cli test_cmd::symbolic
-SYMBOLIC_CONFORMANCE=1 cargo nextest run --locked -p forge --test cli symbolic_conformance
-SYMBOLIC_LIMITS=1 cargo nextest run --locked -p forge --test cli symbolic_limits
+cargo nextest run -p forge --test cli test_cmd::symbolic
+SYMBOLIC_CONFORMANCE=1 cargo nextest run -p forge --test cli symbolic_conformance
+SYMBOLIC_LIMITS=1 cargo nextest run -p forge --test cli symbolic_limits
 ```
 
 The conformance and limits suites require a local solver and are intentionally
