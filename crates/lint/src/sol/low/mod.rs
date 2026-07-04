@@ -38,6 +38,9 @@ use reentrancy_events::REENTRANCY_EVENTS;
 mod require_revert_in_loop;
 use require_revert_in_loop::REQUIRE_REVERT_IN_LOOP;
 
+mod solmate_safe_transfer_lib;
+use solmate_safe_transfer_lib::SOLMATE_SAFE_TRANSFER_LIB;
+
 register_lints!(
     (BlockTimestamp, late, (BLOCK_TIMESTAMP)),
     (CallsLoop, late, (CALLS_LOOP)),
@@ -51,4 +54,5 @@ register_lints!(
     (ReturnBomb, late, (RETURN_BOMB)),
     (ReentrancyEvents, late, (REENTRANCY_EVENTS)),
     (RequireRevertInLoop, late, (REQUIRE_REVERT_IN_LOOP)),
+    (SolmateSafeTransferLib, late, (SOLMATE_SAFE_TRANSFER_LIB)),
 );
