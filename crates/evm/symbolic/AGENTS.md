@@ -13,49 +13,33 @@ scoped to the modeled EVM surface and configured bounds.
 ## Internal Structure
 
 - `src/lib.rs`: crate boundary, public symbolic run inputs/results, solver
-  availability helpers, SVM compatibility selector mapping, and shared imports.
-- `src/abi.rs`: ABI-to-symbolic calldata/value construction, dynamic length
-  expansion, model concretization, and replay value extraction.
-- `src/executor/`: bytecode execution driver. `run.rs` coordinates paths,
-  `opcodes.rs` implements opcode semantics, `calls.rs` and `create.rs` handle
-  call/create flows, `cheatcodes.rs` handles Foundry and SVM helpers,
-  `constraints.rs` manages branch constraints, and `invariant.rs` builds
-  bounded symbolic invariant sequences.
-- `src/runtime.rs`: module hub for runtime data structures.
-- `src/runtime/state.rs`: `PathState`, call frames, symbolic world overlay,
-  storage, balances, logs, returndata, snapshots, and path-local execution
-  state.
-- `src/runtime/memory.rs`, `bytes.rs`, and `calldata.rs`: byte-precise symbolic
-  memory, byte vectors, calldata, returndata, and copy/load/store helpers.
-- `src/runtime/solver.rs` and `src/runtime/solver/`: SMT-LIB solver backend,
-  solver portfolio scheduling, normalization, cache keys, model parsing,
-  hard-arithmetic fallback, and monotonic-product reasoning.
-- `src/runtime/expr/`: symbolic word and bool expression representation,
-  hash-consing, symbol interning, simplification, canonicalization, SMT
-  emission, traversal, and folding.
+  availability helpers, and compatibility helper mapping.
+- `src/abi.rs`: ABI-to-symbolic calldata/value construction and replay value
+  extraction.
+- `src/executor/`: bytecode execution, calls/creates, cheatcodes, branch
+  constraints, and bounded invariant sequences.
+- `src/runtime/`: symbolic runtime data structures: path state, world overlay,
+  memory, bytes, calldata, expressions, solver integration, precompiles, and
+  EVM helpers.
+- `src/runtime/expr/`: symbolic word/bool expressions, hash-consing, symbol
+  interning, simplification, canonicalization, SMT emission, traversal, and
+  folding.
 - `src/tests.rs`: crate-level symbolic behavior tests. Put private expression
   representation tests in the relevant module-local `#[cfg(test)]` module.
 
 ## Expression Invariants
 
-- `SymCx` owns all expression storage: word expressions, bool expressions, byte
-  expressions, and the symbol interner.
-- `Symbol` is an id-only nonzero `u32` wrapper. Do not store variable names in
-  symbols or expression leaves. Names live in the `inturn` interner as
-  `Box<str>`.
+- `SymCx` owns expression storage and symbol interning.
+- `Symbol` is an id-only handle. Do not store variable names in symbols or
+  expression leaves; keep names in the interner.
 - Use `SymExpr::var(cx, name)` when creating a named variable from a string.
   Use `SymExpr::get_var(cx, symbol)` when you already have a `Symbol`.
-- `HashConsed` equality is pointer equality. Structural equality is enforced by
-  `HashCons::make`; do not add ad hoc deep equality on handles.
-- `HashCons` owns an Alloy/foldhash `FixedState` and stores the cached
-  structural hash in each handle. Use hashcons-local helpers for stable
-  expression ordering; do not expose raw cached hash accessors just to order
-  expressions.
+- `HashConsed` equality is pointer equality. Structural equality is enforced
+  when values are hash-consed.
 - `SymExpr::binop` must accept both EVM operand orders because simplification
   happens before commutative canonicalization.
 - Normalized commutative word ops put simpler operands on the RHS; constants end
-  up on the RHS. For same-complexity operands, keep a stable tie-breaker so
-  `x + y` and `y + x` hash-cons to the same expression.
+  up on the RHS.
 - Once matching an already-normalized commutative expression, do not duplicate
   impossible constant-left cases such as `<constant>, X` and `X, <constant>`.
   Keep both directions only at construction boundaries or for non-commutative
@@ -67,16 +51,11 @@ scoped to the modeled EVM surface and configured bounds.
 
 ## Solver And Normalization Notes
 
-- `normalize_constraints_for_solver` and `normalize_bool_for_solver` are the
-  canonical path before SMT and sat-cache keys. Preserve cache-key stability when
-  changing expression ordering.
-- `runtime/solver/opt.rs` contains local rewrites and constraint-context facts.
-  Keep rewrites semantics-preserving under EVM bit-vector behavior.
-- `runtime/solver/hard_arith_fallback.rs` is a bounded model search used before
-  or alongside SMT for hard arithmetic. Validate candidates against the original
-  constraints.
-- Solver models are not trusted until checked against symbolic expressions and,
-  for user-visible failures, replayed through the concrete Foundry executor.
+- Keep solver rewrites semantics-preserving under EVM bit-vector behavior.
+- Preserve normalization/cache behavior when changing expression ordering or
+  boolean simplification.
+- Solver models are not user-visible counterexamples until replay confirms
+  them.
 
 ## Testing
 
