@@ -792,10 +792,6 @@ fn minimize_uint(
         return true;
     }
 
-    if minimize_uint_by_search(value, current, bits, try_value) {
-        return true;
-    }
-
     let bit_limit = bits.min(256);
     for bit in (0..bit_limit).rev() {
         let mask = U256::from(1) << bit;
@@ -808,7 +804,7 @@ fn minimize_uint(
         }
     }
 
-    false
+    minimize_uint_by_search(value, current, bits, try_value)
 }
 
 fn minimize_uint_by_search(
@@ -1535,6 +1531,29 @@ mod tests {
             vec![DynSolValue::Uint(U256::from(43), 8)]
         );
         assert!(minimized.attempts < TEST_MAX_MINIMIZATION_ATTEMPTS);
+    }
+
+    #[test]
+    fn uint_minimization_prefers_bit_clearing_before_binary_search() {
+        let mut value = DynSolValue::Uint(U256::from(100), 256);
+        let accepted = [U256::from(100), U256::from(50), U256::from(36)];
+
+        loop {
+            let (current, bits) = match &value {
+                DynSolValue::Uint(current, bits) => (*current, *bits),
+                _ => unreachable!(),
+            };
+            if !minimize_uint(
+                &mut value,
+                current,
+                bits,
+                &mut |candidate| matches!(candidate, DynSolValue::Uint(candidate, _) if accepted.contains(candidate)),
+            ) {
+                break;
+            }
+        }
+
+        assert_eq!(value, DynSolValue::Uint(U256::from(36), 256));
     }
 
     #[test]
