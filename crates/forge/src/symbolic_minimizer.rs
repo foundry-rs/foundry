@@ -1259,6 +1259,15 @@ fn minimize_u256_pair_delta_candidates(
     current_right: U256,
     try_candidate: &mut impl FnMut(U256, U256) -> bool,
 ) -> bool {
+    let one = U256::from(1);
+    if (current_left, current_right) != (one, one)
+        && !current_left.is_zero()
+        && !current_right.is_zero()
+        && try_candidate(one, one)
+    {
+        return true;
+    }
+
     match current_left.cmp(&current_right) {
         std::cmp::Ordering::Equal => {
             !current_left.is_zero() && try_candidate(U256::ZERO, U256::ZERO)
@@ -1554,6 +1563,22 @@ mod tests {
         }
 
         assert_eq!(value, DynSolValue::Uint(U256::from(36), 256));
+    }
+
+    #[test]
+    fn uint_pair_delta_minimization_tries_simple_nonzero_pair_first() {
+        let mut candidates = Vec::new();
+
+        assert!(minimize_u256_pair_delta_candidates(
+            U256::from(100),
+            U256::from(50),
+            &mut |left, right| {
+                candidates.push((left, right));
+                (left, right) == (U256::from(1), U256::from(1))
+            },
+        ));
+
+        assert_eq!(candidates, vec![(U256::from(1), U256::from(1))]);
     }
 
     #[test]
