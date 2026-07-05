@@ -53,5 +53,17 @@ contract WhileStatement {
         while ( someLongVariableName < 10 && someLongVariableName < 11 && someLongVariableName < 12) doIt();
         
         while (condition) { doIt(); doIt(); }
+
+        while /* cmt */ (cond) { doIt(); doIt(); }
+        
+        while (cond) while /* cmt */ (cond) { doIt(); doIt(); }
+        
+        while (cond) /* cmt */  { doIt(); doIt(); }
+        
+        while (cond) while (cond) /* cmt */  { doIt(); doIt(); }
+        
+        while (cond)   {/* cmt */ doIt(); doIt(); }
+        
+        while (cond) while (cond)  {/* cmt */ doIt(); doIt(); }
     }
 }

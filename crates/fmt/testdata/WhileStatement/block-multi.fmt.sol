@@ -92,5 +92,51 @@ contract WhileStatement {
             doIt();
             doIt();
         }
+
+        while ( /* cmt */
+            cond
+        ) {
+            doIt();
+            doIt();
+        }
+
+        while (cond) {
+            while ( /* cmt */
+                cond
+            ) {
+                doIt();
+                doIt();
+            }
+        }
+
+        while (
+            cond /* cmt */
+        ) {
+            doIt();
+            doIt();
+        }
+
+        while (cond) {
+            while (
+                cond /* cmt */
+            ) {
+                doIt();
+                doIt();
+            }
+        }
+
+        while (cond) {
+            /* cmt */
+            doIt();
+            doIt();
+        }
+
+        while (cond) {
+            while (cond) {
+                /* cmt */
+                doIt();
+                doIt();
+            }
+        }
     }
 }

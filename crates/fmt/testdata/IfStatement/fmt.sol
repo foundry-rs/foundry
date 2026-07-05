@@ -239,6 +239,24 @@ contract IfStatement {
                 if (condition) { /* comment */ }
             }
         }
+
+        if (a) {
+            while ( /* comment */
+                b
+            ) {
+                x();
+            }
+        }
+
+        if (a) {
+            if (a) {
+                while ( /* comment */
+                    b
+                ) {
+                    x();
+                }
+            }
+        }
     }
 
     function test_nestedBkocks() public {
