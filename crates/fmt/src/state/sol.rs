@@ -2450,19 +2450,20 @@ impl<'ast> State<'_, 'ast> {
 
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
-            config::SingleLineBlockStyle::Preserve
-                if self.is_stmt_in_new_line(cond, then)
-                    || self.is_multiline_block_stmt(then, true) =>
-            {
-                return Decision { outcome: false, is_cached: false };
+            config::SingleLineBlockStyle::Preserve => {
+                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
+                {
+                    return Decision { outcome: false, is_cached: false };
+                }
             }
-            config::SingleLineBlockStyle::Single if self.is_multiline_block_stmt(then, true) => {
-                return Decision { outcome: false, is_cached: false };
+            config::SingleLineBlockStyle::Single => {
+                if self.is_multiline_block_stmt(then, true) {
+                    return Decision { outcome: false, is_cached: false };
+                }
             }
             config::SingleLineBlockStyle::Multi => {
                 return Decision { outcome: false, is_cached: false };
             }
-            _ => {}
         };
 
         // If no decision was made, estimate the length to be formatted.
@@ -2569,7 +2570,7 @@ impl<'ast> State<'_, 'ast> {
 
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.
     fn is_multiline_block_stmt(
-        &self,
+        &mut self,
         stmt: &'ast ast::Stmt<'ast>,
         empty_as_multiline: bool,
     ) -> bool {
@@ -2577,7 +2578,9 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::Block(block) => {
                 self.is_multiline_block(block, empty_as_multiline, false)
             }
-            ast::StmtKind::While(_, body) => self.is_multiline_block_stmt(body, empty_as_multiline),
+            ast::StmtKind::While(cond, body) => {
+                !self.is_single_line_block(stmt.span.lo(), cond, body, None).outcome
+            }
             ast::StmtKind::For { body, .. } => {
                 // In `print_for_stmt`, `print_stmt_as_block(body, span.hi(), false)` is called with
                 // `inline = false`. So only empty can be single-line.
@@ -2614,7 +2617,7 @@ impl<'ast> State<'_, 'ast> {
     /// Checks if a block statement `{ ... }` should be treated as multiline,
     /// either because it spans multiple lines or contains multiple statements.
     fn is_multiline_block(
-        &self,
+        &mut self,
         block: &'ast ast::Block<'ast>,
         empty_as_multiline: bool,
         force_single_as_multiline: bool,
