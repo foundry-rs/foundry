@@ -2237,19 +2237,19 @@ impl<'ast> State<'_, 'ast> {
                 skip_ind = true;
             };
 
-            let mut prev_block_non_empty = !block.stmts.is_empty();
+            let mut prev_block_multiline = self.is_multiline_block(block, false, true);
 
             // Handle 'catch' clauses
             for (pos, ast::TryCatchClause { name, args, block, span: catch_span }) in
                 other.iter().delimited()
             {
-                let current_block_non_empty = !block.stmts.is_empty();
+                let current_block_multiline = self.is_multiline_block(block, false, true);
                 if !pos.is_first || !skip_ind {
-                    if prev_block_non_empty && (current_block_non_empty || pos.is_last) {
+                    if prev_block_multiline && (current_block_multiline || pos.is_last) {
                         self.nbsp();
                     } else {
                         self.space();
-                        if !current_block_non_empty {
+                        if !current_block_multiline {
                             self.s.offset(self.ind);
                         }
                     }
@@ -2287,7 +2287,7 @@ impl<'ast> State<'_, 'ast> {
                     self.cursor.advance_to(catch_span.hi(), true);
                 }
 
-                prev_block_non_empty = current_block_non_empty;
+                prev_block_multiline = current_block_multiline;
             }
         }
         self.end();
