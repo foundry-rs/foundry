@@ -145,6 +145,10 @@ contract IfStatement {
         if (condition) if (condition) if (condition) /* comment */ { execute(); }
         
         if (condition) if (condition) if (condition) { /* comment */ }
+        
+        if (a) while /* comment */ (b) { x(); }
+        
+        if (a) if (a) while /* comment */ (b) { x(); }
     }
 
     function test_nestedBkocks() public {
