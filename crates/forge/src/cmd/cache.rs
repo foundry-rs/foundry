@@ -7,7 +7,7 @@ use eyre::Result;
 use foundry_common::sh_warn;
 use foundry_config::{Chain, Config, NamedChain, cache};
 use std::{ffi::OsStr, str::FromStr};
-use strum::VariantNames;
+use strum_027::VariantNames;
 
 /// CLI arguments for `forge cache`.
 #[derive(Debug, Parser)]

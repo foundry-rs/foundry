@@ -2,7 +2,7 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use eyre::Result;
 use foundry_config::{Chain, NamedChain};
 use std::ffi::OsStr;
-use strum::VariantNames;
+use strum_027::VariantNames;
 
 /// Custom Clap value parser for [`Chain`]s.
 ///

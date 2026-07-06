@@ -81,7 +81,7 @@ semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }
 solar.workspace = true
-strum = { workspace = true, features = ["derive"] }
+strum-027 = { package = "strum", version = "0.27" }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "signal"] }
 toml_edit.workspace = true

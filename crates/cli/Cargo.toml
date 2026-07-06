@@ -54,7 +54,7 @@ serde_json.workspace = true
 serde.workspace = true
 toml.workspace = true
 strsim = "0.11"
-strum = { workspace = true, features = ["derive"] }
+strum-027 = { package = "strum", version = "0.27" }
 tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
