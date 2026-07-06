@@ -23,8 +23,6 @@ use ratatui::{
 use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
-const SHORTCUT_LINE_COUNT: u16 = 4;
-
 impl TUIContext<'_> {
     pub(crate) fn draw_layout(&mut self, f: &mut Frame<'_>) {
         // We need 100 columns to display a 32 byte word in the memory and stack panes.
@@ -238,7 +236,7 @@ impl TUIContext<'_> {
                     || self.status.is_some(),
             )
         };
-        let shortcuts = if self.show_shortcuts { SHORTCUT_LINE_COUNT } else { 0 };
+        let shortcuts = if self.show_shortcuts { 3 } else { 0 };
         status_or_input + shortcuts
     }
 
@@ -307,7 +305,7 @@ impl TUIContext<'_> {
     }
 
     fn draw_command_prompt(&self, f: &mut Frame<'_>, area: Rect, input: &str) {
-        let shortcuts = if self.show_shortcuts { SHORTCUT_LINE_COUNT } else { 0 };
+        let shortcuts = if self.show_shortcuts { 3 } else { 0 };
         let [prompt, shortcuts_area] = Layout::new(
             Direction::Vertical,
             [Constraint::Length(3), Constraint::Length(shortcuts)],
@@ -1016,15 +1014,11 @@ fn shortcut_lines() -> Vec<Line<'static>> {
             dimmed,
         )),
         Line::from(Span::styled(
-            "[/] search | [:] command | [n/N] repeat | [l] layout | [b] buffer",
+            "[/] search | [:] command | [n/N] repeat | [l] layout | [b] buffer | [v] source | [V] variables",
             dimmed,
         )),
         Line::from(Span::styled(
-            "[v] source | [V] variables | [S] stack | [t] labels | [m] decode | [h] help",
-            dimmed,
-        )),
-        Line::from(Span::styled(
-            "[J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint",
+            "[t] labels | [m] decode | [h] help | [J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint",
             dimmed,
         )),
     ]
