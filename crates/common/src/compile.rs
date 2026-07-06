@@ -8,7 +8,7 @@ use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::AS
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
+    Artifact, Graph, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
         BytecodeObject, Contract, Source, output_selection::OutputSelection, remappings::Remapping,
     },
@@ -17,7 +17,7 @@ use foundry_compilers::{
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
-    multi::{MultiCompiler, MultiCompilerSettings},
+    multi::{MultiCompiler, MultiCompilerParser, MultiCompilerSettings},
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
@@ -603,20 +603,20 @@ where
 
 /// Compiles the target contract requesting only ABI output and returns its ABI.
 pub fn compile_target_abi(
-    project: &mut Project<MultiCompiler>,
+    project: &Project<MultiCompiler>,
     target_path: &Path,
     target_name: &str,
 ) -> Result<JsonAbi> {
     let target_path = dunce::canonicalize(target_path)?;
-    let mut output = compile_abi_project(
-        project,
-        ProjectCompiler::new().quiet(true).files([target_path.clone()]),
-    )?;
-
     if is_solidity_file(&target_path) {
-        return target_abi_from_solar(&mut output, &target_path, target_name);
+        return target_abi_from_solar(project, &target_path, target_name);
     }
 
+    let mut project = project.clone();
+    let output = compile_abi_project(
+        &mut project,
+        ProjectCompiler::new().quiet(true).files([target_path.clone()]),
+    )?;
     let artifact = output
         .find(&target_path, target_name)
         .ok_or_eyre("failed to find target artifact when compiling for abi")?;
@@ -624,11 +624,14 @@ pub fn compile_target_abi(
 }
 
 fn target_abi_from_solar(
-    output: &mut ProjectCompileOutput<MultiCompiler>,
+    project: &Project<MultiCompiler>,
     target_path: &Path,
     target_name: &str,
 ) -> Result<JsonAbi> {
-    let compiler = output.parser_mut().solc_mut().compiler_mut();
+    let sources = [(target_path.to_path_buf(), Source::read(target_path)?)].into_iter().collect();
+    let (_sources, mut edges) =
+        Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?.into_sources();
+    let compiler = edges.parser_mut().solc_mut().compiler_mut();
     compiler.enter_mut(|compiler| -> Result<JsonAbi> {
         let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {
             eyre::bail!("failed to lower Solar ASTs when compiling target ABI");

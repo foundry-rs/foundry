@@ -84,8 +84,7 @@ impl VerificationContext {
 
     /// Compiles target contract requesting only ABI and returns it.
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
-        let mut project = self.project.clone();
-        compile_target_abi(&mut project, &self.target_path, &self.target_name)
+        compile_target_abi(&self.project, &self.target_path, &self.target_name)
     }
 }
 
