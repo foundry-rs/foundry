@@ -6,6 +6,7 @@ use crate::{
     multi_runner::{
         FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, MultiNetworkConfig,
         ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
+        is_generated_symbolic_regression_contract,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
@@ -3070,10 +3071,15 @@ fn list_from_output(
             let source = id.source.as_path().display().to_string();
             let identifier = id.identifier();
             let name = id.name;
+            let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
             let tests = abi
                 .functions()
                 .filter(|func| {
-                    let kind = matcher.test_function_kind(&identifier, func);
+                    let kind = matcher.test_function_kind(
+                        &identifier,
+                        func,
+                        generated_symbolic_regression,
+                    );
                     (!fuzz_only
                         || matches!(
                             kind,
