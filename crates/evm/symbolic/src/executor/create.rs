@@ -236,6 +236,7 @@ impl SymbolicExecutor {
             }
 
             loop {
+                self.check_timeout()?;
                 if state.depth >= depth_limit {
                     return Err(SymbolicError::Unsupported("symbolic depth limit exceeded"));
                 }

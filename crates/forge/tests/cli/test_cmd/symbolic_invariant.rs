@@ -1,6 +1,120 @@
-use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness};
+use super::symbolic_helpers::{
+    assert_symbolic, assert_symbolic_engine, assert_symbolic_engine_witness,
+};
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str};
+
+forgetest_init!(symbolic_invariant_runs_before_fuzz_campaign, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_runs_before_fuzz_campaign");
+
+    prj.add_test(
+        "SymbolicInvariantRuns.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantTarget {
+    uint256 public counter;
+
+    function bump(uint8 amount) external {
+        if (amount == 7) {
+            counter = 1;
+        }
+    }
+}
+
+contract SymbolicInvariantRuns is Test {
+    SymbolicInvariantTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_counterStaysZero() public view {
+        assertEq(target.counter(), 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_engine_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--fuzz-runs",
+        "0",
+        "--match-test",
+        "invariant_counterStaysZero",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicInvariantRuns.t.sol:SymbolicInvariantRuns
+[FAIL: assertion failed: 1 != 0]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=bump(uint8) [ARGS]
+ invariant_counterStaysZero() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
+forgetest_init!(symbolic_invariant_honors_execution_timeout, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_honors_execution_timeout");
+
+    prj.add_test(
+        "SymbolicInvariantTimeout.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicTimeoutTarget {
+    uint256 scratch;
+
+    function spin() external {
+        while (true) {
+            unchecked {
+                scratch += 1;
+            }
+        }
+    }
+}
+
+contract SymbolicInvariantTimeout is Test {
+    SymbolicTimeoutTarget target;
+
+    function setUp() public {
+        target = new SymbolicTimeoutTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.symbolic.timeout = 1
+    // Keep the depth guard out of this fixture's stop condition; it should fail
+    // because the one-second symbolic timeout is reached first.
+    /// forge-config: default.symbolic.max_depth = 100000000
+    function invariant_alwaysTrue() public pure {}
+}
+"#,
+    );
+
+    assert_symbolic_engine(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_alwaysTrue",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantTimeout.t.sol:SymbolicInvariantTimeout
+[FAIL: incomplete symbolic execution (Timeout): symbolic execution timeout exceeded (1s)] invariant_alwaysTrue() ([METRICS])
+...
+"#]]);
+});
 
 // EIP-1153 transient storage is per-transaction scratch space. The symbolic
 // invariant runner must clear `state.world.transient_storage` at the boundary
@@ -103,7 +217,7 @@ contract SymbolicRevertBranchInvariant is Test {
 "#,
     );
 
-    assert_symbolic_witness(cmd.args([
+    assert_symbolic_engine_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
@@ -122,7 +236,186 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
-[SEED] (use `--fuzz-seed` to reproduce)
+"#]]);
+});
+
+forgetest_init!(symbolic_invariant_does_not_inherit_prank_into_nested_call, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_does_not_inherit_prank_into_nested_call");
+
+    prj.add_test(
+        "SymbolicSetupMappingStorageInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SetupToken {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function setBalance(address account, uint256 amount) external {
+        balanceOf[account] = amount;
+    }
+
+    function approve(address spender, uint256 amount) external {
+        allowance[msg.sender][spender] = amount;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        require(allowance[from][msg.sender] >= amount, "insufficient allowance");
+        require(balanceOf[from] >= amount, "insufficient balance");
+
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
+
+contract SetupSpender {
+    function pull(SetupToken token, address from, uint8 amount) external {
+        token.transferFrom(from, address(this), amount);
+    }
+}
+
+contract SymbolicSetupMappingStorageInvariant is Test {
+    SetupToken token;
+    SetupSpender spender;
+
+    function setUp() public {
+        token = new SetupToken();
+        spender = new SetupSpender();
+        token.setBalance(address(this), 10);
+        token.approve(address(spender), type(uint256).max);
+        targetContract(address(this));
+    }
+
+    function pull(uint8 amount) external {
+        if (amount == 7) {
+            vm.startPrank(address(this));
+            spender.pull(token, address(this), amount);
+            vm.stopPrank();
+        }
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_balanceStaysInitialized() public view {
+        assertEq(token.balanceOf(address(this)), 10);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_engine_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_balanceStaysInitialized",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicSetupMappingStorageInvariant.t.sol:SymbolicSetupMappingStorageInvariant
+[FAIL: assertion failed: 3 != 10]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=pull(uint8) [ARGS]
+ invariant_balanceStaysInitialized() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
+
+forgetest_init!(symbolic_invariant_solves_multicall_hard_arithmetic, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_solves_multicall_hard_arithmetic");
+
+    prj.add_test(
+        "SymbolicInvariantHardArithmetic.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicHardArithmeticMarket {
+    bool public borrowed;
+    uint256 public supplyAssets;
+    uint256 public supplyShares;
+    uint256 public collateralAssets;
+    uint256 public borrowAssets;
+    uint256 public borrowShares;
+
+    function supply(uint8 assets) external {
+        require(assets != 0, "zero supply");
+        uint256 shares = mulDivDown(assets, supplyShares + 1_000_000, supplyAssets + 1);
+        supplyAssets += assets;
+        supplyShares += shares;
+    }
+
+    function supplyCollateral(uint8 assets) external {
+        require(assets != 0, "zero collateral");
+        collateralAssets += assets;
+    }
+
+    function borrow(uint8 assets) external {
+        require(assets != 0, "zero borrow");
+        uint256 shares = mulDivUp(assets, borrowShares + 1_000_000, borrowAssets + 1);
+        borrowAssets += assets;
+        borrowShares += shares;
+        require(borrowAssets <= supplyAssets, "insufficient liquidity");
+        require(borrowAssets <= collateralAssets, "insufficient collateral");
+        borrowed = true;
+    }
+
+    function mulDivDown(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
+        return (x * y) / d;
+    }
+
+    function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
+        return (x * y + (d - 1)) / d;
+    }
+}
+
+contract SymbolicInvariantHardArithmetic is Test {
+    SymbolicHardArithmeticMarket target;
+
+    function setUp() public {
+        target = new SymbolicHardArithmeticMarket();
+        bytes4[] memory selectors = new bytes4[](3);
+        selectors[0] = target.supply.selector;
+        selectors[1] = target.supplyCollateral.selector;
+        selectors[2] = target.borrow.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 3
+    function invariant_notBorrowed() public view {
+        assertEq(target.borrowed(), false);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_engine_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_notBorrowed",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicInvariantHardArithmetic.t.sol:SymbolicInvariantHardArithmetic
+[FAIL: assertion failed: true != false]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] [SENDER] calldata=supply(uint8) [ARGS]
+		[SENDER] [SENDER] calldata=supplyCollateral(uint8) [ARGS]
+		[SENDER] [SENDER] calldata=borrow(uint8) [ARGS]
+ invariant_notBorrowed() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
@@ -191,7 +484,7 @@ contract SymbolicOverlayCodeInvariant is Test {
 "#,
     );
 
-    assert_symbolic_witness(cmd.args([
+    assert_symbolic_engine_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
@@ -210,8 +503,6 @@ Encountered 1 failing test in test/SymbolicOverlayCodeInvariant.t.sol:SymbolicOv
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-
-[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });

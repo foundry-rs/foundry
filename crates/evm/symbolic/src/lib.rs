@@ -448,6 +448,7 @@ pub struct SymbolicExecutor {
     cx: runtime::SymCx,
     solver: Box<dyn runtime::SymbolicSolver>,
     deferred_incomplete: Option<DeferredIncomplete>,
+    deadline: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -58,7 +58,7 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
     }
-    let vars = fallback_search_vars(cx, vars);
+    let vars = fallback_search_vars(cx, vars, constraints);
     !vars.is_empty() && vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS
 }
 
@@ -80,7 +80,7 @@ pub(crate) fn hard_arith_fallback_model(
     }
     let mut constants = constants.into_iter().collect::<Vec<_>>();
     constants.sort_unstable();
-    let vars = fallback_search_vars(cx, vars);
+    let vars = fallback_search_vars(cx, vars, constraints);
     if vars.is_empty() || vars.len() > HARD_ARITH_FALLBACK_MAX_VARS {
         return None;
     }
@@ -110,8 +110,19 @@ pub(crate) fn hard_arith_fallback_model(
     search.model(0, &mut model, &mut assignments)
 }
 
-fn fallback_search_vars(cx: &SymCx, vars: SymbolicVars) -> Vec<Symbol> {
+fn fallback_search_vars(
+    cx: &SymCx,
+    vars: SymbolicVars,
+    constraints: &[SymBoolExpr],
+) -> Vec<Symbol> {
     if vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
+        return vars.into_iter().collect();
+    }
+
+    let hard_arith_vars = hard_arith_fallback_vars(constraints);
+    if !hard_arith_vars.is_empty() && hard_arith_vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
+        let mut vars = hard_arith_vars;
+        add_zero_invalid_support_vars(&mut vars, constraints);
         return vars.into_iter().collect();
     }
 
@@ -125,6 +136,32 @@ fn fallback_search_vars(cx: &SymCx, vars: SymbolicVars) -> Vec<Symbol> {
                 || !var.contains('_')
         })
         .collect()
+}
+
+fn hard_arith_fallback_vars(constraints: &[SymBoolExpr]) -> SymbolicVars {
+    let mut vars = SymbolicVars::default();
+    for constraint in constraints {
+        collect_bool_hard_arith_vars(constraint, &mut vars);
+    }
+    vars
+}
+
+fn add_zero_invalid_support_vars(vars: &mut SymbolicVars, constraints: &[SymBoolExpr]) {
+    let zero_model = SymbolicModel::default();
+    for constraint in constraints {
+        if constraint.eval_model(&zero_model).unwrap_or(false) {
+            continue;
+        }
+
+        let mut constraint_vars = SymbolicVars::default();
+        constraint.collect_vars(&mut constraint_vars);
+        let missing =
+            constraint_vars.iter().filter(|var| !vars.contains(*var)).cloned().collect::<Vec<_>>();
+        if vars.len() + missing.len() > HARD_ARITH_FALLBACK_MAX_VARS {
+            continue;
+        }
+        vars.extend(missing);
+    }
 }
 
 fn fallback_candidates_for_var(
@@ -241,6 +278,15 @@ fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit_exprs(&mut |expr| {
         if let Some(var) = expr.kind().get_eval_var() {
             vars.insert(var);
+        }
+        ControlFlow::<()>::Continue(())
+    });
+}
+
+fn collect_bool_hard_arith_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
+    let _ = expr.visit_exprs(&mut |expr| {
+        if is_hard_arith_node(expr) {
+            expr.collect_eval_vars(vars);
         }
         ControlFlow::<()>::Continue(())
     });
@@ -376,5 +422,63 @@ fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<
             right.as_const()
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hard_arith_fallback_ignores_unrelated_abi_vars() {
+        let mut cx = SymCx::new();
+        let amount = SymExpr::var(&mut cx, "sequence_0_0_0_1");
+        let zero = SymExpr::zero(&mut cx);
+        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), amount.clone());
+        let div = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, amount.clone());
+        let amount_is_zero = SymBoolExpr::eq(&mut cx, amount.clone(), zero.clone());
+        let guarded_div = SymExpr::ite(&mut cx, amount_is_zero.clone(), zero, div);
+        let overflow_branch = SymBoolExpr::eq(&mut cx, guarded_div, scale).not(&mut cx);
+
+        let address_bound = U256::from(1) << 160;
+        let mut constraints = vec![amount_is_zero.not(&mut cx), overflow_branch];
+        for idx in 0..6 {
+            let abi_word = SymExpr::var(&mut cx, &format!("sequence_0_0_0_addr_{idx}"));
+            constraints.push(SymBoolExpr::cmp_word_const(
+                &mut cx,
+                SymCmpOp::Ult,
+                &abi_word,
+                address_bound,
+            ));
+        }
+
+        assert!(constraints_prefer_hard_arith_fallback_first(&constraints));
+        let model = hard_arith_fallback_model(&constraints).expect("fallback model");
+        assert!(model.contains_name(Symbol::intern("sequence_0_0_0_1")));
+        assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+    }
+
+    #[test]
+    fn hard_arith_fallback_keeps_prior_path_vars_needed_by_zero_model() {
+        let mut cx = SymCx::new();
+        let setup_amount = SymExpr::var(&mut cx, "sequence_0_0_0_1");
+        let borrow_amount = SymExpr::var(&mut cx, "sequence_2_2_0_1");
+        let zero = SymExpr::zero(&mut cx);
+        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), borrow_amount.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, borrow_amount.clone());
+
+        let constraints = vec![
+            SymBoolExpr::eq(&mut cx, setup_amount, zero.clone()).not(&mut cx),
+            SymBoolExpr::eq(&mut cx, borrow_amount, zero).not(&mut cx),
+            SymBoolExpr::eq(&mut cx, quotient, scale),
+        ];
+
+        assert!(constraints_prefer_hard_arith_fallback_first(&constraints));
+        let model = hard_arith_fallback_model(&constraints).expect("fallback model");
+        assert!(model.contains_name(Symbol::intern("sequence_0_0_0_1")));
+        assert!(model.contains_name(Symbol::intern("sequence_2_2_0_1")));
+        assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     }
 }

@@ -29,7 +29,31 @@ impl SymbolicExecutor {
     /// a fresh executor when a caller needs independent solver query accounting.
     pub fn new(config: SymbolicConfig) -> Self {
         let solver = SmtLibSubprocessSolver::from_config(&config);
-        Self { config, cx: SymCx::new(), solver: Box::new(solver), deferred_incomplete: None }
+        Self {
+            config,
+            cx: SymCx::new(),
+            solver: Box::new(solver),
+            deferred_incomplete: None,
+            deadline: None,
+        }
+    }
+
+    fn reset_run_state(&mut self) {
+        self.deferred_incomplete = None;
+        self.deadline = self
+            .config
+            .timeout
+            .filter(|seconds| *seconds > 0)
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+    }
+
+    pub(super) fn check_timeout(&self) -> Result<(), SymbolicError> {
+        if let Some(deadline) = self.deadline
+            && Instant::now() >= deadline
+        {
+            return Err(SymbolicError::Timeout(self.config.timeout.unwrap_or_default()));
+        }
+        Ok(())
     }
 
     /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
@@ -108,7 +132,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
     ) -> SymbolicRunResult {
-        self.deferred_incomplete = None;
+        self.reset_run_state();
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -165,7 +189,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
     ) -> SymbolicInvariantRunResult {
-        self.deferred_incomplete = None;
+        self.reset_run_state();
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -245,6 +269,7 @@ impl SymbolicExecutor {
             trace!(completed_paths, worklist_size = worklist.len(), "exploring symbolic path");
 
             loop {
+                self.check_timeout()?;
                 if state.depth >= depth_limit {
                     debug!(depth = state.depth, depth_limit, "symbolic depth limit reached");
                     return Ok(SymbolicRunResult::Incomplete {
@@ -488,10 +513,13 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let mut frontier = vec![initial];
         for depth in 0..input.depth {
+            self.check_timeout()?;
             let mut next_frontier = Vec::new();
             for sequence in frontier {
+                self.check_timeout()?;
                 for (target_idx, target) in input.targets.iter().enumerate() {
                     for (sender_idx, sender) in senders.iter().copied().enumerate() {
+                        self.check_timeout()?;
                         let prefix = format!("sequence_{depth}_{target_idx}_{sender_idx}");
                         let calldatas = SymbolicCalldata::variants_with_prefix(
                             &target.function,
@@ -544,35 +572,10 @@ impl SymbolicExecutor {
                                                 },
                                             );
                                         }
-                                        let mut reverted_state = sequence.state.clone();
-                                        reverted_state.world.clear_transaction_scoped_state();
-                                        for invariant_outcome in self.execute_invariant_check(
-                                            input.executor,
-                                            reverted_state,
-                                            input.invariant_address,
-                                            input.sender,
-                                            input.invariant,
-                                            input.after_invariant,
-                                            &mut completed_paths,
-                                        )? {
-                                            if invariant_outcome.failed {
-                                                let sequence = self.materialize_sequence(
-                                                    &steps,
-                                                    &invariant_outcome.state,
-                                                )?;
-                                                return Ok(
-                                                    SymbolicInvariantRunResult::Counterexample {
-                                                        sequence,
-                                                        stats: self
-                                                            .stats_with_paths(completed_paths),
-                                                    },
-                                                );
-                                            }
-                                            next_frontier.push(SequencePath {
-                                                state: invariant_outcome.state,
-                                                steps: steps.clone(),
-                                            });
-                                        }
+                                        // With `fail_on_revert = false`, a reverted top-level
+                                        // call cannot change persistent state. The unchanged
+                                        // prefix was already checked, so carrying each revert
+                                        // branch forward only duplicates the same frontier.
                                     }
                                     TopLevelCallStatus::Success => {
                                         for invariant_outcome in self.execute_invariant_check(

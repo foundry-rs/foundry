@@ -146,6 +146,7 @@ impl SymbolicExecutor {
             trace!(completed_paths, worklist_size = worklist.len(), "exploring symbolic path");
 
             loop {
+                self.check_timeout()?;
                 if state.depth >= depth_limit {
                     return Err(SymbolicError::Unsupported("symbolic depth limit exceeded"));
                 }

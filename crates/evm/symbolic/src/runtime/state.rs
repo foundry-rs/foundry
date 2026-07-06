@@ -159,7 +159,9 @@ impl PathState {
             block: self.block.clone(),
             frame,
             world: self.world.clone(),
-            prank: self.prank.clone(),
+            // A prank changes the call being entered; calls made by the callee use
+            // normal EVM caller semantics unless the callee sets its own prank.
+            prank: SymbolicPrank::default(),
             constraints: self.constraints.clone(),
             next_symbol: self.next_symbol,
             recorded_logs: self.recorded_logs.clone(),

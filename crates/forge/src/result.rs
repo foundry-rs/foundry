@@ -995,6 +995,23 @@ impl SymbolicResult {
         )
     }
 
+    /// Creates a symbolic sequence counterexample result that concrete replay confirmed.
+    pub fn fail_counterexample_sequence(
+        config: &SymbolicConfig,
+        stats: SymbolicStats,
+        call_trace: SymbolicCallTrace,
+    ) -> Self {
+        Self::new(
+            SymbolicResultStatus::FailCounterexample,
+            config,
+            stats,
+            None,
+            SymbolicReplayMetadata::confirmed(),
+            call_trace,
+            None,
+        )
+    }
+
     /// Creates an incomplete symbolic result.
     pub fn incomplete(
         config: &SymbolicConfig,
