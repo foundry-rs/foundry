@@ -34,12 +34,13 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind, compile::ProjectCompiler, fs,
-    shell,
+    EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
+    compile::{ProjectCompiler, compile_abi_project},
+    fs, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
-    artifacts::{Libraries, output_selection::OutputSelection},
+    artifacts::Libraries,
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -1124,10 +1125,7 @@ impl TestArgs {
         }
 
         let mut project = config.create_project(true, true)?;
-        project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection(["abi".to_string()]);
-        });
-        let output = project.compile()?;
+        let output = compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
@@ -1236,13 +1234,10 @@ impl TestArgs {
         let quiet = shell::is_json() || self.junit;
 
         if self.list {
-            project.update_output_selection(|selection| {
-                *selection = OutputSelection::common_output_selection(["abi".to_string()]);
-            });
-            let output = ProjectCompiler::new()
-                .dynamic_test_linking(dynamic_test_linking)
-                .quiet(quiet)
-                .compile(&project)?;
+            let output = compile_abi_project(
+                &mut project,
+                ProjectCompiler::new().dynamic_test_linking(dynamic_test_linking).quiet(quiet),
+            )?;
             let inline_config = Arc::new(InlineConfig::new_parsed(&output, &config)?);
             return Ok((
                 project_root,
