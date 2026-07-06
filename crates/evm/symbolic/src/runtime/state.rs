@@ -150,6 +150,9 @@ impl PathState {
             for target in cheats.arbitrary_storage_targets() {
                 self.world.enable_arbitrary_storage(target);
             }
+            for target in cheats.arbitrary_storage_copied_targets() {
+                self.world.enable_arbitrary_storage(target);
+            }
         }
     }
 

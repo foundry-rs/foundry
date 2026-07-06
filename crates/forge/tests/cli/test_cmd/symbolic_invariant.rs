@@ -191,6 +191,86 @@ calldata=useStore()
     assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
 });
 
+forgetest_init!(symbolic_invariant_replays_copied_arbitrary_storage, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_replays_copied_arbitrary_storage");
+
+    prj.add_test(
+        "SymbolicInvariantCopiedStorage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ArbitraryStorageVm {
+    function setArbitraryStorage(address target) external;
+    function copyStorage(address from, address to) external;
+}
+
+contract ExternalStore {
+    uint256 public value;
+}
+
+contract StorageBackedTarget {
+    ExternalStore store;
+    bool public hit;
+
+    constructor(ExternalStore store_) {
+        store = store_;
+    }
+
+    function useStore() external {
+        require(store.value() == 42);
+        hit = true;
+    }
+}
+
+contract SymbolicInvariantCopiedStorage is Test {
+    ExternalStore source;
+    ExternalStore copy;
+    StorageBackedTarget target;
+
+    function setUp() public {
+        source = new ExternalStore();
+        copy = new ExternalStore();
+        target = new StorageBackedTarget(copy);
+        ArbitraryStorageVm(address(vm)).setArbitraryStorage(address(source));
+        ArbitraryStorageVm(address(vm)).copyStorage(address(source), address(copy));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_engine_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--fuzz-runs",
+        "0",
+        "--match-test",
+        "invariant_notHit",
+    ]))
+    .failure()
+    .get_output()
+    .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL: hit]
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+calldata=useStore()
+"#]],
+    );
+    assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
+});
+
 forgetest_init!(symbolic_invariant_honors_execution_timeout, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_honors_execution_timeout");
 

@@ -433,6 +433,11 @@ impl ArbitraryStorage {
         self.values.keys().copied()
     }
 
+    /// Returns addresses that copy storage from arbitrary-storage targets.
+    fn copied_targets(&self) -> impl Iterator<Item = Address> + '_ {
+        self.copies.keys().copied()
+    }
+
     /// Caches a concrete value for a slot on an arbitrary-storage address.
     fn cache_value(&mut self, address: Address, slot: U256, data: U256) {
         if let Some(values) = self.values.get_mut(&address) {
@@ -1318,6 +1323,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Returns addresses explicitly marked with arbitrary storage.
     pub fn arbitrary_storage_targets(&self) -> impl Iterator<Item = Address> + '_ {
         self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::targets)
+    }
+
+    /// Returns addresses that copy storage from arbitrary-storage targets.
+    pub fn arbitrary_storage_copied_targets(&self) -> impl Iterator<Item = Address> + '_ {
+        self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::copied_targets)
     }
 
     /// Caches a concrete replay value for a slot on an arbitrary-storage address.
