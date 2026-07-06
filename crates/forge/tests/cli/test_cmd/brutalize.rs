@@ -206,6 +206,34 @@ contract FixtureReadTest is Test {
     cmd.assert_success();
 });
 
+forgetest_init!(brutalize_creates_write_permission_dirs, |prj, cmd| {
+    let writes = prj.root().join("writes");
+    fs::create_dir_all(&writes).unwrap();
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::write("./writes")));
+
+    prj.add_test(
+        "FixtureWrite.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+
+contract FixtureWriteTest is Test {
+    function test_writeFixture() public {
+        vm.writeFile("./writes/output.txt", "fixture-data");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "test_writeFixture"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().args(["test", "--brutalize", "--mt", "test_writeFixture"]);
+    cmd.assert_success();
+});
+
 // --brutalize and --mutate are mutually exclusive
 forgetest_init!(brutalize_conflicts_with_mutate, |prj, cmd| {
     prj.add_source(

@@ -91,7 +91,9 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
             Some(rebase_project_path(&config.root, temp_path, path));
     }
     for permission in &mut temp_config.fs_permissions.permissions {
-        permission.path = rebase_project_path(&config.root, temp_path, &permission.path);
+        if permission.path.is_absolute() {
+            permission.path = rebase_project_path(&config.root, temp_path, &permission.path);
+        }
     }
     if let Some(model_checker) = &mut temp_config.model_checker {
         model_checker.contracts = std::mem::take(&mut model_checker.contracts)
@@ -187,15 +189,21 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         )?;
     }
     for permission in &config.fs_permissions.permissions {
-        if !permission.is_granted(FsAccessKind::Read) {
-            continue;
+        if permission.is_granted(FsAccessKind::Read) {
+            copy_project_local_permission_path(
+                &config.root,
+                temp_dir,
+                &permission.path,
+                &handled_extra_roots,
+            )?;
+        } else if permission.is_granted(FsAccessKind::Write) {
+            create_project_local_permission_dir(
+                &config.root,
+                temp_dir,
+                &permission.path,
+                &handled_extra_roots,
+            )?;
         }
-        copy_project_local_permission_path(
-            &config.root,
-            temp_dir,
-            &permission.path,
-            &handled_extra_roots,
-        )?;
     }
 
     // Copy `script/` too when present and distinct from src/test. Many real
@@ -341,6 +349,31 @@ fn copy_project_local_permission_path(
         return Ok(());
     }
     copy_extra_project_path(root, temp_dir, path, handled_roots, "fs permission")
+}
+
+fn create_project_local_permission_dir(
+    root: &Path,
+    temp_dir: &Path,
+    path: &Path,
+    handled_roots: &[PathBuf],
+) -> Result<()> {
+    let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let rel = relative_to_root(root, &resolved);
+    if rel.is_absolute() || rel.as_os_str().is_empty() {
+        return Ok(());
+    }
+    ensure_safe_relative_path(&rel, "fs permission", path)?;
+    ensure_within_root(root, &resolved, "fs permission", path)?;
+
+    if is_covered_by_handled_root(&rel, handled_roots) {
+        return Ok(());
+    }
+
+    if resolved.exists() && resolved.is_dir() {
+        fs::create_dir_all(temp_dir.join(rel))?;
+    }
+
+    Ok(())
 }
 
 /// Create a symlink to a directory (cross-platform).
@@ -607,6 +640,25 @@ mod tests {
         let contracts = temp_config.model_checker.unwrap().contracts;
         assert!(contracts.contains_key(&workspace.join("src/Target.sol").display().to_string()));
         assert!(contracts.contains_key(&external.join("External.sol").display().to_string()));
+    }
+
+    #[test]
+    fn test_rebase_config_paths_rebases_relative_fs_permissions() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(root.join("writes")).unwrap();
+
+        let config = Config {
+            root,
+            fs_permissions: foundry_config::FsPermissions::new([PathPermission::write("./writes")]),
+            ..Default::default()
+        };
+
+        let temp_config = rebase_config_paths(&config, &workspace).sanitized();
+
+        assert_eq!(temp_config.root, workspace);
+        assert_eq!(temp_config.fs_permissions.permissions[0].path, workspace.join("writes"));
     }
 
     #[test]
