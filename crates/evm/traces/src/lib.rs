@@ -16,10 +16,7 @@ use foundry_common::{
     shell,
 };
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::{
-    OpcodeFilter,
-    types::{DecodedTraceStep, TraceMemberOrder},
-};
+use revm_inspectors::tracing::{OpcodeFilter, types::DecodedTraceStep};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -35,7 +32,7 @@ pub use revm_inspectors::tracing::{
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
         CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
-        DecodedCallTrace,
+        DecodedCallTrace, TraceMemberOrder,
     },
 };
 

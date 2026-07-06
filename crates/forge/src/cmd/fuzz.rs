@@ -171,8 +171,13 @@ impl FuzzShowArgs {
                     sh_println!("{} ({} txs)", entry.path.display(), entry.sequence.len())?;
                     for (idx, tx) in entry.sequence.iter().enumerate() {
                         if let Some(decoded) = &tx.decoded {
+                            let ambiguity = if decoded.ambiguous_contracts.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" ambiguous=[{}]", decoded.ambiguous_contracts.join(","))
+                            };
                             sh_println!(
-                                "  {idx}: {} sender={} target={} value={}",
+                                "  {idx}: {} sender={} target={} value={}{}",
                                 decoded.call,
                                 tx.raw.sender,
                                 tx.raw.call_details.target,
@@ -180,7 +185,8 @@ impl FuzzShowArgs {
                                     .call_details
                                     .value
                                     .map(|v| v.to_string())
-                                    .unwrap_or_else(|| "0".to_string())
+                                    .unwrap_or_else(|| "0".to_string()),
+                                ambiguity
                             )?;
                         } else {
                             sh_println!(
@@ -814,10 +820,7 @@ fn abi_calldata_candidates(calldata: &[u8], decoder: &CorpusDecoder, limit: usiz
     if limit == 0 {
         return Vec::new();
     }
-    let Some(function) = decoder.unique_decodable_function(calldata) else {
-        return Vec::new();
-    };
-    let Ok(args) = function.abi_decode_input(&calldata[4..]) else {
+    let Some((function, args)) = decoder.unique_decodable_function(calldata) else {
         return Vec::new();
     };
 
@@ -1015,7 +1018,10 @@ struct DisplayTxDetails {
 
 #[derive(Serialize)]
 struct DecodedCall {
-    contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    contract: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ambiguous_contracts: Vec<String>,
     signature: String,
     args: Vec<String>,
     call: String,
@@ -1068,46 +1074,66 @@ impl CorpusDecoder {
 
     fn decode(&self, tx: &BasicTxDetails) -> Option<DecodedCall> {
         let calldata = tx.call_details.calldata.as_ref();
-        let function = self.unique_decodable_function(calldata)?;
-        let decoded_args = function.abi_decode_input(&calldata[4..]).ok()?;
-        let args = format_tokens_raw(&decoded_args).collect::<Vec<_>>();
+        if calldata.len() < 4 {
+            return None;
+        }
 
         let selector = Selector::from_slice(&calldata[..4]);
-        self.functions.get(&selector).and_then(|functions| {
-            let indexed = functions.iter().find(|indexed| &indexed.function == function)?;
-            let signature = indexed.function.signature();
+        let functions = self.functions.get(&selector)?;
+        let (function, decoded_args) = self.unique_decodable_function(calldata)?;
+        let args = format_tokens_raw(&decoded_args).collect::<Vec<_>>();
+        let signature = function.signature();
+
+        let mut contracts = functions
+            .iter()
+            .filter(|indexed| indexed.function.signature() == signature.as_str())
+            .map(|indexed| indexed.contract.clone())
+            .collect::<Vec<_>>();
+        contracts.sort();
+        contracts.dedup();
+
+        let function_call = format!("{}({})", function.name, args.join(", "));
+        if contracts.len() == 1 {
+            let contract = contracts.pop()?;
             Some(DecodedCall {
-                call: format!(
-                    "{}.{}({})",
-                    indexed.contract,
-                    indexed.function.name,
-                    args.join(", ")
-                ),
-                contract: indexed.contract.clone(),
+                call: format!("{contract}.{function_call}"),
+                contract: Some(contract),
+                ambiguous_contracts: Vec::new(),
                 signature,
                 args,
             })
-        })
+        } else {
+            Some(DecodedCall {
+                call: function_call,
+                contract: None,
+                ambiguous_contracts: contracts,
+                signature,
+                args,
+            })
+        }
     }
 
-    fn unique_decodable_function(&self, calldata: &[u8]) -> Option<&Function> {
+    fn unique_decodable_function(&self, calldata: &[u8]) -> Option<(&Function, Vec<DynSolValue>)> {
         if calldata.len() < 4 {
             return None;
         }
 
         let selector = Selector::from_slice(&calldata[..4]);
         let mut unique = None;
-        for function in self.functions.get(&selector)?.iter().filter_map(|indexed| {
-            indexed.function.abi_decode_input(&calldata[4..]).ok()?;
-            Some(&indexed.function)
-        }) {
-            match unique {
-                Some(existing) if existing == function => {}
+        for (function, decoded_args) in
+            self.functions.get(&selector)?.iter().filter_map(|indexed| {
+                let decoded_args = indexed.function.abi_decode_input(&calldata[4..]).ok()?;
+                Some((&indexed.function, decoded_args))
+            })
+        {
+            let signature = function.signature();
+            match &unique {
+                Some((existing, _, _)) if existing == &signature => {}
                 Some(_) => return None,
-                None => unique = Some(function),
+                None => unique = Some((signature, function, decoded_args)),
             }
         }
-        unique
+        unique.map(|(_, function, decoded_args)| (function, decoded_args))
     }
 }
 
@@ -1228,6 +1254,7 @@ fn merge_new_edge_vec(cumulative: &mut Vec<u8>, candidate: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::executors::ReplayFailure;
 
     fn decoder_with_functions(functions: Vec<Function>) -> CorpusDecoder {
         let mut decoder = CorpusDecoder::default();
@@ -1282,6 +1309,40 @@ mod tests {
         let observations = BTreeMap::from([
             ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
             ("B".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_failures() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            (
+                "B".to_string(),
+                ReplayObservation {
+                    failure: Some(ReplayFailure::AfterInvariant),
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_replayed_transactions() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            ("B".to_string(), ReplayObservation { replayed: 1, ..Default::default() }),
         ]);
 
         assert!(has_new_active_targets(&observations, &baseline));
@@ -1444,5 +1505,25 @@ mod tests {
             abi_calldata_candidates(&calldata[..calldata.len() - 1], &decoder, usize::MAX)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn abi_calldata_candidates_accept_same_signature_with_metadata_differences() {
+        let function =
+            Function::parse("function target(uint256 value) external returns (uint256)").unwrap();
+        let same_signature = Function::parse("function target(uint256 value) view").unwrap();
+        let calldata =
+            function.abi_encode_input(&[DynSolValue::Uint(U256::from(42), 256)]).unwrap();
+
+        let mut decoder = CorpusDecoder::default();
+        decoder.functions.entry(function.selector()).or_default().extend([
+            IndexedFunction { contract: "WithReturn".to_string(), function: function.clone() },
+            IndexedFunction { contract: "NoReturn".to_string(), function: same_signature },
+        ]);
+
+        let candidates =
+            candidate_args(&function, abi_calldata_candidates(&calldata, &decoder, usize::MAX));
+
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Uint(U256::ZERO, 256)));
     }
 }

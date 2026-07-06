@@ -1214,7 +1214,10 @@ pub enum CastSubcommand {
         /// Encoded transaction
         tx: Option<String>,
 
-        /// Specify the Network for correct encoding.
+        /// Override the network used to decode the transaction.
+        ///
+        /// By default, cast decodes with Foundry's transaction envelope, which recognizes
+        /// standard Ethereum txs and Foundry-supported network-specific tx types such as Tempo.
         #[arg(long, short, num_args = 1, value_name = "NETWORK")]
         network: Option<NetworkVariant>,
     },
