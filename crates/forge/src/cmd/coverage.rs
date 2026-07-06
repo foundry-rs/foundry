@@ -115,12 +115,10 @@ impl CoverageArgs {
     }
 
     fn file_report_count(&self) -> usize {
-        self.report
-            .iter()
-            .filter(|kind| {
-                matches!(kind, CoverageReportKind::Lcov | CoverageReportKind::Attribution)
-            })
-            .count()
+        let has_lcov = self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Lcov));
+        let has_attribution =
+            self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution));
+        usize::from(has_lcov) + usize::from(has_attribution)
     }
 
     pub async fn run(mut self) -> Result<()> {
