@@ -938,7 +938,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Logs(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
-            let decoded_tx = match network {
+            let tx_bytes = hex::decode(&tx)?;
+            let ty = tx_bytes.first().copied();
+            // Auto-detect the network from the transaction type byte unless an explicit
+            // `--network` override was provided, so e.g. a Tempo tx (type `0x76`) decodes
+            // without `--network tempo`.
+            let variant = network.or_else(|| ty.and_then(NetworkVariant::from_tx_type));
+            let decoded_tx = match variant {
                 #[cfg(feature = "optimism")]
                 Some(NetworkVariant::Optimism) => {
                     SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
