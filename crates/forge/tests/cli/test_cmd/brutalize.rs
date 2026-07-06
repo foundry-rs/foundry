@@ -537,6 +537,59 @@ contract ValueBitsVulnTest is Test {
     cmd.assert_failure();
 });
 
+forgetest_init!(brutalize_warns_via_ir_value_bits_are_ineffective, |prj, cmd| {
+    prj.add_source(
+        "ValueBitsVuln.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract ValueBitsVuln {
+    function rawBytes4(uint32 x) external pure returns (uint256 raw) {
+        bytes4 y = bytes4(x);
+        assembly {
+            raw := y
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "ValueBitsVuln.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/ValueBitsVuln.sol";
+
+contract ValueBitsVulnTest is Test {
+    ValueBitsVuln public c;
+
+    function setUp() public {
+        c = new ValueBitsVuln();
+    }
+
+    function test_rawBytes4IsClean() public view {
+        bytes4 expected = bytes4(uint32(0x12345678));
+        assertEq(c.rawBytes4(0x12345678), uint256(bytes32(expected)));
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--brutalize", "--via-ir", "--mc", "ValueBitsVulnTest"])
+        .assert_success()
+        .get_output()
+        .stderr_lossy();
+    assert!(
+        output.contains("--brutalize value cast dirty-bits checks are ineffective with via-IR"),
+        "{output}"
+    );
+});
+
 // With src = ".", brutalization should skip tests, scripts, and libraries.
 forgetest_init!(brutalize_flat_layout_only_brutalizes_sources, |prj, cmd| {
     prj.update_config(|config| {

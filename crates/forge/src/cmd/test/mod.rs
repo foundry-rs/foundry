@@ -36,7 +36,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind, compile::ProjectCompiler, fs,
-    sh_status, shell,
+    sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -951,7 +951,8 @@ pub struct TestArgs {
     /// sanitizers before compiling:
     ///
     /// - Dirties unused bits in sub-256-bit type casts (address, uint8, bytes4, etc.) to catch
-    ///   assembly code that assumes clean upper bits
+    ///   assembly code that assumes clean upper bits when using legacy codegen. Via-IR may clean
+    ///   these bits before inline assembly observes them.
     /// - Fills scratch space (0x00-0x3f) and memory beyond the free memory pointer with junk to
     ///   catch uninitialized memory reads
     /// - Misaligns the free memory pointer to catch word-alignment assumptions
@@ -1212,6 +1213,12 @@ impl TestArgs {
         let silent = shell::is_json();
         let temp_dir = TempDir::with_prefix("forge_brutalize_")?;
         let temp_path = temp_dir.path();
+
+        if config.via_ir && !silent {
+            sh_warn!(
+                "--brutalize value cast dirty-bits checks are ineffective with via-IR; memory and free-memory-pointer checks still apply"
+            )?;
+        }
 
         if !silent {
             sh_status!("Brutalizing source files...")?;
