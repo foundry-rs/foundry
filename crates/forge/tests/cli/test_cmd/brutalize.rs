@@ -373,6 +373,56 @@ contract ScratchHighVulnTest is Test {
     cmd.assert_failure();
 });
 
+// Catches dirty upper bits from narrow value casts.
+forgetest_init!(brutalize_catches_dirty_value_bits, |prj, cmd| {
+    prj.add_source(
+        "ValueBitsVuln.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract ValueBitsVuln {
+    function rawBytes4(uint32 x) external pure returns (uint256 raw) {
+        bytes4 y = bytes4(x);
+        assembly {
+            raw := y
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "ValueBitsVuln.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/ValueBitsVuln.sol";
+
+contract ValueBitsVulnTest is Test {
+    ValueBitsVuln public c;
+
+    function setUp() public {
+        c = new ValueBitsVuln();
+    }
+
+    function test_rawBytes4IsClean() public view {
+        bytes4 expected = bytes4(uint32(0x12345678));
+        assertEq(c.rawBytes4(0x12345678), uint256(bytes32(expected)));
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "ValueBitsVulnTest"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ValueBitsVulnTest"]);
+    cmd.assert_failure();
+});
+
 // With src = ".", brutalization should skip tests, scripts, and libraries.
 forgetest_init!(brutalize_flat_layout_only_brutalizes_sources, |prj, cmd| {
     prj.update_config(|config| {
