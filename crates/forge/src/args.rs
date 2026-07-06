@@ -33,7 +33,7 @@ pub fn setup() -> Result<()> {
 pub fn run_command(args: Forge) -> Result<()> {
     // Set the execution context based on the subcommand.
     let context = match &args.cmd {
-        ForgeSubcommand::Test(_) | ForgeSubcommand::Fuzz(_) => ForgeContext::Test,
+        ForgeSubcommand::Test(_) | ForgeSubcommand::Corpus(_) => ForgeContext::Test,
         ForgeSubcommand::Coverage(_) => ForgeContext::Coverage,
         ForgeSubcommand::Snapshot(_) => ForgeContext::Snapshot,
         ForgeSubcommand::Script(cmd) => {
@@ -62,9 +62,8 @@ pub fn run_command(args: Forge) -> Result<()> {
                 outcome.ensure_ok(silent)
             }
         }
-        ForgeSubcommand::Fuzz(cmd) => {
-            cmd.reject_unsupported_flags()?;
-            let silent = cmd.is_junit() || shell::is_json();
+        ForgeSubcommand::Corpus(cmd) => {
+            let silent = shell::is_json();
             let outcome = global.block_on(cmd.run())?;
             outcome.ensure_ok(silent)
         }

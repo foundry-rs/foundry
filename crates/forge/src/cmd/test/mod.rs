@@ -361,16 +361,16 @@ fn sources_to_compile_from_artifacts(
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
-    /// Internal mode used by `forge fuzz`.
-    #[arg(skip)]
+    /// Run only fuzz and invariant tests.
+    #[arg(long = "fuzz")]
     pub(crate) fuzz_only: bool,
 
-    /// Internal showmap/replay override used by `forge fuzz replay`.
+    /// Internal showmap/replay override used by corpus minimization.
     #[arg(skip)]
     pub(crate) showmap_override: Option<ShowmapConfig>,
 
-    /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
-    #[arg(skip)]
+    /// Replay persisted fuzz and invariant failures without running a new campaign.
+    #[arg(long = "replay-failure", requires = "fuzz_only")]
     pub(crate) fuzz_failure_replay: bool,
 
     // Include global options for users of this struct.
@@ -984,6 +984,7 @@ impl TestArgs {
 
     /// Overrides showmap config for callers that reuse replay mode without the
     /// `forge test --showmap-*` CLI flags.
+    #[cfg(test)]
     pub(crate) fn set_showmap_override(&mut self, showmap: ShowmapConfig) {
         self.showmap_override = Some(showmap);
     }
@@ -1000,11 +1001,6 @@ impl TestArgs {
         self.evm = evm;
         self.build = build;
         self.filter = filter;
-    }
-
-    /// Replays persisted fuzz failures without running a new fuzz campaign.
-    pub(crate) const fn enable_fuzz_failure_replay(&mut self) {
-        self.fuzz_failure_replay = true;
     }
 
     fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {

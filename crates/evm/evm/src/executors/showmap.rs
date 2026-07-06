@@ -92,7 +92,7 @@ pub struct ShowmapOpts {
     pub per_input: bool,
     /// Which bitmap(s) to dump.
     pub domain: ShowmapDomain,
-    /// Whether to write showmap files. Disabled by `forge fuzz replay`.
+    /// Whether to write showmap files. Disabled by persisted failure replay.
     pub emit_files: bool,
 }
 

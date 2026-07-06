@@ -203,7 +203,8 @@ contract ForgeFuzzRunTest is Test {
    "#,
     );
 
-    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzRunTest"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--fuzz", "--mc", "ForgeFuzzRunTest"]).assert_success().stdout_eq(str![[
+        r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -215,7 +216,8 @@ Suite result: ok. 1 passed; 0 failed; 1 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 1 skipped (2 total tests)
 
-"#]]);
+"#
+    ]]);
 });
 
 forgetest_init!(does_not_evaluate_unused_fuzz_fixtures_for_unit_test_filter, |prj, cmd| {
@@ -253,7 +255,7 @@ contract UnusedFuzzFixturesTest {
 
     cmd.forge_fuse();
     cmd.args(["test", "--match-test", "testFuzzUsesFixture", "-q"]).assert_success();
-    assert!(marker.exists(), "fuzz run did not evaluate fuzz fixture");
+    assert!(marker.exists(), "fuzz mode did not evaluate fuzz fixture");
 });
 
 forgetest_init!(forge_fuzz_skips_unit_only_failing_setup, |prj, cmd| {
@@ -273,12 +275,14 @@ contract ForgeFuzzUnitOnlyTest is Test {
     );
 
     let run =
-        cmd.forge_fuse().args(["fuzz", "run", "--mc", "ForgeFuzzUnitOnlyTest"]).assert_success();
+        cmd.forge_fuse().args(["test", "--fuzz", "--mc", "ForgeFuzzUnitOnlyTest"]).assert_success();
     let stdout = String::from_utf8(run.get_output().stdout.clone()).unwrap();
     assert!(!stdout.contains("setUp should not run"), "{stdout}");
 
-    let replay =
-        cmd.forge_fuse().args(["fuzz", "replay", "--mc", "ForgeFuzzUnitOnlyTest"]).assert_success();
+    let replay = cmd
+        .forge_fuse()
+        .args(["test", "--fuzz", "--replay-failure", "--mc", "ForgeFuzzUnitOnlyTest"])
+        .assert_success();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(!stdout.contains("setUp should not run"), "{stdout}");
 });
@@ -299,7 +303,7 @@ contract ForgeFuzzReplayTest is Test {
    "#,
     );
 
-    cmd.args(["fuzz", "replay", "--mc", "ForgeFuzzReplayTest"]).assert_success().stdout_eq(str![[
+    cmd.args(["test", "--fuzz", "--replay-failure", "--mc", "ForgeFuzzReplayTest"]).assert_success().stdout_eq(str![[
         r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -316,8 +320,8 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
     ]]);
 });
 
-// `forge fuzz replay` (without `--corpus-dir`) must not start a fresh invariant
-// campaign when there is no persisted failure to replay; it should skip instead.
+// Persisted failure replay must not start a fresh invariant campaign when there is
+// no persisted failure to replay; it should skip instead.
 forgetest_init!(forge_fuzz_replay_invariant_skips_without_persisted_failure, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzReplayInvariant.t.sol",
@@ -342,7 +346,7 @@ contract ForgeFuzzReplayInvariantTest is Test {
    "#,
     );
 
-    cmd.args(["fuzz", "replay", "--mc", "ForgeFuzzReplayInvariantTest"])
+    cmd.args(["test", "--fuzz", "--replay-failure", "--mc", "ForgeFuzzReplayInvariantTest"])
         .assert_success()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -376,11 +380,11 @@ contract ForgeFuzzReplayFailureTest {
    "#,
     );
 
-    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayFailureTest", "-q"]).assert_failure();
+    cmd.args(["test", "--fuzz", "--mc", "ForgeFuzzReplayFailureTest", "-q"]).assert_failure();
 
     let replay = cmd
         .forge_fuse()
-        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
+        .args(["test", "--fuzz", "--replay-failure", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
         .assert_failure();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(
@@ -419,7 +423,7 @@ contract Beta {
     std::fs::create_dir_all(&corpus).unwrap();
     write_corpus_entry(&corpus, "00000000-0000-0000-0000-00000000be7a-1.json", &calldata);
 
-    let show = cmd.forge_fuse().args(["fuzz", "show", "corpus"]).assert_success();
+    let show = cmd.forge_fuse().args(["corpus", "show", "corpus"]).assert_success();
     let stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("  0: collide(42) "), "{stdout}");
     assert!(stdout.contains(" ambiguous=[Alpha,Beta]"), "{stdout}");
@@ -427,7 +431,7 @@ contract Beta {
     assert!(!stdout.contains("Beta.collide(42)"), "{stdout}");
 
     let json =
-        cmd.forge_fuse().args(["fuzz", "show", "corpus", "--format", "json"]).assert_success();
+        cmd.forge_fuse().args(["corpus", "show", "corpus", "--format", "json"]).assert_success();
     let stdout = String::from_utf8(json.get_output().stdout.clone()).unwrap();
     let entries: Value = serde_json::from_str(&stdout).unwrap();
     let decoded = &entries[0]["sequence"][0]["decoded"];
@@ -453,7 +457,7 @@ contract ForgeFuzzReplayAssumeRejectTest {
    "#,
     );
 
-    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayAssumeRejectTest", "-q"]).assert_failure();
+    cmd.args(["test", "--fuzz", "--mc", "ForgeFuzzReplayAssumeRejectTest", "-q"]).assert_failure();
 
     prj.add_test(
         "ForgeFuzzReplayAssumeReject.t.sol",
@@ -474,7 +478,7 @@ contract ForgeFuzzReplayAssumeRejectTest {
     );
 
     cmd.forge_fuse()
-        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayAssumeRejectTest"])
+        .args(["test", "--fuzz", "--replay-failure", "--mc", "ForgeFuzzReplayAssumeRejectTest"])
         .assert_success()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -506,7 +510,7 @@ contract ForgeFuzzReplaySkipTest {
    "#,
     );
 
-    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplaySkipTest", "-q"]).assert_failure();
+    cmd.args(["test", "--fuzz", "--mc", "ForgeFuzzReplaySkipTest", "-q"]).assert_failure();
 
     prj.add_test(
         "ForgeFuzzReplaySkip.t.sol",
@@ -524,7 +528,7 @@ contract ForgeFuzzReplaySkipTest is Test {
 
     let replay = cmd
         .forge_fuse()
-        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplaySkipTest"])
+        .args(["test", "--fuzz", "--replay-failure", "--mc", "ForgeFuzzReplaySkipTest"])
         .assert_success();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[SKIP: disabled] testFuzz_reverts(uint256)"), "{stdout}");
@@ -547,7 +551,8 @@ contract ForgeFuzzReplayUserSkipPayloadTest {
    "#,
     );
 
-    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayUserSkipPayloadTest", "-q"]).assert_failure();
+    cmd.args(["test", "--fuzz", "--mc", "ForgeFuzzReplayUserSkipPayloadTest", "-q"])
+        .assert_failure();
 
     prj.add_test(
         "ForgeFuzzReplayUserSkipPayload.t.sol",
@@ -566,7 +571,7 @@ contract ForgeFuzzReplayUserSkipPayloadTest {
 
     let replay = cmd
         .forge_fuse()
-        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayUserSkipPayloadTest"])
+        .args(["test", "--fuzz", "--replay-failure", "--mc", "ForgeFuzzReplayUserSkipPayloadTest"])
         .assert_failure();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[FAIL:"), "{stdout}");
@@ -592,7 +597,7 @@ contract ForgeFuzzJunitFailureTest {
 
     let run = cmd
         .forge_fuse()
-        .args(["fuzz", "run", "--junit", "--mc", "ForgeFuzzJunitFailureTest"])
+        .args(["test", "--fuzz", "--junit", "--mc", "ForgeFuzzJunitFailureTest"])
         .assert_failure();
     let stdout = String::from_utf8(run.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("<testsuites"), "{stdout}");
@@ -600,21 +605,18 @@ contract ForgeFuzzJunitFailureTest {
 
     let replay = cmd
         .forge_fuse()
-        .args(["fuzz", "replay", "--junit", "--mc", "ForgeFuzzJunitFailureTest"])
+        .args([
+            "test",
+            "--fuzz",
+            "--replay-failure",
+            "--junit",
+            "--mc",
+            "ForgeFuzzJunitFailureTest",
+        ])
         .assert_failure();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("<testsuites"), "{stdout}");
     assert!(!stdout.contains("Failing tests:"), "{stdout}");
-});
-
-forgetest_init!(forge_fuzz_rejects_watch, |prj, cmd| {
-    let run = cmd.forge_fuse().args(["fuzz", "run", "--watch"]).assert_failure();
-    let stderr = String::from_utf8(run.get_output().stderr.clone()).unwrap();
-    assert!(stderr.contains("`--watch` is not supported for `forge fuzz run`"), "{stderr}");
-
-    let replay = cmd.forge_fuse().args(["fuzz", "replay", "--watch"]).assert_failure();
-    let stderr = String::from_utf8(replay.get_output().stderr.clone()).unwrap();
-    assert!(stderr.contains("`--watch` is not supported for `forge fuzz replay`"), "{stderr}");
 });
 
 forgetest_init!(forge_fuzz_list_only_shows_runnable_tests, |prj, cmd| {
@@ -632,7 +634,7 @@ contract ForgeFuzzListTest {
    "#,
     );
 
-    cmd.args(["fuzz", "run", "--list", "--mc", "ForgeFuzzListTest"]).assert_success().stdout_eq(
+    cmd.args(["test", "--fuzz", "--list", "--mc", "ForgeFuzzListTest"]).assert_success().stdout_eq(
         str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -697,7 +699,7 @@ contract ForgeFuzzShowTargetTest {
     write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", calldata);
 
     cmd.forge_fuse()
-        .args(["fuzz", "show", "corpus"])
+        .args(["corpus", "show", "corpus"])
         .assert_success()
         .stdout_eq(str![[r#"
 corpus/00000000-0000-0000-0000-000000000001-1.json (1 txs)
@@ -709,7 +711,15 @@ corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
 
     let replay = cmd
         .forge_fuse()
-        .args(["fuzz", "replay", "--mc", "ForgeFuzzShowTargetTest", "--corpus-dir", "corpus"])
+        .args([
+            "test",
+            "--showmap-out",
+            "showmap-replay",
+            "--mc",
+            "ForgeFuzzShowTargetTest",
+            "--showmap-corpus-dir",
+            "corpus",
+        ])
         .assert_success();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[PASS] testFuzz_setNumber(uint256) (replay: 2 entries"), "{stdout}");
@@ -754,7 +764,7 @@ contract ForgeFuzzCminTargetTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminTargetTest",
@@ -773,7 +783,7 @@ contract ForgeFuzzCminTargetTest {
 
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminTargetTest",
@@ -807,7 +817,7 @@ contract ForgeFuzzCminTargetTest {
         .assert_success();
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminTargetTest",
@@ -871,7 +881,7 @@ contract ForgeFuzzCminBucketTargetTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminBucketTargetTest",
@@ -925,7 +935,7 @@ contract ForgeFuzzCminMultiTargetTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminMultiTargetTest",
@@ -983,7 +993,7 @@ contract ForgeFuzzCminNamespacedBetaTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminNamespaced(Alpha|Beta)Test",
@@ -1039,7 +1049,7 @@ contract ForgeFuzzCminTargetFailureBetaTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminTargetFailure(Alpha|Beta)Test",
@@ -1093,7 +1103,7 @@ contract ForgeFuzzCminZeroReplayBetaTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminZeroReplay(Alpha|Beta)Test",
@@ -1111,7 +1121,7 @@ contract ForgeFuzzCminZeroReplayBetaTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminZeroReplay(Alpha|Beta)Test",
@@ -1157,7 +1167,7 @@ contract ForgeFuzzCminStaleTargetTest {
 
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminStaleTargetTest",
@@ -1172,7 +1182,7 @@ contract ForgeFuzzCminStaleTargetTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminStaleTargetTest",
@@ -1219,7 +1229,7 @@ contract ForgeFuzzCminZeroReplayTest is Test {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminZeroReplayTest",
@@ -1242,7 +1252,7 @@ contract ForgeFuzzCminZeroReplayTest is Test {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminZeroReplayTest",
@@ -1307,7 +1317,7 @@ contract ForgeFuzzCminInvariantTargetTest is Test {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "cmin",
             "--mc",
             "ForgeFuzzCminInvariantTargetTest",
@@ -1359,7 +1369,7 @@ contract ForgeFuzzTminRemoveTargetTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminRemoveTargetTest",
@@ -1414,7 +1424,7 @@ contract ForgeFuzzTminAbiTargetTest {
 
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminAbiTargetTest",
@@ -1473,7 +1483,7 @@ contract ForgeFuzzTminExactEdgesTargetTest {
 
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminExactEdgesTargetTest",
@@ -1529,7 +1539,7 @@ contract ForgeFuzzTminMultiArgTargetTest {
 
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminMultiArgTargetTest",
@@ -1583,7 +1593,7 @@ contract ForgeFuzzTminArrayTargetTest {
 
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminArrayTargetTest",
@@ -1631,7 +1641,7 @@ contract ForgeFuzzTminFailureTargetTest {
 
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminFailureTargetTest",
@@ -1680,7 +1690,7 @@ contract ForgeFuzzTminExistingOutputTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminExistingOutputTest",
@@ -1734,7 +1744,7 @@ contract ForgeFuzzTminDirectoryTargetTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminDirectoryTargetTest",
@@ -1753,7 +1763,7 @@ contract ForgeFuzzTminDirectoryTargetTest {
     assert!(stderr.contains("skipped 2 entries"), "{stderr}");
     assert_eq!(regular_file_count(&prj.root().join("tmin-dir-output")), 2);
 
-    let show = cmd.forge_fuse().args(["fuzz", "show", "tmin-dir-output"]).assert_success();
+    let show = cmd.forge_fuse().args(["corpus", "show", "tmin-dir-output"]).assert_success();
     let stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("ForgeFuzzTminDirectoryTargetTest.testFuzz_directory"), "{stdout}");
 });
@@ -1786,7 +1796,7 @@ contract ForgeFuzzTminGzipTargetTest {
 
     cmd.forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminGzipTargetTest",
@@ -1798,7 +1808,8 @@ contract ForgeFuzzTminGzipTargetTest {
         ])
         .assert_success();
 
-    let show = cmd.forge_fuse().args(["fuzz", "show", "tmin-gzip-output.json.gz"]).assert_success();
+    let show =
+        cmd.forge_fuse().args(["corpus", "show", "tmin-gzip-output.json.gz"]).assert_success();
     let stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("ForgeFuzzTminGzipTargetTest.testFuzz_gzip"), "{stdout}");
 });
@@ -1828,7 +1839,7 @@ contract ForgeFuzzTminBudgetTargetTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminBudgetTargetTest",
@@ -1875,7 +1886,7 @@ contract ForgeFuzzTminUnreplayableTargetTest {
     let assert = cmd
         .forge_fuse()
         .args([
-            "fuzz",
+            "corpus",
             "tmin",
             "--mc",
             "ForgeFuzzTminUnreplayableTargetTest",
@@ -1962,13 +1973,14 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
     let replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzInvariantFailOnRevertReplayTest",
             "--mt",
             "invariant_ok",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "invariant_corpus",
         ])
         .assert_failure();
@@ -2117,13 +2129,14 @@ contract ForgeFuzzInvariantReplaySequenceTest is Test {
     let replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzInvariantReplaySequenceTest",
             "--mt",
             "invariant_ok",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "corpus/check-interval.json",
         ])
         .assert_success();
@@ -2133,13 +2146,14 @@ contract ForgeFuzzInvariantReplaySequenceTest is Test {
     let replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzInvariantReplaySequenceTest",
             "--mt",
             "invariant_ok",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "corpus/after-invariant.json",
         ])
         .assert_failure();
@@ -2161,7 +2175,7 @@ forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
     std::fs::write(worker0.join(name), entry).unwrap();
     std::fs::write(worker1.join(name), entry).unwrap();
 
-    let show = cmd.args(["fuzz", "show", "corpus"]).assert_success();
+    let show = cmd.args(["corpus", "show", "corpus"]).assert_success();
     let stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
     assert_eq!(
         stdout.matches(&format!("corpus{}worker", std::path::MAIN_SEPARATOR)).count(),
@@ -2209,13 +2223,14 @@ contract ForgeFuzzZeroReplayTest is Test {
     let zero_replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzZeroReplayTest",
             "--mt",
             "testFuzz_branch",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "wrong-corpus",
         ])
         .assert_success();
@@ -2235,13 +2250,14 @@ contract ForgeFuzzZeroReplayTest is Test {
     let all_assume_replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzZeroReplayTest",
             "--mt",
             "testFuzz_assumeAlways",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "assume-corpus",
         ])
         .assert_success();
@@ -2298,13 +2314,14 @@ contract ForgeFuzzSkipReplayTest is Test {
     let all_skip_replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzSkipReplayTest",
             "--mt",
             "testFuzz_skipEven",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "skip-corpus",
         ])
         .assert_success();
@@ -2324,13 +2341,14 @@ contract ForgeFuzzSkipReplayTest is Test {
     let malformed_replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzZeroReplayTest",
             "--mt",
             "testFuzz_branch",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "malformed-corpus",
         ])
         .assert_failure();
@@ -2374,9 +2392,9 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
    "#,
     );
 
-    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzGeneratedCorpusTest"]).assert_success();
+    cmd.args(["test", "--fuzz", "--mc", "ForgeFuzzGeneratedCorpusTest"]).assert_success();
 
-    let show = cmd.forge_fuse().args(["fuzz", "show", "fuzz_corpus"]).assert_success();
+    let show = cmd.forge_fuse().args(["corpus", "show", "fuzz_corpus"]).assert_success();
     let show_stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
     let fuzz_corpus_path = ["fuzz_corpus", "ForgeFuzzGeneratedCorpusTest", "testFuzz_SetNumber"]
         .join(std::path::MAIN_SEPARATOR_STR);
@@ -2385,11 +2403,12 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
     let replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzGeneratedCorpusTest",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "fuzz_corpus",
         ])
         .assert_success();
@@ -2404,7 +2423,7 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
     );
 
     let invariant_show =
-        cmd.forge_fuse().args(["fuzz", "show", "invariant_corpus"]).assert_success();
+        cmd.forge_fuse().args(["corpus", "show", "invariant_corpus"]).assert_success();
     let invariant_stdout = String::from_utf8(invariant_show.get_output().stdout.clone()).unwrap();
     let invariant_corpus_path =
         ["invariant_corpus", "ForgeFuzzGeneratedCorpusTest", "worker0", "corpus"]
@@ -2566,7 +2585,15 @@ contract GeneratedCorpusBTest {
 
     let replay = cmd
         .forge_fuse()
-        .args(["fuzz", "replay", "--mc", "GeneratedCorpusBTest", "--corpus-dir", "fuzz_corpus"])
+        .args([
+            "test",
+            "--showmap-out",
+            "showmap-replay",
+            "--mc",
+            "GeneratedCorpusBTest",
+            "--showmap-corpus-dir",
+            "fuzz_corpus",
+        ])
         .assert_success();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[PASS] testFuzz_same(uint256) (replay: 1 entries"), "{stdout}");
@@ -2632,13 +2659,14 @@ contract GeneratedInvariantCorpusBTest is Test {
     let replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "GeneratedInvariantCorpusBTest",
             "--mt",
             "invariant_ok",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "invariant_corpus",
         ])
         .assert_success();
@@ -2852,11 +2880,12 @@ contract ForgeFuzzReplayFailOnRevertTest {
     let replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--mc",
             "ForgeFuzzReplayFailOnRevertTest",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "corpus",
         ])
         .assert_failure();
@@ -2903,8 +2932,9 @@ contract ForgeFuzzReplayHandlerFailureTest is Test {
     let replay = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--fuzz",
+            "--replay-failure",
             "--mc",
             "ForgeFuzzReplayHandlerFailureTest",
             "--mt",
@@ -2957,7 +2987,13 @@ contract ForgeFuzzReplayNonAnchorInvariantTest is Test {
     cmd.args(["test", "--mc", "ForgeFuzzReplayNonAnchorInvariantTest", "-q"]).assert_failure();
     let replay = cmd
         .forge_fuse()
-        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayNonAnchorInvariantTest"])
+        .args([
+            "test",
+            "--fuzz",
+            "--replay-failure",
+            "--mc",
+            "ForgeFuzzReplayNonAnchorInvariantTest",
+        ])
         .assert_failure();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[FAIL: middle broken]"), "{stdout}");

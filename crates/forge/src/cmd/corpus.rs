@@ -1,6 +1,6 @@
 use crate::{
     cmd::test::{FilterArgs, FuzzMinimizeReplaySession, TestArgs},
-    multi_runner::{FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, ShowmapConfig},
+    multi_runner::{FuzzMinimizeEdgeIndices, FuzzMinimizeObservation},
     result::TestOutcome,
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -20,7 +20,7 @@ use foundry_common::{
 };
 use foundry_config::Config;
 use foundry_evm::{
-    executors::{CorpusDirEntry, ReplayObservation, ShowmapDomain, read_corpus_tree},
+    executors::{CorpusDirEntry, ReplayObservation, read_corpus_tree},
     fuzz::BasicTxDetails,
 };
 use serde::Serialize;
@@ -29,114 +29,43 @@ use std::{
     fs::OpenOptions,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tempfile::{Builder as TempDirBuilder, TempDir};
 
-/// Run and manage Forge fuzzing corpora.
+/// Manage Forge corpus artifacts.
 #[derive(Clone, Debug, Parser)]
-pub struct FuzzArgs {
+pub struct CorpusArgs {
     #[command(subcommand)]
-    pub command: FuzzSubcommands,
+    pub command: CorpusSubcommands,
 }
 
-impl FuzzArgs {
+impl CorpusArgs {
     pub async fn run(self) -> Result<TestOutcome> {
         match self.command {
-            FuzzSubcommands::Run(mut args) => {
-                args.enable_fuzz_only();
-                args.run().await
-            }
-            FuzzSubcommands::Replay(args) => args.run().await,
-            FuzzSubcommands::Show(args) => {
+            CorpusSubcommands::Show(args) => {
                 args.run()?;
                 Ok(TestOutcome::empty(None, true))
             }
-            FuzzSubcommands::Cmin(args) => {
+            CorpusSubcommands::Cmin(args) => {
                 args.run().await?;
                 Ok(TestOutcome::empty(None, true))
             }
-            FuzzSubcommands::Tmin(args) => {
+            CorpusSubcommands::Tmin(args) => {
                 args.run().await?;
                 Ok(TestOutcome::empty(None, true))
             }
-        }
-    }
-
-    pub const fn is_junit(&self) -> bool {
-        match &self.command {
-            FuzzSubcommands::Run(args) => args.junit,
-            FuzzSubcommands::Replay(args) => args.is_junit(),
-            FuzzSubcommands::Show(_) | FuzzSubcommands::Cmin(_) | FuzzSubcommands::Tmin(_) => false,
-        }
-    }
-
-    pub fn reject_unsupported_flags(&self) -> Result<()> {
-        match &self.command {
-            FuzzSubcommands::Run(args) if args.is_watch() => {
-                bail!("`--watch` is not supported for `forge fuzz run`")
-            }
-            FuzzSubcommands::Replay(args) if args.is_watch() => {
-                bail!("`--watch` is not supported for `forge fuzz replay`")
-            }
-            _ => Ok(()),
         }
     }
 }
 
 #[derive(Clone, Debug, Subcommand)]
-pub enum FuzzSubcommands {
-    /// Run only fuzz and invariant tests.
-    Run(TestArgs),
-    /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
-    Replay(FuzzReplayArgs),
+pub enum CorpusSubcommands {
     /// Print persisted corpus entries.
-    Show(FuzzShowArgs),
+    Show(CorpusShowArgs),
     /// Minimize a corpus by keeping entries that contribute new coverage.
-    Cmin(FuzzCminArgs),
+    Cmin(CorpusCminArgs),
     /// Minimize one corpus entry while preserving its failure or coverage.
-    Tmin(FuzzTminArgs),
-}
-
-/// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
-#[derive(Clone, Debug, Parser)]
-pub struct FuzzReplayArgs {
-    #[command(flatten)]
-    test: TestArgs,
-    /// Replay corpus entries from this directory instead of persisted fuzz failures.
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
-    corpus_dir: Option<PathBuf>,
-}
-
-impl FuzzReplayArgs {
-    async fn run(mut self) -> Result<TestOutcome> {
-        self.test.enable_fuzz_only();
-        if self.corpus_dir.is_none() {
-            self.test.enable_fuzz_failure_replay();
-            return self.test.run().await;
-        }
-
-        let replay_id =
-            SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
-        self.test.set_showmap_override(ShowmapConfig {
-            out_dir: std::env::temp_dir().join(format!("forge-fuzz-replay-{replay_id}")),
-            approach: "replay".to_string(),
-            trial: "replay".to_string(),
-            per_input: false,
-            domain: ShowmapDomain::Evm,
-            corpus_dir: self.corpus_dir.clone(),
-            emit_files: false,
-        });
-        self.test.run().await
-    }
-
-    const fn is_junit(&self) -> bool {
-        self.test.junit
-    }
-
-    const fn is_watch(&self) -> bool {
-        self.test.is_watch()
-    }
+    Tmin(CorpusTminArgs),
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -149,7 +78,7 @@ pub enum CorpusShowFormat {
 
 /// Print persisted corpus entries.
 #[derive(Clone, Debug, Parser)]
-pub struct FuzzShowArgs {
+pub struct CorpusShowArgs {
     /// Corpus directory or a single corpus file.
     #[arg(value_name = "PATH", value_hint = ValueHint::AnyPath)]
     corpus: PathBuf,
@@ -161,7 +90,7 @@ pub struct FuzzShowArgs {
     limit: Option<usize>,
 }
 
-impl FuzzShowArgs {
+impl CorpusShowArgs {
     fn run(&self) -> Result<()> {
         let decoder = CorpusDecoder::load();
         let entries = read_entries(&self.corpus, self.limit, &decoder)?;
@@ -212,9 +141,9 @@ impl FuzzShowArgs {
 
 /// Minimize a corpus by keeping entries that contribute new coverage.
 #[derive(Clone, Debug, Parser)]
-pub struct FuzzCminArgs {
+pub struct CorpusCminArgs {
     #[command(flatten)]
-    test: FuzzMinimizeTestArgs,
+    test: CorpusMinimizeTestArgs,
     /// Input corpus directory.
     #[arg(value_name = "CORPUS_DIR", value_hint = ValueHint::DirPath)]
     corpus_dir: PathBuf,
@@ -223,7 +152,7 @@ pub struct FuzzCminArgs {
     out: PathBuf,
 }
 
-impl FuzzCminArgs {
+impl CorpusCminArgs {
     async fn run(self) -> Result<()> {
         if cmin_out_exists(&self.out) {
             bail!("output corpus directory already exists: {}", self.out.display());
@@ -406,9 +335,9 @@ struct CminSummary {
 
 /// Minimize one corpus entry while preserving its failure or coverage.
 #[derive(Clone, Debug, Parser)]
-pub struct FuzzTminArgs {
+pub struct CorpusTminArgs {
     #[command(flatten)]
-    test: FuzzMinimizeTestArgs,
+    test: CorpusMinimizeTestArgs,
     /// Input corpus file or directory.
     #[arg(value_name = "INPUT", value_hint = ValueHint::AnyPath)]
     input: PathBuf,
@@ -420,7 +349,7 @@ pub struct FuzzTminArgs {
     max_attempts: usize,
 }
 
-impl FuzzTminArgs {
+impl CorpusTminArgs {
     async fn run(self) -> Result<()> {
         if self.max_attempts == 0 {
             bail!("--max-attempts must be greater than 0");
@@ -1168,7 +1097,7 @@ fn read_corpus_entries(path: &Path) -> Result<Vec<CorpusDirEntry>> {
 }
 
 #[derive(Clone, Debug, Parser)]
-struct FuzzMinimizeTestArgs {
+struct CorpusMinimizeTestArgs {
     #[command(flatten)]
     global: GlobalArgs,
     #[command(flatten)]
@@ -1179,7 +1108,7 @@ struct FuzzMinimizeTestArgs {
     build: BuildOpts,
 }
 
-impl FuzzMinimizeTestArgs {
+impl CorpusMinimizeTestArgs {
     async fn prepare_session(self, corpus_dir: &Path) -> Result<FuzzMinimizeReplaySession> {
         let mut test = TestArgs::parse_from(["test", "-q"]);
         test.set_fuzz_minimize_replay_options(self.global, self.evm, self.build, self.filter);

@@ -2712,19 +2712,24 @@ contract SymbolicFuzzFrontierSeed {
     let replay_output = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--showmap-out",
+            "showmap-replay",
             "--match-contract",
             "SymbolicFuzzFrontierSeed",
             "--match-test",
             "testFuzz_frontier",
-            "--corpus-dir",
+            "--showmap-corpus-dir",
             "fuzz_corpus",
         ])
-        .assert_failure()
+        .assert_success()
         .get_output()
         .stdout_lossy();
-    assert!(replay_output.contains("corpus replay failed"), "{replay_output}");
+    assert!(
+        replay_output.contains("[PASS] testFuzz_frontier(uint64,uint256) (replay:"),
+        "{replay_output}"
+    );
+    assert!(!replay_output.contains("corpus replay failed"), "{replay_output}");
 });
 
 forgetest_init!(symbolic_fuzz_frontier_seeding_ignores_pre_target_counterexamples, |prj, cmd| {

@@ -1761,7 +1761,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             kind
         };
 
-        // In showmap replay mode and `forge fuzz`, only fuzz/invariant tests are runnable.
+        // In showmap replay mode and fuzz-only mode, only fuzz/invariant tests are runnable.
         if (self.cr.mcr.tcfg.showmap.is_some() || self.cr.mcr.tcfg.fuzz_only)
             && matches!(
                 kind,
@@ -3333,9 +3333,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let primary_failure_file =
             invariant_failure_file(&failure_dir, invariant_contract.anchor());
 
-        // Try to replay recorded failure if any. `forge fuzz replay` checks each selected
-        // predicate as the replay anchor because merged invariant suites persist failures per
-        // predicate, while campaign runs use a stable suite anchor.
+        // Try to replay recorded failure if any. `forge test --fuzz --replay-failure` checks each
+        // selected predicate as the replay anchor because merged invariant suites persist
+        // failures per predicate, while campaign runs use a stable suite anchor.
         let mut replayed_persisted_invariant = false;
         let replay_candidates: Vec<(&Function, bool)> =
             if self.cr.mcr.tcfg.fuzz_failure_replay && !is_optimization {
@@ -3480,7 +3480,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &replay_ctx,
         );
 
-        // `forge fuzz replay` (without `--corpus-dir`) only replays persisted failures and
+        // `forge test --fuzz --replay-failure` only replays persisted failures and
         // must never start a fresh campaign. If handler bugs still reproduce, surface them
         // through the normal invariant result path below; otherwise report a skip.
         if self.cr.mcr.tcfg.fuzz_failure_replay && persisted_handler_failures.is_empty() {

@@ -1,7 +1,7 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
-    compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, fuzz::FuzzArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    compiler::CompilerArgs, config, corpus::CorpusArgs, coverage, create::CreateArgs, doc::DocArgs,
+    eip712, flatten, fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
     lint::LintArgs, remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands,
     snapshot, soldeer, test, tree, update,
 };
@@ -36,8 +36,8 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "t")]
     Test(test::TestArgs),
 
-    /// Run and manage Forge fuzzing corpora.
-    Fuzz(FuzzArgs),
+    /// Manage Forge corpus artifacts.
+    Corpus(CorpusArgs),
 
     /// Run a smart contract as a script, building transactions that can be sent onchain.
     Script(ScriptArgs),
