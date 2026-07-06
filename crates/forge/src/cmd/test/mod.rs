@@ -1,4 +1,4 @@
-use super::{install, watch::WatchArgs};
+use super::{fuzz::FuzzRunArgs, install, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
@@ -35,7 +35,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind, compile::ProjectCompiler, fs,
-    shell,
+    sh_warn, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -358,8 +358,153 @@ fn sources_to_compile_from_artifacts(
         .collect()
 }
 
-/// CLI arguments for `forge test`.
+/// Shared campaign arguments for `forge fuzz run`.
 #[derive(Clone, Debug, Parser)]
+#[command(next_help_heading = "Campaign options")]
+pub struct CampaignArgs {
+    /// Number of runs to execute for each fuzz or invariant campaign.
+    #[arg(long, value_name = "RUNS")]
+    pub runs: Option<u64>,
+
+    /// Campaign-global timeout in seconds.
+    #[arg(long, value_name = "TIMEOUT")]
+    pub timeout: Option<u32>,
+
+    /// Set seed used to generate randomness during fuzz runs.
+    #[arg(long)]
+    pub seed: Option<U256>,
+
+    /// Number of calls executed to try to break invariants in one run.
+    #[arg(long, value_name = "DEPTH")]
+    pub depth: Option<u32>,
+
+    /// Minimum sampled invariant depth when `--depth-mode random` is active.
+    #[arg(long, value_name = "DEPTH")]
+    pub min_depth: Option<u32>,
+
+    /// How invariant run depth is selected.
+    #[arg(long, value_name = "fixed|random")]
+    pub depth_mode: Option<InvariantDepthMode>,
+
+    /// Number of workers to use for invariant test campaigns, or `auto` to derive from `--jobs`.
+    #[arg(long, value_name = "WORKERS")]
+    pub workers: Option<InvariantWorkers>,
+
+    /// Directory for fuzz and invariant corpus persistence.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub corpus_dir: Option<PathBuf>,
+
+    /// Percent of calldata generated from the dictionary.
+    #[arg(long, value_name = "PERCENT")]
+    pub dictionary_weight: Option<u32>,
+
+    /// Maximum dictionary addresses, or `max`.
+    #[arg(long, value_name = "N|max")]
+    pub dictionary_addresses: Option<String>,
+
+    /// Maximum dictionary values, or `max`.
+    #[arg(long, value_name = "N|max")]
+    pub dictionary_values: Option<String>,
+
+    /// Maximum dictionary literals, or `max`.
+    #[arg(long, value_name = "N|max")]
+    pub dictionary_literals: Option<String>,
+
+    /// Percent chance that coverage-guided fuzzing generates fresh input instead of mutating
+    /// corpus input.
+    #[arg(long, value_name = "PERCENT")]
+    pub corpus_random_sequence_weight: Option<u32>,
+
+    /// Percent chance that fuzzed payable calls carry non-zero msg.value.
+    #[arg(long, value_name = "PERCENT")]
+    pub payable_value_weight: Option<u32>,
+
+    /// Corpus mutation weight for splice.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_splice: Option<u32>,
+
+    /// Corpus mutation weight for repeat.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_repeat: Option<u32>,
+
+    /// Corpus mutation weight for interleave.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_interleave: Option<u32>,
+
+    /// Corpus mutation weight for prefix replacement.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_prefix: Option<u32>,
+
+    /// Corpus mutation weight for suffix replacement.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_suffix: Option<u32>,
+
+    /// Corpus mutation weight for ABI argument mutation.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_abi: Option<u32>,
+
+    /// Corpus mutation weight for comparison-operand mutation.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_cmp: Option<u32>,
+
+    /// Directory for fuzz branch frontier artifacts.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub frontier_dir: Option<PathBuf>,
+
+    /// Maximum number of fuzz branch frontier records to write per test.
+    #[arg(long, value_name = "COUNT")]
+    pub frontier_limit: Option<usize>,
+}
+
+impl CampaignArgs {
+    pub(crate) const fn supplied_engine_flags(&self) -> SuppliedEngineFlags {
+        SuppliedEngineFlags {
+            frontier_dir: self.frontier_dir.is_some(),
+            frontier_limit: self.frontier_limit.is_some(),
+            depth: self.depth.is_some(),
+            min_depth: self.min_depth.is_some(),
+            depth_mode: self.depth_mode.is_some(),
+            workers: self.workers.is_some(),
+            ..SuppliedEngineFlags::empty()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SuppliedEngineFlags {
+    pub(crate) frontier_dir: bool,
+    pub(crate) frontier_limit: bool,
+    pub(crate) fuzz_run: bool,
+    pub(crate) fuzz_worker: bool,
+    pub(crate) depth: bool,
+    pub(crate) min_depth: bool,
+    pub(crate) depth_mode: bool,
+    pub(crate) workers: bool,
+}
+
+impl SuppliedEngineFlags {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            frontier_dir: false,
+            frontier_limit: false,
+            fuzz_run: false,
+            fuzz_worker: false,
+            depth: false,
+            min_depth: false,
+            depth_mode: false,
+            workers: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MatchedEngineCounts {
+    fuzz: usize,
+    invariant: usize,
+}
+
+/// CLI arguments for `forge test`.
+#[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
     /// Internal mode used by `forge fuzz`.
@@ -373,6 +518,18 @@ pub struct TestArgs {
     /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
     #[arg(skip)]
     pub(crate) fuzz_failure_replay: bool,
+
+    /// Internal override used by `forge fuzz run --runs` for invariant campaigns.
+    #[arg(skip)]
+    pub(crate) invariant_runs_override: Option<u64>,
+
+    /// Internal override used by `forge fuzz run --timeout` for invariant campaigns.
+    #[arg(skip)]
+    pub(crate) invariant_timeout_override: Option<u32>,
+
+    /// Internal warning metadata used by `forge fuzz run`.
+    #[arg(skip)]
+    pub(crate) warn_unsupported_engine_flags: Option<SuppliedEngineFlags>,
 
     // Include global options for users of this struct.
     #[command(flatten)]
@@ -1008,6 +1165,143 @@ impl TestArgs {
         self.fuzz_failure_replay = true;
     }
 
+    fn warn_unsupported_engine_flags(
+        &self,
+        output: &ProjectCompileOutput,
+        config: &Config,
+        inline_config: &InlineConfig,
+        filter: &ProjectPathsAwareFilter,
+        multi_network: &MultiNetworkConfig,
+    ) -> Result<()> {
+        let Some(flags) = self.warn_unsupported_engine_flags else { return Ok(()) };
+        let counts = matched_engine_counts(output, config, inline_config, filter, multi_network);
+        if counts.fuzz == 0 && counts.invariant == 0 {
+            return Ok(());
+        }
+
+        if counts.fuzz == 0 && counts.invariant > 0 {
+            if flags.frontier_dir {
+                sh_warn!(
+                    "`--frontier-dir` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
+            if flags.frontier_limit {
+                sh_warn!(
+                    "`--frontier-limit` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
+            if flags.fuzz_run {
+                sh_warn!(
+                    "`--fuzz-run` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
+            if flags.fuzz_worker {
+                sh_warn!(
+                    "`--fuzz-worker` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
+        }
+
+        if counts.invariant == 0 && counts.fuzz > 0 {
+            if flags.depth {
+                sh_warn!(
+                    "`--depth` only applies to invariant tests; no matched invariant tests were found."
+                )?;
+            }
+            if flags.min_depth {
+                sh_warn!(
+                    "`--min-depth` only applies to invariant tests; no matched invariant tests were found."
+                )?;
+            }
+            if flags.depth_mode {
+                sh_warn!(
+                    "`--depth-mode` only applies to invariant tests; no matched invariant tests were found."
+                )?;
+            }
+            if flags.workers {
+                sh_warn!(
+                    "`--workers` only applies to invariant tests; no matched invariant tests were found."
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Builds the delegated `forge test` invocation for `forge fuzz run`.
+    pub(crate) fn from_fuzz_run(args: FuzzRunArgs) -> Self {
+        let mut supplied = args.campaign.supplied_engine_flags();
+        supplied.fuzz_run = args.fuzz_run.is_some();
+        supplied.fuzz_worker = args.fuzz_worker.is_some();
+
+        Self {
+            fuzz_only: true,
+            warn_unsupported_engine_flags: Some(supplied),
+            global: args.global,
+            path: args.path,
+            gas_report: args.gas_report,
+            allow_failure: args.allow_failure,
+            junit: args.junit,
+            fail_fast: args.fail_fast,
+            etherscan_api_key: args.etherscan_api_key,
+            list: args.list,
+            fuzz_seed: args.campaign.seed,
+            fuzz_runs: args.campaign.runs,
+            invariant_workers: args.campaign.workers,
+            fuzz_run: args.fuzz_run,
+            fuzz_worker: args.fuzz_worker,
+            fuzz_timeout: args.campaign.timeout.map(u64::from),
+            fuzz_dictionary_weight: args.campaign.dictionary_weight,
+            fuzz_dictionary_addresses: args.campaign.dictionary_addresses.clone(),
+            fuzz_dictionary_values: args.campaign.dictionary_values.clone(),
+            fuzz_dictionary_literals: args.campaign.dictionary_literals.clone(),
+            fuzz_corpus_random_sequence_weight: args.campaign.corpus_random_sequence_weight,
+            fuzz_corpus_dir: args.campaign.corpus_dir.clone(),
+            fuzz_frontier_dir: args.campaign.frontier_dir,
+            fuzz_frontier_limit: args.campaign.frontier_limit,
+            fuzz_payable_value_weight: args.campaign.payable_value_weight,
+            fuzz_mutation_weight_splice: args.campaign.mutation_weight_splice,
+            fuzz_mutation_weight_repeat: args.campaign.mutation_weight_repeat,
+            fuzz_mutation_weight_interleave: args.campaign.mutation_weight_interleave,
+            fuzz_mutation_weight_prefix: args.campaign.mutation_weight_prefix,
+            fuzz_mutation_weight_suffix: args.campaign.mutation_weight_suffix,
+            fuzz_mutation_weight_abi: args.campaign.mutation_weight_abi,
+            fuzz_mutation_weight_cmp: args.campaign.mutation_weight_cmp,
+            fuzz_input_file: args.fuzz_input_file,
+            invariant_depth: args.campaign.depth,
+            invariant_min_depth: args.campaign.min_depth,
+            invariant_depth_mode: args.campaign.depth_mode,
+            invariant_dictionary_weight: args.campaign.dictionary_weight,
+            invariant_dictionary_addresses: args.campaign.dictionary_addresses,
+            invariant_dictionary_values: args.campaign.dictionary_values,
+            invariant_dictionary_literals: args.campaign.dictionary_literals,
+            invariant_corpus_random_sequence_weight: args.campaign.corpus_random_sequence_weight,
+            invariant_corpus_dir: args.campaign.corpus_dir,
+            invariant_payable_value_weight: args.campaign.payable_value_weight,
+            invariant_mutation_weight_splice: args.campaign.mutation_weight_splice,
+            invariant_mutation_weight_repeat: args.campaign.mutation_weight_repeat,
+            invariant_mutation_weight_interleave: args.campaign.mutation_weight_interleave,
+            invariant_mutation_weight_prefix: args.campaign.mutation_weight_prefix,
+            invariant_mutation_weight_suffix: args.campaign.mutation_weight_suffix,
+            invariant_mutation_weight_abi: args.campaign.mutation_weight_abi,
+            invariant_mutation_weight_cmp: args.campaign.mutation_weight_cmp,
+            show_progress: args.show_progress,
+            rerun: args.rerun,
+            showmap_out: args.showmap_out,
+            showmap_per_input: args.showmap_per_input,
+            showmap_domain: args.showmap_domain,
+            showmap_approach: args.showmap_approach,
+            showmap_trial: args.showmap_trial,
+            showmap_corpus_dir: args.showmap_corpus_dir,
+            filter: args.filter,
+            evm: args.evm,
+            build: args.build,
+            invariant_runs_override: args.campaign.runs,
+            invariant_timeout_override: args.campaign.timeout,
+            ..Self::default()
+        }
+    }
+
     fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
         let Some(path) = &self.replay_symbolic_artifact else {
             return Ok(None);
@@ -1438,6 +1732,14 @@ impl TestArgs {
                 );
             }
         }
+
+        self.warn_unsupported_engine_flags(
+            output,
+            &config,
+            &execution.inline_config,
+            filter,
+            &execution.multi_network,
+        )?;
 
         if self.list {
             return list_from_output(
@@ -2824,6 +3126,9 @@ impl Provider for TestArgs {
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         let mut invariant_dict = Dict::default();
+        if let Some(invariant_runs) = self.invariant_runs_override {
+            invariant_dict.insert("runs".to_string(), invariant_runs.into());
+        }
         if let Some(invariant_depth) = self.invariant_depth {
             invariant_dict.insert("depth".to_string(), invariant_depth.into());
         }
@@ -2878,6 +3183,9 @@ impl Provider for TestArgs {
         if let Some(invariant_payable_value_weight) = self.invariant_payable_value_weight {
             invariant_dict
                 .insert("payable_value_weight".to_string(), invariant_payable_value_weight.into());
+        }
+        if let Some(invariant_timeout) = self.invariant_timeout_override {
+            invariant_dict.insert("timeout".to_string(), invariant_timeout.into());
         }
         if let Some(weight) = self.invariant_mutation_weight_splice {
             invariant_dict.insert("mutation_weight_splice".to_string(), weight.into());
@@ -3101,6 +3409,71 @@ fn list_from_output(
 
     print_list_results(&results)?;
     Ok(TestOutcome::empty(None, false))
+}
+
+fn matched_engine_counts(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    inline_config: &InlineConfig,
+    filter: &ProjectPathsAwareFilter,
+    multi_network: &MultiNetworkConfig,
+) -> MatchedEngineCounts {
+    let matcher = TestFunctionMatcher::new(config, inline_config, None);
+    output
+        .artifact_ids()
+        .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
+        .filter_map(|(id, abi)| {
+            let id = id.with_stripped_file_prefixes(&config.root);
+            let deployable = abi
+                .constructor
+                .as_ref()
+                .map(|constructor| constructor.inputs.is_empty())
+                .unwrap_or(true);
+            if !deployable || !matcher.matches_contract(filter, &id, abi) {
+                return None;
+            }
+
+            let contract_name = id.identifier();
+            let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
+            let fuzz = abi
+                .functions()
+                .filter_map(|func| {
+                    let kind = matcher.test_function_kind(
+                        &contract_name,
+                        func,
+                        generated_symbolic_regression,
+                    );
+                    matches!(kind, TestFunctionKind::FuzzTest { .. }).then_some((func, kind))
+                })
+                .filter(|(func, kind)| {
+                    filter.matches_test_function_kind_in_contract(&contract_name, func, *kind)
+                })
+                .filter(|(func, _)| {
+                    function_matches_network_pass(
+                        &multi_network.all_override_networks,
+                        multi_network.pass_network.as_ref(),
+                        inline_config.network_for(&config.profile, &contract_name, &func.name),
+                    )
+                })
+                .count();
+            let invariant = count_runnable_invariant_campaign_anchors(
+                abi,
+                filter,
+                crate::runner::InvariantCampaignScope {
+                    config,
+                    inline_config,
+                    contract_name: &contract_name,
+                    all_override_networks: &multi_network.all_override_networks,
+                    pass_network: multi_network.pass_network.as_ref(),
+                },
+            );
+            Some(MatchedEngineCounts { fuzz, invariant })
+        })
+        .fold(MatchedEngineCounts::default(), |mut acc, counts| {
+            acc.fuzz += counts.fuzz;
+            acc.invariant += counts.invariant;
+            acc
+        })
 }
 
 fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>) -> Result<()> {
@@ -3501,6 +3874,36 @@ mod tests {
             TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
         assert_eq!(args.fuzz_run, Some(10));
         assert_eq!(args.fuzz_worker, Some(2));
+    }
+
+    #[test]
+    fn fuzz_run_adapter_writes_unified_campaign_dials_sparsely() {
+        let args = FuzzRunArgs::parse_from([
+            "foundry-cli",
+            "--runs",
+            "9",
+            "--timeout",
+            "3",
+            "--seed",
+            "0x10",
+            "--depth",
+            "7",
+            "--workers",
+            "2",
+        ]);
+        let args = TestArgs::from_fuzz_run(args);
+        let figment = figment::Figment::from(&args);
+
+        assert_eq!(figment.extract_inner::<u64>("fuzz.runs").unwrap(), 9);
+        assert_eq!(figment.extract_inner::<u64>("fuzz.timeout").unwrap(), 3);
+        assert_eq!(figment.extract_inner::<String>("fuzz.seed").unwrap(), "16");
+        assert_eq!(figment.extract_inner::<u64>("invariant.runs").unwrap(), 9);
+        assert_eq!(figment.extract_inner::<u32>("invariant.timeout").unwrap(), 3);
+        assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 7);
+        assert_eq!(
+            figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
+            InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap())
+        );
     }
 
     #[test]
