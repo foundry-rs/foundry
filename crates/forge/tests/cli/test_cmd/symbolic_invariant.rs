@@ -1,5 +1,6 @@
 use super::symbolic_helpers::{
     assert_relevant_lines, assert_symbolic, assert_symbolic_engine, assert_symbolic_engine_witness,
+    json_test_result,
 };
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
@@ -100,24 +101,18 @@ contract SymbolicInvariantSafeRunsFuzz is Test {
 "#,
     );
 
-    let stdout = assert_symbolic(cmd.args([
-        "test",
-        "--symbolic",
-        "--match-test",
-        "invariant_countBelowTwo",
-    ]))
-    .failure()
-    .get_output()
-    .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[FAIL:
-invariant_countBelowTwo()
-runs: 1, calls: 2, reverts: 0
-"#]],
-    );
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_countBelowTwo"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_countBelowTwo()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 2);
+    assert_eq!(result["kind"]["Invariant"]["reverts"], 0);
 });
 
 forgetest_init!(symbolic_invariant_replays_setup_arbitrary_storage, |prj, cmd| {
