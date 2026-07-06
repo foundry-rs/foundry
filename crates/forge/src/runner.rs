@@ -3472,13 +3472,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ffi_enabled: self.config.ffi,
             }) {
                 SymbolicInvariantRunResult::Safe(stats) => {
-                    self.result.symbolic_result(
-                        TestStatus::Success,
-                        None,
-                        None,
-                        SymbolicResult::pass(&self.config.symbolic, stats),
-                    );
-                    return self.result;
+                    self.result.record_symbolic(SymbolicResult::pass(&self.config.symbolic, stats));
                 }
                 SymbolicInvariantRunResult::Incomplete { kind, reason, stats } => {
                     let display_reason =

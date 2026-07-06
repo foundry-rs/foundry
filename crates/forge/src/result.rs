@@ -2396,6 +2396,12 @@ impl TestResult {
         self.status = status;
         self.reason = reason;
         self.counterexample = counterexample;
+        self.record_symbolic(symbolic);
+        self.duration = Duration::default();
+    }
+
+    /// Records symbolic execution metadata without changing the test status/kind.
+    pub(crate) fn record_symbolic(&mut self, symbolic: SymbolicResult) {
         if let Some(artifact) = symbolic.artifact.clone() {
             self.add_counterexample_artifact(artifact);
         }
@@ -2404,7 +2410,6 @@ impl TestResult {
             self.add_counterexample_artifact(minimization.minimized);
         }
         self.symbolic = Some(symbolic);
-        self.duration = Duration::default();
     }
 
     /// Records a successful showmap replay result.

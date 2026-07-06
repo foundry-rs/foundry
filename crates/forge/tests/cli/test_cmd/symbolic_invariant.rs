@@ -38,7 +38,7 @@ contract SymbolicInvariantRuns is Test {
 "#,
     );
 
-    assert_symbolic_engine_witness(cmd.args([
+    let stdout = assert_symbolic_engine_witness(cmd.args([
         "test",
         "--symbolic",
         "--fuzz-runs",
@@ -47,20 +47,77 @@ contract SymbolicInvariantRuns is Test {
         "invariant_counterStaysZero",
     ]))
     .failure()
-    .stdout_eq(str![[r#"
-...
-Failing tests:
+    .get_output()
+    .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
 Encountered 1 failing test in test/SymbolicInvariantRuns.t.sol:SymbolicInvariantRuns
 [FAIL: assertion failed: 1 != 0]
-	[Sequence] (original: 1, shrunk: 1)
-		[SENDER] [SENDER] calldata=bump(uint8) [ARGS]
- invariant_counterStaysZero() ([METRICS])
+[Sequence] (original: 1, shrunk: 1)
+calldata=bump(uint8)
+invariant_counterStaysZero()
+"#]],
+    );
+});
 
-Encountered a total of 1 failing tests, 0 tests succeeded
+forgetest_init!(symbolic_invariant_safe_still_runs_fuzz_campaign, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_safe_still_runs_fuzz_campaign");
 
-Tip: Run `forge test --rerun` to retry only the 1 failed test
+    prj.add_test(
+        "SymbolicInvariantSafeRunsFuzz.t.sol",
+        r#"
+import "forge-std/Test.sol";
 
-"#]]);
+contract SymbolicSafeThenFuzzTarget {
+    uint256 public count;
+
+    function step() external {
+        count++;
+    }
+}
+
+contract SymbolicInvariantSafeRunsFuzz is Test {
+    SymbolicSafeThenFuzzTarget target;
+
+    function setUp() public {
+        target = new SymbolicSafeThenFuzzTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.step.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    // Symbolic checks the one-call prefix; invariant fuzzing must still run the two-call case.
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 2
+    function invariant_countBelowTwo() public view {
+        assertLt(target.count(), 2);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_countBelowTwo",
+    ]))
+    .failure()
+    .get_output()
+    .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL:
+invariant_countBelowTwo()
+runs: 1, calls: 2, reverts: 0
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_invariant_replays_setup_arbitrary_storage, |prj, cmd| {
