@@ -1014,7 +1014,7 @@ fn shortcut_lines() -> Vec<Line<'static>> {
             dimmed,
         )),
         Line::from(Span::styled(
-            "[/] search | [:] command | [n/N] repeat | [l] layout | [b] buffer | [v] source | [V] variables",
+            "[/] search | [:] command | [n/N] repeat | [l] layout | [b] buffer",
             dimmed,
         )),
         Line::from(Span::styled(
