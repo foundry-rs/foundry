@@ -271,57 +271,177 @@ calldata=useStore()
     assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
 });
 
-forgetest_init!(symbolic_invariant_honors_execution_timeout, |prj, cmd| {
-    skip_unless_z3!("symbolic_invariant_honors_execution_timeout");
+forgetest_init!(symbolic_invariant_replays_initial_state_failure, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_replays_initial_state_failure");
 
     prj.add_test(
-        "SymbolicInvariantTimeout.t.sol",
+        "SymbolicInvariantInitialState.t.sol",
         r#"
 import "forge-std/Test.sol";
 
-contract SymbolicTimeoutTarget {
-    uint256 scratch;
-
-    function spin() external {
-        while (true) {
-            unchecked {
-                scratch += 1;
-            }
-        }
-    }
+contract NoopTarget {
+    function touch() external {}
 }
 
-contract SymbolicInvariantTimeout is Test {
-    SymbolicTimeoutTarget target;
+contract SymbolicInvariantInitialState is Test {
+    NoopTarget target;
+    uint256 x;
 
     function setUp() public {
-        target = new SymbolicTimeoutTarget();
+        target = new NoopTarget();
         targetContract(address(target));
     }
 
     /// forge-config: default.symbolic.invariant_depth = 1
-    /// forge-config: default.symbolic.timeout = 1
-    // Keep the depth guard out of this fixture's stop condition; it should fail
-    // because the one-second symbolic timeout is reached first.
-    /// forge-config: default.symbolic.max_depth = 100000000
-    function invariant_alwaysTrue() public pure {}
+    function invariant_xIsOne() public view {
+        assertEq(x, 1);
+    }
 }
 "#,
     );
 
-    assert_symbolic_engine(cmd.args([
+    let stdout = assert_symbolic_engine(cmd.args([
         "test",
         "--symbolic",
+        "--fuzz-runs",
+        "0",
         "--match-test",
-        "invariant_alwaysTrue",
+        "invariant_xIsOne",
     ]))
     .failure()
-    .stdout_eq(str![[r#"
-...
-Ran 1 test for test/SymbolicInvariantTimeout.t.sol:SymbolicInvariantTimeout
-[FAIL: incomplete symbolic execution (Timeout): symbolic execution timeout exceeded (1s)] invariant_alwaysTrue() ([METRICS])
-...
-"#]]);
+    .get_output()
+    .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL: assertion failed: 0 != 1]
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[Sequence] (original: 0, shrunk: 0)
+"#]],
+    );
+    assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
+});
+
+forgetest_init!(symbolic_invariant_replay_mismatch_falls_back_to_fuzz, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_replay_mismatch_falls_back_to_fuzz");
+
+    prj.add_test(
+        "SymbolicInvariantReplayMismatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ArbitraryStorageVm {
+    function setArbitraryStorage(address target) external;
+}
+
+contract TokenLike {
+    mapping(address => uint256) public balanceOf;
+}
+
+contract MappingBackedTarget {
+    TokenLike token;
+    bool public hit;
+
+    constructor(TokenLike token_) {
+        token = token_;
+    }
+
+    function useIt(address who) external {
+        require(token.balanceOf(who) == 777);
+        hit = true;
+    }
+}
+
+contract SymbolicInvariantReplayMismatch is Test {
+    TokenLike token;
+    MappingBackedTarget target;
+
+    function setUp() public {
+        token = new TokenLike();
+        target = new MappingBackedTarget(token);
+        ArbitraryStorageVm(address(vm)).setArbitraryStorage(address(token));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 1
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_notHit"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_notHit()");
+    assert_eq!(result["status"], "Success");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert_eq!(result["symbolic"]["replay"]["status"], "mismatch");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 1);
+});
+
+forgetest_init!(symbolic_invariant_incomplete_still_runs_fuzz_campaign, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_incomplete_still_runs_fuzz_campaign");
+
+    prj.add_test(
+        "SymbolicInvariantIncompleteRunsFuzz.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicIncompleteThenFuzzTarget {
+    uint256 public count;
+
+    function step() external {
+        count++;
+    }
+}
+
+contract SymbolicInvariantIncompleteRunsFuzz is Test {
+    SymbolicIncompleteThenFuzzTarget target;
+
+    function setUp() public {
+        target = new SymbolicIncompleteThenFuzzTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.step.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    /// forge-config: default.symbolic.max_paths = 0
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 2
+    function invariant_countBelowTwo() public view {
+        assertLt(target.count(), 2);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_countBelowTwo"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_countBelowTwo()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert_eq!(result["symbolic"]["incomplete"]["kind"], "stuck");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 2);
 });
 
 // EIP-1153 transient storage is per-transaction scratch space. The symbolic

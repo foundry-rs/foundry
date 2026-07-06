@@ -38,13 +38,16 @@ impl SymbolicExecutor {
         }
     }
 
-    fn reset_run_state(&mut self) {
+    fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
         self.deferred_incomplete = None;
-        self.deadline = self
-            .config
-            .timeout
-            .filter(|seconds| *seconds > 0)
-            .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+        self.deadline = if use_wall_clock_deadline {
+            self.config
+                .timeout
+                .filter(|seconds| *seconds > 0)
+                .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()))
+        } else {
+            None
+        };
     }
 
     pub(super) fn check_timeout(&self) -> Result<(), SymbolicError> {
@@ -132,7 +135,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
     ) -> SymbolicRunResult {
-        self.reset_run_state();
+        self.reset_run_state(false);
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -189,7 +192,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
     ) -> SymbolicInvariantRunResult {
-        self.reset_run_state();
+        self.reset_run_state(true);
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
         if let Err(err) = self.solver.check_available() {
@@ -668,5 +671,22 @@ impl SymbolicExecutor {
     /// Returns the incomplete reason used when heuristic witnesses cannot certify safety.
     fn hard_arith_heuristic_incomplete_reason() -> String {
         "hard arithmetic heuristic witness used; no replayed counterexample found".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stateless_runs_do_not_use_symbolic_timeout_as_wall_clock_deadline() {
+        let mut executor =
+            SymbolicExecutor::new(SymbolicConfig { timeout: Some(1), ..Default::default() });
+
+        executor.reset_run_state(false);
+        assert!(executor.deadline.is_none());
+
+        executor.reset_run_state(true);
+        assert!(executor.deadline.is_some());
     }
 }
