@@ -302,6 +302,51 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     None
 }
 
+pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+    if constraints.iter().any(SymBoolExpr::contains_hard_arith)
+        || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
+    {
+        return None;
+    }
+
+    let mut vars = SymbolicVars::default();
+    let mut constants = HashSet::<U256>::default();
+    for constraint in constraints {
+        collect_bool_fallback_vars(constraint, &mut vars);
+        collect_bool_constants(constraint, &mut constants);
+    }
+    if vars.len() != 2 {
+        return None;
+    }
+
+    let mut constants = constants.into_iter().collect::<Vec<_>>();
+    constants.sort_unstable();
+    let vars = vars.into_iter().collect::<Vec<_>>();
+    let candidates = vars
+        .iter()
+        .map(|var| fallback_candidates_for_var(var, constraints, &constants))
+        .collect::<Option<Vec<_>>>()?;
+    let searched_vars = vars.iter().copied().collect::<SymbolicVars>();
+    let constraint_vars = constraints
+        .iter()
+        .map(|constraint| {
+            let mut vars = SymbolicVars::default();
+            constraint.collect_vars(&mut vars);
+            vars
+        })
+        .collect::<Vec<_>>();
+    let search = FallbackSearch {
+        constraints,
+        constraint_vars: &constraint_vars,
+        searched_vars: &searched_vars,
+        vars: &vars,
+        candidates: &candidates,
+    };
+    let mut model = SymbolicModel::default();
+    let mut assignments = 0usize;
+    search.model(0, &mut model, &mut assignments)
+}
+
 fn push_fallback_candidate(candidates: &mut HashSet<U256>, candidate: U256, hints: MaskHints) {
     candidates.insert((candidate | hints.one) & !hints.zero);
 }

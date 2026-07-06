@@ -3740,6 +3740,33 @@ fn is_sat_uses_single_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
+fn is_sat_uses_two_var_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("two-var-is-sat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let zero = SymExpr::zero(&mut cx);
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![
+        SymBoolExpr::eq(&mut cx, x.clone(), zero.clone()).not(&mut cx),
+        SymBoolExpr::eq(&mut cx, y.clone(), zero).not(&mut cx),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, ten),
+    ];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn gasleft_can_use_single_var_witness_before_solver() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("gasleft-single-var");
@@ -3792,6 +3819,36 @@ fn model_uses_single_var_witness_before_solver() {
     let limit = SymExpr::constant(&mut cx, U256::from(10));
     let below_limit = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value, limit);
     let constraints = vec![not_zero, below_limit];
+
+    let model = solver.model(&mut cx, &constraints).unwrap();
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.model_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn model_uses_two_var_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("two-var-model");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let zero = SymExpr::zero(&mut cx);
+    let cap = SymExpr::constant(&mut cx, U256::from(1_000_000));
+    let constraints = vec![
+        SymBoolExpr::eq(&mut cx, x.clone(), zero.clone()).not(&mut cx),
+        SymBoolExpr::eq(&mut cx, y.clone(), zero).not(&mut cx),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, y.clone(), x.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x, cap.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, y, cap),
+    ];
 
     let model = solver.model(&mut cx, &constraints).unwrap();
     assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
