@@ -657,6 +657,27 @@ contract RerunTargetTest {
     assert!(!stdout.contains("[PASS] test_pass()"), "{stdout}");
 });
 
+forgetest_init!(brutalize_persists_original_failure_cache, |prj, cmd| {
+    prj.add_test(
+        "BrutalizeFailureCache.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract BrutalizeFailureCacheTest {
+    function test_failBrutalizedRun() public pure {
+        require(false, "record brutalized failure");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--brutalize", "--mt", "test_failBrutalizedRun"]).assert_failure();
+
+    let failures = fs::read_to_string(prj.root().join("cache/test-failures")).unwrap();
+    assert!(failures.contains("test_failBrutalizedRun"), "{failures}");
+});
+
 // --brutalize must preserve CLI/config overrides when compiling from the temp workspace.
 forgetest_init!(brutalize_preserves_fuzz_runs_override, |prj, cmd| {
     prj.add_source(

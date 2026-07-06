@@ -1175,7 +1175,9 @@ impl TestArgs {
             sh_status!("Brutalized {count} source files, compiling from temp workspace...")?;
         }
 
-        let config = workspace::rebase_config_paths(&config, temp_path).sanitized();
+        let test_failures_file = config.test_failures_file.clone();
+        let mut config = workspace::rebase_config_paths(&config, temp_path).sanitized();
+        config.test_failures_file = test_failures_file;
         let project = config.project()?;
         let project_root = project.paths.root.clone();
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
