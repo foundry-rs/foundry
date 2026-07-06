@@ -71,6 +71,7 @@ pub mod call_spec;
 pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
+pub mod rpc_trace;
 pub mod tx;
 
 use rlp_converter::Item;
