@@ -234,6 +234,35 @@ contract FixtureWriteTest is Test {
     cmd.assert_success();
 });
 
+forgetest_init!(brutalize_creates_write_permission_file_parents, |prj, cmd| {
+    fs::create_dir_all(prj.root().join("logs/sub")).unwrap();
+    prj.update_config(|config| {
+        config.fs_permissions.add(PathPermission::write("./logs/sub/a.txt"))
+    });
+
+    prj.add_test(
+        "FixtureWriteFile.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+
+contract FixtureWriteFileTest is Test {
+    function test_writeFixtureFile() public {
+        vm.writeFile("./logs/sub/a.txt", "fixture-data");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "test_writeFixtureFile"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().args(["test", "--brutalize", "--mt", "test_writeFixtureFile"]);
+    cmd.assert_success();
+});
+
 #[cfg(not(target_os = "windows"))]
 forgetest_init!(brutalize_copies_in_root_symlinked_source_dirs, |prj, cmd| {
     fs::create_dir_all(prj.root().join(".shared/src")).unwrap();

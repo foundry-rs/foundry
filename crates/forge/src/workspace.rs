@@ -4,7 +4,6 @@
 //! to a temporary directory for safe source-level modifications.
 
 use std::{
-    collections::HashSet,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -366,12 +365,29 @@ fn create_project_local_permission_dir(
     ensure_safe_relative_path(&rel, "fs permission", path)?;
     ensure_within_root(root, &resolved, "fs permission", path)?;
 
-    if is_covered_by_handled_root(&rel, handled_roots) {
+    if resolved.exists() && resolved.is_dir() {
+        if !is_covered_by_handled_root(&rel, handled_roots) {
+            fs::create_dir_all(temp_dir.join(rel))?;
+        }
         return Ok(());
     }
 
-    if resolved.exists() && resolved.is_dir() {
-        fs::create_dir_all(temp_dir.join(rel))?;
+    let Some(parent) = rel.parent() else { return Ok(()) };
+    let resolved_parent = root.join(parent);
+    if !resolved_parent.exists() || !resolved_parent.is_dir() {
+        return Ok(());
+    }
+    ensure_within_root(root, &resolved_parent, "fs permission", path)?;
+
+    if parent.as_os_str().is_empty() || is_covered_by_handled_root(parent, handled_roots) {
+        return Ok(());
+    }
+
+    fs::create_dir_all(temp_dir.join(parent))?;
+    if resolved.exists() {
+        fs::copy(&resolved, temp_dir.join(rel))?;
+    } else {
+        fs::File::create(temp_dir.join(rel))?;
     }
 
     Ok(())
@@ -474,12 +490,12 @@ fn process_nested_lib_dir(
 
 /// Recursively copy a directory, following symlinked directories only within the allowed root.
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     copy_dir_recursive_inner(src, dst, src, &mut visited)
 }
 
 fn copy_project_dir_recursive(root: &Path, src: &Path, dst: &Path) -> Result<()> {
-    let mut visited = HashSet::new();
+    let mut visited = Vec::new();
     copy_dir_recursive_inner(src, dst, root, &mut visited)
 }
 
@@ -487,42 +503,49 @@ fn copy_dir_recursive_inner(
     src: &Path,
     dst: &Path,
     allowed_root: &Path,
-    visited: &mut HashSet<PathBuf>,
+    visited: &mut Vec<PathBuf>,
 ) -> Result<()> {
     if !src.exists() {
         return Ok(());
     }
     ensure_within_root(allowed_root, src, "copied directory", src)?;
     let canonical = src.canonicalize()?;
-    if !visited.insert(canonical) {
+    if visited.contains(&canonical) {
         return Ok(());
     }
+    visited.push(canonical);
 
-    fs::create_dir_all(dst)?;
+    let result = (|| {
+        fs::create_dir_all(dst)?;
 
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        let dest_path = dst.join(entry.file_name());
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dest_path = dst.join(entry.file_name());
 
-        let meta = fs::symlink_metadata(&path)?;
+            let meta = fs::symlink_metadata(&path)?;
 
-        if meta.file_type().is_symlink() {
-            if path.is_dir() {
-                if ensure_within_root(allowed_root, &path, "symlinked directory", &path).is_ok() {
-                    copy_dir_recursive_inner(&path, &dest_path, allowed_root, visited)?;
+            if meta.file_type().is_symlink() {
+                if path.is_dir() {
+                    if ensure_within_root(allowed_root, &path, "symlinked directory", &path).is_ok()
+                    {
+                        copy_dir_recursive_inner(&path, &dest_path, allowed_root, visited)?;
+                    }
+                } else {
+                    fs::copy(&path, &dest_path)?;
                 }
+            } else if meta.is_dir() {
+                copy_dir_recursive_inner(&path, &dest_path, allowed_root, visited)?;
             } else {
                 fs::copy(&path, &dest_path)?;
             }
-        } else if meta.is_dir() {
-            copy_dir_recursive_inner(&path, &dest_path, allowed_root, visited)?;
-        } else {
-            fs::copy(&path, &dest_path)?;
         }
-    }
 
-    Ok(())
+        Ok(())
+    })();
+
+    visited.pop();
+    result
 }
 
 #[cfg(test)]
@@ -803,6 +826,27 @@ mod tests {
         assert!(dst.join("file1.sol").exists());
         assert!(dst.join("subdir/file2.sol").exists());
         assert!(dst.join("subdir/nested/file3.sol").exists());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_copy_project_dir_recursive_preserves_in_root_symlink_aliases() {
+        let temp = TempDir::new().unwrap();
+
+        let root = temp.path().join("project");
+        let src = root.join("src");
+        let shared = root.join(".shared/pkg");
+        fs::create_dir_all(&shared).unwrap();
+        fs::create_dir_all(src.join("nested")).unwrap();
+        fs::write(shared.join("Y.sol"), "contract Y {}").unwrap();
+        symlink_dir(Path::new("../.shared/pkg"), &src.join("first")).unwrap();
+        symlink_dir(Path::new("../../.shared/pkg"), &src.join("nested/second")).unwrap();
+
+        let dst = temp.path().join("dst/src");
+        copy_project_dir_recursive(&root, &src, &dst).unwrap();
+
+        assert!(dst.join("first/Y.sol").exists());
+        assert!(dst.join("nested/second/Y.sol").exists());
     }
 
     #[test]
