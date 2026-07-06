@@ -913,38 +913,55 @@ impl SymBoolExpr {
         match op {
             SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
                 // `a > 0 => a != 0`.
-                (_, Some(value)) if value.is_zero() => left.normalize_ne_zero_for_solver(cx),
+                (_, Some(value)) if value.is_zero() => left
+                    .normalize_ne_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, left).not(cx))),
                 // `1 > a => a == 0`.
-                (Some(value), _) if value == U256::from(1) => {
-                    right.normalize_eq_zero_for_solver(cx)
-                }
+                (Some(value), _) if value == U256::from(1) => right
+                    .normalize_eq_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, right))),
                 _ => None,
             },
             SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
                 // `a >= 1 => a != 0`.
-                (_, Some(value)) if value == U256::from(1) => left.normalize_ne_zero_for_solver(cx),
+                (_, Some(value)) if value == U256::from(1) => left
+                    .normalize_ne_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, left).not(cx))),
                 // `0 >= a => a == 0`.
-                (Some(value), _) if value.is_zero() => right.normalize_eq_zero_for_solver(cx),
+                (Some(value), _) if value.is_zero() => right
+                    .normalize_eq_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, right))),
                 _ => None,
             },
             SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
                 // `a <= 0 => a == 0`.
-                (_, Some(value)) if value.is_zero() => left.normalize_eq_zero_for_solver(cx),
-                // `1 <= a => a != 0`.
-                (Some(value), _) if value == U256::from(1) => {
-                    right.normalize_ne_zero_for_solver(cx)
+                (_, Some(value)) if value.is_zero() => {
+                    left.normalize_eq_zero_for_solver(cx).or_else(|| Some(Self::eq_zero(cx, left)))
                 }
+                // `1 <= a => a != 0`.
+                (Some(value), _) if value == U256::from(1) => right
+                    .normalize_ne_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, right).not(cx))),
                 _ => None,
             },
             SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
                 // `a < 1 => a == 0`.
-                (_, Some(value)) if value == U256::from(1) => left.normalize_eq_zero_for_solver(cx),
+                (_, Some(value)) if value == U256::from(1) => {
+                    left.normalize_eq_zero_for_solver(cx).or_else(|| Some(Self::eq_zero(cx, left)))
+                }
                 // `0 < a => a != 0`.
-                (Some(value), _) if value.is_zero() => right.normalize_ne_zero_for_solver(cx),
+                (Some(value), _) if value.is_zero() => right
+                    .normalize_ne_zero_for_solver(cx)
+                    .or_else(|| Some(Self::eq_zero(cx, right).not(cx))),
                 _ => None,
             },
             SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
         }
+    }
+
+    fn eq_zero(cx: &mut SymCx, expr: &SymExpr) -> Self {
+        let zero = SymExpr::zero(cx);
+        Self::eq(cx, expr.clone(), zero)
     }
 }
 

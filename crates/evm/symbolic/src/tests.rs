@@ -3182,6 +3182,35 @@ fn solver_normalizes_negated_mask_equality_with_context_bound() {
 }
 
 #[test]
+fn solver_normalizes_unsigned_zero_comparisons() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let shift = SymExpr::constant(&mut cx, U256::from(1));
+    let shifted = SymExpr::binop(&mut cx, SymBinOp::Shl, x.clone(), shift);
+    let zero = SymExpr::zero(&mut cx);
+    let positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, zero, shifted.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero);
+
+    assert_eq!(normalize_bool_for_solver(&mut cx, positive), shifted_zero.clone().not(&mut cx));
+
+    let zero = SymExpr::zero(&mut cx);
+    let positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, zero, shifted);
+    let not_positive = positive.not(&mut cx);
+    assert_eq!(normalize_bool_for_solver(&mut cx, not_positive), shifted_zero);
+
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let below_one = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), one);
+    let zero = SymExpr::zero(&mut cx);
+    let x_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
+    assert_eq!(normalize_bool_for_solver(&mut cx, below_one), x_zero);
+
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let at_least_one = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, one, x);
+    assert_eq!(normalize_bool_for_solver(&mut cx, at_least_one), x_zero.not(&mut cx));
+}
+
+#[test]
 fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
@@ -4650,9 +4679,10 @@ fn solver_smt_dump_shares_repeated_subterms() {
     let shift = SymExpr::constant(&mut cx, U256::from(248));
     let shifted = SymExpr::binop(&mut cx, SymBinOp::Shl, byte, shift);
     let zero = SymExpr::zero(&mut cx);
-    let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero.clone());
-    let shifted_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, shifted, zero);
-    let constraints = vec![shifted_zero, shifted_positive];
+    let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero);
+    let other = SymExpr::var(&mut cx, "other");
+    let shifted_not_other = SymBoolExpr::eq(&mut cx, shifted, other).not(&mut cx);
+    let constraints = vec![shifted_zero, shifted_not_other];
 
     solver.capture_diagnostics();
 
