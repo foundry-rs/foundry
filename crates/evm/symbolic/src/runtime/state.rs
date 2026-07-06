@@ -20,6 +20,7 @@ pub(crate) struct PathState {
     corpus_seed_models: Vec<Arc<SymbolicModel>>,
     branch_target: Option<SymbolicBranchTarget>,
     branch_target_reached: bool,
+    needs_feasibility_check: bool,
     pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
@@ -69,6 +70,7 @@ impl PathState {
             corpus_seed_models: Vec::new(),
             branch_target: None,
             branch_target_reached: false,
+            needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -116,6 +118,7 @@ impl PathState {
             corpus_seed_models: Vec::new(),
             branch_target: None,
             branch_target_reached: false,
+            needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -165,6 +168,7 @@ impl PathState {
             corpus_seed_models: self.corpus_seed_models.clone(),
             branch_target: self.branch_target,
             branch_target_reached: self.branch_target_reached,
+            needs_feasibility_check: self.needs_feasibility_check,
             loop_jumps: HashMap::default(),
             expected_revert: self.expected_revert.clone(),
             assume_no_revert_next_call: self.assume_no_revert_next_call.clone(),
@@ -336,6 +340,16 @@ impl PathState {
 
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
         self.branch_target.is_none() || self.branch_target_reached
+    }
+
+    pub(crate) const fn defer_feasibility_check(&mut self) {
+        self.needs_feasibility_check = true;
+    }
+
+    pub(crate) const fn take_deferred_feasibility_check(&mut self) -> bool {
+        let needs_check = self.needs_feasibility_check;
+        self.needs_feasibility_check = false;
+        needs_check
     }
 
     pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {

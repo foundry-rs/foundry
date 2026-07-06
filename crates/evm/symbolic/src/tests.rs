@@ -2490,6 +2490,41 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
 }
 
 #[test]
+fn fallback_model_keeps_multi_bit_nonzero_masks_weak() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let zero = SymExpr::zero(&mut cx);
+    let mask = SymExpr::constant(&mut cx, U256::from(0xffff));
+    let value = SymExpr::binop(&mut cx, SymBinOp::And, calldata.clone(), mask);
+    let value_nonzero = SymBoolExpr::eq(&mut cx, value.clone(), zero).not(&mut cx);
+    let calldata_limit = SymExpr::constant(&mut cx, U256::from(1) << 16);
+    let calldata_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, calldata, calldata_limit);
+    let reserve = SymExpr::constant(&mut cx, U256::from(10_000));
+    let value_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value.clone(), reserve.clone());
+    let remaining = SymExpr::binop(&mut cx, SymBinOp::Sub, reserve.clone(), value);
+    let left_product = SymExpr::binop(&mut cx, SymBinOp::Mul, reserve, remaining);
+    let factor = SymExpr::constant(&mut cx, U256::from(100_009_984));
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, left_product, factor);
+    let buggy_threshold = SymExpr::constant(&mut cx, U256::from(100_000_000_000_000u64));
+    let above_buggy_threshold =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product.clone(), buggy_threshold).not(&mut cx);
+    let intended_threshold = SymExpr::constant(&mut cx, U256::from(10_000_000_000_000_000u64));
+    let below_intended_threshold =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product, intended_threshold);
+    let constraints = vec![
+        value_nonzero,
+        calldata_bound,
+        value_bound,
+        above_buggy_threshold,
+        below_intended_threshold,
+    ];
+
+    let model = fallback_single_var_model(&constraints).unwrap();
+
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
 fn expression_op_simplifies_exact_arithmetic_identities() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
@@ -3144,6 +3179,35 @@ fn solver_normalizes_negated_mask_equality_with_context_bound() {
         normalize_constraints_for_solver(&mut cx, &[bounded, different_value]),
         vec![SymBoolExpr::constant(&mut cx, false)]
     );
+}
+
+#[test]
+fn solver_normalizes_unsigned_zero_comparisons() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let shift = SymExpr::constant(&mut cx, U256::from(1));
+    let shifted = SymExpr::binop(&mut cx, SymBinOp::Shl, x.clone(), shift);
+    let zero = SymExpr::zero(&mut cx);
+    let positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, zero, shifted.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero);
+
+    assert_eq!(normalize_bool_for_solver(&mut cx, positive), shifted_zero.clone().not(&mut cx));
+
+    let zero = SymExpr::zero(&mut cx);
+    let positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, zero, shifted);
+    let not_positive = positive.not(&mut cx);
+    assert_eq!(normalize_bool_for_solver(&mut cx, not_positive), shifted_zero);
+
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let below_one = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), one);
+    let zero = SymExpr::zero(&mut cx);
+    let x_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
+    assert_eq!(normalize_bool_for_solver(&mut cx, below_one), x_zero);
+
+    let one = SymExpr::constant(&mut cx, U256::from(1));
+    let at_least_one = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, one, x);
+    assert_eq!(normalize_bool_for_solver(&mut cx, at_least_one), x_zero.not(&mut cx));
 }
 
 #[test]
@@ -4615,9 +4679,10 @@ fn solver_smt_dump_shares_repeated_subterms() {
     let shift = SymExpr::constant(&mut cx, U256::from(248));
     let shifted = SymExpr::binop(&mut cx, SymBinOp::Shl, byte, shift);
     let zero = SymExpr::zero(&mut cx);
-    let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero.clone());
-    let shifted_positive = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, shifted, zero);
-    let constraints = vec![shifted_zero, shifted_positive];
+    let shifted_zero = SymBoolExpr::eq(&mut cx, shifted.clone(), zero);
+    let other = SymExpr::var(&mut cx, "other");
+    let shifted_not_other = SymBoolExpr::eq(&mut cx, shifted, other).not(&mut cx);
+    let constraints = vec![shifted_zero, shifted_not_other];
 
     solver.capture_diagnostics();
 

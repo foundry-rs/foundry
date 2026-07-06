@@ -351,12 +351,18 @@ impl MaskHints {
             zero_mask_equality(var, left, right).or_else(|| zero_mask_equality(var, right, left))
         {
             if inverted {
-                self.one |= mask;
+                if is_single_bit(mask) {
+                    self.one |= mask;
+                }
             } else {
                 self.zero |= mask;
             }
         }
     }
+}
+
+fn is_single_bit(value: U256) -> bool {
+    !value.is_zero() && (value & (value - U256::from(1))).is_zero()
 }
 
 fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<U256> {
