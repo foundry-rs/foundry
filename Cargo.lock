@@ -7742,7 +7742,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11250,6 +11250,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solar"
+version = "1.7.2"
+dependencies = [
+ "solar-cli",
+]
+
+[[package]]
 name = "solar-ast"
 version = "0.1.8"
 source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
@@ -11263,6 +11270,25 @@ dependencies = [
  "solar-interface",
  "solar-macros",
  "strum 0.28.0",
+]
+
+[[package]]
+name = "solar-cli"
+version = "0.1.8"
+source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+dependencies = [
+ "alloy-primitives",
+ "cfg-if",
+ "clap",
+ "indexmap 2.14.0",
+ "libc",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "solar-config",
+ "solar-interface",
+ "solar-sema",
+ "tracing",
 ]
 
 [[package]]
@@ -11285,8 +11311,10 @@ name = "solar-config"
 version = "0.1.8"
 source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
 dependencies = [
+ "clap",
  "colorchoice",
  "strum 0.28.0",
+ "vergen-gitcl",
 ]
 
 [[package]]
