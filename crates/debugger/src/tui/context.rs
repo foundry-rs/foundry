@@ -91,6 +91,7 @@ pub(crate) struct TUIContext<'a> {
     pub(crate) show_shortcuts: bool,
     pub(crate) show_source: bool,
     pub(crate) show_variables: bool,
+    pub(crate) show_stack: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
     pub(crate) active_buffer: BufferKind,
 }
@@ -117,6 +118,7 @@ impl<'a> TUIContext<'a> {
             show_shortcuts: true,
             show_source: true,
             show_variables: true,
+            show_stack: true,
             active_buffer: BufferKind::Memory,
         }
     }
@@ -366,6 +368,13 @@ impl TUIContext<'_> {
                 self.show_variables = !self.show_variables;
                 let state = if self.show_variables { "shown" } else { "hidden" };
                 self.set_info(format!("Variables pane: {state}"));
+            }
+
+            // Toggle stack pane.
+            KeyCode::Char('S') => {
+                self.show_stack = !self.show_stack;
+                let state = if self.show_stack { "shown" } else { "hidden" };
+                self.set_info(format!("Stack pane: {state}"));
             }
 
             // Go to program counter
@@ -1479,6 +1488,13 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('V')));
         assert!(tui.show_variables);
         assert_eq!(tui.status.as_ref().unwrap().text, "Variables pane: shown");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('S')));
+        assert!(!tui.show_stack);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack pane: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('S')));
+        assert!(tui.show_stack);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack pane: shown");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('h')));
         assert!(!tui.show_shortcuts);
