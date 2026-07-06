@@ -455,7 +455,7 @@ futures = { version = "0.3", default-features = false }
 hashbrown = "0.16.1"
 hyper = "1.8"
 indicatif = "0.18"
-inturn = "0.1.2"
+inturn = "0.2.0"
 itertools = "0.15"
 jsonpath_lib = "0.3"
 k256 = "0.13"
