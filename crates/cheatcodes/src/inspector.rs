@@ -438,9 +438,17 @@ impl ArbitraryStorage {
         self.copies.keys().copied()
     }
 
-    /// Caches a concrete value for a slot on an arbitrary-storage address.
+    /// Caches a concrete value for a slot on an arbitrary-storage address or copied target.
     fn cache_value(&mut self, address: Address, slot: U256, data: U256) {
         if let Some(values) = self.values.get_mut(&address) {
+            values.insert(slot, data);
+            return;
+        }
+
+        let Some(source) = self.copies.get(&address).copied() else {
+            return;
+        };
+        if let Some(values) = self.values.get_mut(&source) {
             values.insert(slot, data);
         }
     }
@@ -1330,7 +1338,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::copied_targets)
     }
 
-    /// Caches a concrete replay value for a slot on an arbitrary-storage address.
+    /// Caches a concrete replay value for a slot on an arbitrary-storage address or copied target.
     pub fn cache_arbitrary_storage_value(&mut self, address: Address, slot: U256, value: U256) {
         if let Some(storage) = &mut self.arbitrary_storage {
             storage.cache_value(address, slot, value);
@@ -3263,5 +3271,19 @@ mod tests {
             Default::default(),
         ));
         assert!(cheats.has_log_hooks());
+    }
+
+    #[test]
+    fn arbitrary_storage_cache_value_routes_copied_targets_to_source() {
+        let mut storage = ArbitraryStorage::default();
+        let source = Address::repeat_byte(0x11);
+        let copied = Address::repeat_byte(0x22);
+        let slot = U256::from(7);
+
+        storage.mark_arbitrary(&source, false);
+        storage.mark_copy(&source, &copied);
+        storage.cache_value(copied, slot, U256::ZERO);
+
+        assert_eq!(storage.cached_value(source, slot), Some(U256::ZERO));
     }
 }
