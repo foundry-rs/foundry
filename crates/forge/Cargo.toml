@@ -110,7 +110,7 @@ anvil.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 
-mockall = "0.14"
+mockall = "0.15"
 globset = "0.4"
 similar-asserts.workspace = true
 svm.workspace = true
