@@ -174,19 +174,14 @@ impl CoverageReport {
             .collect()
     }
 
-    /// Retains all the coverage items specified by `predicate`.
+    /// Retains all the sources specified by `predicate`.
     ///
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
     pub fn retain_sources(&mut self, mut predicate: impl FnMut(&Path) -> bool) {
-        self.analyses.retain(|version, analysis| {
-            analysis.all_items_mut().retain(|item| {
-                self.source_paths
-                    .get(&(version.clone(), item.loc.source_id))
-                    .map(|path| predicate(path))
-                    .unwrap_or(false)
-            });
-            !analysis.all_items().is_empty()
+        self.source_paths.retain(|_, path| predicate(path));
+        self.source_paths_to_ids.retain(|(version, _), source_id| {
+            self.source_paths.contains_key(&(version.clone(), *source_id))
         });
     }
 }

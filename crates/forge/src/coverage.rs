@@ -284,9 +284,13 @@ struct AttributionItem {
     source: String,
     contract: String,
     kind: &'static str,
+    /// The start of a 1-based, half-open line range.
     line_start: u32,
+    /// The end of a 1-based, half-open line range.
     line_end: u32,
+    /// The start of a 0-based, half-open byte range.
     byte_start: u32,
+    /// The end of a 0-based, half-open byte range.
     byte_end: u32,
     hits: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -366,7 +370,7 @@ fn attributed_items(
             let contract = item.loc.contract_name.to_string();
             let (kind, function, branch_id, path_id) = coverage_item_kind_fields(&item.kind);
             let line_start = item.loc.lines.start;
-            let line_end = item.loc.lines.end.saturating_sub(1);
+            let line_end = item.loc.lines.end;
             let byte_start = item.loc.bytes.start;
             let byte_end = item.loc.bytes.end;
             let key = (

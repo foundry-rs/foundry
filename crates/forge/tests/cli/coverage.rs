@@ -2,6 +2,7 @@ use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
     TestCommand, TestProject,
     snapbox::{Data, IntoData},
+    util::OutputExt,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -2061,6 +2062,113 @@ contract AContractTest is DSTest {
     }));
 });
 
+forgetest!(attribution_report_keeps_items_aligned_after_filtering_sources, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "sub/WContract.sol",
+        r#"
+contract WContract {
+    function hit() public pure returns (uint256) {
+        return 2;
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "XContract.sol",
+        r#"
+contract XContract {
+    function hit() public pure returns (uint256) {
+        return 4;
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "YContract.sol",
+        r#"
+contract YContract {
+    function hit() public pure returns (uint256) {
+        return 6;
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "ZContract.sol",
+        r#"
+contract ZContract {
+    function hit() public pure returns (uint256) {
+        return 8;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AttributionFilterTest.sol",
+        r#"
+import "./test.sol";
+import {WContract} from "./sub/WContract.sol";
+import {XContract} from "./XContract.sol";
+import {YContract} from "./YContract.sol";
+import {ZContract} from "./ZContract.sol";
+
+contract AttributionFilterTest is DSTest {
+    function testW() public {
+        assertEq(new WContract().hit(), 2);
+    }
+
+    function testX() public {
+        assertEq(new XContract().hit(), 4);
+    }
+
+    function testY() public {
+        assertEq(new YContract().hit(), 6);
+    }
+
+    function testZ() public {
+        assertEq(new ZContract().hit(), 8);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage")
+        .args(["--report=attribution", "--no-match-coverage=YContract"])
+        .assert_success();
+
+    let attribution = prj.root().join("coverage-attribution.json");
+    let json: Value = serde_json::from_str(&std::fs::read_to_string(attribution).unwrap()).unwrap();
+    let tests = json["tests"].as_array().unwrap();
+
+    assert!(
+        tests.iter().flat_map(|test| test["covered"].as_array().unwrap()).all(|item| {
+            item["source"].as_str().is_some_and(|source| !source.contains("YContract.sol"))
+        }),
+        "filtered source should not be present in attribution output"
+    );
+
+    for (test_name, contract_name) in
+        [("testW()", "WContract"), ("testX()", "XContract"), ("testZ()", "ZContract")]
+    {
+        let test = tests.iter().find(|test| test["test"] == test_name).unwrap();
+        let covered = test["covered"].as_array().unwrap();
+        assert!(
+            covered.iter().any(|item| {
+                item["source"]
+                    .as_str()
+                    .is_some_and(|source| source.ends_with(&format!("{contract_name}.sol")))
+                    && item["contract"] == contract_name
+                    && item["kind"] == "function"
+                    && item["function"] == "hit"
+                    && item["hits"].as_u64().is_some_and(|hits| hits > 0)
+            }),
+            "{test_name} should retain coverage for {contract_name}.hit"
+        );
+    }
+});
+
 forgetest!(attribution_report_with_lcov_uses_default_paths, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
@@ -2096,9 +2204,17 @@ contract AContractTest is DSTest {
     "#,
     );
 
-    cmd.arg("coverage")
+    let stderr = cmd
+        .arg("coverage")
         .args(["--report=attribution", "--report=lcov", "--report-file", "combined.out"])
-        .assert_success();
+        .assert_success()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("`--report-file` is ignored when multiple file reports are requested"),
+        "expected warning about ignored --report-file, got:\n{stderr}"
+    );
 
     assert!(prj.root().join("coverage-attribution.json").exists());
     assert!(prj.root().join("lcov.info").exists());

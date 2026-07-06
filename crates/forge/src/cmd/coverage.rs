@@ -76,7 +76,8 @@ pub struct CoverageArgs {
 
     /// The path to output the report.
     ///
-    /// If not specified, the report will be stored in the root of the project.
+    /// Used only when a single file report is requested. If not specified, the
+    /// report will be stored in the root of the project.
     #[arg(
         long,
         value_hint = ValueHint::FilePath,
@@ -146,6 +147,13 @@ impl CoverageArgs {
             let (project, output) = self.build(&config)?;
             (project.paths, output)
         };
+
+        if self.report_file.is_some() && self.file_report_count() > 1 {
+            sh_warn!(
+                "`--report-file` is ignored when multiple file reports are requested; \
+                 each report will use its default output path"
+            )?;
+        }
 
         self.populate_reporters(&paths.root);
 
