@@ -2490,6 +2490,41 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
 }
 
 #[test]
+fn fallback_model_keeps_multi_bit_nonzero_masks_weak() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let zero = SymExpr::zero(&mut cx);
+    let mask = SymExpr::constant(&mut cx, U256::from(0xffff));
+    let value = SymExpr::binop(&mut cx, SymBinOp::And, calldata.clone(), mask);
+    let value_nonzero = SymBoolExpr::eq(&mut cx, value.clone(), zero).not(&mut cx);
+    let calldata_limit = SymExpr::constant(&mut cx, U256::from(1) << 16);
+    let calldata_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, calldata, calldata_limit);
+    let reserve = SymExpr::constant(&mut cx, U256::from(10_000));
+    let value_bound = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value.clone(), reserve.clone());
+    let remaining = SymExpr::binop(&mut cx, SymBinOp::Sub, reserve.clone(), value);
+    let left_product = SymExpr::binop(&mut cx, SymBinOp::Mul, reserve, remaining);
+    let factor = SymExpr::constant(&mut cx, U256::from(100_009_984));
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, left_product, factor);
+    let buggy_threshold = SymExpr::constant(&mut cx, U256::from(100_000_000_000_000u64));
+    let above_buggy_threshold =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product.clone(), buggy_threshold).not(&mut cx);
+    let intended_threshold = SymExpr::constant(&mut cx, U256::from(10_000_000_000_000_000u64));
+    let below_intended_threshold =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product, intended_threshold);
+    let constraints = vec![
+        value_nonzero,
+        calldata_bound,
+        value_bound,
+        above_buggy_threshold,
+        below_intended_threshold,
+    ];
+
+    let model = fallback_single_var_model(&constraints).unwrap();
+
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
 fn expression_op_simplifies_exact_arithmetic_identities() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
