@@ -44,14 +44,18 @@ fn generate_memory_brutalization_assembly(span: Span) -> String {
     let w1 = splitmix64(s.wrapping_add(1));
     let w2 = splitmix64(s.wrapping_add(2));
     let w3 = splitmix64(s.wrapping_add(3));
-    let s0 = splitmix64(s.wrapping_add(4));
-    let s1 = splitmix64(s.wrapping_add(5));
-    let s2 = splitmix64(s.wrapping_add(6));
-    let s3 = splitmix64(s.wrapping_add(7));
+    let w4 = splitmix64(s.wrapping_add(4));
+    let w5 = splitmix64(s.wrapping_add(5));
+    let w6 = splitmix64(s.wrapping_add(6));
+    let w7 = splitmix64(s.wrapping_add(7));
+    let s0 = splitmix64(s.wrapping_add(8));
+    let s1 = splitmix64(s.wrapping_add(9));
+    let s2 = splitmix64(s.wrapping_add(10));
+    let s3 = splitmix64(s.wrapping_add(11));
     format!(
         " assembly {{ \
-        mstore(0x00, 0x{w0:016x}{w1:016x}) \
-        mstore(0x20, 0x{w2:016x}{w3:016x}) \
+        mstore(0x00, 0x{w0:016x}{w1:016x}{w2:016x}{w3:016x}) \
+        mstore(0x20, 0x{w4:016x}{w5:016x}{w6:016x}{w7:016x}) \
         let _b_p := mload(0x40) \
         mstore(_b_p, 0x{s0:016x}{s1:016x}{s2:016x}{s3:016x}) \
         for {{ let _b_i := 0x20 }} lt(_b_i, 0x400) {{ _b_i := add(_b_i, 0x20) }} {{ \

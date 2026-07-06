@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use foundry_config::Config;
 use solar::{
@@ -57,18 +57,33 @@ pub fn brutalize_project(config: &Config, temp_dir: &Path) -> eyre::Result<usize
         return Ok(0);
     }
 
-    brutalize_sol_files_in_dir(&src_dir)
+    let mut skipped_dirs = Vec::new();
+    for path in config.libs.iter().chain([&config.script]) {
+        if path.exists() && path != &config.src {
+            let rel = path.strip_prefix(&config.root).unwrap_or(path);
+            skipped_dirs.push(temp_dir.join(rel));
+        }
+    }
+    if config.test.exists() && config.test != config.src {
+        let test_rel = config.test.strip_prefix(&config.root).unwrap_or(&config.test);
+        skipped_dirs.push(temp_dir.join(test_rel));
+    }
+
+    brutalize_sol_files_in_dir(&src_dir, &skipped_dirs)
 }
 
-fn brutalize_sol_files_in_dir(dir: &Path) -> eyre::Result<usize> {
+fn brutalize_sol_files_in_dir(dir: &Path, skipped_dirs: &[PathBuf]) -> eyre::Result<usize> {
     let mut count = 0;
     let entries = std::fs::read_dir(dir)?;
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
+        if skipped_dirs.contains(&path) {
+            continue;
+        }
         if path.is_dir() {
-            count += brutalize_sol_files_in_dir(&path)?;
-        } else if path.extension().is_some_and(|ext| ext == "sol") {
+            count += brutalize_sol_files_in_dir(&path, skipped_dirs)?;
+        } else if path.extension().is_some_and(|ext| ext == "sol") && !is_test_or_script(&path) {
             let source = std::fs::read_to_string(&path)?;
             let brutalized = brutalize_source(&path, &source)?;
             if brutalized != source {
@@ -78,6 +93,12 @@ fn brutalize_sol_files_in_dir(dir: &Path) -> eyre::Result<usize> {
         }
     }
     Ok(count)
+}
+
+fn is_test_or_script(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".t.sol") || name.ends_with(".s.sol"))
 }
 
 /// Applies the splitmix64 finalizer to produce a well-distributed 64-bit hash.

@@ -325,6 +325,108 @@ contract ScratchVulnTest is Test {
     cmd.assert_failure();
 });
 
+// Catches dirty scratch space in the high half of the scratch word.
+forgetest_init!(brutalize_catches_dirty_scratch_space_high_half, |prj, cmd| {
+    prj.add_source(
+        "ScratchHighVuln.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract ScratchHighVuln {
+    function readScratchHighHalf() external pure returns (uint256 result) {
+        assembly {
+            result := shr(128, mload(0x00))
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "ScratchHighVuln.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/ScratchHighVuln.sol";
+
+contract ScratchHighVulnTest is Test {
+    ScratchHighVuln public c;
+
+    function setUp() public {
+        c = new ScratchHighVuln();
+    }
+
+    function test_readScratchHighHalf() public view {
+        assertEq(c.readScratchHighHalf(), 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "ScratchHighVulnTest"]);
+    cmd.assert_success();
+
+    cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ScratchHighVulnTest"]);
+    cmd.assert_failure();
+});
+
+// With src = ".", brutalization should skip tests, scripts, and libraries.
+forgetest_init!(brutalize_flat_layout_only_brutalizes_sources, |prj, cmd| {
+    prj.update_config(|config| {
+        config.src = ".".into();
+        config.test = ".".into();
+    });
+
+    fs::write(
+        prj.root().join("FlatTarget.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract FlatTarget {
+    function readScratch() external pure returns (uint256 result) {
+        assembly {
+            result := mload(0x00)
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        prj.root().join("FlatTarget.t.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "./FlatTarget.sol";
+
+contract FlatTargetTest {
+    function test_readScratch() external {
+        assembly {
+            let scratch := mload(0x00)
+            pop(scratch)
+        }
+        require(new FlatTarget().readScratch() != 0, "source was not brutalized");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let stderr = cmd
+        .args(["test", "--brutalize", "--mt", "test_readScratch"])
+        .assert_success()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("Brutalized 1 source files"), "{stderr}");
+});
+
 // --brutalize works with --match-test filter (regression for .sanitized() config fix)
 forgetest_init!(brutalize_with_filter, |prj, cmd| {
     prj.add_source(
