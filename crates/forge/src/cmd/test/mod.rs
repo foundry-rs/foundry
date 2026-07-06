@@ -2991,7 +2991,12 @@ fn list_from_output(
         .filter_map(|(id, artifact)| {
             let abi = artifact.abi.as_ref()?;
             let id = id.with_stripped_file_prefixes(&config.root);
-            if !matcher.matches_contract(filter, &id, abi) {
+            let deployable = abi
+                .constructor
+                .as_ref()
+                .map(|constructor| constructor.inputs.is_empty())
+                .unwrap_or(true);
+            if !deployable || !matcher.matches_contract(filter, &id, abi) {
                 return None;
             }
             let source = id.source.as_path().display().to_string();

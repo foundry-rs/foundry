@@ -192,6 +192,18 @@ contract ListTests {
 }
 "#,
     );
+    prj.add_test(
+        "ConstructorArgListTests.t.sol",
+        r#"
+contract ConstructorArgListTests {
+    constructor(uint256 value) {
+        value;
+    }
+
+    function test_constructor_arg() public pure {}
+}
+"#,
+    );
 
     cmd.args(["test", "--list", "--match-test", "test_"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
