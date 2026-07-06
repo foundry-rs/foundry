@@ -244,16 +244,17 @@ fn plan_symbolic_regression(
     match artifact.kind {
         SymbolicCounterexampleArtifactKind::SingleCall => {
             let call = artifact.calls.first().expect("single-call artifact has at least one call");
-            write_call(&mut contents, call, "address(this)", true)?;
+            write_call(&mut contents, call, "address(this)", true, None)?;
         }
         SymbolicCounterexampleArtifactKind::Sequence => {
             let call_after_invariant = call_after_invariant(known_contracts, artifact)?;
-            for call in &artifact.calls {
+            for (index, call) in artifact.calls.iter().enumerate() {
                 write_call(
                     &mut contents,
                     call,
                     &format!("address({})", call.target),
                     artifact.replay_semantics.fail_on_revert,
+                    Some(index),
                 )?;
             }
             writeln!(
@@ -274,7 +275,7 @@ fn plan_symbolic_regression(
     writeln!(contents)?;
     writeln!(
         contents,
-        "    function __foundrySymbolicRegressionCall(address target, bytes memory data, uint256 value, bool bubbleFailure) internal {{"
+        "    function __foundrySymbolicRegressionCall(address target, bytes memory data, uint256 value, bool bubbleFailure) internal returns (bool) {{"
     )?;
     writeln!(contents, "        if (target != address(this)) {{")?;
     writeln!(contents, "            uint256 codeSize;")?;
@@ -290,6 +291,7 @@ fn plan_symbolic_regression(
     writeln!(contents, "                revert(add(ret, 0x20), mload(ret))")?;
     writeln!(contents, "            }}")?;
     writeln!(contents, "        }}")?;
+    writeln!(contents, "        return ok;")?;
     writeln!(contents, "    }}")?;
     writeln!(contents, "}}")?;
 
@@ -341,6 +343,7 @@ fn write_call(
     call: &crate::result::SymbolicCounterexampleCall,
     target: &str,
     bubble_failure: bool,
+    sequence_call_index: Option<usize>,
 ) -> Result<()> {
     if let Some(warp) = call.warp {
         writeln!(
@@ -355,22 +358,87 @@ fn write_call(
     if let Some(value) = call.value
         && !value.is_zero()
     {
-        writeln!(out, "        __foundrySymbolicVm.deal(address(this), {});", u256_literal(value))?;
-        writeln!(
-            out,
-            "        __foundrySymbolicVm.deal({}, {});",
-            call.sender,
-            u256_literal(value)
-        )?;
+        if let Some(index) = sequence_call_index {
+            writeln!(
+                out,
+                "        uint256 __foundrySymbolicValue{index} = {} <= address({}).balance ? {} : address({}).balance;",
+                u256_literal(value),
+                call.sender,
+                u256_literal(value),
+                call.sender
+            )?;
+            writeln!(
+                out,
+                "        if (__foundrySymbolicValue{index} != 0 && {} != address(this)) {{",
+                call.sender
+            )?;
+            writeln!(
+                out,
+                "            __foundrySymbolicVm.deal(address(this), address(this).balance + __foundrySymbolicValue{index});"
+            )?;
+            writeln!(
+                out,
+                "            __foundrySymbolicVm.deal({}, address({}).balance - __foundrySymbolicValue{index});",
+                call.sender, call.sender
+            )?;
+            writeln!(out, "        }}")?;
+        } else {
+            writeln!(
+                out,
+                "        __foundrySymbolicVm.deal(address(this), {});",
+                u256_literal(value)
+            )?;
+            writeln!(
+                out,
+                "        __foundrySymbolicVm.deal({}, {});",
+                call.sender,
+                u256_literal(value)
+            )?;
+        }
     }
     writeln!(out, "        __foundrySymbolicVm.prank({});", call.sender)?;
-    writeln!(
-        out,
-        "        __foundrySymbolicRegressionCall({target}, hex\"{}\", {}, {});",
-        hex::encode(call.calldata.as_ref()),
-        call.value.map_or_else(|| "0".to_string(), u256_literal),
-        if bubble_failure { "true" } else { "false" }
-    )?;
+    let value = sequence_call_index
+        .filter(|_| call.value.is_some_and(|value| !value.is_zero()))
+        .map_or_else(
+            || call.value.map_or_else(|| "0".to_string(), u256_literal),
+            |index| format!("__foundrySymbolicValue{index}"),
+        );
+    if let Some(index) = sequence_call_index {
+        writeln!(
+            out,
+            "        bool __foundrySymbolicOk{index} = __foundrySymbolicRegressionCall({target}, hex\"{}\", {}, {});",
+            hex::encode(call.calldata.as_ref()),
+            value,
+            if bubble_failure { "true" } else { "false" }
+        )?;
+        if call.value.is_some_and(|value| !value.is_zero()) {
+            writeln!(
+                out,
+                "        if (__foundrySymbolicValue{index} != 0 && {} != address(this)) {{",
+                call.sender
+            )?;
+            writeln!(out, "            if (!__foundrySymbolicOk{index}) {{")?;
+            writeln!(
+                out,
+                "                __foundrySymbolicVm.deal({}, address({}).balance + __foundrySymbolicValue{index});",
+                call.sender, call.sender
+            )?;
+            writeln!(
+                out,
+                "                __foundrySymbolicVm.deal(address(this), address(this).balance - __foundrySymbolicValue{index});"
+            )?;
+            writeln!(out, "            }}")?;
+            writeln!(out, "        }}")?;
+        }
+    } else {
+        writeln!(
+            out,
+            "        __foundrySymbolicRegressionCall({target}, hex\"{}\", {}, {});",
+            hex::encode(call.calldata.as_ref()),
+            value,
+            if bubble_failure { "true" } else { "false" }
+        )?;
+    }
     Ok(())
 }
 
@@ -453,6 +521,152 @@ fn normalized_components(path: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::result::{
+        SymbolicCallTrace, SymbolicCounterexample, SymbolicCounterexampleReplaySemantics,
+        SymbolicCounterexampleTestIdentity, SymbolicReplayMetadata, SymbolicResult,
+    };
+    use alloy_primitives::{Address, Bytes};
+    use foundry_config::SymbolicConfig;
+    use foundry_evm_symbolic::SymbolicStats;
+
+    fn config(root: &Path) -> Config {
+        Config { root: root.to_path_buf(), test: root.join("test"), ..Default::default() }
+    }
+
+    fn artifact(
+        kind: SymbolicCounterexampleArtifactKind,
+        calls: Vec<crate::result::SymbolicCounterexampleCall>,
+    ) -> SymbolicCounterexampleArtifact {
+        let call = calls.first().expect("artifact has at least one call");
+        let symbolic = SymbolicResult::fail_counterexample(
+            &SymbolicConfig::default(),
+            SymbolicStats::default(),
+            SymbolicCallTrace::none(),
+            SymbolicCounterexample {
+                calldata: call.calldata.clone(),
+                args: None,
+                raw_args: None,
+                value: call.value,
+            },
+        );
+        let mut artifact = SymbolicCounterexampleArtifact::new(
+            kind,
+            SymbolicCounterexampleTestIdentity {
+                contract: "test/Regression.t.sol:Regression".to_string(),
+                test: "invariant_value()".to_string(),
+            },
+            &symbolic,
+            SymbolicCounterexampleReplaySemantics { fail_on_revert: false },
+            calls,
+        );
+        artifact.replay = SymbolicReplayMetadata::confirmed();
+        artifact
+    }
+
+    fn value_call(target: Address) -> crate::result::SymbolicCounterexampleCall {
+        crate::result::SymbolicCounterexampleCall {
+            warp: None,
+            roll: None,
+            sender: Address::repeat_byte(0xb0),
+            target,
+            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
+            value: Some(U256::from(10)),
+            contract_name: None,
+            function_name: None,
+            signature: None,
+            args: None,
+            raw_args: None,
+        }
+    }
+
+    fn plan(
+        kind: SymbolicCounterexampleArtifactKind,
+        calls: Vec<crate::result::SymbolicCounterexampleCall>,
+    ) -> String {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("test/Regression.t.sol");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, "contract Regression {}").unwrap();
+
+        let artifact_path = temp.path().join("cache/artifact.json");
+        let artifact = artifact(kind, calls);
+        plan_symbolic_regression(
+            &config(temp.path()),
+            &SymbolicRegressionConfig { out: None, overwrite: false },
+            &artifact_path,
+            &artifact,
+            &ContractsByArtifact::default(),
+            None,
+        )
+        .unwrap()
+        .contents
+    }
+
+    #[test]
+    fn sequence_regression_clamps_and_debits_sender_balance() {
+        let contents = plan(
+            SymbolicCounterexampleArtifactKind::Sequence,
+            vec![value_call(Address::repeat_byte(0x7f)), value_call(Address::repeat_byte(0x8f))],
+        );
+        let lowercase = contents.to_lowercase();
+
+        assert!(lowercase.contains(
+            "uint256 __foundrysymbolicvalue0 = 10 <= address(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0).balance ? 10 : address(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0).balance;"
+        ));
+        assert!(lowercase.contains(
+            "uint256 __foundrysymbolicvalue1 = 10 <= address(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0).balance ? 10 : address(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0).balance;"
+        ));
+        assert!(contents.contains("if (__foundrySymbolicValue0 != 0"));
+        assert!(contents.contains("if (__foundrySymbolicValue1 != 0"));
+        assert!(contents.contains(
+            "__foundrySymbolicVm.deal(address(this), address(this).balance + __foundrySymbolicValue0);"
+        ));
+        assert!(contents.contains("bool __foundrySymbolicOk0 = __foundrySymbolicRegressionCall"));
+        assert!(contents.contains("if (!__foundrySymbolicOk0) {"));
+        assert!(lowercase.contains(
+            "__foundrysymbolicvm.deal(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0, address(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0).balance - __foundrysymbolicvalue0);"
+        ));
+        assert!(lowercase.contains(
+            "__foundrysymbolicvm.deal(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0, address(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0).balance - __foundrysymbolicvalue1);"
+        ));
+        assert!(lowercase.contains(
+            "__foundrysymbolicvm.deal(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0, address(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0).balance + __foundrysymbolicvalue0);"
+        ));
+        assert!(contents.contains(
+            "__foundrySymbolicVm.deal(address(this), address(this).balance - __foundrySymbolicValue0);"
+        ));
+        assert!(lowercase.contains(
+            "__foundrysymbolicregressioncall(address(0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f), hex\"12345678\", __foundrysymbolicvalue0, false);"
+        ));
+        assert!(lowercase.contains(
+            "__foundrysymbolicregressioncall(address(0x8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f), hex\"12345678\", __foundrysymbolicvalue1, false);"
+        ));
+        assert!(
+            !lowercase.contains(
+                "__foundrysymbolicvm.deal(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0, 10);"
+            )
+        );
+    }
+
+    #[test]
+    fn single_call_regression_preserves_exact_value_funding() {
+        let contents = plan(
+            SymbolicCounterexampleArtifactKind::SingleCall,
+            vec![value_call(Address::repeat_byte(0x7f))],
+        );
+        let lowercase = contents.to_lowercase();
+
+        assert!(contents.contains("__foundrySymbolicVm.deal(address(this), 10);"));
+        assert!(
+            lowercase.contains(
+                "__foundrysymbolicvm.deal(0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0, 10);"
+            )
+        );
+        assert!(contents.contains(
+            "__foundrySymbolicRegressionCall(address(this), hex\"12345678\", 10, true);"
+        ));
+        assert!(!contents.contains("bool __foundrySymbolicOk0 ="));
+    }
 
     #[test]
     fn relative_solidity_import_canonicalizes_symlinked_absolute_paths() {
