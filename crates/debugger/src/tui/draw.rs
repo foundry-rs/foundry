@@ -20,6 +20,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
+use revm::interpreter::InstructionResult;
 use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
@@ -862,12 +863,32 @@ impl TUIContext<'_> {
 
     fn decode_return_values(&mut self, scope: &DebugSourceScope) -> Option<Vec<String>> {
         let current_step = self.absolute_current_step();
-        self.active_internal_call().and_then(|active| {
-            (current_step >= active.end_step
-                && decoded_internal_name_matches(&active.decoded.func_name, scope))
-            .then(|| active.decoded.return_data.clone())
+        if let Some(values) = self
+            .active_internal_call()
+            .and_then(|active| {
+                (current_step >= active.end_step
+                    && decoded_internal_name_matches(&active.decoded.func_name, scope))
+                .then(|| active.decoded.return_data.clone())
+            })
             .flatten()
-        })
+        {
+            return Some(values);
+        }
+
+        if self.current_step + 1 < self.debug_steps().len()
+            || !matches!(
+                self.current_step().status,
+                Some(InstructionResult::Return | InstructionResult::Stop)
+            )
+        {
+            return None;
+        }
+
+        decode_external_return_values(
+            scope,
+            &self.debug_call().calldata,
+            &self.debug_call().returndata,
+        )
     }
 
     fn decode_internal_parameter_values(
@@ -1146,6 +1167,27 @@ fn decode_external_parameter_values(
     scope: &DebugSourceScope,
     calldata: &[u8],
 ) -> Option<Vec<String>> {
+    let types = external_scope_parameter_types(scope, calldata)?;
+
+    decode_abi_sequence(&types, &calldata[4..])
+}
+
+fn decode_external_return_values(
+    scope: &DebugSourceScope,
+    calldata: &[u8],
+    returndata: &[u8],
+) -> Option<Vec<String>> {
+    external_scope_parameter_types(scope, calldata)?;
+    let returns_src = scope.returns_src.as_deref()?;
+    let returns = Parameters::parse(returns_src).ok()?;
+    let types = resolved_types(&returns)?;
+    decode_abi_sequence(&types, returndata)
+}
+
+fn external_scope_parameter_types(
+    scope: &DebugSourceScope,
+    calldata: &[u8],
+) -> Option<Vec<DynSolType>> {
     if calldata.len() < 4 {
         return None;
     }
@@ -1157,7 +1199,7 @@ fn decode_external_parameter_values(
         return None;
     }
 
-    decode_abi_sequence(&types, &calldata[4..])
+    Some(types)
 }
 
 fn resolved_types(parameters: &Parameters<'_>) -> Option<Vec<DynSolType>> {
@@ -1343,6 +1385,17 @@ mod tests {
             parameters: Vec::new(),
             returns: Vec::new(),
             locals: Vec::new(),
+        }
+    }
+
+    fn scope_with_returns(
+        function_name: &str,
+        parameters_src: &str,
+        returns_src: &str,
+    ) -> DebugSourceScope {
+        DebugSourceScope {
+            returns_src: Some(returns_src.to_string()),
+            ..scope(function_name, parameters_src)
         }
     }
 
@@ -1605,6 +1658,65 @@ mod tests {
         calldata.extend_from_slice(&abi_word(U256::from(42)));
 
         assert_eq!(super::decode_external_parameter_values(&scope, &calldata), None);
+    }
+
+    #[test]
+    fn decode_external_return_values_decodes_named_returns() {
+        let scope = scope_with_returns("foo", "(uint256 amount)", "(uint256 total, bool ok)");
+        let parameters = Parameters::parse(&scope.parameters_src).unwrap();
+        let types = super::resolved_types(&parameters).unwrap();
+        let mut calldata = Vec::new();
+        calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
+        calldata.extend_from_slice(&abi_word(U256::from(42)));
+        let mut returndata = Vec::new();
+        returndata.extend_from_slice(&abi_word(U256::from(99)));
+        returndata.extend_from_slice(&abi_word(U256::from(1)));
+
+        let values = super::decode_external_return_values(&scope, &calldata, &returndata).unwrap();
+
+        assert_eq!(values, ["99", "true"]);
+    }
+
+    #[test]
+    fn decode_return_values_uses_external_output_at_frame_end() {
+        let scope = scope_with_returns("foo", "()", "(uint256 total)");
+        let parameters = Parameters::parse(&scope.parameters_src).unwrap();
+        let types = super::resolved_types(&parameters).unwrap();
+        let mut calldata = Vec::new();
+        calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
+        let mut node = debug_node(
+            0,
+            0,
+            vec![trace_step(Vec::new()), {
+                let mut step = trace_step(Vec::new());
+                step.op = OpCode::RETURN;
+                step.status = Some(InstructionResult::Return);
+                step
+            }],
+        );
+        node.calldata = Bytes::from(calldata);
+        node.returndata = Bytes::from(abi_word(U256::from(123)).to_vec());
+        let mut context = context_with_arena(vec![node]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 1;
+
+        assert_eq!(tui.decode_return_values(&scope), Some(vec!["123".to_string()]));
+    }
+
+    #[test]
+    fn decode_return_values_waits_for_external_frame_end() {
+        let scope = scope_with_returns("foo", "()", "(uint256 total)");
+        let parameters = Parameters::parse(&scope.parameters_src).unwrap();
+        let types = super::resolved_types(&parameters).unwrap();
+        let mut calldata = Vec::new();
+        calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
+        let mut node = debug_node(0, 0, vec![trace_step(Vec::new()), trace_step(Vec::new())]);
+        node.calldata = Bytes::from(calldata);
+        node.returndata = Bytes::from(abi_word(U256::from(123)).to_vec());
+        let mut context = context_with_arena(vec![node]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(tui.decode_return_values(&scope), None);
     }
 
     #[test]
