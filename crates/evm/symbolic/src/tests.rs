@@ -3863,6 +3863,66 @@ fn model_uses_two_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
+fn is_sat_falls_through_when_two_var_witness_misses() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("two-var-fallthrough");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let twenty = SymExpr::constant(&mut cx, U256::from(20));
+    let thirty = SymExpr::constant(&mut cx, U256::from(30));
+    let thirty_eight = SymExpr::constant(&mut cx, U256::from(38));
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
+    let constraints = vec![
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), ten),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, twenty.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, y.clone(), twenty),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, thirty),
+        SymBoolExpr::eq(&mut cx, sum, thirty_eight),
+    ];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn is_sat_ignores_disjunctive_two_var_bounds() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("two-var-disjunctive-bounds");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let x_below_ten = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), ten.clone());
+    let y_below_ten = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y.clone(), ten);
+    let constraints = vec![
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y),
+        SymBoolExpr::or(&mut cx, vec![x_below_ten, y_below_ten]),
+    ];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("hard-arith-is-sat");

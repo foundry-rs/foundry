@@ -303,20 +303,23 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
 }
 
 pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
-    if constraints.iter().any(SymBoolExpr::contains_hard_arith)
-        || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
-        || constraints.iter().any(SymBoolExpr::contains_gasleft)
-    {
+    if constraints.iter().any(SymBoolExpr::contains_hard_arith) {
         return None;
     }
 
     let mut vars = SymbolicVars::default();
-    let mut constants = HashSet::<U256>::default();
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
-        collect_bool_constants(constraint, &mut constants);
+        if vars.len() > 2 {
+            return None;
+        }
     }
     if vars.len() != 2 {
+        return None;
+    }
+    if constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
+        || constraints.iter().any(SymBoolExpr::contains_gasleft)
+    {
         return None;
     }
     if !constraints_have_two_var_relation(constraints, &vars)
@@ -325,6 +328,10 @@ pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<Symb
         return None;
     }
 
+    let mut constants = HashSet::<U256>::default();
+    for constraint in constraints {
+        collect_bool_constants(constraint, &mut constants);
+    }
     let mut constants = constants.into_iter().collect::<Vec<_>>();
     constants.sort_unstable();
     let vars = vars.into_iter().collect::<Vec<_>>();
@@ -357,16 +364,25 @@ fn constraints_have_two_var_relation(
     constraints: &[SymBoolExpr],
     searched_vars: &SymbolicVars,
 ) -> bool {
-    constraints.iter().any(|constraint| bool_expr_has_two_var_relation(constraint, searched_vars))
+    constraints
+        .iter()
+        .any(|constraint| bool_expr_has_two_var_relation(constraint, searched_vars, false))
 }
 
-fn bool_expr_has_two_var_relation(expr: &SymBoolExpr, searched_vars: &SymbolicVars) -> bool {
+fn bool_expr_has_two_var_relation(
+    expr: &SymBoolExpr,
+    searched_vars: &SymbolicVars,
+    inverted: bool,
+) -> bool {
     match expr.kind() {
         SymBoolExprKind::Const(_) => false,
-        SymBoolExprKind::Not(expr) => bool_expr_has_two_var_relation(expr, searched_vars),
-        SymBoolExprKind::And(exprs) => {
-            exprs.iter().any(|expr| bool_expr_has_two_var_relation(expr, searched_vars))
+        SymBoolExprKind::Not(expr) => {
+            bool_expr_has_two_var_relation(expr, searched_vars, !inverted)
         }
+        SymBoolExprKind::And(exprs) if !inverted => {
+            exprs.iter().any(|expr| bool_expr_has_two_var_relation(expr, searched_vars, false))
+        }
+        SymBoolExprKind::And(_) => false,
         SymBoolExprKind::Cmp(_, left, right) => {
             let mut vars = SymbolicVars::default();
             collect_expr_fallback_vars(left, &mut vars);
@@ -381,17 +397,18 @@ fn constraints_bind_each_search_var(
     searched_vars: &SymbolicVars,
 ) -> bool {
     searched_vars.iter().all(|var| {
-        constraints.iter().any(|constraint| bool_expr_binds_single_var(constraint, *var))
+        constraints.iter().any(|constraint| bool_expr_binds_single_var(constraint, *var, false))
     })
 }
 
-fn bool_expr_binds_single_var(expr: &SymBoolExpr, bound_var: Symbol) -> bool {
+fn bool_expr_binds_single_var(expr: &SymBoolExpr, bound_var: Symbol, inverted: bool) -> bool {
     match expr.kind() {
         SymBoolExprKind::Const(_) => false,
-        SymBoolExprKind::Not(expr) => bool_expr_binds_single_var(expr, bound_var),
-        SymBoolExprKind::And(exprs) => {
-            exprs.iter().any(|expr| bool_expr_binds_single_var(expr, bound_var))
+        SymBoolExprKind::Not(expr) => bool_expr_binds_single_var(expr, bound_var, !inverted),
+        SymBoolExprKind::And(exprs) if !inverted => {
+            exprs.iter().any(|expr| bool_expr_binds_single_var(expr, bound_var, false))
         }
+        SymBoolExprKind::And(_) => false,
         SymBoolExprKind::Cmp(_, left, right) => {
             let mut vars = SymbolicVars::default();
             collect_expr_fallback_vars(left, &mut vars);
