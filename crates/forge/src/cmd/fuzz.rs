@@ -191,10 +191,6 @@ pub struct FuzzRunArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
     pub(crate) fuzz_run: Option<u32>,
 
-    /// Run the fuzz case from the given worker. Requires `--fuzz-run`.
-    #[arg(long, env = "FOUNDRY_FUZZ_WORKER", value_name = "WORKER", requires = "fuzz_run")]
-    pub(crate) fuzz_worker: Option<u32>,
-
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub(crate) fuzz_input_file: Option<String>,
@@ -1358,6 +1354,11 @@ mod tests {
     #[test]
     fn fuzz_args_clap_shape_is_valid() {
         FuzzArgs::command().debug_assert();
+    }
+
+    #[test]
+    fn fuzz_run_rejects_fuzz_worker() {
+        assert!(FuzzArgs::try_parse_from(["foundry-cli", "run", "--fuzz-worker", "1"]).is_err());
     }
 
     fn decoder_with_functions(functions: Vec<Function>) -> CorpusDecoder {

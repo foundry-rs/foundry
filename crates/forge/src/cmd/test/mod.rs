@@ -475,7 +475,6 @@ pub(crate) struct SuppliedEngineFlags {
     pub(crate) frontier_dir: bool,
     pub(crate) frontier_limit: bool,
     pub(crate) fuzz_run: bool,
-    pub(crate) fuzz_worker: bool,
     pub(crate) depth: bool,
     pub(crate) min_depth: bool,
     pub(crate) depth_mode: bool,
@@ -488,7 +487,6 @@ impl SuppliedEngineFlags {
             frontier_dir: false,
             frontier_limit: false,
             fuzz_run: false,
-            fuzz_worker: false,
             depth: false,
             min_depth: false,
             depth_mode: false,
@@ -1195,11 +1193,6 @@ impl TestArgs {
                     "`--fuzz-run` only applies to fuzz tests; no matched fuzz tests were found."
                 )?;
             }
-            if flags.fuzz_worker {
-                sh_warn!(
-                    "`--fuzz-worker` only applies to fuzz tests; no matched fuzz tests were found."
-                )?;
-            }
         }
 
         if counts.invariant == 0 && counts.fuzz > 0 {
@@ -1232,7 +1225,6 @@ impl TestArgs {
     pub(crate) fn from_fuzz_run(args: FuzzRunArgs) -> Self {
         let mut supplied = args.campaign.supplied_engine_flags();
         supplied.fuzz_run = args.fuzz_run.is_some();
-        supplied.fuzz_worker = args.fuzz_worker.is_some();
 
         Self {
             fuzz_only: true,
@@ -1247,9 +1239,8 @@ impl TestArgs {
             list: args.list,
             fuzz_seed: args.campaign.seed,
             fuzz_runs: args.campaign.runs,
-            invariant_workers: args.campaign.workers,
+            invariant_workers: Some(args.campaign.workers.unwrap_or(InvariantWorkers::Auto)),
             fuzz_run: args.fuzz_run,
-            fuzz_worker: args.fuzz_worker,
             fuzz_timeout: args.campaign.timeout.map(u64::from),
             fuzz_dictionary_weight: args.campaign.dictionary_weight,
             fuzz_dictionary_addresses: args.campaign.dictionary_addresses.clone(),
@@ -3903,6 +3894,17 @@ mod tests {
         assert_eq!(
             figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
             InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap())
+        );
+    }
+
+    #[test]
+    fn fuzz_run_adapter_defaults_invariant_workers_to_auto() {
+        let args = TestArgs::from_fuzz_run(FuzzRunArgs::parse_from(["foundry-cli"]));
+        let figment = figment::Figment::from(&args);
+
+        assert_eq!(
+            figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
+            InvariantWorkers::Auto
         );
     }
 
