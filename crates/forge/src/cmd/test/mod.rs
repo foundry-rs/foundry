@@ -33,7 +33,8 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
+    EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind, compile::ProjectCompiler, fs,
+    shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -1201,7 +1202,7 @@ impl TestArgs {
         }
 
         // Set up the project.
-        let project = config.project()?;
+        let mut project = config.project()?;
         let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1232,6 +1233,27 @@ impl TestArgs {
 
         let dynamic_test_linking = config.dynamic_test_linking;
         let quiet = shell::is_json() || self.junit;
+
+        if self.list {
+            project.update_output_selection(|selection| {
+                *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+            });
+            let output = ProjectCompiler::new()
+                .dynamic_test_linking(dynamic_test_linking)
+                .quiet(quiet)
+                .compile(&project)?;
+            let inline_config = Arc::new(InlineConfig::new_parsed(&output, &config)?);
+            return Ok((
+                project_root,
+                config,
+                evm_opts,
+                output,
+                filter,
+                inline_config,
+                replay_symbolic_artifact,
+            ));
+        }
+
         let compile = |files| {
             ProjectCompiler::new()
                 .dynamic_test_linking(dynamic_test_linking)
@@ -1414,6 +1436,17 @@ impl TestArgs {
                     conflicts.join(", ")
                 );
             }
+        }
+
+        if self.list {
+            return list_from_output(
+                output,
+                &config,
+                &execution.inline_config,
+                filter,
+                self.fuzz_only,
+                execution.replay_symbolic_artifact.as_ref(),
+            );
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -3008,11 +3041,67 @@ fn list<FEN: FoundryEvmNetwork>(
     filter: &ProjectPathsAwareFilter,
 ) -> Result<TestOutcome> {
     let results = runner.list(filter);
+    print_list_results(&results)?;
+    Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+}
 
+fn list_from_output(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    inline_config: &InlineConfig,
+    filter: &ProjectPathsAwareFilter,
+    fuzz_only: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
+) -> Result<TestOutcome> {
+    let matcher = TestFunctionMatcher::new(config, inline_config, symbolic_artifact_replay);
+    let results = output
+        .artifact_ids()
+        .filter_map(|(id, artifact)| {
+            let abi = artifact.abi.as_ref()?;
+            let id = id.with_stripped_file_prefixes(&config.root);
+            let deployable = abi
+                .constructor
+                .as_ref()
+                .map(|constructor| constructor.inputs.is_empty())
+                .unwrap_or(true);
+            if !deployable || !matcher.matches_contract(filter, &id, abi) {
+                return None;
+            }
+            let source = id.source.as_path().display().to_string();
+            let identifier = id.identifier();
+            let name = id.name;
+            let tests = abi
+                .functions()
+                .filter(|func| {
+                    let kind = matcher.test_function_kind(&identifier, func);
+                    (!fuzz_only
+                        || matches!(
+                            kind,
+                            TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                        ))
+                        && filter.matches_test_function_kind_in_contract(&identifier, func, kind)
+                })
+                .map(|func| func.name.clone())
+                .collect::<Vec<_>>();
+            (!tests.is_empty()).then_some((source, name, tests))
+        })
+        .fold(
+            BTreeMap::<String, BTreeMap<String, Vec<String>>>::new(),
+            |mut acc, (source, name, tests)| {
+                acc.entry(source).or_default().insert(name, tests);
+                acc
+            },
+        );
+
+    print_list_results(&results)?;
+    Ok(TestOutcome::empty(None, false))
+}
+
+fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>) -> Result<()> {
     if shell::is_json() {
         sh_println!("{}", serde_json::to_string(&results)?)?;
     } else {
-        for (file, contracts) in &results {
+        for (file, contracts) in results {
             sh_println!("{file}")?;
             for (contract, tests) in contracts {
                 sh_println!("  {contract}")?;
@@ -3020,7 +3109,7 @@ fn list<FEN: FoundryEvmNetwork>(
             }
         }
     }
-    Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+    Ok(())
 }
 
 /// Merges `other` into `base` by extending suite results.
