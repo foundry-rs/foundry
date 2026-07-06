@@ -144,6 +144,43 @@ configured record limit, and a `frontiers` array. Each frontier contains:
 Frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default 256).
 It reuses the fuzzer's comparison-operand inspector and does not store traces.
 
+Symbolic execution can consume those artifacts to solve the opposite side of
+captured comparisons and write replay-confirmed inputs into the fuzz corpus:
+
+```sh
+forge test --match-test test_hard_branch \
+  --fuzz-frontier-dir fuzz_frontiers \
+  --fuzz-corpus-dir fuzz_corpus \
+  --symbolic-use-fuzz-frontiers
+```
+
+Forge imports up to `symbolic.frontier_limit` records (default 256), replays the
+recorded one-call seed as a path-priority hint, constrains symbolic execution to
+flip the captured comparison result, and persists only candidates that replay
+with the expected concrete outcome.
+
+To focus solver time on specific captured sites, pass frontier artifact IDs,
+comparison PCs, or calldata selectors:
+
+```sh
+forge test --match-test test_hard_branch \
+  --fuzz-frontier-dir fuzz_frontiers \
+  --fuzz-corpus-dir fuzz_corpus \
+  --symbolic-use-fuzz-frontiers \
+  --symbolic-frontier-ids 3,7 \
+  --symbolic-frontier-pcs 128,412 \
+  --symbolic-frontier-selectors 0x12345678
+```
+
+`symbolic.frontier_ids`, `symbolic.frontier_pcs`, and
+`symbolic.frontier_selectors` default to `[]`, meaning any value for that
+dimension. Non-empty filters compose conjunctively, so the example imports only
+records matching one of the requested IDs, one of the requested PCs, and one of
+the requested selectors. Forge keeps the artifact order as the priority order
+after filtering, imports up to `symbolic.frontier_limit` records, reports how
+many records were imported or skipped by target filters, and warns if a
+requested target cannot be imported.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
@@ -304,6 +341,9 @@ default_array_lengths = []
 default_bytes_lengths = []
 max_calldata_bytes = 4096
 invariant_depth = 10
+frontier_ids = []
+frontier_pcs = []
+frontier_selectors = []
 symbolic_call_targets = false
 dump_smt = false
 storage_layout = "solidity"

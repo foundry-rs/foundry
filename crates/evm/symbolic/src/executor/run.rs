@@ -215,6 +215,7 @@ impl SymbolicExecutor {
                 input.ffi_enabled,
             );
             root.set_corpus_seed_models(corpus_seed_models);
+            root.set_branch_target(input.branch_target);
             root.apply_executor_env(&mut self.cx, input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
             root.world.clear_transaction_scoped_state();
@@ -229,10 +230,7 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = match self.config.exploration_order {
-            SymbolicExplorationOrder::Bfs => worklist.pop_front(),
-            SymbolicExplorationOrder::Dfs => worklist.pop_back(),
-        } {
+        while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
             if completed_paths >= path_limit {
                 debug!(completed_paths, path_limit, "symbolic path limit reached");
                 return Ok(SymbolicRunResult::Incomplete {
@@ -259,13 +257,18 @@ impl SymbolicExecutor {
 
                 let Some(op) = code.opcode(&mut self.cx, state.pc)? else {
                     if !state.expectations_satisfied() {
-                        let (args, calldata_bytes) = self.materialize_stateless_counterexample(
-                            state.root_calldata.as_ref().ok_or_else(|| {
-                                SymbolicError::Unsupported("missing root symbolic calldata")
-                            })?,
-                            input.function,
-                            &state,
-                        )?;
+                        let Some((args, calldata_bytes)) = self
+                            .materialize_stateless_counterexample_if_branch_target_satisfied(
+                                state.root_calldata.as_ref().ok_or_else(|| {
+                                    SymbolicError::Unsupported("missing root symbolic calldata")
+                                })?,
+                                input.function,
+                                &state,
+                            )?
+                        else {
+                            completed_paths += 1;
+                            break;
+                        };
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata: calldata_bytes,
@@ -273,6 +276,7 @@ impl SymbolicExecutor {
                         });
                     }
                     if input.collect_success_input
+                        && state.satisfies_branch_target()
                         && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                     {
                         success_input = Some((
@@ -290,7 +294,7 @@ impl SymbolicExecutor {
                     break;
                 };
 
-                let _step_span = trace_span!("symbolic_step", pc = state.pc - 1, op).entered();
+                let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
                 match self.step(
                     input.executor,
                     &code,
@@ -303,14 +307,18 @@ impl SymbolicExecutor {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         if !state.expectations_satisfied() {
-                            let (args, calldata_bytes) = self
-                                .materialize_stateless_counterexample(
+                            let Some((args, calldata_bytes)) = self
+                                .materialize_stateless_counterexample_if_branch_target_satisfied(
                                     state.root_calldata.as_ref().ok_or_else(|| {
                                         SymbolicError::Unsupported("missing root symbolic calldata")
                                     })?,
                                     input.function,
                                     &state,
-                                )?;
+                                )?
+                            else {
+                                completed_paths += 1;
+                                break;
+                            };
                             return Ok(SymbolicRunResult::Counterexample {
                                 args,
                                 calldata: calldata_bytes,
@@ -318,6 +326,7 @@ impl SymbolicExecutor {
                             });
                         }
                         if input.collect_success_input
+                            && state.satisfies_branch_target()
                             && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                         {
                             success_input = Some((
@@ -343,13 +352,18 @@ impl SymbolicExecutor {
                     StepOutcome::AssumeRejected => break,
                     StepOutcome::Forked => break,
                     StepOutcome::Failure => {
-                        let (args, calldata_bytes) = self.materialize_stateless_counterexample(
-                            state.root_calldata.as_ref().ok_or_else(|| {
-                                SymbolicError::Unsupported("missing root symbolic calldata")
-                            })?,
-                            input.function,
-                            &state,
-                        )?;
+                        let Some((args, calldata_bytes)) = self
+                            .materialize_stateless_counterexample_if_branch_target_satisfied(
+                                state.root_calldata.as_ref().ok_or_else(|| {
+                                    SymbolicError::Unsupported("missing root symbolic calldata")
+                                })?,
+                                input.function,
+                                &state,
+                            )?
+                        else {
+                            completed_paths += 1;
+                            break;
+                        };
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
                             calldata: calldata_bytes,
@@ -390,6 +404,18 @@ impl SymbolicExecutor {
             stats: self.stats_with_paths(completed_paths),
             success_input: success_input.map(|(_, input)| input),
         })
+    }
+
+    fn materialize_stateless_counterexample_if_branch_target_satisfied(
+        &mut self,
+        calldata: &SymbolicCalldata,
+        function: &Function,
+        state: &PathState,
+    ) -> Result<Option<(Vec<DynSolValue>, Bytes)>, SymbolicError> {
+        if !state.satisfies_branch_target() {
+            return Ok(None);
+        }
+        self.materialize_stateless_counterexample(calldata, function, state).map(Some)
     }
 
     pub(super) fn materialize_stateless_counterexample(

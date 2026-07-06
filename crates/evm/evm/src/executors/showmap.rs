@@ -29,7 +29,7 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Selector, hex};
+use alloy_primitives::{Address, B256, Selector, hex, keccak256};
 use eyre::Result;
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
@@ -137,10 +137,8 @@ pub struct InvariantReplayOptions {
 /// A structured identity for a failure observed during corpus replay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayFailure {
-    /// A stateless fuzz test call failed. Keyed by selector and code-path fingerprint.
-    // TODO(@mablr): include revert data/reason if this identity is reused by
-    // minimization, so same-edge branchless failures cannot be swapped.
-    Fuzz { selector: Selector, fingerprint: Option<B256> },
+    /// A stateless fuzz test call failed. Keyed by selector, code-path fingerprint, and output.
+    Fuzz { selector: Selector, fingerprint: Option<B256>, output: B256 },
     /// An invariant handler call hit an assertion or a `fail_on_revert` revert.
     /// Keyed by `(target, selector)` site and code-path fingerprint, mirroring the
     /// campaign's handler-bug deduplication.
@@ -355,7 +353,11 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                     target.fuzz_fail_on_revert,
                 )
             {
-                entry_failure = Some(ReplayFailure::Fuzz { selector, fingerprint });
+                entry_failure = Some(ReplayFailure::Fuzz {
+                    selector,
+                    fingerprint,
+                    output: keccak256(call_result.result.as_ref()),
+                });
                 break;
             }
         }
@@ -527,7 +529,11 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         ) {
             record_replay_failure(
                 &mut observation.failure,
-                ReplayFailure::Fuzz { selector, fingerprint },
+                ReplayFailure::Fuzz {
+                    selector,
+                    fingerprint,
+                    output: keccak256(call_result.result.as_ref()),
+                },
             );
             break;
         }

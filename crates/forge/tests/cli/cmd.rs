@@ -1733,7 +1733,11 @@ forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
         r"
 pragma solidity *;
 contract A {
-    function testExample() public {}
+    event Example();
+
+    function testExample() public {
+        emit Example();
+    }
 }
    ",
     );
@@ -4167,6 +4171,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "viaSSACFG": false,
     "experimental": false,
     "libraries": {}
   }

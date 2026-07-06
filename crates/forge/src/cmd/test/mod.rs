@@ -6,11 +6,16 @@ use crate::{
     multi_runner::{
         FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, MultiNetworkConfig,
         ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
+        is_generated_symbolic_regression_contract,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
         SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
+    },
+    symbolic_regression::{
+        SymbolicRegressionConfig, attach_symbolic_regressions_to_suites,
+        collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
     },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -30,7 +35,8 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, sh_status, shell,
+    EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind, compile::ProjectCompiler, fs,
+    sh_status, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -673,6 +679,24 @@ pub struct TestArgs {
     )]
     pub replay_symbolic_artifact: Option<PathBuf>,
 
+    /// Emit Solidity regression tests for confirmed symbolic counterexamples.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_EMIT_REGRESSION")]
+    pub emit_regression: bool,
+
+    /// File or directory for generated symbolic regression tests.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_REGRESSION_OUT",
+        value_name = "PATH",
+        value_hint = ValueHint::AnyPath,
+        requires = "emit_regression"
+    )]
+    pub regression_out: Option<PathBuf>,
+
+    /// Overwrite existing generated symbolic regression tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_REGRESSION_OVERWRITE", requires = "emit_regression")]
+    pub regression_overwrite: bool,
+
     /// Run fuzz tests symbolically and persist non-failing concrete inputs to the fuzz corpus.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SEED_CORPUS")]
     pub symbolic_seed_corpus: bool,
@@ -684,6 +708,31 @@ pub struct TestArgs {
     /// Maximum number of fuzz corpus entries to import for one symbolic test.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CORPUS_SEED_LIMIT", value_name = "COUNT")]
     pub symbolic_corpus_seed_limit: Option<usize>,
+
+    /// Run targeted symbolic solving from existing fuzz branch frontier artifacts.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_USE_FUZZ_FRONTIERS")]
+    pub symbolic_use_fuzz_frontiers: bool,
+
+    /// Maximum number of fuzz branch frontiers to try for one symbolic test.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_LIMIT", value_name = "COUNT")]
+    pub symbolic_frontier_limit: Option<usize>,
+
+    /// Comma-separated fuzz branch frontier artifact IDs to try.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_IDS", value_name = "IDS", value_delimiter = ',')]
+    pub symbolic_frontier_ids: Option<Vec<u64>>,
+
+    /// Comma-separated fuzz branch frontier comparison PCs to try.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_FRONTIER_PCS", value_name = "PCS", value_delimiter = ',')]
+    pub symbolic_frontier_pcs: Option<Vec<usize>>,
+
+    /// Comma-separated fuzz branch frontier calldata selectors to try.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_FRONTIER_SELECTORS",
+        value_name = "SELECTORS",
+        value_delimiter = ','
+    )]
+    pub symbolic_frontier_selectors: Option<Vec<String>>,
 
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
@@ -1238,7 +1287,7 @@ impl TestArgs {
         }
 
         // Set up the project.
-        let project = config.project()?;
+        let mut project = config.project()?;
         let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1269,6 +1318,27 @@ impl TestArgs {
 
         let dynamic_test_linking = config.dynamic_test_linking;
         let quiet = shell::is_json() || self.junit;
+
+        if self.list {
+            project.update_output_selection(|selection| {
+                *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+            });
+            let output = ProjectCompiler::new()
+                .dynamic_test_linking(dynamic_test_linking)
+                .quiet(quiet)
+                .compile(&project)?;
+            let inline_config = Arc::new(InlineConfig::new_parsed(&output, &config)?);
+            return Ok((
+                project_root,
+                config,
+                evm_opts,
+                output,
+                filter,
+                inline_config,
+                replay_symbolic_artifact,
+            ));
+        }
+
         let compile = |files| {
             ProjectCompiler::new()
                 .dynamic_test_linking(dynamic_test_linking)
@@ -1451,6 +1521,17 @@ impl TestArgs {
                     conflicts.join(", ")
                 );
             }
+        }
+
+        if self.list {
+            return list_from_output(
+                output,
+                &config,
+                &execution.inline_config,
+                filter,
+                self.fuzz_only,
+                execution.replay_symbolic_artifact.as_ref(),
+            );
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -2134,6 +2215,16 @@ impl TestArgs {
         }
     }
 
+    fn symbolic_regression_config(&self, config: &Config) -> Option<SymbolicRegressionConfig> {
+        self.emit_regression.then(|| SymbolicRegressionConfig {
+            out: self
+                .regression_out
+                .clone()
+                .map(|path| if path.is_relative() { config.root.join(path) } else { path }),
+            overwrite: self.regression_overwrite,
+        })
+    }
+
     /// Run all tests that matches the filter predicate from a test runner
     async fn run_tests_inner<FEN: FoundryEvmNetwork>(
         &self,
@@ -2147,6 +2238,7 @@ impl TestArgs {
         if self.list {
             return list(runner, filter);
         }
+        let symbolic_regression = self.symbolic_regression_config(&config);
 
         trace!(target: "forge::test", "running all tests");
 
@@ -2235,13 +2327,33 @@ impl TestArgs {
                     }
                 }
             }
+            if let Some(regression) = &symbolic_regression {
+                let artifacts = collect_symbolic_artifacts_from_suites(results.values());
+                let regressions = emit_symbolic_regressions(
+                    &config,
+                    regression,
+                    &runner.known_contracts,
+                    &artifacts,
+                )?;
+                attach_symbolic_regressions_to_suites(results.values_mut(), &regressions);
+            }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             let kc = runner.known_contracts.clone();
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
-            let results = runner.test_collect(filter)?;
+            let mut results = runner.test_collect(filter)?;
+            if let Some(regression) = &symbolic_regression {
+                let artifacts = collect_symbolic_artifacts_from_suites(results.values());
+                let regressions = emit_symbolic_regressions(
+                    &config,
+                    regression,
+                    &runner.known_contracts,
+                    &artifacts,
+                )?;
+                attach_symbolic_regressions_to_suites(results.values_mut(), &regressions);
+            }
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             let kc = runner.known_contracts.clone();
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
@@ -2605,6 +2717,21 @@ impl TestArgs {
                 break;
             }
         }
+        if let Some(regression) = &symbolic_regression {
+            let artifacts = collect_symbolic_artifacts_from_suites(outcome.results.values());
+            let regressions =
+                emit_symbolic_regressions(&config, regression, &known_contracts, &artifacts)?;
+            attach_symbolic_regressions_to_suites(outcome.results.values_mut(), &regressions);
+            if !silent {
+                for regression in regressions {
+                    sh_warn!(
+                        "Regression test: {} (from {})",
+                        regression.path.display(),
+                        regression.artifact.display()
+                    )?;
+                }
+            }
+        }
         outcome.last_run_decoder = Some(decoder);
         let duration = timer.elapsed();
 
@@ -2881,6 +3008,21 @@ impl Provider for TestArgs {
         if let Some(corpus_seed_limit) = self.symbolic_corpus_seed_limit {
             symbolic_dict.insert("corpus_seed_limit".to_string(), corpus_seed_limit.into());
         }
+        if self.symbolic_use_fuzz_frontiers {
+            symbolic_dict.insert("use_fuzz_frontiers".to_string(), true.into());
+        }
+        if let Some(frontier_limit) = self.symbolic_frontier_limit {
+            symbolic_dict.insert("frontier_limit".to_string(), frontier_limit.into());
+        }
+        if let Some(frontier_ids) = self.symbolic_frontier_ids.clone() {
+            symbolic_dict.insert("frontier_ids".to_string(), frontier_ids.into());
+        }
+        if let Some(frontier_pcs) = self.symbolic_frontier_pcs.clone() {
+            symbolic_dict.insert("frontier_pcs".to_string(), frontier_pcs.into());
+        }
+        if let Some(frontier_selectors) = self.symbolic_frontier_selectors.clone() {
+            symbolic_dict.insert("frontier_selectors".to_string(), frontier_selectors.into());
+        }
         if let Some(solver) = self.symbolic_solver.clone() {
             symbolic_dict.insert("solver".to_string(), solver.into());
         }
@@ -2991,11 +3133,72 @@ fn list<FEN: FoundryEvmNetwork>(
     filter: &ProjectPathsAwareFilter,
 ) -> Result<TestOutcome> {
     let results = runner.list(filter);
+    print_list_results(&results)?;
+    Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+}
 
+fn list_from_output(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    inline_config: &InlineConfig,
+    filter: &ProjectPathsAwareFilter,
+    fuzz_only: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
+) -> Result<TestOutcome> {
+    let matcher = TestFunctionMatcher::new(config, inline_config, symbolic_artifact_replay);
+    let results = output
+        .artifact_ids()
+        .filter_map(|(id, artifact)| {
+            let abi = artifact.abi.as_ref()?;
+            let id = id.with_stripped_file_prefixes(&config.root);
+            let deployable = abi
+                .constructor
+                .as_ref()
+                .map(|constructor| constructor.inputs.is_empty())
+                .unwrap_or(true);
+            if !deployable || !matcher.matches_contract(filter, &id, abi) {
+                return None;
+            }
+            let source = id.source.as_path().display().to_string();
+            let identifier = id.identifier();
+            let name = id.name;
+            let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
+            let tests = abi
+                .functions()
+                .filter(|func| {
+                    let kind = matcher.test_function_kind(
+                        &identifier,
+                        func,
+                        generated_symbolic_regression,
+                    );
+                    (!fuzz_only
+                        || matches!(
+                            kind,
+                            TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                        ))
+                        && filter.matches_test_function_kind_in_contract(&identifier, func, kind)
+                })
+                .map(|func| func.name.clone())
+                .collect::<Vec<_>>();
+            (!tests.is_empty()).then_some((source, name, tests))
+        })
+        .fold(
+            BTreeMap::<String, BTreeMap<String, Vec<String>>>::new(),
+            |mut acc, (source, name, tests)| {
+                acc.entry(source).or_default().insert(name, tests);
+                acc
+            },
+        );
+
+    print_list_results(&results)?;
+    Ok(TestOutcome::empty(None, false))
+}
+
+fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>) -> Result<()> {
     if shell::is_json() {
         sh_println!("{}", serde_json::to_string(&results)?)?;
     } else {
-        for (file, contracts) in &results {
+        for (file, contracts) in results {
             sh_println!("{file}")?;
             for (contract, tests) in contracts {
                 sh_println!("  {contract}")?;
@@ -3003,7 +3206,7 @@ fn list<FEN: FoundryEvmNetwork>(
             }
         }
     }
-    Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+    Ok(())
 }
 
 /// Merges `other` into `base` by extending suite results.
@@ -3556,6 +3759,15 @@ mod tests {
             "3",
             "--fuzz-mutation-weight-cmp",
             "5",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "3",
+            "--symbolic-frontier-ids",
+            "4,9",
+            "--symbolic-frontier-pcs",
+            "123,456",
+            "--symbolic-frontier-selectors",
+            "0x12345678,deadbeef",
             "--invariant-depth",
             "300",
             "--invariant-min-depth",
@@ -3610,6 +3822,17 @@ mod tests {
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_cmp").unwrap(), 5);
+        assert!(figment.extract_inner::<bool>("symbolic.use_fuzz_frontiers").unwrap());
+        assert_eq!(figment.extract_inner::<usize>("symbolic.frontier_limit").unwrap(), 3);
+        assert_eq!(figment.extract_inner::<Vec<u64>>("symbolic.frontier_ids").unwrap(), vec![4, 9]);
+        assert_eq!(
+            figment.extract_inner::<Vec<usize>>("symbolic.frontier_pcs").unwrap(),
+            vec![123, 456]
+        );
+        assert_eq!(
+            figment.extract_inner::<Vec<String>>("symbolic.frontier_selectors").unwrap(),
+            vec!["0x12345678", "deadbeef"]
+        );
         assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 300);
         assert_eq!(figment.extract_inner::<u32>("invariant.min_depth").unwrap(), 20);
         assert_eq!(
@@ -3654,6 +3877,11 @@ mod tests {
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_cmp, 5);
+        assert!(config.symbolic.use_fuzz_frontiers);
+        assert_eq!(config.symbolic.frontier_limit, 3);
+        assert_eq!(config.symbolic.frontier_ids, vec![4, 9]);
+        assert_eq!(config.symbolic.frontier_pcs, vec![123, 456]);
+        assert_eq!(config.symbolic.frontier_selectors, vec!["0x12345678", "deadbeef"]);
         assert_eq!(config.invariant.depth, 300);
         assert_eq!(config.invariant.min_depth, 20);
         assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);

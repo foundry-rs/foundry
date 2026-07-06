@@ -53,6 +53,7 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
+    erc4337::TransactionConditional,
     pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
@@ -2715,21 +2716,15 @@ impl EthApi<FoundryNetwork> {
         Ok(*tx.hash())
     }
 
-    /// Sends a signed transaction with an empty transaction condition.
+    /// Sends a signed transaction with an ignored transaction condition.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransactionConditional`
     pub async fn send_raw_transaction_conditional(
         &self,
         tx: Bytes,
-        condition: serde_json::Value,
+        _condition: TransactionConditional,
     ) -> Result<TxHash> {
         node_info!("eth_sendRawTransactionConditional");
-        if !is_empty_transaction_condition(&condition) {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                "transaction conditions are not supported",
-            )));
-        }
-
         self.send_raw_transaction(tx).await
     }
 
@@ -3427,18 +3422,6 @@ impl EthApi<FoundryNetwork> {
 
         self.backend.trace_call_many(calls, Some(block_request)).await
     }
-}
-
-fn is_empty_transaction_condition(condition: &serde_json::Value) -> bool {
-    let Some(condition) = condition.as_object() else {
-        return false;
-    };
-
-    condition.iter().all(|(key, value)| match key.as_str() {
-        "knownAccounts" => value.as_object().is_some_and(|accounts| accounts.is_empty()),
-        "blockNumberMin" | "blockNumberMax" | "timestampMin" | "timestampMax" => value.is_null(),
-        _ => false,
-    })
 }
 
 // == impl EthApi anvil endpoints ==
