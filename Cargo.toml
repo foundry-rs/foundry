@@ -540,8 +540,8 @@ idna_adapter = "=1.1.0"
 ## Temporary pins on foundry-rs/foundry-core until foundry-compilers / foundry-block-explorers are
 ## released. Currently at foundry-rs/foundry-core#109 (deterministic contract sources); both crates
 ## point at the same rev so there's a single foundry-compilers in the graph.
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "e35c4f8ea6501cd92909e631ee0649489f131978" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "e35c4f8ea6501cd92909e631ee0649489f131978" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "643aa536a005708ef088633e8afec4f065f32b91" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "643aa536a005708ef088633e8afec4f065f32b91" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
