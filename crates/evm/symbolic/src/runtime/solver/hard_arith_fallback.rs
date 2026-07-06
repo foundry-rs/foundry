@@ -633,8 +633,9 @@ mod tests {
         let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
         let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), amount.clone());
         let div = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, amount.clone());
-        let amount_is_zero = SymBoolExpr::eq(&mut cx, amount.clone(), zero.clone());
-        let guarded_div = SymExpr::ite(&mut cx, amount_is_zero.clone(), zero, div);
+        let amount_is_zero = SymBoolExpr::eq(&mut cx, amount, zero);
+        let guarded_zero = SymExpr::zero(&mut cx);
+        let guarded_div = SymExpr::ite(&mut cx, amount_is_zero.clone(), guarded_zero, div);
         let overflow_branch = SymBoolExpr::eq(&mut cx, guarded_div, scale).not(&mut cx);
 
         let address_bound = U256::from(1) << 160;
@@ -692,10 +693,10 @@ mod tests {
         let debited = SymExpr::binop(&mut cx, SymBinOp::Sub, from_balance.clone(), amount.clone());
         let credited = SymExpr::binop(&mut cx, SymBinOp::Add, to_balance.clone(), amount.clone());
         let mut constraints = vec![
-            SymBoolExpr::eq(&mut cx, amount.clone(), zero).not(&mut cx),
+            SymBoolExpr::eq(&mut cx, amount, zero).not(&mut cx),
             SymBoolExpr::eq(&mut cx, quotient, scale),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, from_balance.clone(), debited).not(&mut cx),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, credited, to_balance.clone()).not(&mut cx),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, from_balance, debited).not(&mut cx),
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, credited, to_balance).not(&mut cx),
         ];
 
         let address_bound = U256::from(1) << 160;
