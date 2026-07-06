@@ -110,15 +110,18 @@ impl TUIContext<'_> {
             self.draw_footer(f, footer);
         }
 
+        let opcodes_weight = if self.show_opcodes { 1 } else { 0 };
         let source_weight = if self.show_source { 3 } else { 0 };
         let memory_weight = if self.show_source { 1 } else { 2 };
-        let total_weight = 1
+        let total_weight = opcodes_weight
             + memory_weight
             + source_weight
             + if self.show_variables { 1 } else { 0 }
             + if self.show_stack { 1 } else { 0 };
         let mut constraints = Vec::with_capacity(5);
-        constraints.push(Constraint::Ratio(1, total_weight));
+        if self.show_opcodes {
+            constraints.push(Constraint::Ratio(opcodes_weight, total_weight));
+        }
         if self.show_variables {
             constraints.push(Constraint::Ratio(1, total_weight));
         }
@@ -132,8 +135,9 @@ impl TUIContext<'_> {
 
         let panes = Layout::new(Direction::Vertical, constraints).split(app);
         let mut panes = panes.iter();
-        let op_pane = *panes.next().expect("opcode pane is always visible");
-        self.draw_op_list(f, op_pane);
+        if self.show_opcodes {
+            self.draw_op_list(f, *panes.next().expect("opcodes pane is visible"));
+        }
         if self.show_variables {
             self.draw_variables(f, *panes.next().expect("variables pane is visible"));
         }
@@ -173,35 +177,44 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        // Split app in 2 horizontally.
-        let [app_left, app_right] =
-            Layout::new(Direction::Horizontal, [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-                .split(app)[..]
-        else {
-            unreachable!()
-        };
-
-        let (op_pane, src_pane) = if self.show_source {
-            // Split left pane in 2 vertically to opcode list and source.
-            let [op_pane, src_pane] = Layout::new(
-                Direction::Vertical,
-                [Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)],
+        let has_left_pane = self.show_opcodes || self.show_source;
+        let (app_left, app_right) = if has_left_pane {
+            // Split app in 2 horizontally.
+            let [app_left, app_right] = Layout::new(
+                Direction::Horizontal,
+                [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)],
             )
-            .split(app_left)[..] else {
+            .split(app)[..] else {
                 unreachable!()
             };
-            (op_pane, Some(src_pane))
+            (Some(app_left), app_right)
         } else {
-            (app_left, None)
+            (None, app)
         };
 
         if footer_height > 0 {
             self.draw_footer(f, footer);
         }
-        if let Some(src_pane) = src_pane {
-            self.draw_src(f, src_pane);
+        if let Some(app_left) = app_left {
+            let total_weight =
+                if self.show_opcodes { 1 } else { 0 } + if self.show_source { 3 } else { 0 };
+            let mut constraints = Vec::with_capacity(2);
+            if self.show_opcodes {
+                constraints.push(Constraint::Ratio(1, total_weight));
+            }
+            if self.show_source {
+                constraints.push(Constraint::Ratio(3, total_weight));
+            }
+
+            let panes = Layout::new(Direction::Vertical, constraints).split(app_left);
+            let mut panes = panes.iter();
+            if self.show_opcodes {
+                self.draw_op_list(f, *panes.next().expect("opcodes pane is visible"));
+            }
+            if self.show_source {
+                self.draw_src(f, *panes.next().expect("source pane is visible"));
+            }
         }
-        self.draw_op_list(f, op_pane);
 
         let total_weight =
             2 + if self.show_variables { 1 } else { 0 } + if self.show_stack { 1 } else { 0 };
@@ -1448,6 +1461,30 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(!screen.contains("Contract call"));
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn hidden_opcodes_pane_omits_opcode_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_opcodes = false;
+        let backend = TestBackend::new(220, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("address:"));
+        assert!(screen.contains("Contract call"));
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
     }
 
