@@ -305,6 +305,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
 pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
     if constraints.iter().any(SymBoolExpr::contains_hard_arith)
         || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
+        || constraints.iter().any(SymBoolExpr::contains_gasleft)
     {
         return None;
     }
@@ -316,6 +317,11 @@ pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<Symb
         collect_bool_constants(constraint, &mut constants);
     }
     if vars.len() != 2 {
+        return None;
+    }
+    if !constraints_have_two_var_relation(constraints, &vars)
+        || !constraints_bind_each_search_var(constraints, &vars)
+    {
         return None;
     }
 
@@ -345,6 +351,69 @@ pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<Symb
     let mut model = SymbolicModel::default();
     let mut assignments = 0usize;
     search.model(0, &mut model, &mut assignments)
+}
+
+fn constraints_have_two_var_relation(
+    constraints: &[SymBoolExpr],
+    searched_vars: &SymbolicVars,
+) -> bool {
+    constraints.iter().any(|constraint| bool_expr_has_two_var_relation(constraint, searched_vars))
+}
+
+fn bool_expr_has_two_var_relation(expr: &SymBoolExpr, searched_vars: &SymbolicVars) -> bool {
+    match expr.kind() {
+        SymBoolExprKind::Const(_) => false,
+        SymBoolExprKind::Not(expr) => bool_expr_has_two_var_relation(expr, searched_vars),
+        SymBoolExprKind::And(exprs) => {
+            exprs.iter().any(|expr| bool_expr_has_two_var_relation(expr, searched_vars))
+        }
+        SymBoolExprKind::Cmp(_, left, right) => {
+            let mut vars = SymbolicVars::default();
+            collect_expr_fallback_vars(left, &mut vars);
+            collect_expr_fallback_vars(right, &mut vars);
+            vars.len() == 2 && vars.is_subset(searched_vars)
+        }
+    }
+}
+
+fn constraints_bind_each_search_var(
+    constraints: &[SymBoolExpr],
+    searched_vars: &SymbolicVars,
+) -> bool {
+    searched_vars.iter().all(|var| {
+        constraints.iter().any(|constraint| bool_expr_binds_single_var(constraint, *var))
+    })
+}
+
+fn bool_expr_binds_single_var(expr: &SymBoolExpr, bound_var: Symbol) -> bool {
+    match expr.kind() {
+        SymBoolExprKind::Const(_) => false,
+        SymBoolExprKind::Not(expr) => bool_expr_binds_single_var(expr, bound_var),
+        SymBoolExprKind::And(exprs) => {
+            exprs.iter().any(|expr| bool_expr_binds_single_var(expr, bound_var))
+        }
+        SymBoolExprKind::Cmp(_, left, right) => {
+            let mut vars = SymbolicVars::default();
+            collect_expr_fallback_vars(left, &mut vars);
+            collect_expr_fallback_vars(right, &mut vars);
+            vars.len() == 1
+                && vars.contains(&bound_var)
+                && (expr_contains_const(left) || expr_contains_const(right))
+        }
+    }
+}
+
+fn collect_expr_fallback_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
+    let _ = expr.visit(&mut |expr| {
+        if let Some(var) = expr.kind().get_eval_var() {
+            vars.insert(var);
+        }
+        ControlFlow::<()>::Continue(())
+    });
+}
+
+fn expr_contains_const(expr: &SymExpr) -> bool {
+    expr.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Const(_)))
 }
 
 fn push_fallback_candidate(candidates: &mut HashSet<U256>, candidate: U256, hints: MaskHints) {
