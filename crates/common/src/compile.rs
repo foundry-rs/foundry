@@ -23,12 +23,10 @@ use foundry_compilers::{
     solc::SolcSettings,
 };
 use num_format::{Locale, ToFormattedString};
-use solar::interface::source_map::FileName;
 use std::{
     collections::BTreeMap,
     fmt::Display,
     io::IsTerminal,
-    ops::ControlFlow,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -608,52 +606,15 @@ pub fn compile_target_abi(
     target_name: &str,
 ) -> Result<JsonAbi> {
     let target_path = dunce::canonicalize(target_path)?;
-    let mut output = compile_abi_project(
+    let output = compile_abi_project(
         project,
         ProjectCompiler::new().quiet(true).files([target_path.clone()]),
     )?;
-
-    if is_solidity_file(&target_path) {
-        return target_abi_from_solar(&mut output, &target_path, target_name);
-    }
 
     let artifact = output
         .find(&target_path, target_name)
         .ok_or_eyre("failed to find target artifact when compiling for abi")?;
     artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
-}
-
-fn target_abi_from_solar(
-    output: &mut ProjectCompileOutput<MultiCompiler>,
-    target_path: &Path,
-    target_name: &str,
-) -> Result<JsonAbi> {
-    let compiler = output.parser_mut().solc_mut().compiler_mut();
-    compiler.enter_mut(|compiler| -> Result<JsonAbi> {
-        let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {
-            eyre::bail!("failed to lower Solar ASTs when compiling target ABI");
-        };
-
-        let gcx = compiler.gcx();
-        let contract_id = gcx
-            .hir
-            .contract_ids()
-            .find(|&id| {
-                let contract = gcx.hir.contract(id);
-                contract.name.as_str() == target_name
-                    && match &gcx.hir.source(contract.source).file.name {
-                        FileName::Real(path) => path == target_path,
-                        _ => false,
-                    }
-            })
-            .ok_or_eyre("failed to find target contract in Solar HIR when compiling for abi")?;
-
-        Ok(gcx.contract_abi(contract_id).into_iter().collect())
-    })
-}
-
-fn is_solidity_file(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext == "sol")
 }
 
 /// Creates a [Project] from an Etherscan source.
