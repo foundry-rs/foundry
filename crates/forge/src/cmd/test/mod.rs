@@ -12,6 +12,10 @@ use crate::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
         SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
     },
+    symbolic_regression::{
+        SymbolicRegressionConfig, attach_symbolic_regressions_to_suites,
+        collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
+    },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -669,6 +673,24 @@ pub struct TestArgs {
         ],
     )]
     pub replay_symbolic_artifact: Option<PathBuf>,
+
+    /// Emit Solidity regression tests for confirmed symbolic counterexamples.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_EMIT_REGRESSION")]
+    pub emit_regression: bool,
+
+    /// File or directory for generated symbolic regression tests.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_REGRESSION_OUT",
+        value_name = "PATH",
+        value_hint = ValueHint::AnyPath,
+        requires = "emit_regression"
+    )]
+    pub regression_out: Option<PathBuf>,
+
+    /// Overwrite existing generated symbolic regression tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_REGRESSION_OVERWRITE", requires = "emit_regression")]
+    pub regression_overwrite: bool,
 
     /// Run fuzz tests symbolically and persist non-failing concrete inputs to the fuzz corpus.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SEED_CORPUS")]
@@ -2076,6 +2098,16 @@ impl TestArgs {
         }
     }
 
+    fn symbolic_regression_config(&self, config: &Config) -> Option<SymbolicRegressionConfig> {
+        self.emit_regression.then(|| SymbolicRegressionConfig {
+            out: self
+                .regression_out
+                .clone()
+                .map(|path| if path.is_relative() { config.root.join(path) } else { path }),
+            overwrite: self.regression_overwrite,
+        })
+    }
+
     /// Run all tests that matches the filter predicate from a test runner
     async fn run_tests_inner<FEN: FoundryEvmNetwork>(
         &self,
@@ -2089,6 +2121,7 @@ impl TestArgs {
         if self.list {
             return list(runner, filter);
         }
+        let symbolic_regression = self.symbolic_regression_config(&config);
 
         trace!(target: "forge::test", "running all tests");
 
@@ -2177,13 +2210,33 @@ impl TestArgs {
                     }
                 }
             }
+            if let Some(regression) = &symbolic_regression {
+                let artifacts = collect_symbolic_artifacts_from_suites(results.values());
+                let regressions = emit_symbolic_regressions(
+                    &config,
+                    regression,
+                    &runner.known_contracts,
+                    &artifacts,
+                )?;
+                attach_symbolic_regressions_to_suites(results.values_mut(), &regressions);
+            }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             let kc = runner.known_contracts.clone();
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
-            let results = runner.test_collect(filter)?;
+            let mut results = runner.test_collect(filter)?;
+            if let Some(regression) = &symbolic_regression {
+                let artifacts = collect_symbolic_artifacts_from_suites(results.values());
+                let regressions = emit_symbolic_regressions(
+                    &config,
+                    regression,
+                    &runner.known_contracts,
+                    &artifacts,
+                )?;
+                attach_symbolic_regressions_to_suites(results.values_mut(), &regressions);
+            }
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             let kc = runner.known_contracts.clone();
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
@@ -2545,6 +2598,21 @@ impl TestArgs {
             // Stop processing the remaining suites if any test failed and `fail_fast` is set.
             if self.fail_fast && any_test_failed {
                 break;
+            }
+        }
+        if let Some(regression) = &symbolic_regression {
+            let artifacts = collect_symbolic_artifacts_from_suites(outcome.results.values());
+            let regressions =
+                emit_symbolic_regressions(&config, regression, &known_contracts, &artifacts)?;
+            attach_symbolic_regressions_to_suites(outcome.results.values_mut(), &regressions);
+            if !silent {
+                for regression in regressions {
+                    sh_warn!(
+                        "Regression test: {} (from {})",
+                        regression.path.display(),
+                        regression.artifact.display()
+                    )?;
+                }
             }
         }
         outcome.last_run_decoder = Some(decoder);
