@@ -403,11 +403,11 @@ pub struct ArbitraryStorage {
     /// Mapping of arbitrary storage addresses to generated values (slot, arbitrary value).
     /// (SLOADs return random value if storage slot wasn't accessed).
     /// Changed values are recorded and used to copy storage to different addresses.
-    pub values: HashMap<Address, HashMap<U256, U256>>,
+    values: HashMap<Address, HashMap<U256, U256>>,
     /// Mapping of address with storage copied to arbitrary storage address source.
-    pub copies: HashMap<Address, Address>,
+    copies: HashMap<Address, Address>,
     /// Address with storage slots that should be overwritten even if previously set.
-    pub overwrites: HashSet<Address>,
+    overwrites: HashSet<Address>,
 }
 
 impl ArbitraryStorage {
@@ -426,6 +426,23 @@ impl ArbitraryStorage {
         if self.values.contains_key(from) {
             self.copies.insert(*to, *from);
         }
+    }
+
+    /// Returns addresses explicitly marked with arbitrary storage.
+    fn targets(&self) -> impl Iterator<Item = Address> + '_ {
+        self.values.keys().copied()
+    }
+
+    /// Caches a concrete value for a slot on an arbitrary-storage address.
+    fn cache_value(&mut self, address: Address, slot: U256, data: U256) {
+        if let Some(values) = self.values.get_mut(&address) {
+            values.insert(slot, data);
+        }
+    }
+
+    /// Returns a cached arbitrary value for a slot.
+    fn cached_value(&self, address: Address, slot: U256) -> Option<U256> {
+        self.values.get(&address).and_then(|values| values.get(&slot)).copied()
     }
 
     /// Saves arbitrary storage value for a given address:
@@ -1296,6 +1313,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Used by `setArbitraryStorage` cheatcode to track addresses with arbitrary storage.
     pub fn arbitrary_storage(&mut self) -> &mut ArbitraryStorage {
         self.arbitrary_storage.get_or_insert_with(ArbitraryStorage::default)
+    }
+
+    /// Returns addresses explicitly marked with arbitrary storage.
+    pub fn arbitrary_storage_targets(&self) -> impl Iterator<Item = Address> + '_ {
+        self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::targets)
+    }
+
+    /// Caches a concrete replay value for a slot on an arbitrary-storage address.
+    pub fn cache_arbitrary_storage_value(&mut self, address: Address, slot: U256, value: U256) {
+        if let Some(storage) = &mut self.arbitrary_storage {
+            storage.cache_value(address, slot, value);
+        }
+    }
+
+    /// Returns a cached arbitrary-storage replay value for a slot.
+    pub fn cached_arbitrary_storage_value(&self, address: Address, slot: U256) -> Option<U256> {
+        self.arbitrary_storage.as_ref().and_then(|storage| storage.cached_value(address, slot))
     }
 
     /// Whether the given address has arbitrary storage.
@@ -2535,7 +2569,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.should_overwrite_arbitrary_storage(&target_address, key)
         {
             if self.has_arbitrary_storage(&target_address) {
-                let arbitrary_value = self.rng().random();
+                let arbitrary_value = self
+                    .cached_arbitrary_storage_value(target_address, key)
+                    .unwrap_or_else(|| self.rng().random());
                 self.arbitrary_storage.as_mut().unwrap().save(
                     ecx,
                     target_address,

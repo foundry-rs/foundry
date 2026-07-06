@@ -146,6 +146,11 @@ impl PathState {
             .and_then(|cheats| cheats.gas_price)
             .unwrap_or_else(|| executor.tx_env().gas_price());
         self.gas_price = SymExpr::constant(cx, U256::from(gas_price));
+        if let Some(cheats) = executor.inspector().cheatcodes.as_ref() {
+            for target in cheats.arbitrary_storage_targets() {
+                self.world.enable_arbitrary_storage(target);
+            }
+        }
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
@@ -1489,6 +1494,7 @@ struct SymbolicWorldSnapshot {
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
+    replay_storage_slots: HashMap<Symbol, SymbolicReplayStorageSlot>,
 }
 
 impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
@@ -1508,8 +1514,15 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
             arbitrary_storage_all: world.arbitrary_storage_all,
             zero_init_symbolic_storage: world.zero_init_symbolic_storage,
             symbolic_address_aliases: world.symbolic_address_aliases.clone(),
+            replay_storage_slots: world.replay_storage_slots.clone(),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct SymbolicReplayStorageSlot {
+    address: Address,
+    slot: U256,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1526,6 +1539,7 @@ pub(crate) struct SymbolicWorld {
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
+    replay_storage_slots: HashMap<Symbol, SymbolicReplayStorageSlot>,
     snapshots: HashMap<U256, SymbolicWorldSnapshot>,
     next_snapshot_id: u64,
 }
@@ -1561,7 +1575,7 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn sload<FEN: FoundryEvmNetwork>(
-        &self,
+        &mut self,
         cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
@@ -1603,6 +1617,22 @@ impl SymbolicWorld {
 
     pub(crate) fn enable_arbitrary_storage(&mut self, address: Address) {
         self.arbitrary_storage_accounts.insert(address);
+    }
+
+    pub(crate) fn replay_storage_assignments(
+        &self,
+        model: &SymbolicModel,
+    ) -> Vec<SymbolicStorageAssignment> {
+        self.replay_storage_slots
+            .iter()
+            .filter_map(|(symbol, slot)| {
+                model.get(symbol).copied().map(|value| SymbolicStorageAssignment {
+                    address: slot.address,
+                    slot: slot.slot,
+                    value,
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn resolve_address(&self, expr: &SymExpr) -> Option<Address> {
@@ -1653,6 +1683,7 @@ impl SymbolicWorld {
         self.arbitrary_storage_all = snapshot.arbitrary_storage_all;
         self.zero_init_symbolic_storage = snapshot.zero_init_symbolic_storage;
         self.symbolic_address_aliases = snapshot.symbolic_address_aliases;
+        self.replay_storage_slots = snapshot.replay_storage_slots;
         true
     }
 
@@ -1665,15 +1696,21 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn storage_base<FEN: FoundryEvmNetwork>(
-        &self,
+        &mut self,
         cx: &mut SymCx,
         executor: &Executor<FEN>,
         address: Address,
         key: &SymExpr,
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
-        if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
-            let name = stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes());
+        let has_arbitrary_storage = self.arbitrary_storage_accounts.contains(&address);
+        if self.arbitrary_storage_all || has_arbitrary_storage {
+            let name = symbolic_storage_symbol(cx, address, key);
+            if has_arbitrary_storage && let Some(slot) = concrete_key.or_else(|| key.as_const()) {
+                self.replay_storage_slots
+                    .entry(name)
+                    .or_insert(SymbolicReplayStorageSlot { address, slot });
+            }
             return Ok(SymExpr::get_var(cx, name));
         }
         if let Some(key) = concrete_key {
@@ -1692,7 +1729,7 @@ impl SymbolicWorld {
         } else if self.zero_init_symbolic_storage {
             Ok(SymExpr::zero(cx))
         } else {
-            let name = stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes());
+            let name = symbolic_storage_symbol(cx, address, key);
             Ok(SymExpr::get_var(cx, name))
         }
     }
@@ -2104,6 +2141,10 @@ impl SymbolicWorld {
         }
         Ok(targets)
     }
+}
+
+fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> Symbol {
+    stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes())
 }
 
 #[derive(Clone, Debug)]

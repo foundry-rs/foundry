@@ -1,8 +1,8 @@
 use super::symbolic_helpers::{
-    assert_symbolic, assert_symbolic_engine, assert_symbolic_engine_witness,
+    assert_relevant_lines, assert_symbolic, assert_symbolic_engine, assert_symbolic_engine_witness,
 };
 use crate::skip_unless_z3;
-use foundry_test_utils::{forgetest_init, str};
+use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
 forgetest_init!(symbolic_invariant_runs_before_fuzz_campaign, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_runs_before_fuzz_campaign");
@@ -61,6 +61,82 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
+});
+
+forgetest_init!(symbolic_invariant_replays_setup_arbitrary_storage, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_replays_setup_arbitrary_storage");
+
+    prj.add_test(
+        "SymbolicInvariantSetupStorage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ArbitraryStorageVm {
+    function setArbitraryStorage(address target) external;
+}
+
+contract ExternalStore {
+    uint256 public value;
+}
+
+contract StorageBackedTarget {
+    ExternalStore store;
+    bool public hit;
+
+    constructor(ExternalStore store_) {
+        store = store_;
+    }
+
+    function useStore() external {
+        require(store.value() == 42);
+        hit = true;
+    }
+}
+
+contract SymbolicInvariantSetupStorage is Test {
+    ExternalStore store;
+    StorageBackedTarget target;
+
+    function setUp() public {
+        store = new ExternalStore();
+        target = new StorageBackedTarget(store);
+        ArbitraryStorageVm(address(vm)).setArbitraryStorage(address(store));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_engine_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--fuzz-runs",
+        "0",
+        "--match-test",
+        "invariant_notHit",
+    ]))
+    .failure()
+    .get_output()
+    .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL: hit]
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+calldata=useStore()
+"#]],
+    );
+    assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
 });
 
 forgetest_init!(symbolic_invariant_honors_execution_timeout, |prj, cmd| {

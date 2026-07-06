@@ -220,9 +220,9 @@ impl SymbolicExecutor {
         &mut self,
         steps: &[SequenceStepTemplate],
         state: &PathState,
-    ) -> Result<Vec<SymbolicInvariantStep>, SymbolicError> {
+    ) -> Result<(Vec<SymbolicInvariantStep>, Vec<SymbolicStorageAssignment>), SymbolicError> {
         let model = self.solver.model(&mut self.cx, &state.constraints)?;
-        steps
+        let sequence = steps
             .iter()
             .map(|step| {
                 let args = step.calldata.model_to_args(&mut self.cx, &model)?;
@@ -237,6 +237,8 @@ impl SymbolicExecutor {
                     calldata,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, SymbolicError>>()?;
+        let storage = state.world.replay_storage_assignments(&model);
+        Ok((sequence, storage))
     }
 }

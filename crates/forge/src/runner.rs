@@ -58,7 +58,7 @@ use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
     SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor, SymbolicInvariantRunInput,
     SymbolicInvariantRunResult, SymbolicInvariantStep, SymbolicInvariantTarget, SymbolicRunInput,
-    SymbolicRunResult, SymbolicStats, SymbolicStopReason,
+    SymbolicRunResult, SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -1395,6 +1395,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         current_settings: &InvariantSettings,
         test_name: &str,
         artifact_file_name: &str,
+        symbolic_storage: &[SymbolicStorageAssignment],
         progress: Option<&indicatif::ProgressBar>,
         position: Option<(usize, usize)>,
     ) -> Result<ReplayedInvariantSequence> {
@@ -1406,6 +1407,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             identified_contracts,
             current_settings,
             assertion_failure,
+            symbolic_storage,
         );
 
         let minimized_txes;
@@ -1424,7 +1426,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let replay = replay_error(
             replay_config,
-            self.clone_executor(),
+            self.clone_executor_with_symbolic_storage(symbolic_storage)?,
             replay_calls,
             inner_sequence,
             assertion_failure,
@@ -1515,6 +1517,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         identified_contracts: &ContractsByAddress,
         current_settings: &InvariantSettings,
         assertion_failure: bool,
+        symbolic_storage: &[SymbolicStorageAssignment],
     ) -> Option<MinimizedSequence> {
         if !self.config.symbolic.enabled || calls.is_empty() {
             return None;
@@ -1528,6 +1531,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_contract,
             target_invariant,
             assertion_failure,
+            symbolic_storage,
         )?;
         let sender_candidates = self.symbolic_sequence_sender_candidates(current_settings);
 
@@ -1542,6 +1546,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     invariant_contract,
                     target_invariant,
                     assertion_failure,
+                    symbolic_storage,
                     &expected,
                 )
             },
@@ -1553,6 +1558,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_contract,
             target_invariant,
             assertion_failure,
+            symbolic_storage,
             &expected,
         )
         .then_some(minimization)
@@ -1602,6 +1608,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         candidates
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn symbolic_sequence_preserves_failure(
         &self,
         calls: &[SymbolicCounterexampleCall],
@@ -1609,6 +1616,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         invariant_contract: &InvariantContract<'_>,
         target_invariant: &Function,
         assertion_failure: bool,
+        symbolic_storage: &[SymbolicStorageAssignment],
         expected: &SymbolicSequenceFailure,
     ) -> bool {
         self.symbolic_sequence_failure(
@@ -1617,6 +1625,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_contract,
             target_invariant,
             assertion_failure,
+            symbolic_storage,
         )
         .is_some_and(|actual| actual.preserves(expected))
     }
@@ -1628,11 +1637,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         invariant_contract: &InvariantContract<'_>,
         target_invariant: &Function,
         assertion_failure: bool,
+        symbolic_storage: &[SymbolicStorageAssignment],
     ) -> Option<SymbolicSequenceFailure> {
         let txes =
             calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect::<Vec<_>>();
         let outcome = check_sequence(
-            self.clone_executor(),
+            self.clone_executor_with_symbolic_storage(symbolic_storage).ok()?,
             &txes,
             (0..txes.len()).collect(),
             invariant_contract.address,
@@ -3489,7 +3499,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     );
                     return self.result;
                 }
-                SymbolicInvariantRunResult::Counterexample { sequence, stats } => {
+                SymbolicInvariantRunResult::Counterexample { sequence, storage, stats } => {
                     let discovered_failures = 1;
                     let symbolic_workers = 1;
                     let failed_corpus_replays = 0;
@@ -3505,6 +3515,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &invariant_contract,
                             invariant_contract.anchor(),
                             false,
+                            &storage,
                         )
                         .unwrap_or(SymbolicSequenceFailure {
                             replayed_entirely: true,
@@ -3529,6 +3540,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &current_settings,
                         &invariant_contract.anchor().signature(),
                         &invariant_contract.anchor().signature(),
+                        &storage,
                         progress.as_ref(),
                         Some((discovered_failures, discovered_failures)),
                     ) {
@@ -3776,6 +3788,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &current_settings,
                             &invariant_contract.anchor().signature(),
                             &invariant_contract.anchor().signature(),
+                            &[],
                             progress.as_ref(),
                             Some((1, total_broken)),
                         ) {
@@ -3889,6 +3902,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &current_settings,
                             &invariant.signature(),
                             &invariant.signature(),
+                            &[],
                             progress.as_ref(),
                             Some((position, total_broken)),
                         ) {
@@ -4436,6 +4450,24 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
     fn clone_executor(&self) -> Executor<FEN> {
         self.executor.clone().into_owned()
+    }
+
+    fn clone_executor_with_symbolic_storage(
+        &self,
+        storage: &[SymbolicStorageAssignment],
+    ) -> Result<Executor<FEN>> {
+        let mut executor = self.clone_executor();
+        for assignment in storage {
+            executor.set_storage_slot(assignment.address, assignment.slot, assignment.value)?;
+            if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+                cheats.cache_arbitrary_storage_value(
+                    assignment.address,
+                    assignment.slot,
+                    assignment.value,
+                );
+            }
+        }
+        Ok(executor)
     }
 
     fn build_fuzz_state(&self, invariant: bool, func: Option<&Function>) -> EvmFuzzState {

@@ -502,9 +502,11 @@ impl SymbolicExecutor {
             &mut completed_paths,
         )? {
             if outcome.failed {
-                let sequence = self.materialize_sequence(&initial.steps, &outcome.state)?;
+                let (sequence, storage) =
+                    self.materialize_sequence(&initial.steps, &outcome.state)?;
                 return Ok(SymbolicInvariantRunResult::Counterexample {
                     sequence,
+                    storage,
                     stats: self.stats_with_paths(completed_paths),
                 });
             }
@@ -554,20 +556,22 @@ impl SymbolicExecutor {
 
                                 match outcome.status {
                                     TopLevelCallStatus::Failure => {
-                                        let sequence =
+                                        let (sequence, storage) =
                                             self.materialize_sequence(&steps, &outcome.state)?;
                                         return Ok(SymbolicInvariantRunResult::Counterexample {
                                             sequence,
+                                            storage,
                                             stats: self.stats_with_paths(completed_paths),
                                         });
                                     }
                                     TopLevelCallStatus::Revert => {
                                         if input.fail_on_revert {
-                                            let sequence =
+                                            let (sequence, storage) =
                                                 self.materialize_sequence(&steps, &outcome.state)?;
                                             return Ok(
                                                 SymbolicInvariantRunResult::Counterexample {
                                                     sequence,
+                                                    storage,
                                                     stats: self.stats_with_paths(completed_paths),
                                                 },
                                             );
@@ -588,13 +592,15 @@ impl SymbolicExecutor {
                                             &mut completed_paths,
                                         )? {
                                             if invariant_outcome.failed {
-                                                let sequence = self.materialize_sequence(
-                                                    &steps,
-                                                    &invariant_outcome.state,
-                                                )?;
+                                                let (sequence, storage) = self
+                                                    .materialize_sequence(
+                                                        &steps,
+                                                        &invariant_outcome.state,
+                                                    )?;
                                                 return Ok(
                                                     SymbolicInvariantRunResult::Counterexample {
                                                         sequence,
+                                                        storage,
                                                         stats: self
                                                             .stats_with_paths(completed_paths),
                                                     },

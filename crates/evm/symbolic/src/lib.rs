@@ -340,6 +340,17 @@ pub struct SymbolicInvariantRunInput<'a, FEN: FoundryEvmNetwork> {
     pub ffi_enabled: bool,
 }
 
+/// One concrete storage value required to replay a symbolic invariant candidate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolicStorageAssignment {
+    /// Account whose storage slot should be initialized.
+    pub address: Address,
+    /// Concrete storage slot.
+    pub slot: U256,
+    /// Concrete value extracted from the solver model.
+    pub value: U256,
+}
+
 /// Outcome of bounded symbolic invariant execution.
 #[derive(Clone, Debug)]
 pub enum SymbolicInvariantRunResult {
@@ -349,6 +360,8 @@ pub enum SymbolicInvariantRunResult {
     Counterexample {
         /// Concrete sequence extracted from the solver model.
         sequence: Vec<SymbolicInvariantStep>,
+        /// Concrete setup-storage values needed for replay.
+        storage: Vec<SymbolicStorageAssignment>,
         /// Execution counters collected before the counterexample was returned.
         stats: SymbolicStats,
     },
