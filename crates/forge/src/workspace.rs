@@ -4,6 +4,7 @@
 //! to a temporary directory for safe source-level modifications.
 
 use std::{
+    collections::HashSet,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -172,10 +173,10 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     ensure_safe_relative_path(&test_rel, "test", &config.test)?;
     ensure_within_root(&config.root, &config.test, "test", &config.test)?;
 
-    copy_dir_recursive(&config.src, &temp_dir.join(&src_rel))?;
+    copy_project_dir_recursive(&config.root, &config.src, &temp_dir.join(&src_rel))?;
 
     if config.test != config.src {
-        copy_dir_recursive(&config.test, &temp_dir.join(&test_rel))?;
+        copy_project_dir_recursive(&config.root, &config.test, &temp_dir.join(&test_rel))?;
     }
 
     let handled_extra_roots = handled_project_roots(config)?;
@@ -215,7 +216,7 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         let script_rel = relative_to_root(&config.root, &config.script);
         ensure_safe_relative_path(&script_rel, "script", &config.script)?;
         ensure_within_root(&config.root, &config.script, "script", &config.script)?;
-        copy_dir_recursive(&config.script, &temp_dir.join(&script_rel))?;
+        copy_project_dir_recursive(&config.root, &config.script, &temp_dir.join(&script_rel))?;
     }
 
     for lib_path in &config.libs {
@@ -327,7 +328,7 @@ fn copy_extra_project_path(
 
     let target = temp_dir.join(rel);
     if resolved.is_dir() {
-        copy_dir_recursive(&resolved, &target)
+        copy_project_dir_recursive(root, &resolved, &target)
     } else {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -471,9 +472,29 @@ fn process_nested_lib_dir(
     Ok(())
 }
 
-/// Recursively copy a directory, skipping symlinked directories for safety.
+/// Recursively copy a directory, following symlinked directories only within the allowed root.
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    let mut visited = HashSet::new();
+    copy_dir_recursive_inner(src, dst, src, &mut visited)
+}
+
+fn copy_project_dir_recursive(root: &Path, src: &Path, dst: &Path) -> Result<()> {
+    let mut visited = HashSet::new();
+    copy_dir_recursive_inner(src, dst, root, &mut visited)
+}
+
+fn copy_dir_recursive_inner(
+    src: &Path,
+    dst: &Path,
+    allowed_root: &Path,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<()> {
     if !src.exists() {
+        return Ok(());
+    }
+    ensure_within_root(allowed_root, src, "copied directory", src)?;
+    let canonical = src.canonicalize()?;
+    if !visited.insert(canonical) {
         return Ok(());
     }
 
@@ -488,11 +509,14 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 
         if meta.file_type().is_symlink() {
             if path.is_dir() {
-                continue;
+                if ensure_within_root(allowed_root, &path, "symlinked directory", &path).is_ok() {
+                    copy_dir_recursive_inner(&path, &dest_path, allowed_root, visited)?;
+                }
+            } else {
+                fs::copy(&path, &dest_path)?;
             }
-            fs::copy(&path, &dest_path)?;
         } else if meta.is_dir() {
-            copy_dir_recursive(&path, &dest_path)?;
+            copy_dir_recursive_inner(&path, &dest_path, allowed_root, visited)?;
         } else {
             fs::copy(&path, &dest_path)?;
         }

@@ -234,6 +234,63 @@ contract FixtureWriteTest is Test {
     cmd.assert_success();
 });
 
+#[cfg(not(target_os = "windows"))]
+forgetest_init!(brutalize_copies_in_root_symlinked_source_dirs, |prj, cmd| {
+    fs::create_dir_all(prj.root().join(".shared/src")).unwrap();
+    fs::create_dir_all(prj.root().join(".shared/test")).unwrap();
+    fs::create_dir_all(prj.root().join("src")).unwrap();
+    fs::create_dir_all(prj.root().join("test")).unwrap();
+    std::os::unix::fs::symlink(std::path::Path::new("../.shared/src"), prj.root().join("src/core"))
+        .unwrap();
+    std::os::unix::fs::symlink(
+        std::path::Path::new("../.shared/test"),
+        prj.root().join("test/suite"),
+    )
+    .unwrap();
+
+    fs::write(
+        prj.root().join(".shared/src/SymlinkTarget.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract SymlinkTarget {
+    function readScratch() external pure returns (uint256 result) {
+        assembly {
+            result := mload(0x00)
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        prj.root().join(".shared/test/SymlinkTarget.t.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../../src/core/SymlinkTarget.sol";
+
+contract SymlinkTargetTest {
+    function test_symlinkedSourceIsBrutalized() external {
+        require(new SymlinkTarget().readScratch() != 0, "source was not brutalized");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let stdout = cmd
+        .args(["test", "--brutalize", "--mt", "test_symlinkedSourceIsBrutalized"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("[PASS] test_symlinkedSourceIsBrutalized()"), "{stdout}");
+});
+
 // --brutalize and --mutate are mutually exclusive
 forgetest_init!(brutalize_conflicts_with_mutate, |prj, cmd| {
     prj.add_source(
