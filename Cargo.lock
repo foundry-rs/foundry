@@ -5747,6 +5747,7 @@ dependencies = [
  "foundry-config",
  "foundry-evm",
  "hashbrown 0.16.1",
+ "inturn 0.2.0",
  "serde",
  "serde_json",
  "shlex 1.3.0",
@@ -6898,6 +6899,19 @@ dependencies = [
  "dashmap",
  "hashbrown 0.14.5",
  "stumpalo",
+ "thread_local",
+]
+
+[[package]]
+name = "inturn"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "630b41dcc27d131bc9b501515a2cb3dfde2b0de4d8b53bd9c97180fb87696aa2"
+dependencies = [
+ "boxcar",
+ "bumpalo",
+ "dashmap",
+ "hashbrown 0.14.5",
  "thread_local",
 ]
 
@@ -11301,7 +11315,7 @@ dependencies = [
  "anstyle",
  "derive_more",
  "dunce",
- "inturn",
+ "inturn 0.1.3",
  "itertools 0.10.5",
  "itoa",
  "normalize-path",

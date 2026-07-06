@@ -392,6 +392,51 @@ contract ForgeFuzzReplayFailureTest {
     assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
 });
 
+forgetest_init!(forge_fuzz_show_marks_selector_ambiguous_contracts, |prj, cmd| {
+    prj.add_source(
+        "SelectorTwins.sol",
+        r#"
+contract Alpha {
+    function collide(uint256 value) external pure returns (uint256) {
+        return value;
+    }
+}
+
+contract Beta {
+    uint256 public stored;
+
+    function collide(uint256 value) external view {
+        require(stored != value);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let alpha_abi = artifact_abi(prj.root(), "out/SelectorTwins.sol/Alpha.json");
+    let calldata = calldata_for(&alpha_abi, "collide", 42);
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-00000000be7a-1.json", &calldata);
+
+    let show = cmd.forge_fuse().args(["fuzz", "show", "corpus"]).assert_success();
+    let stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("  0: collide(42) "), "{stdout}");
+    assert!(stdout.contains(" ambiguous=[Alpha,Beta]"), "{stdout}");
+    assert!(!stdout.contains("Alpha.collide(42)"), "{stdout}");
+    assert!(!stdout.contains("Beta.collide(42)"), "{stdout}");
+
+    let json =
+        cmd.forge_fuse().args(["fuzz", "show", "corpus", "--format", "json"]).assert_success();
+    let stdout = String::from_utf8(json.get_output().stdout.clone()).unwrap();
+    let entries: Value = serde_json::from_str(&stdout).unwrap();
+    let decoded = &entries[0]["sequence"][0]["decoded"];
+    assert!(decoded.get("contract").is_none(), "{decoded}");
+    assert_eq!(decoded["signature"], "collide(uint256)");
+    assert_eq!(decoded["call"], "collide(42)");
+    assert_eq!(decoded["ambiguous_contracts"], serde_json::json!(["Alpha", "Beta"]));
+});
+
 forgetest_init!(forge_fuzz_replay_does_not_fuzz_after_assume_reject, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.runs = 32;

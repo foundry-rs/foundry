@@ -9,6 +9,9 @@ use calls_loop::CALLS_LOOP;
 mod delegatecall_loop;
 use delegatecall_loop::DELEGATECALL_LOOP;
 
+mod empty_block;
+use empty_block::EMPTY_BLOCK;
+
 pub(crate) mod incorrect_modifier;
 use incorrect_modifier::INCORRECT_MODIFIER;
 
@@ -39,6 +42,7 @@ register_lints!(
     (BlockTimestamp, late, (BLOCK_TIMESTAMP)),
     (CallsLoop, late, (CALLS_LOOP)),
     (DelegatecallLoop, late, (DELEGATECALL_LOOP)),
+    (EmptyBlock, early, (EMPTY_BLOCK)),
     (IncorrectModifier, late, (INCORRECT_MODIFIER)),
     (MsgValueLoop, late, (MSG_VALUE_LOOP)),
     (MissingEventsAccessControl, late, (MISSING_EVENTS_ACCESS_CONTROL)),

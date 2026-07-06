@@ -20,6 +20,7 @@ pub(crate) struct PathState {
     corpus_seed_models: Vec<Arc<SymbolicModel>>,
     branch_target: Option<SymbolicBranchTarget>,
     branch_target_reached: bool,
+    needs_feasibility_check: bool,
     pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
@@ -69,6 +70,7 @@ impl PathState {
             corpus_seed_models: Vec::new(),
             branch_target: None,
             branch_target_reached: false,
+            needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -116,6 +118,7 @@ impl PathState {
             corpus_seed_models: Vec::new(),
             branch_target: None,
             branch_target_reached: false,
+            needs_feasibility_check: false,
             loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -165,6 +168,7 @@ impl PathState {
             corpus_seed_models: self.corpus_seed_models.clone(),
             branch_target: self.branch_target,
             branch_target_reached: self.branch_target_reached,
+            needs_feasibility_check: self.needs_feasibility_check,
             loop_jumps: HashMap::default(),
             expected_revert: self.expected_revert.clone(),
             assume_no_revert_next_call: self.assume_no_revert_next_call.clone(),
@@ -278,7 +282,7 @@ impl PathState {
         expr.collect_eval_vars(&mut vars);
         let mut model = SymbolicModel::default();
         for var in vars {
-            let var_expr = SymExpr::var_symbol(cx, var.clone());
+            let var_expr = SymExpr::get_var(cx, var);
             let value = self.constraints.iter().find_map(|constraint| {
                 constraint.forces_expr_const_with_context(&var_expr, &self.constraints)
             })?;
@@ -336,6 +340,16 @@ impl PathState {
 
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
         self.branch_target.is_none() || self.branch_target_reached
+    }
+
+    pub(crate) const fn defer_feasibility_check(&mut self) {
+        self.needs_feasibility_check = true;
+    }
+
+    pub(crate) const fn take_deferred_feasibility_check(&mut self) -> bool {
+        let needs_check = self.needs_feasibility_check;
+        self.needs_feasibility_check = false;
+        needs_check
     }
 
     pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
@@ -1657,8 +1671,8 @@ impl SymbolicWorld {
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
-            let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
-            return Ok(SymExpr::var_symbol(cx, name));
+            let name = stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes());
+            return Ok(SymExpr::get_var(cx, name));
         }
         if let Some(key) = concrete_key {
             return executor
@@ -1676,8 +1690,8 @@ impl SymbolicWorld {
         } else if self.zero_init_symbolic_storage {
             Ok(SymExpr::zero(cx))
         } else {
-            let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
-            Ok(SymExpr::var_symbol(cx, name))
+            let name = stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes());
+            Ok(SymExpr::get_var(cx, name))
         }
     }
 
