@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use solar::{
-    ast::{LitKind, StrKind},
+    ast::{LitKind, StrKind, UnOpKind},
     interface::Span,
     sema::{
         Gcx,
@@ -59,9 +59,13 @@ impl<'hir> LateLintPass<'hir> for LiteralInsteadOfConstant {
 
 /// The semantic value of a literal, the grouping key: two spellings of the same number
 /// (`100`, `0x64`, `1e2`) or the same unit-scaled amount (`1 ether`, `1e18`) are one value.
+/// A numeric literal under a value-changing unary operator denotes a DISTINCT constant, so
+/// `-5` and `~5` never group with the bare `5`.
 #[derive(PartialEq, Eq, Hash)]
 enum LiteralValue {
     Number(U256),
+    NegNumber(U256),
+    BitNotNumber(U256),
     Address(Address),
     HexString(Vec<u8>),
 }
@@ -91,6 +95,39 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
                     let _ = self.visit_expr(index);
                 }
                 return ControlFlow::Continue(());
+            }
+            // A value-changing unary operator on a numeric literal denotes a DISTINCT constant, so
+            // `-5`/`~5` must not group with the bare `5`.
+            ExprKind::Unary(op, operand) if matches!(op.kind, UnOpKind::Neg | UnOpKind::BitNot) => {
+                match &operand.peel_parens().kind {
+                    // `-5` / `~5`: record the operator-qualified value; do not descend into the
+                    // operand, which would re-record the bare magnitude.
+                    ExprKind::Lit(lit) => {
+                        if let LitKind::Number(v) = &lit.kind
+                            && *v > U256::from(2u64)
+                        {
+                            let key = if op.kind == UnOpKind::Neg {
+                                LiteralValue::NegNumber(*v)
+                            } else {
+                                LiteralValue::BitNotNumber(*v)
+                            };
+                            self.groups.entry(key).or_default().push(expr.span);
+                        }
+                        return ControlFlow::Continue(());
+                    }
+                    // Nested unary (`-(-5)`, `~~5`) folds to a value that is neither this
+                    // operator's nor the bare literal's; canonicalizing it is
+                    // not worth it, so skip the whole chain rather than risk
+                    // grouping it with an unrelated constant.
+                    ExprKind::Unary(inner, _)
+                        if matches!(inner.kind, UnOpKind::Neg | UnOpKind::BitNot) =>
+                    {
+                        return ControlFlow::Continue(());
+                    }
+                    // Any other operand (`-x`, `-(a + 5)`): walk normally so a literal inside it is
+                    // still recorded with its own value.
+                    _ => {}
+                }
             }
             ExprKind::Lit(lit) => {
                 let key = match &lit.kind {

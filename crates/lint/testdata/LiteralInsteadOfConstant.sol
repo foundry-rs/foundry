@@ -6,6 +6,8 @@ pragma solidity ^0.8.18;
 // executable bodies a contract declares (functions, constructors, modifiers) should be a
 // named constant. Grouping compares
 // the semantic value, so `100`, `0x64` and `1e2` are one value, and `1 ether` equals `1e18`.
+// A numeric literal under a unary minus or bitwise-not (`-5`, `~5`) is a distinct value from
+// the bare literal, so it never groups with it.
 // Out of scope: `0`, `1` and `2` (structural values), bare literals indexing an array
 // (positional), string and bool literals, single occurrences, and repetitions split across
 // two contracts.
@@ -70,5 +72,32 @@ contract OtherA {
 contract OtherB {
     function n(uint256 x) internal pure returns (uint256) {
         return x * 777;
+    }
+}
+
+// A value-changing unary operator makes a distinct constant: `-5`/`~5` never group with `5`.
+contract UnaryLiterals {
+    // `5` and `-5` each appear once, so neither reports. Before the fix the collector keyed the
+    // `5` inside `-5` on the bare magnitude and wrongly reported both as a repeated literal.
+    function signAndBareAreDistinct(int256 x) internal pure returns (int256) {
+        return x * 5 + (-5);
+    }
+
+    // The same negative constant used twice DOES group and reports.
+    function repeatedNegative(int256 x) internal pure returns (int256) {
+        return x * (-7) + (-7); //~NOTE: this literal appears multiple times
+    }
+
+    // The same bitwise-not constant used twice DOES group and reports.
+    function repeatedBitNot(int256 x) internal pure returns (int256) {
+        return (x + ~9) * ~9; //~NOTE: this literal appears multiple times
+    }
+}
+
+// Nested unary operators (`-(-5)`, `~~5`) are not canonicalized, so they never group with a bare
+// literal or a single-unary literal: no false positive even when `-5` also appears once.
+contract NestedUnary {
+    function nestedIsNotGrouped(int256 x) internal pure returns (int256) {
+        return x * (-5) + (-(-5));
     }
 }
