@@ -89,6 +89,7 @@ pub(crate) struct TUIContext<'a> {
     /// Whether to decode active buffer as utf8 or not.
     pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
+    pub(crate) show_opcodes: bool,
     pub(crate) show_source: bool,
     pub(crate) show_variables: bool,
     pub(crate) show_stack: bool,
@@ -116,6 +117,7 @@ impl<'a> TUIContext<'a> {
             stack_labels: false,
             buf_utf: false,
             show_shortcuts: true,
+            show_opcodes: true,
             show_source: true,
             show_variables: true,
             show_stack: true,
@@ -634,6 +636,8 @@ impl TUIContext<'_> {
             self.run_buffer_command(command, BufferKind::Returndata, parts);
         } else if STORAGE_COMMANDS.contains(&command) {
             self.run_storage_command(command, parts);
+        } else if OPCODE_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Opcodes, parts);
         } else if SOURCE_COMMANDS.contains(&command) {
             self.run_pane_command(command, PaneCommand::Source, parts);
         } else if VARIABLES_COMMANDS.contains(&command) {
@@ -682,6 +686,10 @@ impl TUIContext<'_> {
             return self.set_error(command_usage(command, ""));
         }
         let shown = match pane {
+            PaneCommand::Opcodes => {
+                self.show_opcodes = !self.show_opcodes;
+                self.show_opcodes
+            }
             PaneCommand::Source => {
                 self.show_source = !self.show_source;
                 self.show_source
@@ -899,6 +907,7 @@ const MEMORY_COMMANDS: &[&str] = &["mem", "memory"];
 const CALLDATA_COMMANDS: &[&str] = &["calldata", "cd"];
 const RETURNDATA_COMMANDS: &[&str] = &["returndata", "ret", "rd"];
 const STORAGE_COMMANDS: &[&str] = &["storage", "store", "slot"];
+const OPCODE_COMMANDS: &[&str] = &["opcodes", "opcode", "ops"];
 const SOURCE_COMMANDS: &[&str] = &["source", "src"];
 const VARIABLES_COMMANDS: &[&str] = &["variables", "vars"];
 const STACK_COMMANDS: &[&str] = &["stack"];
@@ -906,6 +915,7 @@ const HELP_COMMANDS: &[&str] = &["help", "h"];
 
 #[derive(Clone, Copy)]
 enum PaneCommand {
+    Opcodes,
     Source,
     Variables,
     Stack,
@@ -914,6 +924,7 @@ enum PaneCommand {
 impl PaneCommand {
     const fn label(self) -> &'static str {
         match self {
+            Self::Opcodes => "Opcodes",
             Self::Source => "Source",
             Self::Variables => "Variables",
             Self::Stack => "Stack",
@@ -927,13 +938,14 @@ fn command_usage(command: &str, arg: &str) -> String {
 
 fn command_help() -> String {
     format!(
-        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>, {} <slot>, {}, {}, {}",
+        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>, {} <slot>, {}, {}, {}, {}",
         command_aliases(CONTINUE_COMMANDS),
         command_aliases(PC_COMMANDS),
         command_aliases(MEMORY_COMMANDS),
         command_aliases(CALLDATA_COMMANDS),
         command_aliases(RETURNDATA_COMMANDS),
         command_aliases(STORAGE_COMMANDS),
+        command_aliases(OPCODE_COMMANDS),
         command_aliases(SOURCE_COMMANDS),
         command_aliases(VARIABLES_COMMANDS),
         command_aliases(STACK_COMMANDS)
@@ -2113,6 +2125,7 @@ mod tests {
             CALLDATA_COMMANDS,
             RETURNDATA_COMMANDS,
             STORAGE_COMMANDS,
+            OPCODE_COMMANDS,
             SOURCE_COMMANDS,
             VARIABLES_COMMANDS,
             STACK_COMMANDS,
@@ -2137,6 +2150,14 @@ mod tests {
         let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
         let mut tui = TUIContext::new(&mut context);
         tui.init();
+
+        tui.run_command_from_input("opcodes");
+        assert!(!tui.show_opcodes);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Opcodes pane: hidden");
+
+        tui.run_command_from_input(":ops");
+        assert!(tui.show_opcodes);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Opcodes pane: shown");
 
         tui.run_command_from_input("source");
         assert!(!tui.show_source);
