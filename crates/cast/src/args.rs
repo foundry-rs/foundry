@@ -32,7 +32,7 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_evm_networks::NetworkVariant;
-use foundry_primitives::{FoundryTxEnvelope, PaymentLaneClassification};
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope, PaymentLaneClassification};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
@@ -938,13 +938,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Logs(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
-            let tx_bytes = hex::decode(&tx)?;
-            let ty = tx_bytes.first().copied();
-            // Auto-detect the network from the transaction type byte unless an explicit
-            // `--network` override was provided, so e.g. a Tempo tx (type `0x76`) decodes
-            // without `--network tempo`.
-            let variant = network.or_else(|| ty.and_then(NetworkVariant::from_tx_type));
-            let decoded_tx = match variant {
+            let decoded_tx = match network {
                 #[cfg(feature = "optimism")]
                 Some(NetworkVariant::Optimism) => {
                     SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
@@ -952,7 +946,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(NetworkVariant::Tempo) => {
                     SimpleCast::decode_raw_transaction::<TempoNetwork>(&tx)?
                 }
-                _ => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
+                Some(NetworkVariant::Ethereum) => {
+                    SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?
+                }
+                // Without an explicit `--network` override, decode with the Foundry envelope,
+                // which dispatches on the EIP-2718 type byte for the transaction types compiled
+                // into `FoundryNetwork`, including Tempo txs (`0x76`).
+                None => SimpleCast::decode_raw_transaction::<FoundryNetwork>(&tx)?,
             };
             print_json_object(decoded_tx)?;
         }

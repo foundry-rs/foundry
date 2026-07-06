@@ -6330,6 +6330,14 @@ casttest!(cast_decode_tx_tempo_autodetect, |_prj, cmd| {
     assert_eq!(decoded["type"], "0x76");
 });
 
+// Test that `--network ethereum` forces Ethereum decoding and rejects a Tempo tx (type `0x76`),
+// so the flag remains a meaningful override rather than falling back to auto-detection.
+casttest!(cast_decode_tx_network_ethereum_rejects_tempo, |_prj, cmd| {
+    let tx = "0x76f8cf82a5bf1485059682f018830494e5f85ef85c9420c0000000000000000000007d9cc57068833ea780b84440c10f190000000000000000000000008a871f4189067637cfc4cc1500abd6244bf1df740000000000000000000000000000000000000000000000000000000005f5e100c08082057e80809420c000000000000000000000000000000000000080c0b841eb100c4cbd96903bf9e97968c0982670bb90fc191ee4544c7ff32d44e901dbea3f6fbdd58255051135c2fe1aa81583a270d96009cbe375f4605ef15971273a4f1b";
+
+    cmd.args(["decode-tx", "--network", "ethereum", tx]).assert_failure();
+});
+
 // Test that `--network tempo` and `-n tempo` (short form) produce identical output for decode-tx.
 // Uses a known Tempo mainnet transaction.
 casttest!(cast_decode_tx_network_flag_short_and_long_equivalent, |_prj, cmd| {
