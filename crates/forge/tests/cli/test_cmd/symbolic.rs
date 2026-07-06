@@ -2165,6 +2165,29 @@ contract SymbolicRegressionCollection is Test {
     assert!(!stdout.contains(" invariant_counterNeverEleven()"), "{stdout}");
 });
 
+forgetest_init!(symbolic_regression_suffix_user_contract_runs_tests, |prj, cmd| {
+    prj.add_test(
+        "RealSymbolicRegression.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Real_SymbolicRegression is Test {
+    function test_fails() public pure {
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--match-contract", "Real_SymbolicRegression"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_fails()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+});
+
 forgetest_init!(symbolic_emit_regression_rejects_explicit_output_collision, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

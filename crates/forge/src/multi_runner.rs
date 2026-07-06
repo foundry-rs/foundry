@@ -8,6 +8,7 @@ use crate::{
         ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
         count_runnable_invariant_campaign_anchors,
     },
+    symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -128,9 +129,15 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         let matcher = self.test_function_matcher();
         self.matching_contracts(filter).flat_map(move |(id, c)| {
             let identifier = id.identifier();
-            c.abi
-                .functions()
-                .filter(move |func| matcher.matches_test_function(filter, &identifier, func))
+            let generated_symbolic_regression = is_generated_symbolic_regression_contract(&c.abi);
+            c.abi.functions().filter(move |func| {
+                matcher.matches_test_function(
+                    filter,
+                    &identifier,
+                    func,
+                    generated_symbolic_regression,
+                )
+            })
         })
     }
 
@@ -145,9 +152,13 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(move |(id, c)| {
                 let identifier = id.identifier();
-                c.abi
-                    .functions()
-                    .filter(move |func| matcher.test_function_kind(&identifier, func).is_any_test())
+                let generated_symbolic_regression =
+                    is_generated_symbolic_regression_contract(&c.abi);
+                c.abi.functions().filter(move |func| {
+                    matcher
+                        .test_function_kind(&identifier, func, generated_symbolic_regression)
+                        .is_any_test()
+                })
             })
     }
 
@@ -159,11 +170,17 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
                 let identifier = id.identifier();
+                let generated_symbolic_regression =
+                    is_generated_symbolic_regression_contract(&c.abi);
                 let tests = c
                     .abi
                     .functions()
                     .filter(|func| {
-                        let kind = matcher.test_function_kind(&identifier, func);
+                        let kind = matcher.test_function_kind(
+                            &identifier,
+                            func,
+                            generated_symbolic_regression,
+                        );
                         (!self.tcfg.fuzz_only
                             || matches!(
                                 kind,
@@ -886,10 +903,9 @@ impl<'a> TestFunctionMatcher<'a> {
         &self,
         contract_id: &str,
         func: &Function,
+        generated_symbolic_regression: bool,
     ) -> TestFunctionKind {
-        if is_symbolic_regression_contract(contract_id)
-            && !func.name.starts_with("test_regression_")
-        {
+        if generated_symbolic_regression && !func.name.starts_with("test_regression_") {
             return TestFunctionKind::Unknown;
         }
 
@@ -905,11 +921,12 @@ impl<'a> TestFunctionMatcher<'a> {
         filter: &dyn TestFilter,
         contract_id: &str,
         func: &Function,
+        generated_symbolic_regression: bool,
     ) -> bool {
         filter.matches_test_function_kind_in_contract(
             contract_id,
             func,
-            self.test_function_kind(contract_id, func),
+            self.test_function_kind(contract_id, func, generated_symbolic_regression),
         )
     }
 
@@ -920,17 +937,15 @@ impl<'a> TestFunctionMatcher<'a> {
         abi: &JsonAbi,
     ) -> bool {
         let identifier = id.identifier();
+        let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
         matches_contract(filter, &id.source, &id.name, &identifier, abi.functions(), |func| {
-            self.test_function_kind(&identifier, func)
+            self.test_function_kind(&identifier, func, generated_symbolic_regression)
         })
     }
 }
 
-fn is_symbolic_regression_contract(contract_id: &str) -> bool {
-    contract_id
-        .rsplit_once(':')
-        .map_or(contract_id, |(_, contract)| contract)
-        .ends_with("_SymbolicRegression")
+pub(crate) fn is_generated_symbolic_regression_contract(abi: &JsonAbi) -> bool {
+    abi.functions().any(|func| func.name == SYMBOLIC_REGRESSION_MARKER && func.inputs.is_empty())
 }
 
 pub(crate) fn matches_contract(
@@ -957,6 +972,15 @@ mod tests {
     use super::*;
     use foundry_common::TestFunctionExt;
 
+    fn abi_with_functions(functions: &[&str]) -> JsonAbi {
+        let mut abi = JsonAbi::new();
+        for function in functions {
+            let function = Function::parse(function).unwrap();
+            abi.functions.entry(function.name.clone()).or_default().push(function);
+        }
+        abi
+    }
+
     #[test]
     fn matches_contract_uses_provided_function_kind() {
         let filter = EmptyTestFilter::default();
@@ -969,5 +993,15 @@ mod tests {
         assert!(!matches_contract(&filter, path, "Symbolic", "Symbolic", [func], |func| {
             func.test_function_kind()
         }));
+    }
+
+    #[test]
+    fn generated_symbolic_regression_detection_uses_marker() {
+        let user_suffix_abi = abi_with_functions(&["test_fails()"]);
+        assert!(!is_generated_symbolic_regression_contract(&user_suffix_abi));
+
+        let generated_abi =
+            abi_with_functions(&[&format!("{SYMBOLIC_REGRESSION_MARKER}()"), "test_fails()"]);
+        assert!(is_generated_symbolic_regression_contract(&generated_abi));
     }
 }

@@ -4,7 +4,10 @@ use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
-    multi_runner::{FuzzMinimizeObservation, TestContract, TestFunctionMatcher, TestRunnerConfig},
+    multi_runner::{
+        FuzzMinimizeObservation, TestContract, TestFunctionMatcher, TestRunnerConfig,
+        is_generated_symbolic_regression_contract,
+    },
     progress::{TestsProgress, start_fuzz_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
@@ -751,6 +754,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 &self.mcr.inline_config,
                 self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
             );
+            let generated_symbolic_regression =
+                is_generated_symbolic_regression_contract(&self.contract.abi);
             !self
                 .contract
                 .abi
@@ -759,13 +764,21 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                     filter.matches_test_function_kind_in_contract(
                         self.name,
                         func,
-                        test_matcher.test_function_kind(self.name, func),
+                        test_matcher.test_function_kind(
+                            self.name,
+                            func,
+                            generated_symbolic_regression,
+                        ),
                     )
                 })
                 .filter(|func| self.function_matches_network_pass(func))
                 .any(|func| {
                     matches!(
-                        test_matcher.test_function_kind(self.name, func),
+                        test_matcher.test_function_kind(
+                            self.name,
+                            func,
+                            generated_symbolic_regression,
+                        ),
                         TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
                     )
                 })
@@ -837,10 +850,16 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 &self.mcr.inline_config,
                 self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
             );
+            let generated_symbolic_regression =
+                is_generated_symbolic_regression_contract(&self.contract.abi);
             self.contract
                 .abi
                 .functions()
-                .filter(|func| test_matcher.test_function_kind(self.name, func).is_invariant_test())
+                .filter(|func| {
+                    test_matcher
+                        .test_function_kind(self.name, func, generated_symbolic_regression)
+                        .is_invariant_test()
+                })
                 .collect()
         };
 
@@ -917,6 +936,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 &self.mcr.inline_config,
                 self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
             );
+            let generated_symbolic_regression =
+                is_generated_symbolic_regression_contract(&self.contract.abi);
             self.contract
                 .abi
                 .functions()
@@ -924,7 +945,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                     filter.matches_test_function_kind_in_contract(
                         self.name,
                         func,
-                        test_matcher.test_function_kind(self.name, func),
+                        test_matcher.test_function_kind(
+                            self.name,
+                            func,
+                            generated_symbolic_regression,
+                        ),
                     )
                 })
                 .filter(|func| self.function_matches_network_pass(func))
@@ -1052,6 +1077,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             &self.mcr.inline_config,
             self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
         );
+        let generated_symbolic_regression =
+            is_generated_symbolic_regression_contract(&self.contract.abi);
 
         if self.progress.is_some() {
             let interrupt = early_exit.clone();
@@ -1116,7 +1143,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = test_matcher.test_function_kind(self.name, func);
+                let kind =
+                    test_matcher.test_function_kind(self.name, func, generated_symbolic_regression);
 
                 let _guard = debug_span!(
                     "test",

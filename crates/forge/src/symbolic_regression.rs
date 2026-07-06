@@ -13,6 +13,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+pub(crate) const SYMBOLIC_REGRESSION_MARKER: &str = "__foundry_symbolic_regression_marker";
+
 /// Configuration for emitting Solidity regression tests from symbolic counterexamples.
 #[derive(Clone, Debug)]
 pub(crate) struct SymbolicRegressionConfig {
@@ -239,6 +241,13 @@ fn plan_symbolic_regression(
         contents,
         "    {vm_interface} private constant __foundrySymbolicVm = {vm_interface}(address(uint160(uint256(keccak256(\"hevm cheat code\")))));"
     )?;
+    writeln!(contents)?;
+    writeln!(
+        contents,
+        "    function {SYMBOLIC_REGRESSION_MARKER}() external pure returns (bytes32) {{"
+    )?;
+    writeln!(contents, "        return keccak256(\"foundry.symbolic.regression\");")?;
+    writeln!(contents, "    }}")?;
     writeln!(contents)?;
     writeln!(contents, "    function {generated_test}() public payable {{")?;
     match artifact.kind {
