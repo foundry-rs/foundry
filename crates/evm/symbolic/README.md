@@ -315,6 +315,40 @@ set, generates symbolic arguments with the same ABI model used for stateless
 tests, preserves symbolic world state between calls, and replays a concrete
 sequence before reporting a counterexample.
 
+Some invariant harnesses deploy dependency contracts in `setUp`, then rely on
+those dependencies having satisfiable environment state during the campaign. For
+example, a lending invariant may call an ERC20 mock for balances and allowances,
+or an oracle mock for a price, without exposing target functions that write
+those values first. In that case the dependency storage remains the concrete
+state produced by `setUp`, and symbolic execution can only explore paths
+reachable from that concrete dependency state.
+
+Use Foundry's existing `vm.setArbitraryStorage(address)` cheatcode to mark those
+environment dependency contracts as symbolic storage targets:
+
+```solidity
+function setUp() public {
+    loanToken = new ERC20Mock();
+    collateralToken = new ERC20Mock();
+    oracle = new OracleMock();
+
+    vm.setArbitraryStorage(address(loanToken));
+    vm.setArbitraryStorage(address(collateralToken));
+    vm.setArbitraryStorage(address(oracle));
+
+    targetContract(address(this));
+}
+```
+
+If the harness imports a smaller Hevm interface that does not expose this
+cheatcode, declare a local interface with `setArbitraryStorage(address)` and
+cast it to `address(vm)`.
+
+Keep this scoped to external dependencies that model the environment, such as
+token balances, token allowances, and oracle prices. Do not blanket-mark the
+invariant harness or protocol state as arbitrary; that can create unreachable
+states and counterexamples that concrete replay rejects.
+
 ## Configuration
 
 The primary configuration path is native Foundry config.
