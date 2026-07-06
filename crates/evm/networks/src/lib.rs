@@ -132,6 +132,19 @@ impl NetworkVariant {
             Self::Tempo => "tempo",
         }
     }
+
+    /// Resolves the network that owns a network-specific EIP-2718 transaction type byte.
+    ///
+    /// Standard Ethereum types (legacy and `0x00`..=`0x04`) are shared by every network and
+    /// return [`None`], since they can be decoded with the default [`Self::Ethereum`] variant.
+    /// Only network-specific type bytes map to a concrete variant.
+    pub const fn from_tx_type(ty: u8) -> Option<Self> {
+        match ty {
+            // Tempo AA transaction.
+            0x76 => Some(Self::Tempo),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for NetworkVariant {
