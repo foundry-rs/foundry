@@ -1254,6 +1254,7 @@ fn merge_new_edge_vec(cumulative: &mut Vec<u8>, candidate: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::executors::ReplayFailure;
 
     fn decoder_with_functions(functions: Vec<Function>) -> CorpusDecoder {
         let mut decoder = CorpusDecoder::default();
@@ -1308,6 +1309,40 @@ mod tests {
         let observations = BTreeMap::from([
             ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
             ("B".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_failures() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            (
+                "B".to_string(),
+                ReplayObservation {
+                    failure: Some(ReplayFailure::AfterInvariant),
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_replayed_transactions() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            ("B".to_string(), ReplayObservation { replayed: 1, ..Default::default() }),
         ]);
 
         assert!(has_new_active_targets(&observations, &baseline));
