@@ -1886,7 +1886,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::StmtKind::While(cond, stmt) => {
                 // Check if blocks should be inlined and update cache if necessary
-                let inline = self.is_single_line_block(cond, stmt, None);
+                let inline = self.is_single_line_block(span.lo(), cond, stmt, None);
                 if !inline.is_cached && self.single_line_stmt.is_none() {
                     self.single_line_stmt = Some(inline.outcome);
                 }
@@ -2059,7 +2059,7 @@ impl<'ast> State<'_, 'ast> {
         els_opt: &'ast Option<&mut ast::Stmt<'ast>>,
     ) {
         // Check if blocks should be inlined and update cache if necessary
-        let inline = self.is_single_line_block(cond, then, els_opt.as_ref());
+        let inline = self.is_single_line_block(span.lo(), cond, then, els_opt.as_ref());
         let set_inline_cache = !inline.is_cached && self.single_line_stmt.is_none();
         if set_inline_cache {
             self.single_line_stmt = Some(inline.outcome);
@@ -2237,13 +2237,13 @@ impl<'ast> State<'_, 'ast> {
                 skip_ind = true;
             };
 
-            let mut prev_block_multiline = self.is_multiline_block(block, false);
+            let mut prev_block_multiline = self.is_multiline_block(block, false, true);
 
             // Handle 'catch' clauses
             for (pos, ast::TryCatchClause { name, args, block, span: catch_span }) in
                 other.iter().delimited()
             {
-                let current_block_multiline = self.is_multiline_block(block, false);
+                let current_block_multiline = self.is_multiline_block(block, false, true);
                 if !pos.is_first || !skip_ind {
                     if prev_block_multiline && (current_block_multiline || pos.is_last) {
                         self.nbsp();
@@ -2396,7 +2396,7 @@ impl<'ast> State<'_, 'ast> {
             std::slice::from_ref(stmt)
         };
 
-        if inline && !stmts.is_empty() {
+        if inline && stmts.len() == 1 {
             self.neverbreak();
             self.print_block_without_braces(stmts, pos_hi, None);
         } else {
@@ -2422,6 +2422,7 @@ impl<'ast> State<'_, 'ast> {
     /// preventing the caller from clearing a cache value that was never set.
     fn is_single_line_block(
         &mut self,
+        stmt_span_lo: BytePos,
         cond: &'ast ast::Expr<'ast>,
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
@@ -2442,21 +2443,27 @@ impl<'ast> State<'_, 'ast> {
             return Decision { outcome: false, is_cached: false };
         }
 
+        // Comments near cond can break single-line layouts. Print as blocks in this case
+        if self.peek_comment_between(stmt_span_lo, then.span.lo()).is_some() {
+            return Decision { outcome: false, is_cached: false };
+        }
+
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
-            config::SingleLineBlockStyle::Preserve
-                if self.is_stmt_in_new_line(cond, then)
-                    || self.is_multiline_block_stmt(then, true) =>
-            {
-                return Decision { outcome: false, is_cached: false };
+            config::SingleLineBlockStyle::Preserve => {
+                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
+                {
+                    return Decision { outcome: false, is_cached: false };
+                }
             }
-            config::SingleLineBlockStyle::Single if self.is_multiline_block_stmt(then, true) => {
-                return Decision { outcome: false, is_cached: false };
+            config::SingleLineBlockStyle::Single => {
+                if self.is_multiline_block_stmt(then, true) {
+                    return Decision { outcome: false, is_cached: false };
+                }
             }
             config::SingleLineBlockStyle::Multi => {
                 return Decision { outcome: false, is_cached: false };
             }
-            _ => {}
         };
 
         // If no decision was made, estimate the length to be formatted.
@@ -2467,15 +2474,24 @@ impl<'ast> State<'_, 'ast> {
 
         // If the parent would fit, check all of its children.
         if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &then.kind {
-            let child_decision =
-                self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());
+            let child_decision = self.is_single_line_block(
+                then.span.lo(),
+                child_cond,
+                child_then,
+                child_els_opt.as_ref(),
+            );
             if !child_decision.outcome {
                 return child_decision;
             }
         }
         if let Some(stmt) = els_opt {
             if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &stmt.kind {
-                return self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());
+                return self.is_single_line_block(
+                    stmt.span.lo(),
+                    child_cond,
+                    child_then,
+                    child_els_opt.as_ref(),
+                );
             } else if self.is_multiline_block_stmt(stmt, true) {
                 return Decision { outcome: false, is_cached: false };
             }
@@ -2554,19 +2570,58 @@ impl<'ast> State<'_, 'ast> {
 
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.
     fn is_multiline_block_stmt(
-        &self,
+        &mut self,
         stmt: &'ast ast::Stmt<'ast>,
         empty_as_multiline: bool,
     ) -> bool {
-        if let ast::StmtKind::Block(block) = &stmt.kind {
-            return self.is_multiline_block(block, empty_as_multiline);
+        match &stmt.kind {
+            ast::StmtKind::Block(block) => {
+                self.is_multiline_block(block, empty_as_multiline, false)
+            }
+            ast::StmtKind::While(cond, body) => {
+                !self.is_single_line_block(stmt.span.lo(), cond, body, None).outcome
+            }
+            ast::StmtKind::For { body, .. } => {
+                // In `print_for_stmt`, `print_stmt_as_block(body, span.hi(), false)` is called with
+                // `inline = false`. So only empty can be single-line.
+                if let ast::StmtKind::Block(block) = &body.kind {
+                    self.is_multiline_block(block, empty_as_multiline, true)
+                } else {
+                    true
+                }
+            }
+
+            ast::StmtKind::If(_, _, Some(_)) => true,
+            ast::StmtKind::If(_, then, None) => {
+                self.is_multiline_block_stmt(then, empty_as_multiline)
+            }
+
+            // these ones always has an inner block, so we mark them as multiline
+            ast::StmtKind::Assembly(_)
+            | ast::StmtKind::DoWhile(_, _)
+            | ast::StmtKind::Try(_)
+            | ast::StmtKind::UncheckedBlock(_) => true,
+
+            ast::StmtKind::Break
+            | ast::StmtKind::Continue
+            | ast::StmtKind::DeclMulti(_, _)
+            | ast::StmtKind::DeclSingle(_)
+            | ast::StmtKind::Emit(_, _)
+            | ast::StmtKind::Expr(_)
+            | ast::StmtKind::Return(_)
+            | ast::StmtKind::Revert(_, _)
+            | ast::StmtKind::Placeholder => false,
         }
-        false
     }
 
     /// Checks if a block statement `{ ... }` should be treated as multiline,
     /// either because it spans multiple lines or contains multiple statements.
-    fn is_multiline_block(&self, block: &'ast ast::Block<'ast>, empty_as_multiline: bool) -> bool {
+    fn is_multiline_block(
+        &mut self,
+        block: &'ast ast::Block<'ast>,
+        empty_as_multiline: bool,
+        force_single_as_multiline: bool,
+    ) -> bool {
         if block.stmts.is_empty() {
             return empty_as_multiline;
         }
@@ -2575,6 +2630,13 @@ impl<'ast> State<'_, 'ast> {
         if block.stmts.len() > 1 {
             return true;
         }
+
+        if force_single_as_multiline {
+            return true;
+        }
+
+        // Check for multiline block.span first.
+        // Block can spans multipline because of comments.
         if self.sm.is_multiline(block.span)
             && let Ok(snip) = self.sm.span_to_snippet(block.span)
         {
@@ -2587,9 +2649,20 @@ impl<'ast> State<'_, 'ast> {
                     !trimmed.is_empty()
                 }
             });
-            return code_lines.count() > 1;
+            if code_lines.count() > 1 {
+                return true;
+            }
         }
-        false
+
+        let stmt = &block.stmts[0];
+
+        // Comments can break single-line layout. Mark block as multiline if there is a comment at
+        // the beginning.
+        if self.peek_comment_between(block.span.lo(), stmt.span.lo()).is_some() {
+            return true;
+        }
+
+        self.is_multiline_block_stmt(stmt, empty_as_multiline)
     }
 
     /// Performs a size estimation to see if the if/else can fit on one line.
