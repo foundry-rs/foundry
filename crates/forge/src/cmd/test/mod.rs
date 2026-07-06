@@ -3069,7 +3069,7 @@ fn list_from_output(
             let tests = abi
                 .functions()
                 .filter(|func| {
-                    let kind = matcher.test_function_kind(&identifier, func);
+                    let kind = matcher.test_function_kind(&identifier, func, false);
                     (!fuzz_only
                         || matches!(
                             kind,
