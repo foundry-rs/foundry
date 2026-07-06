@@ -20,7 +20,7 @@ use mpp::{
 use rustls::crypto::{CryptoProvider, aws_lc_rs};
 use std::{io, time::Duration};
 use tokio::time::timeout;
-use tokio_tungstenite::{
+use tokio_tungstenite_028::{
     MaybeTlsStream, WebSocketStream, connect_async,
     tungstenite::{
         Message,
@@ -293,7 +293,7 @@ mod tests {
         protocol::core::{Base64UrlJson, IntentName, MethodName, parse_authorization},
     };
     use tokio::task::JoinHandle;
-    use tokio_tungstenite::accept_async;
+    use tokio_tungstenite_028::accept_async;
     use tower::Service;
 
     fn test_challenge() -> PaymentChallenge {

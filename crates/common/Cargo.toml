@@ -84,7 +84,9 @@ tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 mpp.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
-tokio-tungstenite.workspace = true
+tokio-tungstenite-028 = { package = "tokio-tungstenite", version = "0.28", features = [
+    "rustls-tls-webpki-roots",
+] }
 futures.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true
