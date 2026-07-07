@@ -508,6 +508,7 @@ impl SymbolicExecutor {
                 let (sequence, storage) =
                     self.materialize_sequence(&initial.steps, &outcome.state)?;
                 return Ok(SymbolicInvariantRunResult::Counterexample {
+                    kind: SymbolicInvariantCounterexampleKind::Predicate,
                     sequence,
                     storage,
                     stats: self.stats_with_paths(completed_paths),
@@ -562,6 +563,7 @@ impl SymbolicExecutor {
                                         let (sequence, storage) =
                                             self.materialize_sequence(&steps, &outcome.state)?;
                                         return Ok(SymbolicInvariantRunResult::Counterexample {
+                                            kind: SymbolicInvariantCounterexampleKind::Handler,
                                             sequence,
                                             storage,
                                             stats: self.stats_with_paths(completed_paths),
@@ -573,6 +575,7 @@ impl SymbolicExecutor {
                                                 self.materialize_sequence(&steps, &outcome.state)?;
                                             return Ok(
                                                 SymbolicInvariantRunResult::Counterexample {
+                                                    kind: SymbolicInvariantCounterexampleKind::Predicate,
                                                     sequence,
                                                     storage,
                                                     stats: self.stats_with_paths(completed_paths),
@@ -602,6 +605,7 @@ impl SymbolicExecutor {
                                                     )?;
                                                 return Ok(
                                                     SymbolicInvariantRunResult::Counterexample {
+                                                        kind: SymbolicInvariantCounterexampleKind::Predicate,
                                                         sequence,
                                                         storage,
                                                         stats: self

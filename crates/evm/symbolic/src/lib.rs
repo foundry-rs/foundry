@@ -358,6 +358,8 @@ pub enum SymbolicInvariantRunResult {
     Safe(SymbolicStats),
     /// A feasible invariant or handler failure was found.
     Counterexample {
+        /// Which part of the invariant run produced the failure.
+        kind: SymbolicInvariantCounterexampleKind,
         /// Concrete sequence extracted from the solver model.
         sequence: Vec<SymbolicInvariantStep>,
         /// Concrete setup-storage values needed for replay.
@@ -374,6 +376,15 @@ pub enum SymbolicInvariantRunResult {
         /// Execution counters collected before execution stopped.
         stats: SymbolicStats,
     },
+}
+
+/// Part of a symbolic invariant run that produced a replayable counterexample.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SymbolicInvariantCounterexampleKind {
+    /// An `invariant_*` or `afterInvariant` check failed.
+    Predicate,
+    /// A fuzzed target/handler call failed with an assertion.
+    Handler,
 }
 
 /// One concrete step in a symbolic invariant counterexample sequence.

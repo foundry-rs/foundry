@@ -59,9 +59,10 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor, SymbolicInvariantRunInput,
-    SymbolicInvariantRunResult, SymbolicInvariantStep, SymbolicInvariantTarget, SymbolicRunInput,
-    SymbolicRunResult, SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
+    SymbolicBranchTarget, SymbolicConcreteInput, SymbolicExecutor,
+    SymbolicInvariantCounterexampleKind, SymbolicInvariantRunInput, SymbolicInvariantRunResult,
+    SymbolicInvariantStep, SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult,
+    SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -1494,6 +1495,44 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         progress: Option<&indicatif::ProgressBar>,
         position: Option<(usize, usize)>,
     ) -> Result<ReplayedInvariantSequence> {
+        self.replay_invariant_error_sequence_with_replay_semantics(
+            invariant_config,
+            original_calls,
+            inner_sequence,
+            assertion_failure,
+            invariant_contract,
+            target_invariant,
+            identified_contracts,
+            current_settings,
+            test_name,
+            artifact_file_name,
+            symbolic_storage,
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
+            progress,
+            position,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn replay_invariant_error_sequence_with_replay_semantics(
+        &mut self,
+        invariant_config: InvariantConfig,
+        original_calls: &[BasicTxDetails],
+        inner_sequence: Option<Vec<Option<BasicTxDetails>>>,
+        assertion_failure: bool,
+        invariant_contract: &InvariantContract<'_>,
+        target_invariant: &Function,
+        identified_contracts: &ContractsByAddress,
+        current_settings: &InvariantSettings,
+        test_name: &str,
+        artifact_file_name: &str,
+        symbolic_storage: &[SymbolicStorageAssignment],
+        artifact_replay_semantics: SymbolicCounterexampleReplaySemantics,
+        progress: Option<&indicatif::ProgressBar>,
+        position: Option<(usize, usize)>,
+    ) -> Result<ReplayedInvariantSequence> {
         let minimization = self.minimize_symbolic_invariant_sequence(
             original_calls,
             &invariant_config,
@@ -1547,6 +1586,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             artifact_file_name,
             &call_sequence,
             minimization,
+            artifact_replay_semantics,
         );
 
         Ok(ReplayedInvariantSequence { call_sequence, artifact, minimization })
@@ -1558,13 +1598,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         artifact_file_name: &str,
         call_sequence: &[BaseCounterExample],
         minimization: Option<MinimizedSequence>,
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
     ) -> (Option<SymbolicArtifactRef>, Option<SymbolicCounterexampleMinimization>) {
         let Some(minimization) = minimization.filter(MinimizedSequence::changed) else {
             return (
-                self.persist_invariant_sequence_counterexample_artifact(
+                self.persist_invariant_sequence_counterexample_artifact_with_replay_semantics(
                     test_name,
                     artifact_file_name,
                     call_sequence,
+                    replay_semantics,
                 ),
                 None,
             );
@@ -1574,15 +1616,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             test_name,
             &format!("original__{artifact_file_name}"),
             minimization.original_calls.clone(),
-            SymbolicCounterexampleReplaySemantics {
-                fail_on_revert: self.config.invariant.fail_on_revert,
-            },
+            replay_semantics,
         );
-        let minimized_artifact = self.persist_invariant_sequence_counterexample_artifact(
-            test_name,
-            artifact_file_name,
-            call_sequence,
-        );
+        let minimized_artifact = self
+            .persist_invariant_sequence_counterexample_artifact_with_replay_semantics(
+                test_name,
+                artifact_file_name,
+                call_sequence,
+                replay_semantics,
+            );
 
         let metadata = match (original_artifact, minimized_artifact.clone()) {
             (Some(original), Some(minimized)) => Some(
@@ -3498,7 +3540,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         // Replay persisted handler bugs; feed still-reproducing ones into the campaign,
         // delete stale files in place.
-        let persisted_handler_failures = replay_persisted_handler_failures(
+        let mut persisted_handler_failures = replay_persisted_handler_failures(
             &failure_dir.join("handlers"),
             &current_settings,
             self.clone_executor(),
@@ -3583,7 +3625,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         None,
                     ));
                 }
-                SymbolicInvariantRunResult::Counterexample { sequence, storage, stats } => {
+                SymbolicInvariantRunResult::Counterexample { kind, sequence, storage, stats } => {
                     let discovered_failures = 1;
                     let symbolic_workers = 1;
                     let failed_corpus_replays = 0;
@@ -3600,136 +3642,245 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         false,
                         &storage,
                     ) {
-                        let txes = symbolic_calls
-                            .iter()
-                            .map(SymbolicCounterexampleCall::to_basic_tx_details)
-                            .collect::<Vec<_>>();
-                        let original_sequence_len = txes.len();
-                        match self.replay_invariant_error_sequence(
-                            invariant_config.clone(),
-                            &txes,
-                            None,
-                            false,
-                            &invariant_contract,
-                            invariant_contract.anchor(),
-                            identified_contracts,
-                            &current_settings,
-                            &invariant_contract.anchor().signature(),
-                            &invariant_contract.anchor().signature(),
-                            &storage,
-                            progress.as_ref(),
-                            Some((discovered_failures, discovered_failures)),
-                        ) {
-                            Ok(replayed) => {
-                                record_invariant_failure(
-                                    failure_dir.as_path(),
-                                    primary_failure_file.as_path(),
-                                    &replayed.call_sequence,
-                                    &current_settings,
-                                    false,
-                                );
-
-                                let artifact = replayed.artifact.clone();
-                                let minimization = replayed.minimization.clone();
-                                let invariant_failures = vec![InvariantFailure::Predicate {
-                                    name: invariant_contract.anchor().name.clone(),
-                                    reason: failure.reason.clone().unwrap_or_else(|| {
-                                        "symbolic invariant counterexample".to_string()
-                                    }),
-                                    counterexample: Some(CounterExample::Sequence(
-                                        original_sequence_len,
-                                        replayed.call_sequence,
-                                    )),
-                                    artifact: replayed.artifact,
-                                    minimization: replayed.minimization,
-                                    persisted_path: primary_failure_file,
-                                    is_anchor: true,
-                                }];
-                                let invariant_predicate_results = if is_campaign {
-                                    invariant_contract
-                                        .invariant_fns
-                                        .iter()
-                                        .map(|(invariant, _)| {
-                                            if *invariant == invariant_contract.anchor() {
-                                                InvariantPredicateResult {
-                                                    name: invariant.name.clone(),
-                                                    status: TestStatus::Failure,
-                                                    reason: failure.reason.clone(),
-                                                }
-                                            } else {
-                                                InvariantPredicateResult {
-                                                    name: invariant.name.clone(),
-                                                    status: TestStatus::Success,
-                                                    reason: None,
-                                                }
-                                            }
-                                        })
-                                        .chain(skipped_predicate_results.clone())
-                                        .sorted_by_key(|predicate| {
-                                            self.cr
-                                                .contract
-                                                .abi
-                                                .functions()
-                                                .position(|func| func.name == predicate.name)
-                                                .unwrap_or(usize::MAX)
-                                        })
-                                        .collect()
-                                } else {
-                                    Vec::new()
-                                };
-
-                                self.result.invariant_result(
-                                    Vec::new(),
-                                    false,
-                                    invariant_failures,
-                                    invariant_predicate_results,
-                                    Some(failure_dir.clone()),
-                                    invariant_count,
-                                    Vec::new(),
-                                    None,
-                                    discovered_failures,
-                                    failure.calls_count,
-                                    failure.reverts,
-                                    Default::default(),
-                                    failed_corpus_replays,
-                                    symbolic_workers,
-                                    None,
-                                );
-
-                                let mut symbolic_result =
-                                    SymbolicResult::fail_counterexample_sequence(
-                                        &self.config.symbolic,
-                                        stats,
-                                        SymbolicCallTrace::test_result_traces(
-                                            !self.result.traces.is_empty(),
-                                        ),
-                                    );
-                                if let Some(artifact) = artifact {
-                                    symbolic_result = symbolic_result.with_artifact(artifact);
-                                }
-                                if let Some(minimization) = minimization {
-                                    symbolic_result =
-                                        symbolic_result.with_minimization(minimization);
-                                }
-                                self.result.symbolic_result(
-                                    TestStatus::Failure,
-                                    None,
-                                    None,
-                                    symbolic_result,
-                                );
-                                return self.result;
-                            }
-                            Err(err) => {
-                                let reason = format!("symbolic invariant replay failed: {err}");
+                        let handler_site = match (kind, failure.site) {
+                            (
+                                SymbolicInvariantCounterexampleKind::Handler,
+                                Some(CheckSequenceFailureSite::SequenceCall {
+                                    target,
+                                    selector,
+                                    fingerprint,
+                                }),
+                            ) => Some((target, selector, fingerprint)),
+                            (SymbolicInvariantCounterexampleKind::Handler, _) => {
+                                let reason = "symbolic handler counterexample replayed at a \
+                                              non-handler failure site"
+                                    .to_string();
                                 self.result.record_symbolic(SymbolicResult::incomplete(
                                     &self.config.symbolic,
                                     SymbolicStopReason::Error,
                                     &reason,
                                     stats,
-                                    SymbolicReplayMetadata::error(reason.clone()),
+                                    SymbolicReplayMetadata::mismatch(reason.clone()),
                                     SymbolicCallTrace::none(),
                                     None,
                                 ));
+                                None
+                            }
+                            (SymbolicInvariantCounterexampleKind::Predicate, _) => None,
+                        };
+
+                        if !(matches!(kind, SymbolicInvariantCounterexampleKind::Handler)
+                            && handler_site.is_none())
+                        {
+                            let txes = symbolic_calls
+                                .iter()
+                                .map(SymbolicCounterexampleCall::to_basic_tx_details)
+                                .collect::<Vec<_>>();
+                            let original_sequence_len = txes.len();
+                            let invariant_signature = invariant_contract.anchor().signature();
+                            let artifact_file_name =
+                                if let Some((reverter, selector, _)) = handler_site {
+                                    format!("handler-{reverter}-{selector}")
+                                } else {
+                                    invariant_signature.clone()
+                                };
+                            let assertion_failure =
+                                matches!(kind, SymbolicInvariantCounterexampleKind::Handler);
+                            let artifact_replay_semantics = SymbolicCounterexampleReplaySemantics {
+                                fail_on_revert: assertion_failure
+                                    || self.config.invariant.fail_on_revert,
+                            };
+                            match self.replay_invariant_error_sequence_with_replay_semantics(
+                                invariant_config.clone(),
+                                &txes,
+                                None,
+                                assertion_failure,
+                                &invariant_contract,
+                                invariant_contract.anchor(),
+                                identified_contracts,
+                                &current_settings,
+                                &invariant_signature,
+                                &artifact_file_name,
+                                &storage,
+                                artifact_replay_semantics,
+                                progress.as_ref(),
+                                Some((discovered_failures, discovered_failures)),
+                            ) {
+                                Ok(replayed) => {
+                                    let ReplayedInvariantSequence {
+                                        call_sequence,
+                                        artifact,
+                                        minimization,
+                                    } = replayed;
+                                    let symbolic_artifact = artifact.clone();
+                                    let symbolic_minimization = minimization.clone();
+
+                                    match (kind, handler_site) {
+                                        (SymbolicInvariantCounterexampleKind::Predicate, _) => {
+                                            record_invariant_failure(
+                                                failure_dir.as_path(),
+                                                primary_failure_file.as_path(),
+                                                &call_sequence,
+                                                &current_settings,
+                                                false,
+                                            );
+                                            let reason =
+                                                failure.reason.clone().unwrap_or_else(|| {
+                                                    "symbolic invariant counterexample".to_string()
+                                                });
+                                            let invariant_failures =
+                                                vec![InvariantFailure::Predicate {
+                                                    name: invariant_contract.anchor().name.clone(),
+                                                    reason,
+                                                    counterexample: Some(CounterExample::Sequence(
+                                                        original_sequence_len,
+                                                        call_sequence,
+                                                    )),
+                                                    artifact,
+                                                    minimization,
+                                                    persisted_path: primary_failure_file,
+                                                    is_anchor: true,
+                                                }];
+                                            let failed_predicate_reason =
+                                                Some(invariant_failures[0].reason().to_string());
+
+                                            let invariant_predicate_results = if is_campaign {
+                                                invariant_contract
+                                                    .invariant_fns
+                                                    .iter()
+                                                    .map(|(invariant, _)| {
+                                                        if *invariant == invariant_contract.anchor()
+                                                        {
+                                                            InvariantPredicateResult {
+                                                                name: invariant.name.clone(),
+                                                                status: TestStatus::Failure,
+                                                                reason: failed_predicate_reason
+                                                                    .clone(),
+                                                            }
+                                                        } else {
+                                                            InvariantPredicateResult {
+                                                                name: invariant.name.clone(),
+                                                                status: TestStatus::Success,
+                                                                reason: None,
+                                                            }
+                                                        }
+                                                    })
+                                                    .chain(skipped_predicate_results.clone())
+                                                    .sorted_by_key(|predicate| {
+                                                        self.cr
+                                                            .contract
+                                                            .abi
+                                                            .functions()
+                                                            .position(|func| {
+                                                                func.name == predicate.name
+                                                            })
+                                                            .unwrap_or(usize::MAX)
+                                                    })
+                                                    .collect()
+                                            } else {
+                                                Vec::new()
+                                            };
+
+                                            self.result.invariant_result(
+                                                Vec::new(),
+                                                false,
+                                                invariant_failures,
+                                                invariant_predicate_results,
+                                                Some(failure_dir.clone()),
+                                                invariant_count,
+                                                Vec::new(),
+                                                None,
+                                                discovered_failures,
+                                                failure.calls_count,
+                                                failure.reverts,
+                                                Default::default(),
+                                                failed_corpus_replays,
+                                                symbolic_workers,
+                                                None,
+                                            );
+
+                                            let mut symbolic_result =
+                                                SymbolicResult::fail_counterexample_sequence(
+                                                    &self.config.symbolic,
+                                                    stats,
+                                                    SymbolicCallTrace::test_result_traces(
+                                                        !self.result.traces.is_empty(),
+                                                    ),
+                                                );
+                                            if let Some(artifact) = symbolic_artifact {
+                                                symbolic_result =
+                                                    symbolic_result.with_artifact(artifact);
+                                            }
+                                            if let Some(minimization) = symbolic_minimization {
+                                                symbolic_result =
+                                                    symbolic_result.with_minimization(minimization);
+                                            }
+                                            self.result.record_symbolic(symbolic_result);
+                                            return self.result;
+                                        }
+                                        (
+                                            SymbolicInvariantCounterexampleKind::Handler,
+                                            Some((reverter, selector, fingerprint)),
+                                        ) => {
+                                            let call_sequence = call_sequence
+                                                .iter()
+                                                .map(base_counterexample_to_tx)
+                                                .collect::<Vec<_>>();
+                                            persisted_handler_failures.insert(
+                                                (reverter, selector),
+                                                InvariantFuzzError::HandlerAssertion(
+                                                    HandlerAssertionFailure {
+                                                        reverter,
+                                                        selector,
+                                                        call_sequence,
+                                                        original_sequence_len,
+                                                        revert_reason: failure
+                                                            .reason
+                                                            .unwrap_or_else(|| {
+                                                                "symbolic handler counterexample"
+                                                                    .to_string()
+                                                            }),
+                                                        edge_fingerprint: fingerprint,
+                                                    },
+                                                ),
+                                            );
+                                            let mut symbolic_result =
+                                                SymbolicResult::fail_counterexample_sequence(
+                                                    &self.config.symbolic,
+                                                    stats,
+                                                    SymbolicCallTrace::test_result_traces(
+                                                        !self.result.traces.is_empty(),
+                                                    ),
+                                                );
+                                            if let Some(artifact) = symbolic_artifact {
+                                                symbolic_result =
+                                                    symbolic_result.with_artifact(artifact);
+                                            }
+                                            if let Some(minimization) = symbolic_minimization {
+                                                symbolic_result =
+                                                    symbolic_result.with_minimization(minimization);
+                                            }
+                                            self.result.record_symbolic(symbolic_result);
+                                        }
+                                        (SymbolicInvariantCounterexampleKind::Handler, None) => {
+                                            unreachable!(
+                                                "handler counterexample sites are checked before replay"
+                                            )
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    let reason = format!("symbolic invariant replay failed: {err}");
+                                    self.result.record_symbolic(SymbolicResult::incomplete(
+                                        &self.config.symbolic,
+                                        SymbolicStopReason::Error,
+                                        &reason,
+                                        stats,
+                                        SymbolicReplayMetadata::error(reason.clone()),
+                                        SymbolicCallTrace::none(),
+                                        None,
+                                    ));
+                                }
                             }
                         }
                     } else {
@@ -4071,15 +4222,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .map(|(_site, failure)| {
                 let reverter = failure.reverter;
                 let selector = failure.selector;
-                // Resolve `Contract::function` from identified contracts when possible.
-                let resolved_name = identified_contracts_ro
-                    .get(&reverter)
-                    .and_then(|(contract_name, abi)| {
-                        abi.functions()
-                            .find(|f| f.selector() == selector)
-                            .map(|f| format!("{contract_name}::{}", f.name))
-                    })
-                    .unwrap_or_else(|| format!("{reverter}::{selector}"));
+                let resolved_name =
+                    invariant_handler_failure_name(identified_contracts_ro, reverter, selector);
 
                 let counterexample_calls = failure
                     .call_sequence
@@ -4675,18 +4819,22 @@ fn base_counterexamples_to_txes(
         .iter_mut()
         .map(|seq| {
             seq.show_solidity = ctx.show_solidity;
-            BasicTxDetails {
-                warp: seq.warp,
-                roll: seq.roll,
-                sender: seq.sender.unwrap_or_default(),
-                call_details: CallDetails {
-                    target: seq.addr.unwrap_or_default(),
-                    calldata: seq.calldata.clone(),
-                    value: seq.value,
-                },
-            }
+            base_counterexample_to_tx(seq)
         })
         .collect()
+}
+
+fn base_counterexample_to_tx(seq: &BaseCounterExample) -> BasicTxDetails {
+    BasicTxDetails {
+        warp: seq.warp,
+        roll: seq.roll,
+        sender: seq.sender.unwrap_or_default(),
+        call_details: CallDetails {
+            target: seq.addr.unwrap_or_default(),
+            calldata: seq.calldata.clone(),
+            value: seq.value,
+        },
+    }
 }
 
 fn symbolic_invariant_counterexample_calls(
@@ -4956,6 +5104,21 @@ fn record_handler_failure(
     let site_hash = alloy_primitives::keccak256(buf);
     let file = handlers_dir.join(format!("{site_hash:x}.json"));
     record_invariant_failure(&handlers_dir, &file, call_sequence, settings, true);
+}
+
+fn invariant_handler_failure_name(
+    identified_contracts: &ContractsByAddress,
+    reverter: Address,
+    selector: Selector,
+) -> String {
+    identified_contracts
+        .get(&reverter)
+        .and_then(|(contract_name, abi)| {
+            abi.functions()
+                .find(|f| f.selector() == selector)
+                .map(|f| format!("{contract_name}::{}", f.name))
+        })
+        .unwrap_or_else(|| format!("{reverter}::{selector}"))
 }
 
 /// Replays persisted handler-side assertion bugs. A file is kept only if the anchor still

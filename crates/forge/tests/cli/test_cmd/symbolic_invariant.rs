@@ -1,6 +1,6 @@
 use super::symbolic_helpers::{
     assert_relevant_lines, assert_symbolic, assert_symbolic_engine, assert_symbolic_engine_witness,
-    json_test_result,
+    assert_symbolic_witness, json_test_result,
 };
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
@@ -189,6 +189,82 @@ calldata=useStore()
 "#]],
     );
     assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
+});
+
+forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_handler_failure_stays_handler");
+
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicInvariantHandlerFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantHandlerFailureTarget {
+    uint256 sink;
+
+    function boom(uint8 x) external {
+        sink = x;
+        if (x == 7) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicInvariantHandlerFailure is Test {
+    SymbolicInvariantHandlerFailureTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantHandlerFailureTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.boom.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--fuzz-runs", "0", "--match-test", "invariant_ok"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_ok()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert!(result["kind"].get("Invariant").is_some());
+    assert!(result["kind"].get("Symbolic").is_none());
+    assert!(
+        result
+            .get("invariant_failures")
+            .and_then(|value| value.as_array())
+            .is_none_or(Vec::is_empty)
+    );
+
+    let handler_failures =
+        result["invariant_handler_failures"].as_array().expect("handler failures");
+    assert_eq!(handler_failures.len(), 1);
+    let handler_failure = &handler_failures[0];
+    assert_eq!(handler_failure["kind"], "handler");
+    assert!(
+        handler_failure["name"]
+            .as_str()
+            .expect("handler name")
+            .ends_with("SymbolicInvariantHandlerFailureTarget::boom"),
+        "{handler_failure}"
+    );
+    assert!(
+        handler_failure["reason"].as_str().expect("handler reason").contains("assertion failed"),
+        "{handler_failure}"
+    );
+    assert!(handler_failure["artifact"]["path"].as_str().is_some(), "{handler_failure}");
 });
 
 forgetest_init!(symbolic_invariant_replays_copied_arbitrary_storage, |prj, cmd| {
@@ -545,7 +621,7 @@ contract SymbolicRevertBranchInvariant is Test {
 "#,
     );
 
-    assert_symbolic_engine_witness(cmd.args([
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
@@ -563,6 +639,8 @@ Encountered 1 failing test in test/SymbolicRevertBranchInvariant.t.sol:SymbolicR
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -632,7 +710,7 @@ contract SymbolicSetupMappingStorageInvariant is Test {
 "#,
     );
 
-    assert_symbolic_engine_witness(cmd.args([
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
@@ -651,6 +729,8 @@ Encountered 1 failing test in test/SymbolicSetupMappingStorageInvariant.t.sol:Sy
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -723,7 +803,7 @@ contract SymbolicInvariantHardArithmetic is Test {
 "#,
     );
 
-    assert_symbolic_engine_witness(cmd.args([
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
@@ -744,6 +824,8 @@ Encountered 1 failing test in test/SymbolicInvariantHardArithmetic.t.sol:Symboli
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -812,7 +894,7 @@ contract SymbolicOverlayCodeInvariant is Test {
 "#,
     );
 
-    assert_symbolic_engine_witness(cmd.args([
+    assert_symbolic_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
@@ -831,6 +913,8 @@ Encountered 1 failing test in test/SymbolicOverlayCodeInvariant.t.sol:SymbolicOv
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
