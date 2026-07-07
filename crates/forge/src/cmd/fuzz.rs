@@ -41,7 +41,7 @@ pub struct FuzzArgs {
 }
 
 impl FuzzArgs {
-    #[expect(
+    #[allow(
         clippy::large_stack_frames,
         reason = "FuzzSubcommands carries TestArgs; boxing the parser shape is outside this PR."
     )]
