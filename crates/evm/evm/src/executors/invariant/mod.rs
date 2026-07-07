@@ -1969,8 +1969,8 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
                 let bnum = block.number();
                 block.set_timestamp(bts + warp);
                 block.set_number(bnum + roll);
-            } else if let Some(block_env) = block_env {
-                cheatcodes.block = Some(block_env);
+            } else {
+                cheatcodes.block = Some(block_env.unwrap());
             }
         }
     }
