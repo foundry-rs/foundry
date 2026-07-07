@@ -5902,7 +5902,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=7610c7e6f88429caa400ec35606afd28270ecf9f#7610c7e6f88429caa400ec35606afd28270ecf9f"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8cb3bf1f5452ca872fd765c5f51a3074ee511734#8cb3bf1f5452ca872fd765c5f51a3074ee511734"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -5925,7 +5925,9 @@ dependencies = [
  "dirs",
  "eth-keystore",
  "eyre",
+ "hidapi-rusb",
  "rpassword",
+ "rusb",
  "rusqlite",
  "serde",
  "serde_json",
@@ -5935,7 +5937,7 @@ dependencies = [
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "tower",
- "tower-http 0.6.11",
+ "tower-http 0.7.0",
  "tracing",
  "uuid 1.23.4",
  "webbrowser",
@@ -6326,11 +6328,11 @@ dependencies = [
 
 [[package]]
 name = "hashlink"
-version = "0.11.1"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824e001ac4f3012dd16a264bec811403a67ca9deb6c102fc5049b32c4574b35f"
+checksum = "32069d97bb81e38fa67eab65e3393bf804bb85969f2bc06bf13f64aef5aba248"
 dependencies = [
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -7260,9 +7262,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.37.0"
+version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
+checksum = "f6c19a05435c21ac299d71b6a9c13db3e3f47c520517d58990a462a1397a61db"
 dependencies = [
  "cc",
  "pkg-config",
@@ -10375,9 +10377,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.39.0"
+version = "0.40.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0d2b0146dd9661bf67bb107c0bb2a55064d556eeb3fc314151b957f313bcd4e"
+checksum = "11438310b19e3109b6446c33d1ed5e889428cf2e278407bc7896bc4aaea43323"
 dependencies = [
  "bitflags 2.13.0",
  "fallible-iterator",
