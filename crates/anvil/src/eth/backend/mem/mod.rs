@@ -737,6 +737,15 @@ impl<N: Network> Backend<N> {
             .unwrap_or_else(|| evm_env.cfg_env.tx_gas_limit_cap())
     }
 
+    pub(crate) fn fallback_tx_gas_limit(&self, evm_env: &EvmEnv) -> u64 {
+        let block_gas_limit = evm_env.block_env.gas_limit;
+        if evm_env.cfg_env.tx_gas_limit_cap.is_none() {
+            block_gas_limit.min(self.tx_gas_limit_cap(evm_env))
+        } else {
+            block_gas_limit
+        }
+    }
+
     fn max_initcode_size(&self, evm_env: &EvmEnv) -> usize {
         self.monad_cfg_env(evm_env)
             .map(|cfg| cfg.max_initcode_size())

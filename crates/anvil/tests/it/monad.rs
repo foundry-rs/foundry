@@ -1,4 +1,4 @@
-use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
 use alloy_primitives::{Address, Bytes, U256, address, hex};
 use alloy_provider::Provider;
@@ -103,6 +103,21 @@ async fn monad_rejects_tx_gas_limit_above_monad_cap() {
     let err = provider.send_transaction(tx.into()).await.unwrap_err().to_string();
 
     assert!(err.contains("tx.gas_limit > resolved tx gas limit cap"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_omitted_gas_fallback_uses_resolved_tx_gas_cap() {
+    let config = monad_eight_config().enable_tx_gas_limit(true).with_gas_limit(Some(40_000_000));
+    let (_api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+
+    let tx =
+        TransactionRequest::default().with_from(from).with_input(Bytes::from(hex!("60006000fd")));
+    let pending = provider.send_transaction(tx.into()).await.unwrap();
+    let sent = provider.get_transaction_by_hash(*pending.tx_hash()).await.unwrap().unwrap();
+
+    assert_eq!(sent.inner.gas_limit(), MONAD_TX_GAS_LIMIT_CAP);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -91,7 +91,7 @@ use futures::{
 };
 use parking_lot::RwLock;
 use revm::{
-    context::{BlockEnv, Cfg},
+    context::BlockEnv,
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{HaltReason, Output},
@@ -3560,12 +3560,7 @@ impl EthApi<FoundryNetwork> {
         if request.gas_limit().is_none() {
             let fallback_gas_limit = {
                 let evm_env = self.backend.evm_env().read();
-                let block_gas_limit = evm_env.block_env.gas_limit;
-                if evm_env.cfg_env.tx_gas_limit_cap.is_none() {
-                    block_gas_limit.min(evm_env.cfg_env().tx_gas_limit_cap())
-                } else {
-                    block_gas_limit
-                }
+                self.backend.fallback_tx_gas_limit(&evm_env)
             };
             let estimated_gas = self
                 .do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
