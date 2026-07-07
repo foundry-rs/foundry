@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use solar::{
-    ast::{LitKind, StrKind, UnOpKind},
+    ast::{BinOpKind, LitKind, StrKind, UnOpKind},
     interface::Span,
     sema::{
         Gcx,
@@ -137,6 +137,27 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
                         || !matches!(index.peel_parens().kind, ExprKind::Lit(..)))
                 {
                     let _ = self.visit_expr(index);
+                }
+                return ControlFlow::Continue(());
+            }
+            // A bare literal shift amount is structural rather than a configuration value
+            // (`x << 128`, `acc >>= 128`): the shifted operand is walked normally, the
+            // amount only when it is computed, so the literals inside it still count.
+            ExprKind::Binary(lhs, op, rhs)
+                if matches!(op.kind, BinOpKind::Shl | BinOpKind::Shr | BinOpKind::Sar) =>
+            {
+                let _ = self.visit_expr(lhs);
+                if !matches!(rhs.peel_parens().kind, ExprKind::Lit(..)) {
+                    let _ = self.visit_expr(rhs);
+                }
+                return ControlFlow::Continue(());
+            }
+            ExprKind::Assign(lhs, Some(op), rhs)
+                if matches!(op.kind, BinOpKind::Shl | BinOpKind::Shr | BinOpKind::Sar) =>
+            {
+                let _ = self.visit_expr(lhs);
+                if !matches!(rhs.peel_parens().kind, ExprKind::Lit(..)) {
+                    let _ = self.visit_expr(rhs);
                 }
                 return ControlFlow::Continue(());
             }

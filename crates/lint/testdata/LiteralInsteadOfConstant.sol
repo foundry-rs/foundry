@@ -9,9 +9,9 @@ pragma solidity ^0.8.18;
 // A numeric literal under a unary minus or bitwise-not (`-5`, `~5`) is a distinct value from
 // the bare literal, so it never groups with it.
 // Out of scope: `0`, `1` and `2` (structural values), bare literals indexing an array-like
-// value or bounding a slice (positional; mapping keys count, they are configuration data),
-// string and bool literals, single occurrences, and repetitions split across two contracts.
-// Yul `case` labels count like any other literal.
+// value, bounding a slice or giving a shift amount (positional or structural; mapping keys
+// count, they are configuration data), string and bool literals, single occurrences, and
+// repetitions split across two contracts. Yul `case` labels count like any other literal.
 
 contract Fees {
     uint256 internal total;
@@ -179,5 +179,26 @@ contract YulCaseLabels {
             default { r := 0 }
         }
         y = r + 500; //~NOTE: this literal appears multiple times
+    }
+}
+
+// Bare literal shift amounts are structural, like array positions: repeated amounts stay
+// clean, a shifted literal value still counts, and a computed amount is walked so the
+// literals inside it are recorded.
+contract ShiftAmounts {
+    uint256 internal acc;
+
+    function amountsAreStructural(uint256 x) internal {
+        acc = (x << 128) + (x >> 128);
+        acc >>= 128;
+    }
+
+    function shiftedValueStillCounts(uint256 n) internal {
+        acc = (500 << n) + 500; //~NOTE: this literal appears multiple times
+    }
+
+    function computedAmount(uint256 x, uint256 n) internal {
+        acc = x << (n + 700); //~NOTE: this literal appears multiple times
+        acc += 700; //~NOTE: this literal appears multiple times
     }
 }

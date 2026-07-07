@@ -254,3 +254,35 @@ LL │         y = r + 500;
    │
    ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
 
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc = (500 << n) + 500;
+   │                ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc = (500 << n) + 500;
+   │                            ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc = x << (n + 700);
+   │                         ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc += 700;
+   │                ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
