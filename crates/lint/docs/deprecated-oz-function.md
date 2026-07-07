@@ -7,7 +7,7 @@ Flags references to OpenZeppelin functions the library has deprecated: `SafeERC2
 
 ## What it does
 
-Reports a reference, called or used as a value, that resolves to a function named `safeApprove` declared in a library named `SafeERC20` / `SafeERC20Upgradeable`, or to a function named `_setupRole` declared in a contract named `AccessControl` / `AccessControlUpgradeable`. Resolution goes through the type checker, so the `using for` method form, the library-qualified form, import aliases and inheritance through extensions are all recognized, while same-name functions declared elsewhere stay out of scope. This mirrors Aderyn's `deprecated-oz-function` detector, which matches any identifier or member with those names in files importing an OpenZeppelin path.
+Reports a reference, called or used as a value, that resolves to a function named `safeApprove` declared in a library named `SafeERC20` / `SafeERC20Upgradeable`, or to a function named `_setupRole` declared in a contract named `AccessControl` / `AccessControlUpgradeable`. Resolution goes through the type checker, so the `using for` method form, the library-qualified form, import aliases and inheritance through extensions are all recognized, while same-name functions declared elsewhere stay out of scope. The declaration must also come from an OpenZeppelin package path (`lib/openzeppelin-contracts`, `@openzeppelin/...`), so a local library or contract reusing the canonical name is not reported; the flip side is that a vendored OpenZeppelin copy under a path that does not name OpenZeppelin is not recognized. This mirrors Aderyn's `deprecated-oz-function` detector, which matches any identifier or member with those names in files importing an OpenZeppelin path.
 
 ## Why is this bad?
 
