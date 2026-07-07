@@ -916,6 +916,140 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
+forgetest_init!(symbolic_invariant_zeroes_created_account_storage, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_zeroes_created_account_storage");
+
+    prj.add_test(
+        "SymbolicCreatedStorageInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FreshStorage {
+    function read(uint256 slot) external view returns (uint256 value) {
+        assembly {
+            value := sload(slot)
+        }
+    }
+}
+
+contract SymbolicCreatedStorageTarget {
+    FreshStorage public fresh;
+    bool public impossible;
+
+    function deployFresh() external {
+        fresh = new FreshStorage();
+    }
+
+    function readFresh(uint256 slot) external {
+        require(address(fresh) != address(0), "missing fresh");
+        if (fresh.read(slot) != 0) {
+            impossible = true;
+        }
+    }
+}
+
+contract SymbolicCreatedStorageInvariant is Test {
+    SymbolicCreatedStorageTarget target;
+
+    function setUp() public {
+        target = new SymbolicCreatedStorageTarget();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = target.deployFresh.selector;
+        selectors[1] = target.readFresh.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    function invariant_noImpossibleCreatedStorage() public view {
+        assertFalse(target.impossible());
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_noImpossibleCreatedStorage",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_noImpossibleCreatedStorage()");
+    assert_eq!(result["status"], "Success");
+    assert_eq!(result["symbolic"]["status"], "pass");
+});
+
+forgetest_init!(symbolic_invariant_aliases_concrete_mapping_write_to_symbolic_read, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_aliases_concrete_mapping_write_to_symbolic_read");
+
+    prj.add_test(
+        "SymbolicMappingAliasInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicMappingAliasTarget {
+    mapping(uint8 => uint256) public messages;
+    bool public accepted;
+
+    function seedZeroRoot() external {
+        messages[0] = 1;
+    }
+
+    function accept(uint8 root) external {
+        if (messages[root] != 0) {
+            accepted = true;
+        }
+    }
+}
+
+contract SymbolicMappingAliasInvariant is Test {
+    SymbolicMappingAliasTarget target;
+
+    function setUp() public {
+        target = new SymbolicMappingAliasTarget();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = target.seedZeroRoot.selector;
+        selectors[1] = target.accept.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function invariant_notAccepted() public view {
+        assertFalse(target.accepted());
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_notAccepted",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_notAccepted()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+});
+
 forgetest_init!(symbolic_invariant_solves_multicall_hard_arithmetic, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_solves_multicall_hard_arithmetic");
 

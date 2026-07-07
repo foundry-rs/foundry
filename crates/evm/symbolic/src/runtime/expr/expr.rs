@@ -10,9 +10,13 @@ pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: Sym
     if let Some(len) = len.as_const()
         && let Ok(len) = usize::try_from(len)
         && len <= bytes.len()
-        && let Ok(bytes) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
+        && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
     {
-        return SymExpr::constant(cx, U256::from_be_bytes(keccak256(bytes).0));
+        let hash = U256::from_be_bytes(keccak256(concrete).0);
+        if len == 64 {
+            cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
+        }
+        return SymExpr::constant(cx, hash);
     }
 
     let exprs = bytes;
@@ -210,26 +214,33 @@ impl SymExpr {
     }
 
     fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<(Self, Self)> {
-        let SymExprKind::Keccak { len, bytes, .. } = self.kind() else { return None };
-        if len.as_const() != Some(U256::from(64)) || bytes.len() < 64 {
-            return None;
-        }
-
+        let bytes = self.storage_mapping_key_bytes(cx)?;
         let key = Self::from_bytes(cx, bytes[..32].iter().cloned());
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
         Some((key, slot))
     }
 
     fn storage_mapping_root_slot(&self, cx: &mut SymCx) -> Option<U256> {
-        let SymExprKind::Keccak { len, bytes, .. } = self.kind() else { return None };
-        if len.as_const() != Some(U256::from(64)) || bytes.len() < 64 {
-            return None;
-        }
-
+        let bytes = self.storage_mapping_key_bytes(cx)?;
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
         match slot.kind() {
+            SymExprKind::Const(value) if cx.concrete_keccak_preimage(*value).is_some() => {
+                slot.storage_mapping_root_slot(cx)
+            }
             SymExprKind::Const(slot) => Some(*slot),
             SymExprKind::Keccak { .. } => slot.storage_mapping_root_slot(cx),
+            _ => None,
+        }
+    }
+
+    fn storage_mapping_key_bytes(&self, cx: &SymCx) -> Option<Arc<[Self]>> {
+        match self.kind() {
+            SymExprKind::Keccak { len, bytes, .. }
+                if len.as_const() == Some(U256::from(64)) && bytes.len() >= 64 =>
+            {
+                Some(bytes.clone())
+            }
+            SymExprKind::Const(hash) => cx.concrete_keccak_preimage(*hash),
             _ => None,
         }
     }
@@ -237,6 +248,9 @@ impl SymExpr {
     fn storage_layout_key(&self, cx: &mut SymCx) -> Option<(Self, Self)> {
         match self.kind() {
             SymExprKind::Keccak { .. } => Some((self.clone(), Self::zero(cx))),
+            SymExprKind::Const(hash) if cx.concrete_keccak_preimage(*hash).is_some() => {
+                Some((self.clone(), Self::zero(cx)))
+            }
             SymExprKind::BinOp(SymBinOp::Add, left, right) => {
                 if let Some((base, offset)) = left.storage_layout_key(cx)
                     && !right.contains_keccak()

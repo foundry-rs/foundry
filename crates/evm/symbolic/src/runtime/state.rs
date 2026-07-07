@@ -1487,6 +1487,7 @@ impl StorageWrite {
 struct SymbolicWorldSnapshot {
     storage: Vec<StorageWrite>,
     transient_storage: Vec<StorageWrite>,
+    created_accounts: HashSet<Address>,
     current_transaction_created_accounts: HashSet<Address>,
     balances: HashMap<Address, SymExpr>,
     code_cache: HashMap<Address, SymCode>,
@@ -1506,6 +1507,7 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
         Self {
             storage: world.storage.clone(),
             transient_storage: world.transient_storage.clone(),
+            created_accounts: world.created_accounts.clone(),
             current_transaction_created_accounts: world
                 .current_transaction_created_accounts
                 .clone(),
@@ -1534,6 +1536,7 @@ struct SymbolicReplayStorageSlot {
 pub(crate) struct SymbolicWorld {
     storage: Vec<StorageWrite>,
     transient_storage: Vec<StorageWrite>,
+    created_accounts: HashSet<Address>,
     current_transaction_created_accounts: HashSet<Address>,
     balances: HashMap<Address, SymExpr>,
     code_cache: HashMap<Address, SymCode>,
@@ -1613,6 +1616,7 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
+        self.created_accounts.insert(address);
         self.current_transaction_created_accounts.insert(address);
     }
 
@@ -1685,6 +1689,7 @@ impl SymbolicWorld {
         };
         self.storage = snapshot.storage;
         self.transient_storage = snapshot.transient_storage;
+        self.created_accounts = snapshot.created_accounts;
         self.current_transaction_created_accounts = snapshot.current_transaction_created_accounts;
         self.balances = snapshot.balances;
         self.code_cache = snapshot.code_cache;
@@ -1718,6 +1723,9 @@ impl SymbolicWorld {
     ) -> Result<SymExpr, SymbolicError> {
         if let Some(base) = self.arbitrary_storage_base(cx, address, key, concrete_key) {
             return Ok(base);
+        }
+        if self.created_accounts.contains(&address) {
+            return Ok(SymExpr::zero(cx));
         }
         if let Some(key) = concrete_key {
             return executor
@@ -1929,6 +1937,8 @@ impl SymbolicWorld {
         }
         self.storage.retain(|write| write.address() != address);
         self.transient_storage.retain(|write| write.address() != address);
+        self.created_accounts.remove(&address);
+        self.current_transaction_created_accounts.remove(&address);
         self.existing_accounts.remove(&address);
         self.destroyed_accounts.insert(address);
         Ok(())
