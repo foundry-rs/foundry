@@ -173,7 +173,7 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
                     }
                     // A nested unary over a literal (`-(-5)`, `~~5`) folds to a value that is
                     // neither this operator's nor the bare literal's; canonicalizing it is not
-                    // worth it, so the chain is skipped rather than mis-keyed. A non-literal
+                    // worth it, so the chain is skipped rather than miss-keyed. A non-literal
                     // operand deeper down (`-(-(x + 500))`) falls through so its own literals
                     // are still recorded.
                     ExprKind::Unary(inner, inner_operand)
