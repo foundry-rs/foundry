@@ -9,7 +9,8 @@ use std::{
 };
 
 use eyre::Result;
-use foundry_config::Config;
+use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
+use foundry_config::{Config, fs_permissions::FsAccessKind};
 
 /// Check if a path is safe for use as a relative path within a workspace.
 /// Rejects absolute paths, parent directory components (..), and other unsafe patterns.
@@ -30,6 +31,123 @@ pub fn ensure_safe_relative_path(rel: &Path, label: &str, orig: &Path) -> Result
 /// Compute relative path of `path` under `root`, or return the path unchanged if not under root.
 pub fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).map(|p| p.to_path_buf()).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Build a config for a copied temp workspace from an already materialized config.
+///
+/// This preserves CLI/env overrides and runtime normalization while rebasing
+/// project-local paths from the original root to `temp_path`.
+pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
+    let mut temp_config = config.clone();
+    temp_config.root = temp_path.to_path_buf();
+    temp_config.src = rebase_project_path(&config.root, temp_path, &config.src);
+    temp_config.test = rebase_project_path(&config.root, temp_path, &config.test);
+    temp_config.script = rebase_project_path(&config.root, temp_path, &config.script);
+    temp_config.out = rebase_project_path(&config.root, temp_path, &config.out);
+    temp_config.cache_path = rebase_project_path(&config.root, temp_path, &config.cache_path);
+    temp_config.snapshots = rebase_project_path(&config.root, temp_path, &config.snapshots);
+    temp_config.broadcast = rebase_project_path(&config.root, temp_path, &config.broadcast);
+    temp_config.mutation_dir = rebase_project_path(&config.root, temp_path, &config.mutation_dir);
+    temp_config.test_failures_file =
+        rebase_project_path(&config.root, temp_path, &config.test_failures_file);
+    temp_config.build_info_path = config
+        .build_info_path
+        .as_ref()
+        .map(|path| rebase_project_path(&config.root, temp_path, path));
+    temp_config.libs =
+        config.libs.iter().map(|lib| rebase_project_path(&config.root, temp_path, lib)).collect();
+    temp_config.remappings = config
+        .remappings
+        .iter()
+        .map(|remapping| rebase_remapping(&config.root, temp_path, remapping))
+        .collect();
+    temp_config.include_paths = config
+        .include_paths
+        .iter()
+        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .collect();
+    temp_config.allow_paths = config
+        .allow_paths
+        .iter()
+        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .collect();
+    temp_config.ignored_error_codes_from = config
+        .ignored_error_codes_from
+        .iter()
+        .map(|(path, codes)| (rebase_project_path(&config.root, temp_path, path), codes.clone()))
+        .collect();
+    temp_config.ignored_file_paths = config
+        .ignored_file_paths
+        .iter()
+        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .collect();
+
+    if let Some(path) = &config.fuzz.failure_persist_dir {
+        temp_config.fuzz.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+    if let Some(path) = &config.invariant.failure_persist_dir {
+        temp_config.invariant.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+    for permission in &mut temp_config.fs_permissions.permissions {
+        let path = rebase_project_path(&config.root, temp_path, &permission.path);
+        permission.path = normalize_existing_ancestor(&path);
+    }
+    if let Some(model_checker) = &mut temp_config.model_checker {
+        model_checker.contracts = std::mem::take(&mut model_checker.contracts)
+            .into_iter()
+            .map(|(path, contracts)| {
+                let path = rebase_project_path(&config.root, temp_path, Path::new(&path));
+                (path.display().to_string(), contracts)
+            })
+            .collect();
+    }
+
+    temp_config
+}
+
+fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    let rel = relative_to_root(root, path);
+    if rel.is_absolute() { path.to_path_buf() } else { temp_path.join(rel) }
+}
+
+fn normalize_existing_ancestor(path: &Path) -> PathBuf {
+    if path.exists() {
+        return dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    }
+
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    while let Some(parent) = ancestor.parent() {
+        if ancestor.exists() {
+            break;
+        }
+        if let Some(name) = ancestor.file_name() {
+            missing.push(name.to_owned());
+        }
+        ancestor = parent;
+    }
+
+    let mut normalized = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+    for component in missing.iter().rev() {
+        normalized.push(component);
+    }
+    normalized
+}
+
+fn rebase_remapping(
+    root: &Path,
+    temp_path: &Path,
+    remapping: &RelativeRemapping,
+) -> RelativeRemapping {
+    let mut remapping: Remapping = remapping.clone().into();
+    remapping.path =
+        rebase_project_path(root, temp_path, Path::new(&remapping.path)).display().to_string();
+    if let Some(context) = &mut remapping.context {
+        *context = rebase_project_path(root, temp_path, Path::new(context)).display().to_string();
+    }
+    RelativeRemapping::new(remapping, temp_path)
 }
 
 /// Verify that `candidate` resolves (after following symlinks) to a path that lives
@@ -77,15 +195,39 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     ensure_safe_relative_path(&test_rel, "test", &config.test)?;
     ensure_within_root(&config.root, &config.test, "test", &config.test)?;
 
-    copy_dir_recursive(&config.src, &temp_dir.join(&src_rel))?;
+    copy_project_dir_recursive(&config.root, &config.src, &temp_dir.join(&src_rel))?;
 
     if config.test != config.src {
-        copy_dir_recursive(&config.test, &temp_dir.join(&test_rel))?;
+        copy_project_dir_recursive(&config.root, &config.test, &temp_dir.join(&test_rel))?;
     }
 
     let handled_extra_roots = handled_project_roots(config)?;
     for extra_path in config.include_paths.iter().chain(config.allow_paths.iter()) {
-        copy_extra_project_path(&config.root, temp_dir, extra_path, &handled_extra_roots)?;
+        copy_extra_project_path(
+            &config.root,
+            temp_dir,
+            extra_path,
+            &handled_extra_roots,
+            "include/allow",
+        )?;
+    }
+    for permission in &config.fs_permissions.permissions {
+        if permission.is_granted(FsAccessKind::Read) {
+            copy_project_local_permission_path(
+                &config.root,
+                temp_dir,
+                &permission.path,
+                &handled_extra_roots,
+            )?;
+        }
+        if permission.is_granted(FsAccessKind::Write) {
+            create_project_local_permission_dir(
+                &config.root,
+                temp_dir,
+                &permission.path,
+                &handled_extra_roots,
+            )?;
+        }
     }
 
     // Copy `script/` too when present and distinct from src/test. Many real
@@ -97,7 +239,7 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         let script_rel = relative_to_root(&config.root, &config.script);
         ensure_safe_relative_path(&script_rel, "script", &config.script)?;
         ensure_within_root(&config.root, &config.script, "script", &config.script)?;
-        copy_dir_recursive(&config.script, &temp_dir.join(&script_rel))?;
+        copy_project_dir_recursive(&config.root, &config.script, &temp_dir.join(&script_rel))?;
     }
 
     for lib_path in &config.libs {
@@ -145,7 +287,7 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn handled_project_roots(config: &Config) -> Result<Vec<PathBuf>> {
+pub(crate) fn handled_project_roots(config: &Config) -> Result<Vec<PathBuf>> {
     let mut roots = Vec::new();
     push_handled_project_root(&mut roots, &config.root, &config.src, "src")?;
     push_handled_project_root(&mut roots, &config.root, &config.test, "test")?;
@@ -192,11 +334,12 @@ fn copy_extra_project_path(
     temp_dir: &Path,
     path: &Path,
     handled_roots: &[PathBuf],
+    label: &str,
 ) -> Result<()> {
     let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
     let rel = relative_to_root(root, &resolved);
-    ensure_safe_relative_path(&rel, "include/allow", path)?;
-    ensure_within_root(root, &resolved, "include/allow", path)?;
+    ensure_safe_relative_path(&rel, label, path)?;
+    ensure_within_root(root, &resolved, label, path)?;
 
     if is_covered_by_handled_root(&rel, handled_roots) {
         return Ok(());
@@ -208,7 +351,7 @@ fn copy_extra_project_path(
 
     let target = temp_dir.join(rel);
     if resolved.is_dir() {
-        copy_dir_recursive(&resolved, &target)
+        copy_project_dir_recursive(root, &resolved, &target)
     } else {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -216,6 +359,60 @@ fn copy_extra_project_path(
         fs::copy(&resolved, target)?;
         Ok(())
     }
+}
+
+fn copy_project_local_permission_path(
+    root: &Path,
+    temp_dir: &Path,
+    path: &Path,
+    handled_roots: &[PathBuf],
+) -> Result<()> {
+    let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let rel = relative_to_root(root, &resolved);
+    if rel.is_absolute() || rel.as_os_str().is_empty() {
+        return Ok(());
+    }
+    copy_extra_project_path(root, temp_dir, path, handled_roots, "fs permission")
+}
+
+fn create_project_local_permission_dir(
+    root: &Path,
+    temp_dir: &Path,
+    path: &Path,
+    handled_roots: &[PathBuf],
+) -> Result<()> {
+    let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let rel = relative_to_root(root, &resolved);
+    if rel.is_absolute() || rel.as_os_str().is_empty() {
+        return Ok(());
+    }
+    ensure_safe_relative_path(&rel, "fs permission", path)?;
+    ensure_within_root(root, &resolved, "fs permission", path)?;
+
+    if resolved.exists() && resolved.is_dir() {
+        if !is_covered_by_handled_root(&rel, handled_roots) {
+            fs::create_dir_all(temp_dir.join(rel))?;
+        }
+        return Ok(());
+    }
+
+    let Some(parent) = rel.parent() else { return Ok(()) };
+    let resolved_parent = root.join(parent);
+    if !resolved_parent.exists() || !resolved_parent.is_dir() {
+        return Ok(());
+    }
+    ensure_within_root(root, &resolved_parent, "fs permission", path)?;
+
+    if parent.as_os_str().is_empty() || is_covered_by_handled_root(parent, handled_roots) {
+        return Ok(());
+    }
+
+    fs::create_dir_all(temp_dir.join(parent))?;
+    if resolved.exists() && resolved.is_file() {
+        fs::copy(&resolved, temp_dir.join(rel))?;
+    }
+
+    Ok(())
 }
 
 /// Create a symlink to a directory (cross-platform).
@@ -313,39 +510,73 @@ fn process_nested_lib_dir(
     Ok(())
 }
 
-/// Recursively copy a directory, skipping symlinked directories for safety.
+/// Recursively copy a directory, following symlinked directories only within the allowed root.
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    let mut visited = Vec::new();
+    copy_dir_recursive_inner(src, dst, src, &mut visited)
+}
+
+fn copy_project_dir_recursive(root: &Path, src: &Path, dst: &Path) -> Result<()> {
+    let mut visited = Vec::new();
+    copy_dir_recursive_inner(src, dst, root, &mut visited)
+}
+
+fn copy_dir_recursive_inner(
+    src: &Path,
+    dst: &Path,
+    allowed_root: &Path,
+    visited: &mut Vec<PathBuf>,
+) -> Result<()> {
     if !src.exists() {
         return Ok(());
     }
-
-    fs::create_dir_all(dst)?;
-
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        let dest_path = dst.join(entry.file_name());
-
-        let meta = fs::symlink_metadata(&path)?;
-
-        if meta.file_type().is_symlink() {
-            if path.is_dir() {
-                continue;
-            }
-            fs::copy(&path, &dest_path)?;
-        } else if meta.is_dir() {
-            copy_dir_recursive(&path, &dest_path)?;
-        } else {
-            fs::copy(&path, &dest_path)?;
-        }
+    ensure_within_root(allowed_root, src, "copied directory", src)?;
+    let canonical = src.canonicalize()?;
+    if visited.contains(&canonical) {
+        return Ok(());
     }
+    visited.push(canonical);
 
-    Ok(())
+    let result = (|| {
+        fs::create_dir_all(dst)?;
+
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dest_path = dst.join(entry.file_name());
+
+            let meta = fs::symlink_metadata(&path)?;
+
+            if meta.file_type().is_symlink() {
+                if path.is_dir() {
+                    if ensure_within_root(allowed_root, &path, "symlinked directory", &path).is_ok()
+                    {
+                        copy_dir_recursive_inner(&path, &dest_path, allowed_root, visited)?;
+                    }
+                } else {
+                    fs::copy(&path, &dest_path)?;
+                }
+            } else if meta.is_dir() {
+                copy_dir_recursive_inner(&path, &dest_path, allowed_root, visited)?;
+            } else {
+                fs::copy(&path, &dest_path)?;
+            }
+        }
+
+        Ok(())
+    })();
+
+    visited.pop();
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{collections::BTreeMap, str::FromStr};
+
+    use foundry_compilers::artifacts::ModelCheckerSettings;
+    use foundry_config::fs_permissions::PathPermission;
     use tempfile::TempDir;
 
     fn create_test_dir_structure(base: &Path, structure: &[&str]) {
@@ -360,6 +591,155 @@ mod tests {
                 fs::write(&full_path, format!("// {path}")).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn test_rebase_config_paths_rebases_materialized_project_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        let external = temp.path().join("external");
+
+        let mut contracts = BTreeMap::new();
+        contracts.insert(root.join("src/Target.sol").display().to_string(), vec!["Target".into()]);
+        contracts
+            .insert(external.join("External.sol").display().to_string(), vec!["External".into()]);
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("contracts"),
+            test: root.join("checks"),
+            script: root.join("deploy"),
+            out: root.join("custom-out"),
+            cache_path: root.join("custom-cache"),
+            snapshots: root.join("custom-snapshots"),
+            broadcast: root.join("custom-broadcast"),
+            mutation_dir: root.join("custom-cache/mutation"),
+            test_failures_file: root.join("custom-cache/test-failures"),
+            build_info_path: Some(root.join("custom-build-info")),
+            libs: vec![root.join("vendor"), external.join("lib")],
+            include_paths: vec![root.join("shared")],
+            allow_paths: vec![root.join("fixtures"), external.join("fixtures")],
+            ignored_error_codes_from: vec![
+                (
+                    root.join("contracts"),
+                    vec![foundry_config::SolidityErrorCode::UnusedLocalVariable],
+                ),
+                (
+                    external.join("contracts"),
+                    vec![foundry_config::SolidityErrorCode::UnusedFunctionParameter],
+                ),
+            ],
+            ignored_file_paths: vec![
+                root.join("contracts/Ignored.sol"),
+                external.join("Ignored.sol"),
+            ],
+            remappings: vec![
+                Remapping::from_str(&format!("@src/={}/", root.join("src").display()))
+                    .unwrap()
+                    .into(),
+                Remapping::from_str(&format!("@ext/={}/", external.join("src").display()))
+                    .unwrap()
+                    .into(),
+            ],
+            fs_permissions: foundry_config::FsPermissions::new([
+                PathPermission::read(root.join("fixtures")),
+                PathPermission::read(external.join("fixtures")),
+            ]),
+            model_checker: Some(ModelCheckerSettings {
+                contracts,
+                engine: None,
+                timeout: None,
+                targets: None,
+                invariants: None,
+                show_unproved: None,
+                div_mod_with_slacks: None,
+                solvers: None,
+                show_unsupported: None,
+                show_proved_safe: None,
+            }),
+            ..Default::default()
+        };
+
+        let temp_config = rebase_config_paths(&config, &workspace);
+
+        assert_eq!(temp_config.root, workspace);
+        assert_eq!(temp_config.src, workspace.join("contracts"));
+        assert_eq!(temp_config.test, workspace.join("checks"));
+        assert_eq!(temp_config.script, workspace.join("deploy"));
+        assert_eq!(temp_config.out, workspace.join("custom-out"));
+        assert_eq!(temp_config.cache_path, workspace.join("custom-cache"));
+        assert_eq!(temp_config.snapshots, workspace.join("custom-snapshots"));
+        assert_eq!(temp_config.broadcast, workspace.join("custom-broadcast"));
+        assert_eq!(temp_config.mutation_dir, workspace.join("custom-cache/mutation"));
+        assert_eq!(temp_config.test_failures_file, workspace.join("custom-cache/test-failures"));
+        assert_eq!(temp_config.build_info_path, Some(workspace.join("custom-build-info")));
+        assert_eq!(temp_config.libs, vec![workspace.join("vendor"), external.join("lib")]);
+        assert_eq!(temp_config.include_paths, vec![workspace.join("shared")]);
+        assert_eq!(
+            temp_config.allow_paths,
+            vec![workspace.join("fixtures"), external.join("fixtures")]
+        );
+        assert_eq!(
+            temp_config.ignored_error_codes_from,
+            vec![
+                (
+                    workspace.join("contracts"),
+                    vec![foundry_config::SolidityErrorCode::UnusedLocalVariable]
+                ),
+                (
+                    external.join("contracts"),
+                    vec![foundry_config::SolidityErrorCode::UnusedFunctionParameter]
+                )
+            ]
+        );
+        assert_eq!(
+            temp_config.ignored_file_paths,
+            vec![workspace.join("contracts/Ignored.sol"), external.join("Ignored.sol")]
+        );
+
+        let remappings =
+            temp_config.remappings.into_iter().map(Remapping::from).collect::<Vec<_>>();
+        assert_eq!(remappings[0].path, format!("{}/", workspace.join("src").display()));
+        assert_eq!(remappings[1].path, format!("{}/", external.join("src").display()));
+
+        assert_eq!(temp_config.fs_permissions.permissions[0].path, workspace.join("fixtures"));
+        assert_eq!(temp_config.fs_permissions.permissions[1].path, external.join("fixtures"));
+
+        let contracts = temp_config.model_checker.unwrap().contracts;
+        assert!(contracts.contains_key(&workspace.join("src/Target.sol").display().to_string()));
+        assert!(contracts.contains_key(&external.join("External.sol").display().to_string()));
+    }
+
+    #[test]
+    fn test_rebase_config_paths_rebases_relative_fs_permissions() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(root.join("writes")).unwrap();
+        fs::create_dir_all(workspace.join("writes")).unwrap();
+        fs::create_dir_all(workspace.join("logs/sub")).unwrap();
+
+        let config = Config {
+            root,
+            fs_permissions: foundry_config::FsPermissions::new([
+                PathPermission::write("./writes"),
+                PathPermission::read_write("./logs/sub/a.txt"),
+            ]),
+            ..Default::default()
+        };
+
+        let temp_config = rebase_config_paths(&config, &workspace).sanitized();
+
+        assert_eq!(temp_config.root, workspace);
+        assert_eq!(
+            temp_config.fs_permissions.permissions[0].path,
+            dunce::canonicalize(workspace.join("writes")).unwrap()
+        );
+        assert_eq!(
+            temp_config.fs_permissions.permissions[1].path,
+            dunce::canonicalize(workspace.join("logs/sub")).unwrap().join("a.txt")
+        );
     }
 
     #[test]
@@ -480,6 +860,27 @@ mod tests {
         assert!(dst.join("file1.sol").exists());
         assert!(dst.join("subdir/file2.sol").exists());
         assert!(dst.join("subdir/nested/file3.sol").exists());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_copy_project_dir_recursive_preserves_in_root_symlink_aliases() {
+        let temp = TempDir::new().unwrap();
+
+        let root = temp.path().join("project");
+        let src = root.join("src");
+        let shared = root.join(".shared/pkg");
+        fs::create_dir_all(&shared).unwrap();
+        fs::create_dir_all(src.join("nested")).unwrap();
+        fs::write(shared.join("Y.sol"), "contract Y {}").unwrap();
+        symlink_dir(Path::new("../.shared/pkg"), &src.join("first")).unwrap();
+        symlink_dir(Path::new("../../.shared/pkg"), &src.join("nested/second")).unwrap();
+
+        let dst = temp.path().join("dst/src");
+        copy_project_dir_recursive(&root, &src, &dst).unwrap();
+
+        assert!(dst.join("first/Y.sol").exists());
+        assert!(dst.join("nested/second/Y.sol").exists());
     }
 
     #[test]

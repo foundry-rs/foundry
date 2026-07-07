@@ -123,7 +123,7 @@ impl CheatsConfig {
     /// Canonicalization fails for non-existing paths, in which case we just normalize the path.
     pub fn normalized_path(&self, path: impl AsRef<Path>) -> PathBuf {
         let path = self.root.join(path);
-        canonicalize(&path).unwrap_or_else(|_| normalize_path(&path))
+        canonicalize(&path).unwrap_or_else(|_| canonicalize_existing_ancestor(&path))
     }
 
     /// Returns true if the given path is allowed, if any path `allowed_paths` is an ancestor of the
@@ -248,6 +248,24 @@ impl Default for CheatsConfig {
             fee_token: None,
         }
     }
+}
+
+fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
+    let normalized = normalize_path(path);
+    let mut missing = Vec::new();
+    let mut ancestor = normalized.as_path();
+    while !ancestor.exists() {
+        let Some(name) = ancestor.file_name() else { return normalized };
+        missing.push(name.to_owned());
+        let Some(parent) = ancestor.parent() else { return normalized };
+        ancestor = parent;
+    }
+
+    let mut path = canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+    for component in missing.iter().rev() {
+        path.push(component);
+    }
+    path
 }
 
 #[cfg(test)]
