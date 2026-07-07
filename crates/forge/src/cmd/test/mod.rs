@@ -4153,6 +4153,8 @@ mod tests {
             "20",
             "--invariant-depth-mode",
             "random",
+            "--invariant-workers",
+            "4",
             "--invariant-dictionary-weight",
             "45",
             "--invariant-dictionary-addresses",
@@ -4271,6 +4273,10 @@ mod tests {
         assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
         assert_eq!(config.invariant.corpus.corpus_dir, Some(PathBuf::from("invariant_corpus")));
         assert!(config.invariant.corpus_random_sequence_weight_configured);
+        assert_eq!(
+            config.invariant.workers,
+            InvariantWorkers::Fixed(std::num::NonZeroUsize::new(4).unwrap())
+        );
         assert!(config.invariant.workers_configured);
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);

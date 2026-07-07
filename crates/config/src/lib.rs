@@ -843,7 +843,8 @@ impl Config {
                     .unwrap_or(false);
         let invariant_workers_configured = self.invariant.workers_configured
             || provider.contains("invariant.workers")
-            || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false);
+            || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
+            || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
         let figment = self.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
@@ -3069,8 +3070,9 @@ mod tests {
         config.warnings = vec![];
     }
 
-    fn mark_serialized_invariant_corpus_weight(config: &mut Config) {
+    fn mark_serialized_invariant_provenance(config: &mut Config) {
         config.invariant.corpus_random_sequence_weight_configured = true;
+        config.invariant.workers_configured = true;
     }
 
     #[test]
@@ -4805,7 +4807,7 @@ mod tests {
             let mut other = Config::load().unwrap();
             clear_warning(&mut other);
             let mut serialized_default = default;
-            mark_serialized_invariant_corpus_weight(&mut serialized_default);
+            mark_serialized_invariant_provenance(&mut serialized_default);
             assert_eq!(serialized_default, other);
 
             Ok(())
@@ -4875,7 +4877,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
-            mark_serialized_invariant_corpus_weight(&mut loaded);
+            mark_serialized_invariant_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -4926,7 +4928,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
-            mark_serialized_invariant_corpus_weight(&mut loaded);
+            mark_serialized_invariant_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -5124,6 +5126,7 @@ mod tests {
                         ..Default::default()
                     },
                     corpus_random_sequence_weight_configured: true,
+                    workers_configured: true,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
