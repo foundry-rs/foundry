@@ -2039,12 +2039,85 @@ impl TestArgs {
             apply_mutation_compiler_overrides(&mut config_for_mutation);
 
             let json_output = shell::is_json();
-            let (selected_sources, _) = self.get_sources_to_compile(
+            let (selected_sources, mutation_inline_config) = self.get_sources_to_compile(
                 &config_for_mutation,
                 filter,
-                Some(execution.inline_config.clone()),
+                None,
                 execution.replay_symbolic_artifact.as_ref(),
             )?;
+            let mutation_output = ProjectCompiler::new()
+                .dynamic_test_linking(config_for_mutation.dynamic_test_linking)
+                .quiet(json_output || self.junit)
+                .files(selected_sources.clone())
+                .compile(&config_for_mutation.project()?)
+                .wrap_err(
+                    "Mutation testing compiler profile failed to compile before applying mutations",
+                )?;
+            let mutation_inline_config = match mutation_inline_config {
+                Some(inline_config) => inline_config,
+                None => Arc::new(InlineConfig::new_parsed(&mutation_output, &config_for_mutation)?),
+            };
+            let mutation_execution = TestExecutionOptions {
+                replay_symbolic_artifact: execution.replay_symbolic_artifact.clone(),
+                ..TestExecutionOptions::default_run(mutation_inline_config)
+            };
+            let (_, mutation_baseline_outcome) = if evm_opts_for_mutation.networks.is_tempo() {
+                self.build_and_run_tests::<TempoEvmNetwork>(
+                    config_for_mutation.clone(),
+                    evm_opts_for_mutation.clone(),
+                    &mutation_output,
+                    filter,
+                    mutation_execution,
+                )
+                .await
+            } else {
+                #[cfg(feature = "optimism")]
+                if evm_opts_for_mutation.networks.is_optimism() {
+                    self.build_and_run_tests::<OpEvmNetwork>(
+                        config_for_mutation.clone(),
+                        evm_opts_for_mutation.clone(),
+                        &mutation_output,
+                        filter,
+                        mutation_execution,
+                    )
+                    .await
+                } else {
+                    self.build_and_run_tests::<EthEvmNetwork>(
+                        config_for_mutation.clone(),
+                        evm_opts_for_mutation.clone(),
+                        &mutation_output,
+                        filter,
+                        mutation_execution,
+                    )
+                    .await
+                }
+                #[cfg(not(feature = "optimism"))]
+                {
+                    self.build_and_run_tests::<EthEvmNetwork>(
+                        config_for_mutation.clone(),
+                        evm_opts_for_mutation.clone(),
+                        &mutation_output,
+                        filter,
+                        mutation_execution,
+                    )
+                    .await
+                }
+            }
+            .wrap_err("Mutation testing compiler profile failed its unmutated baseline run")?;
+            if mutation_baseline_outcome.failed() > 0 {
+                eyre::bail!(
+                    "Mutation testing compiler profile failed its unmutated baseline run; \
+                     adjust `--mutation-via-ir` / `--mutation-optimizer-runs` or fix the tests \
+                     before running mutation testing"
+                );
+            }
+            if mutation_baseline_outcome.successes().next().is_none() {
+                eyre::bail!(
+                    "Mutation testing compiler profile ran zero passing baseline tests; the current \
+                     filter/path selection matched zero non-skipped tests after applying \
+                     `--mutation-via-ir` / `--mutation-optimizer-runs`."
+                );
+            }
             let selected_sources_relative = selected_sources
                 .into_iter()
                 .filter_map(|path| {
@@ -2076,7 +2149,7 @@ impl TestArgs {
 
             let result = run_mutation_testing(
                 Arc::new(config_for_mutation.clone()),
-                output,
+                &mutation_output,
                 evm_opts_for_mutation.clone(),
                 mutation_config,
             )

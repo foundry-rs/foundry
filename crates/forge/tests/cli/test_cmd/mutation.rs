@@ -209,6 +209,77 @@ contract CounterTest is Test {
     );
 });
 
+forgetest_init!(mutation_testing_validates_mutation_compiler_profile, |prj, cmd| {
+    fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = true\n").unwrap();
+
+    prj.add_source(
+        "StackTooDeep.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract StackTooDeep {
+    function manyLocals(uint256 x) public pure returns (uint256) {
+        uint256 a00 = x + 0;
+        uint256 a01 = x + 1;
+        uint256 a02 = x + 2;
+        uint256 a03 = x + 3;
+        uint256 a04 = x + 4;
+        uint256 a05 = x + 5;
+        uint256 a06 = x + 6;
+        uint256 a07 = x + 7;
+        uint256 a08 = x + 8;
+        uint256 a09 = x + 9;
+        uint256 a10 = x + 10;
+        uint256 a11 = x + 11;
+        uint256 a12 = x + 12;
+        uint256 a13 = x + 13;
+        uint256 a14 = x + 14;
+        uint256 a15 = x + 15;
+        uint256 a16 = x + 16;
+        uint256 a17 = x + 17;
+        uint256 a18 = x + 18;
+        uint256 a19 = x + 19;
+        return a00 + a01 + a02 + a03 + a04 + a05 + a06 + a07 + a08 + a09
+            + a10 + a11 + a12 + a13 + a14 + a15 + a16 + a17 + a18 + a19;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "StackTooDeep.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "../src/StackTooDeep.sol";
+
+contract StackTooDeepTest {
+    function test_manyLocals() public {
+        StackTooDeep target = new StackTooDeep();
+        assert(target.manyLocals(1) == 210);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--mutate", "src/StackTooDeep.sol", "--mutation-via-ir", "false", "--json"])
+        .assert_failure();
+    let stdout = output.get_output().stdout_lossy();
+    let stderr = output.get_output().stderr_lossy();
+
+    assert!(stdout.is_empty(), "unexpected stdout:\n{stdout}");
+
+    assert!(
+        stderr.contains(
+            "Mutation testing compiler profile failed to compile before applying mutations"
+        ),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
 forgetest_init!(mutation_testing_rejects_empty_mutate_path_selection, |prj, cmd| {
     prj.add_source(
         "Counter.sol",
