@@ -3759,6 +3759,7 @@ contract SymbolicBoundSkip is Test {
         assertTrue(compat.isContext(SymbolicVmCompat.ForgeContext.TestGroup));
         assertTrue(compat.isContext(SymbolicVmCompat.ForgeContext.Test));
         assertFalse(compat.isContext(SymbolicVmCompat.ForgeContext.ScriptGroup));
+        assertTrue(vm.isIsolateMode());
     }
 
     function checkRuntimeNoopsAndArrayAssertions() public {

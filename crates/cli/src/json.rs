@@ -160,48 +160,6 @@ pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
-/// One NDJSON record on a long-running command's stream. The kind-specific
-/// `payload` is flattened into the same object alongside the spec fields
-/// (`schema_id`, `command_id`, `kind`, `ts`).
-#[derive(Clone, Debug, Serialize)]
-pub struct StreamRecord<T> {
-    pub(crate) schema_id: &'static str,
-    pub(crate) command_id: &'static str,
-    pub(crate) kind: &'static str,
-    /// RFC 3339 UTC with millisecond precision.
-    pub(crate) ts: String,
-    #[serde(flatten)]
-    pub(crate) payload: T,
-}
-
-impl<T> StreamRecord<T> {
-    /// Build a record stamped with the current UTC time.
-    pub fn new(
-        schema_id: &'static str,
-        command_id: &'static str,
-        kind: &'static str,
-        payload: T,
-    ) -> Self {
-        Self {
-            schema_id,
-            command_id,
-            kind,
-            ts: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            payload,
-        }
-    }
-}
-
-/// Emits a single NDJSON record on stdout for a streaming command.
-pub fn print_stream_record<T: Serialize>(
-    schema_id: &'static str,
-    command_id: &'static str,
-    kind: &'static str,
-    payload: T,
-) -> Result<()> {
-    print_json(&StreamRecord::new(schema_id, command_id, kind, payload))
-}
-
 /// Prints a successful JSON envelope to stdout.
 pub fn print_json_success<T: Serialize>(data: T) -> Result<()> {
     print_json(&JsonEnvelope::success(data))
@@ -259,7 +217,7 @@ pub fn print_tokens(tokens: &[DynSolValue]) -> Result<()> {
         let values = tokens
             .iter()
             .cloned()
-            .map(|t| serialize_value_as_json(t, None))
+            .map(|t| serialize_value_as_json(t, None, true))
             .collect::<Result<Vec<Value>>>()?;
         print_json_success(values)
     } else {
@@ -302,32 +260,6 @@ mod tests {
         assert_eq!(value["warnings"][0]["level"], "warning");
         assert_eq!(value["warnings"][0]["code"], "compiler.remappings");
         assert_eq!(value["warnings"][0]["details"]["count"], 3);
-    }
-
-    #[test]
-    fn stream_record_includes_required_fields_and_flattens_payload() {
-        #[derive(Serialize)]
-        struct TestEvent {
-            contract: String,
-            passed: usize,
-        }
-        let payload = TestEvent { contract: "Counter.t.sol:CounterTest".into(), passed: 3 };
-        let rec = StreamRecord::new(
-            "foundry:forge.test.event@v1",
-            "forge.test",
-            "suite_finished",
-            payload,
-        );
-        let json = to_string(&rec).unwrap();
-        // Compact, no pretty-printing.
-        assert!(!json.contains('\n'), "expected compact json, got: {json}");
-        let v = serde_json::from_str::<Value>(&json).unwrap();
-        assert_eq!(v["schema_id"], "foundry:forge.test.event@v1");
-        assert_eq!(v["command_id"], "forge.test");
-        assert_eq!(v["kind"], "suite_finished");
-        assert!(v["ts"].is_string());
-        assert_eq!(v["contract"], "Counter.t.sol:CounterTest");
-        assert_eq!(v["passed"], 3);
     }
 
     #[test]
