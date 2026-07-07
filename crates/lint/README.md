@@ -70,6 +70,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
   - `unused-error`: Custom error declarations that are never referenced should be removed.
   - `literal-instead-of-constant`: A literal value repeated inside a contract should be a named constant.
+  - `modifier-used-only-once`: Modifiers invoked by exactly one function can usually be inlined as checks in that function.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.

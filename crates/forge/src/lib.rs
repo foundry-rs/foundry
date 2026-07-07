@@ -19,6 +19,8 @@ pub mod opts;
 
 pub mod coverage;
 
+pub mod brutalizer;
+
 pub mod gas_report;
 
 pub mod multi_runner;
@@ -34,6 +36,7 @@ pub use runner::ContractRunner;
 mod progress;
 pub mod result;
 mod symbolic_minimizer;
+mod symbolic_regression;
 
 // TODO: remove
 pub use foundry_common::traits::TestFilter;

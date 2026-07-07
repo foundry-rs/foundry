@@ -570,27 +570,19 @@ impl InvariantSettings {
         sender_filters: &SenderFilters,
         fail_on_revert: bool,
     ) -> Self {
-        let target_contracts = targeted_contracts
-            .inner
-            .iter()
-            .map(|(addr, contract)| (*addr, contract.identifier.clone()))
-            .collect();
-
-        let target_selectors = targeted_contracts
-            .inner
-            .iter()
-            .map(|(addr, contract)| {
-                let selectors: Vec<Selector> =
-                    contract.abi_fuzzed_functions().map(|f| f.selector()).collect();
-                (*addr, selectors)
-            })
-            .collect();
+        let mut target_contracts = BTreeMap::new();
+        let mut target_selectors = BTreeMap::new();
+        for (addr, contract) in &targeted_contracts.inner {
+            target_contracts.insert(*addr, contract.identifier.clone());
+            target_selectors
+                .insert(*addr, contract.abi_fuzzed_functions().map(|f| f.selector()).collect());
+        }
 
         let mut target_senders = sender_filters.targeted.clone();
-        target_senders.sort();
+        target_senders.sort_unstable();
 
         let mut excluded_senders = sender_filters.excluded.clone();
-        excluded_senders.sort();
+        excluded_senders.sort_unstable();
 
         Self {
             target_contracts,
