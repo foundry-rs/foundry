@@ -3148,6 +3148,36 @@ fn solver_normalizes_checked_mul_guard_with_context_bound() {
 }
 
 #[test]
+fn solver_normalizes_unsigned_interval_product_contradiction() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let uint16_mask = SymExpr::constant(&mut cx, U256::from(u16::MAX));
+    let amount = SymExpr::binop(&mut cx, SymBinOp::And, calldata.clone(), uint16_mask);
+    let zero = SymExpr::zero(&mut cx);
+    let amount_nonzero = SymBoolExpr::eq(&mut cx, amount.clone(), zero).not(&mut cx);
+    let reserve = SymExpr::constant(&mut cx, U256::from(10_000));
+    let amount_below_reserve =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, amount.clone(), reserve.clone());
+    let uint16_bound = SymExpr::constant(&mut cx, U256::from(65_536));
+    let calldata_uint16 = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, calldata, uint16_bound);
+    let remaining = SymExpr::binop(&mut cx, SymBinOp::Sub, reserve, amount);
+    let scale = SymExpr::constant(&mut cx, U256::from(10_000));
+    let scaled_remaining = SymExpr::binop(&mut cx, SymBinOp::Mul, remaining, scale);
+    let adjusted0 = SymExpr::constant(&mut cx, U256::from(100_009_984));
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scaled_remaining, adjusted0);
+    let intended_min = SymExpr::constant(&mut cx, U256::from(10_000_000_000_000_000u64));
+    let product_at_least_intended =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product, intended_min).not(&mut cx);
+    let constraints =
+        vec![amount_nonzero, product_at_least_intended, calldata_uint16, amount_below_reserve];
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &constraints),
+        vec![SymBoolExpr::constant(&mut cx, false)]
+    );
+}
+
+#[test]
 fn solver_normalizes_mask_equality_with_context_bound() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
@@ -3740,6 +3770,33 @@ fn is_sat_uses_single_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
+fn is_sat_uses_two_var_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("two-var-is-sat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let zero = SymExpr::zero(&mut cx);
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![
+        SymBoolExpr::eq(&mut cx, x.clone(), zero.clone()).not(&mut cx),
+        SymBoolExpr::eq(&mut cx, y.clone(), zero).not(&mut cx),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, ten),
+    ];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn gasleft_can_use_single_var_witness_before_solver() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("gasleft-single-var");
@@ -3801,6 +3858,96 @@ fn model_uses_single_var_witness_before_solver() {
     assert_eq!(stats.smt_queries, 0);
     assert_eq!(stats.model_queries, 1);
     assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn model_uses_two_var_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("two-var-model");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let zero = SymExpr::zero(&mut cx);
+    let cap = SymExpr::constant(&mut cx, U256::from(1_000_000));
+    let constraints = vec![
+        SymBoolExpr::eq(&mut cx, x.clone(), zero.clone()).not(&mut cx),
+        SymBoolExpr::eq(&mut cx, y.clone(), zero).not(&mut cx),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, y.clone(), x.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x, cap.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, y, cap),
+    ];
+
+    let model = solver.model(&mut cx, &constraints).unwrap();
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.model_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn is_sat_falls_through_when_two_var_witness_misses() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("two-var-fallthrough");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let twenty = SymExpr::constant(&mut cx, U256::from(20));
+    let thirty = SymExpr::constant(&mut cx, U256::from(30));
+    let thirty_eight = SymExpr::constant(&mut cx, U256::from(38));
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), y.clone());
+    let constraints = vec![
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), ten),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, twenty.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, y.clone(), twenty),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, thirty),
+        SymBoolExpr::eq(&mut cx, sum, thirty_eight),
+    ];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn is_sat_ignores_disjunctive_two_var_bounds() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("two-var-disjunctive-bounds");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let x_below_ten = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), ten.clone());
+    let y_below_ten = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y.clone(), ten);
+    let constraints = vec![
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y),
+        SymBoolExpr::or(&mut cx, vec![x_below_ten, y_below_ten]),
+    ];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
     let _ = std::fs::remove_file(&marker);
 }
 

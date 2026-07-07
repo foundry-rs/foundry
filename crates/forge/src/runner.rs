@@ -4,7 +4,10 @@ use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
-    multi_runner::{FuzzMinimizeObservation, TestContract, TestFunctionMatcher, TestRunnerConfig},
+    multi_runner::{
+        FuzzMinimizeObservation, TestContract, TestFunctionMatcher, TestRunnerConfig,
+        is_generated_symbolic_regression_contract,
+    },
     progress::{TestsProgress, start_fuzz_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
@@ -749,19 +752,47 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     pub fn run_tests(mut self, filter: &dyn TestFilter) -> SuiteResult {
         let start = Instant::now();
         let mut warnings = Vec::new();
-
         // In fuzz-only mode, drop suites with no runnable fuzz or invariant tests before
         // executing `setUp`. The full function list is built after setup so contract-level
         // inline config can still affect symbolic entrypoint discovery.
-        if self.mcr.tcfg.fuzz_only
-            && !self
+        let skip_fuzz_only_suite = if self.mcr.tcfg.fuzz_only {
+            let test_matcher = TestFunctionMatcher::new(
+                &self.config,
+                &self.mcr.inline_config,
+                self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+            );
+            let generated_symbolic_regression =
+                is_generated_symbolic_regression_contract(&self.contract.abi);
+            !self
                 .contract
                 .abi
                 .functions()
-                .filter(|func| filter.matches_test_function_in_contract(self.name, func))
+                .filter(|func| {
+                    filter.matches_test_function_kind_in_contract(
+                        self.name,
+                        func,
+                        test_matcher.test_function_kind(
+                            self.name,
+                            func,
+                            generated_symbolic_regression,
+                        ),
+                    )
+                })
                 .filter(|func| self.function_matches_network_pass(func))
-                .any(|func| func.is_fuzz_test() || func.is_invariant_test())
-        {
+                .any(|func| {
+                    matches!(
+                        test_matcher.test_function_kind(
+                            self.name,
+                            func,
+                            generated_symbolic_regression,
+                        ),
+                        TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                    )
+                })
+        } else {
+            false
+        };
+        if skip_fuzz_only_suite {
             return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
         }
 
@@ -820,8 +851,24 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             match_sig
         });
 
-        let invariant_fns: Vec<_> =
-            self.contract.abi.functions().filter(|func| func.is_invariant_test()).collect();
+        let invariant_fns: Vec<_> = {
+            let test_matcher = TestFunctionMatcher::new(
+                &self.config,
+                &self.mcr.inline_config,
+                self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+            );
+            let generated_symbolic_regression =
+                is_generated_symbolic_regression_contract(&self.contract.abi);
+            self.contract
+                .abi
+                .functions()
+                .filter(|func| {
+                    test_matcher
+                        .test_function_kind(self.name, func, generated_symbolic_regression)
+                        .is_invariant_test()
+                })
+                .collect()
+        };
 
         // Validate signatures up front: invariant functions must take no parameters. Without
         // this, parameterized `invariant_*` functions would slip into contract-level campaigns
@@ -896,6 +943,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 &self.mcr.inline_config,
                 self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
             );
+            let generated_symbolic_regression =
+                is_generated_symbolic_regression_contract(&self.contract.abi);
             self.contract
                 .abi
                 .functions()
@@ -903,7 +952,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                     filter.matches_test_function_kind_in_contract(
                         self.name,
                         func,
-                        test_matcher.test_function_kind(self.name, func),
+                        test_matcher.test_function_kind(
+                            self.name,
+                            func,
+                            generated_symbolic_regression,
+                        ),
                     )
                 })
                 .filter(|func| self.function_matches_network_pass(func))
@@ -1031,6 +1084,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             &self.mcr.inline_config,
             self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
         );
+        let generated_symbolic_regression =
+            is_generated_symbolic_regression_contract(&self.contract.abi);
 
         if self.progress.is_some() {
             let interrupt = early_exit.clone();
@@ -1095,7 +1150,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = test_matcher.test_function_kind(self.name, func);
+                let kind =
+                    test_matcher.test_function_kind(self.name, func, generated_symbolic_regression);
 
                 let _guard = debug_span!(
                     "test",
@@ -1229,6 +1285,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         kind: SymbolicCounterexampleArtifactKind,
         calls: Vec<SymbolicCounterexampleCall>,
     ) -> Option<SymbolicArtifactRef> {
+        self.persist_symbolic_counterexample_artifact_with_replay_semantics(
+            test_name,
+            artifact_file_name,
+            symbolic,
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
+            kind,
+            calls,
+        )
+    }
+
+    fn persist_symbolic_counterexample_artifact_with_replay_semantics(
+        &self,
+        test_name: &str,
+        artifact_file_name: &str,
+        symbolic: &SymbolicResult,
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
+        kind: SymbolicCounterexampleArtifactKind,
+        calls: Vec<SymbolicCounterexampleCall>,
+    ) -> Option<SymbolicArtifactRef> {
         let dir = self
             .config
             .cache_path
@@ -1243,9 +1320,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 test: test_name.to_string(),
             },
             symbolic,
-            SymbolicCounterexampleReplaySemantics {
-                fail_on_revert: self.config.invariant.fail_on_revert,
-            },
+            replay_semantics,
             calls,
         );
 
@@ -1267,6 +1342,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         artifact_file_name: &str,
         call_sequence: &[BaseCounterExample],
     ) -> Option<SymbolicArtifactRef> {
+        self.persist_invariant_sequence_counterexample_artifact_with_replay_semantics(
+            test_name,
+            artifact_file_name,
+            call_sequence,
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
+        )
+    }
+
+    fn persist_invariant_sequence_counterexample_artifact_with_replay_semantics(
+        &self,
+        test_name: &str,
+        artifact_file_name: &str,
+        call_sequence: &[BaseCounterExample],
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
+    ) -> Option<SymbolicArtifactRef> {
         if call_sequence.is_empty() {
             return None;
         }
@@ -1285,6 +1377,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             test_name,
             artifact_file_name,
             calls,
+            replay_semantics,
         )
     }
 
@@ -1293,6 +1386,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         test_name: &str,
         artifact_file_name: &str,
         calls: Vec<SymbolicCounterexampleCall>,
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
     ) -> Option<SymbolicArtifactRef> {
         if calls.is_empty() {
             return None;
@@ -1311,10 +1405,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             None,
         );
 
-        self.persist_symbolic_counterexample_artifact(
+        self.persist_symbolic_counterexample_artifact_with_replay_semantics(
             test_name,
             artifact_file_name,
             &symbolic_result,
+            replay_semantics,
             SymbolicCounterexampleArtifactKind::Sequence,
             calls,
         )
@@ -1479,6 +1574,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             test_name,
             &format!("original__{artifact_file_name}"),
             minimization.original_calls.clone(),
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
         );
         let minimized_artifact = self.persist_invariant_sequence_counterexample_artifact(
             test_name,
@@ -4006,11 +4104,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &current_settings,
                     );
                 }
-                let artifact = self.persist_invariant_sequence_counterexample_artifact(
-                    &invariant_contract.anchor().signature(),
-                    &format!("handler-{reverter}-{selector}"),
-                    &counterexample_calls,
-                );
+                let artifact = self
+                    .persist_invariant_sequence_counterexample_artifact_with_replay_semantics(
+                        &invariant_contract.anchor().signature(),
+                        &format!("handler-{reverter}-{selector}"),
+                        &counterexample_calls,
+                        SymbolicCounterexampleReplaySemantics { fail_on_revert: true },
+                    );
 
                 let counterexample = if counterexample_calls.is_empty() {
                     None

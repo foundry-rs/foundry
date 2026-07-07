@@ -1117,6 +1117,15 @@ impl SymbolicArtifactRef {
     }
 }
 
+/// Reference to a generated Solidity regression test for a symbolic counterexample.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicRegressionRef {
+    /// Source counterexample artifact path.
+    pub artifact: std::path::PathBuf,
+    /// Generated Solidity regression test path.
+    pub path: std::path::PathBuf,
+}
+
 /// Before/after artifact references and counters for concrete symbolic counterexample minimization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1707,6 +1716,10 @@ pub struct TestResult {
     /// All durable replay artifacts produced for this test result, normalized for JSON consumers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub counterexample_artifacts: Vec<SymbolicArtifactRef>,
+
+    /// Generated Solidity regression tests for this symbolic counterexample.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symbolic_regressions: Vec<SymbolicRegressionRef>,
 
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
