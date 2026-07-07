@@ -9,7 +9,8 @@ use solar::{
     interface::Span,
     sema::{
         Gcx,
-        hir::{self, Expr, ExprKind, Hir, Visit},
+        hir::{self, Expr, ExprKind, Hir, Lit, Stmt, StmtKind, Visit},
+        ty::TyKind,
     },
 };
 use std::{collections::HashMap, convert::Infallible, ops::ControlFlow};
@@ -29,10 +30,9 @@ impl<'hir> LateLintPass<'hir> for LiteralInsteadOfConstant {
         hir: &'hir Hir<'hir>,
         id: hir::ContractId,
     ) {
-        let _ = gcx;
         // Group the literals of the contract's own function and modifier bodies by semantic
         // value; inherited items group with their declaring contract.
-        let mut collector = LiteralCollector { hir, groups: HashMap::new() };
+        let mut collector = LiteralCollector { gcx, hir, groups: HashMap::new() };
         for item_id in hir.contract(id).items {
             if let hir::ItemId::Function(function_id) = item_id
                 && let Some(body) = &hir.function(*function_id).body
@@ -71,10 +71,39 @@ enum LiteralValue {
 }
 
 /// Collects the grouping-relevant literals of a subtree: numbers above 2, address literals
-/// and hex string literals. A bare literal indexing an array stays out, matching Aderyn.
+/// and hex string literals. A bare literal indexing an array-like value or bounding a slice
+/// stays out as positional, matching Aderyn; a mapping key counts, it is configuration data.
 struct LiteralCollector<'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     groups: HashMap<LiteralValue, Vec<Span>>,
+}
+
+impl<'hir> LiteralCollector<'hir> {
+    /// Records one literal under its semantic grouping key.
+    fn record_lit(&mut self, lit: &Lit<'_>) {
+        let key = match &lit.kind {
+            // `0`, `1` and `2` are structural rather than configuration values.
+            LitKind::Number(v) if *v > U256::from(2u64) => Some(LiteralValue::Number(*v)),
+            LitKind::Address(address) => Some(LiteralValue::Address(*address)),
+            LitKind::Str(StrKind::Hex, bytes, _) => {
+                Some(LiteralValue::HexString(bytes.as_byte_str().to_vec()))
+            }
+            _ => None,
+        };
+        if let Some(key) = key {
+            self.groups.entry(key).or_default().push(lit.span);
+        }
+    }
+
+    /// Whether an indexed base is a mapping, whose keys are configuration values rather than
+    /// positions. The type checker tells mappings apart from arrays, bytes and fixed bytes.
+    fn base_is_mapping(&self, base: &Expr<'_>) -> bool {
+        matches!(
+            self.gcx.type_of_expr(base.peel_parens().id).map(|ty| ty.peel_refs().kind),
+            Some(TyKind::Mapping(..))
+        )
+    }
 }
 
 impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
@@ -84,15 +113,42 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
         self.hir
     }
 
+    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        // A Yul `case 500 {}` label is a literal like any other, but `case.constant` is a
+        // `Lit` rather than an expression, so the default visitor never reaches it.
+        if let StmtKind::Switch(switch) = &stmt.kind {
+            for case in switch.cases {
+                if let Some(constant) = &case.constant {
+                    self.record_lit(constant);
+                }
+            }
+        }
+        self.walk_stmt(stmt)
+    }
+
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
-            // A bare literal used as an index (`arr[3]`) is positional, not a magic value.
+            // A bare literal indexing an array-like value (`arr[3]`) is positional, not a
+            // magic value; a mapping key (`m[500]`) is configuration data and counts.
             ExprKind::Index(base, index) => {
                 let _ = self.visit_expr(base);
                 if let Some(index) = index
-                    && !matches!(index.peel_parens().kind, ExprKind::Lit(..))
+                    && (self.base_is_mapping(base)
+                        || !matches!(index.peel_parens().kind, ExprKind::Lit(..)))
                 {
                     let _ = self.visit_expr(index);
+                }
+                return ControlFlow::Continue(());
+            }
+            // Slice bounds share the positional rationale: slices only exist on array-like
+            // values, so a bare literal bound (`d[555:600]`) is never a magic value.
+            ExprKind::Slice(base, start, end) => {
+                let _ = self.visit_expr(base);
+                // Each bound present is walked unless it is a bare literal.
+                for bound in [start, end].into_iter().flatten() {
+                    if !matches!(bound.peel_parens().kind, ExprKind::Lit(..)) {
+                        let _ = self.visit_expr(bound);
+                    }
                 }
                 return ControlFlow::Continue(());
             }
@@ -115,12 +171,14 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
                         }
                         return ControlFlow::Continue(());
                     }
-                    // Nested unary (`-(-5)`, `~~5`) folds to a value that is neither this
-                    // operator's nor the bare literal's; canonicalizing it is
-                    // not worth it, so skip the whole chain rather than risk
-                    // grouping it with an unrelated constant.
-                    ExprKind::Unary(inner, _)
-                        if matches!(inner.kind, UnOpKind::Neg | UnOpKind::BitNot) =>
+                    // A nested unary over a literal (`-(-5)`, `~~5`) folds to a value that is
+                    // neither this operator's nor the bare literal's; canonicalizing it is not
+                    // worth it, so the chain is skipped rather than mis-keyed. A non-literal
+                    // operand deeper down (`-(-(x + 500))`) falls through so its own literals
+                    // are still recorded.
+                    ExprKind::Unary(inner, inner_operand)
+                        if matches!(inner.kind, UnOpKind::Neg | UnOpKind::BitNot)
+                            && matches!(inner_operand.peel_parens().kind, ExprKind::Lit(..)) =>
                     {
                         return ControlFlow::Continue(());
                     }
@@ -129,20 +187,7 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
                     _ => {}
                 }
             }
-            ExprKind::Lit(lit) => {
-                let key = match &lit.kind {
-                    // `0`, `1` and `2` are structural rather than configuration values.
-                    LitKind::Number(v) if *v > U256::from(2u64) => Some(LiteralValue::Number(*v)),
-                    LitKind::Address(address) => Some(LiteralValue::Address(*address)),
-                    LitKind::Str(StrKind::Hex, bytes, _) => {
-                        Some(LiteralValue::HexString(bytes.as_byte_str().to_vec()))
-                    }
-                    _ => None,
-                };
-                if let Some(key) = key {
-                    self.groups.entry(key).or_default().push(lit.span);
-                }
-            }
+            ExprKind::Lit(lit) => self.record_lit(lit),
             _ => {}
         }
         self.walk_expr(expr)

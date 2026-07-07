@@ -8,9 +8,10 @@ pragma solidity ^0.8.18;
 // the semantic value, so `100`, `0x64` and `1e2` are one value, and `1 ether` equals `1e18`.
 // A numeric literal under a unary minus or bitwise-not (`-5`, `~5`) is a distinct value from
 // the bare literal, so it never groups with it.
-// Out of scope: `0`, `1` and `2` (structural values), bare literals indexing an array
-// (positional), string and bool literals, single occurrences, and repetitions split across
-// two contracts.
+// Out of scope: `0`, `1` and `2` (structural values), bare literals indexing an array-like
+// value or bounding a slice (positional; mapping keys count, they are configuration data),
+// string and bool literals, single occurrences, and repetitions split across two contracts.
+// Yul `case` labels count like any other literal.
 
 contract Fees {
     uint256 internal total;
@@ -99,5 +100,84 @@ contract UnaryLiterals {
 contract NestedUnary {
     function nestedIsNotGrouped(int256 x) internal pure returns (int256) {
         return x * (-5) + (-(-5));
+    }
+}
+
+// Skipping a nested-unary chain only applies when the inner operand is itself a literal:
+// literals inside a non-literal operand are still recorded with their own value.
+contract NestedUnaryOperands {
+    int256 internal acc;
+    uint256 internal flags;
+
+    function insideNegation(int256 x) internal {
+        acc = -(-(x + 500)); //~NOTE: this literal appears multiple times
+        acc += 500; //~NOTE: this literal appears multiple times
+    }
+
+    function insideBitNot(uint256 f) internal {
+        flags = ~~(f & 0xff) + 0xff; //~NOTE: this literal appears multiple times
+    }
+}
+
+// A mapping key is configuration data, not a position: repeated keys report, while array
+// indexing and slice bounds stay positional even when repeated.
+contract MappingKeys {
+    mapping(uint256 => uint256) internal m;
+    mapping(address => uint256) internal balances;
+    uint256[10] internal arr;
+
+    function repeatedKeys() internal {
+        m[500] = 1; //~NOTE: this literal appears multiple times
+        m[500] = 2; //~NOTE: this literal appears multiple times
+        balances[0x2222222222222222222222222222222222222222] = 1; //~NOTE: this literal appears multiple times
+        balances[0x2222222222222222222222222222222222222222] = 2; //~NOTE: this literal appears multiple times
+    }
+
+    function positionsStayClean(bytes calldata d) internal view returns (uint256) {
+        uint256 s = arr[3] + arr[3];
+        bytes calldata cut = d[555:600];
+        bytes calldata cut2 = d[555:600];
+        return s + cut.length + cut2.length;
+    }
+}
+
+// Boundary interactions of the index and slice exemptions with the other rules.
+contract IndexEdgeCases {
+    mapping(uint256 => mapping(uint256 => uint256)) internal mm;
+    mapping(int256 => uint256) internal signedKeys;
+
+    // Both levels of a nested mapping lookup are keys: each repeated level reports.
+    function nestedMappingKeys() internal {
+        mm[500][600] = 1; //~NOTE: this literal appears multiple times
+        mm[500][600] = 2; //~NOTE: this literal appears multiple times
+    }
+
+    // A negative mapping key records under its operator-qualified value, so it groups with
+    // other `-5` uses and never with a bare `5`.
+    function negativeKeys() internal {
+        signedKeys[-5] = 1; //~NOTE: this literal appears multiple times
+        signedKeys[-5] = 2; //~NOTE: this literal appears multiple times
+    }
+
+    // A computed slice bound is not a bare literal: the literals inside it are recorded,
+    // consistent with `4 + 3` computing an array index.
+    function computedBound(bytes calldata d, uint256 x) internal pure returns (uint256) {
+        bytes calldata cut = d[x + 555:600]; //~NOTE: this literal appears multiple times
+        return cut.length + 555; //~NOTE: this literal appears multiple times
+    }
+}
+
+// A Yul `case` label is a literal like any other: it groups with the same value elsewhere.
+contract YulCaseLabels {
+    uint256 internal y;
+
+    function labels(uint256 x) internal {
+        uint256 r;
+        assembly {
+            switch x
+            case 500 { r := 1 } //~NOTE: this literal appears multiple times
+            default { r := 0 }
+        }
+        y = r + 500; //~NOTE: this literal appears multiple times
     }
 }
