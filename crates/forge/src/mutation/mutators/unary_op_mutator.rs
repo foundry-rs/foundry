@@ -19,14 +19,8 @@ impl Mutator for UnaryOpMutator {
 
         let expr = context.expr.unwrap();
 
-        let op;
-        let target_span;
-
-        match &expr.kind {
-            ExprKind::Unary(un_op, target) => {
-                op = un_op.kind;
-                target_span = target.span;
-            }
+        let (op, target_span) = match &expr.kind {
+            ExprKind::Unary(un_op, target) => (un_op.kind, target.span),
             _ => unreachable!(),
         };
 
