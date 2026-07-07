@@ -1234,7 +1234,7 @@ impl TestArgs {
         supplied.fuzz_run = args.fuzz_run.is_some();
         supplied.fuzz_input_file = args.fuzz_input_file.is_some();
 
-        Self {
+        let mut test = Self {
             fuzz_only: true,
             warn_unsupported_engine_flags: Some(supplied),
             global: args.global,
@@ -1245,45 +1245,8 @@ impl TestArgs {
             fail_fast: args.fail_fast,
             etherscan_api_key: args.etherscan_api_key,
             list: args.list,
-            fuzz_seed: args.campaign.seed,
-            fuzz_runs: args.campaign.runs,
-            invariant_workers: args.campaign.workers,
             fuzz_run: args.fuzz_run,
-            fuzz_timeout: args.campaign.timeout.map(u64::from),
-            fuzz_dictionary_weight: args.campaign.dictionary_weight,
-            fuzz_dictionary_addresses: args.campaign.dictionary_addresses.clone(),
-            fuzz_dictionary_values: args.campaign.dictionary_values.clone(),
-            fuzz_dictionary_literals: args.campaign.dictionary_literals.clone(),
-            fuzz_corpus_random_sequence_weight: args.campaign.corpus_random_sequence_weight,
-            fuzz_corpus_dir: args.campaign.corpus_dir.clone(),
-            fuzz_frontier_dir: args.campaign.frontier_dir,
-            fuzz_frontier_limit: args.campaign.frontier_limit,
-            fuzz_payable_value_weight: args.campaign.payable_value_weight,
-            fuzz_mutation_weight_splice: args.campaign.mutation_weight_splice,
-            fuzz_mutation_weight_repeat: args.campaign.mutation_weight_repeat,
-            fuzz_mutation_weight_interleave: args.campaign.mutation_weight_interleave,
-            fuzz_mutation_weight_prefix: args.campaign.mutation_weight_prefix,
-            fuzz_mutation_weight_suffix: args.campaign.mutation_weight_suffix,
-            fuzz_mutation_weight_abi: args.campaign.mutation_weight_abi,
-            fuzz_mutation_weight_cmp: args.campaign.mutation_weight_cmp,
             fuzz_input_file: args.fuzz_input_file,
-            invariant_depth: args.campaign.depth,
-            invariant_min_depth: args.campaign.min_depth,
-            invariant_depth_mode: args.campaign.depth_mode,
-            invariant_dictionary_weight: args.campaign.dictionary_weight,
-            invariant_dictionary_addresses: args.campaign.dictionary_addresses,
-            invariant_dictionary_values: args.campaign.dictionary_values,
-            invariant_dictionary_literals: args.campaign.dictionary_literals,
-            invariant_corpus_random_sequence_weight: args.campaign.corpus_random_sequence_weight,
-            invariant_corpus_dir: args.campaign.corpus_dir,
-            invariant_payable_value_weight: args.campaign.payable_value_weight,
-            invariant_mutation_weight_splice: args.campaign.mutation_weight_splice,
-            invariant_mutation_weight_repeat: args.campaign.mutation_weight_repeat,
-            invariant_mutation_weight_interleave: args.campaign.mutation_weight_interleave,
-            invariant_mutation_weight_prefix: args.campaign.mutation_weight_prefix,
-            invariant_mutation_weight_suffix: args.campaign.mutation_weight_suffix,
-            invariant_mutation_weight_abi: args.campaign.mutation_weight_abi,
-            invariant_mutation_weight_cmp: args.campaign.mutation_weight_cmp,
             show_progress: args.show_progress,
             rerun: args.rerun,
             showmap_out: args.showmap_out,
@@ -1295,10 +1258,57 @@ impl TestArgs {
             filter: args.filter,
             evm: args.evm,
             build: args.build,
-            invariant_runs_override: args.campaign.runs,
-            invariant_timeout_override: args.campaign.timeout,
             ..Self::default()
-        }
+        };
+        test.apply_fuzz_run_campaign(args.campaign);
+        test
+    }
+
+    fn apply_fuzz_run_campaign(&mut self, campaign: CampaignArgs) {
+        self.fuzz_seed = campaign.seed;
+        self.fuzz_runs = campaign.runs;
+        self.invariant_runs_override = campaign.runs;
+
+        self.fuzz_timeout = campaign.timeout.map(u64::from);
+        self.invariant_timeout_override = campaign.timeout;
+
+        self.fuzz_dictionary_weight = campaign.dictionary_weight;
+        self.invariant_dictionary_weight = campaign.dictionary_weight;
+        self.fuzz_dictionary_addresses = campaign.dictionary_addresses.clone();
+        self.invariant_dictionary_addresses = campaign.dictionary_addresses;
+        self.fuzz_dictionary_values = campaign.dictionary_values.clone();
+        self.invariant_dictionary_values = campaign.dictionary_values;
+        self.fuzz_dictionary_literals = campaign.dictionary_literals.clone();
+        self.invariant_dictionary_literals = campaign.dictionary_literals;
+
+        self.fuzz_corpus_random_sequence_weight = campaign.corpus_random_sequence_weight;
+        self.invariant_corpus_random_sequence_weight = campaign.corpus_random_sequence_weight;
+        self.fuzz_corpus_dir = campaign.corpus_dir.clone();
+        self.invariant_corpus_dir = campaign.corpus_dir;
+
+        self.fuzz_payable_value_weight = campaign.payable_value_weight;
+        self.invariant_payable_value_weight = campaign.payable_value_weight;
+        self.fuzz_mutation_weight_splice = campaign.mutation_weight_splice;
+        self.invariant_mutation_weight_splice = campaign.mutation_weight_splice;
+        self.fuzz_mutation_weight_repeat = campaign.mutation_weight_repeat;
+        self.invariant_mutation_weight_repeat = campaign.mutation_weight_repeat;
+        self.fuzz_mutation_weight_interleave = campaign.mutation_weight_interleave;
+        self.invariant_mutation_weight_interleave = campaign.mutation_weight_interleave;
+        self.fuzz_mutation_weight_prefix = campaign.mutation_weight_prefix;
+        self.invariant_mutation_weight_prefix = campaign.mutation_weight_prefix;
+        self.fuzz_mutation_weight_suffix = campaign.mutation_weight_suffix;
+        self.invariant_mutation_weight_suffix = campaign.mutation_weight_suffix;
+        self.fuzz_mutation_weight_abi = campaign.mutation_weight_abi;
+        self.invariant_mutation_weight_abi = campaign.mutation_weight_abi;
+        self.fuzz_mutation_weight_cmp = campaign.mutation_weight_cmp;
+        self.invariant_mutation_weight_cmp = campaign.mutation_weight_cmp;
+
+        self.fuzz_frontier_dir = campaign.frontier_dir;
+        self.fuzz_frontier_limit = campaign.frontier_limit;
+        self.invariant_depth = campaign.depth;
+        self.invariant_min_depth = campaign.min_depth;
+        self.invariant_depth_mode = campaign.depth_mode;
+        self.invariant_workers = campaign.workers;
     }
 
     fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
