@@ -3146,6 +3146,40 @@ interface Interface {
     ]);
 });
 
+casttest!(interface_local_contract_does_not_write_artifacts, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "InterfaceTarget",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract InterfaceTarget {
+    event ValueSet(uint256 value);
+
+    function setValue(uint256 value) external {
+        emit ValueSet(value);
+    }
+}
+    "#,
+    );
+
+    let source = prj.root().join("src/InterfaceTarget.sol");
+    let artifact = prj.root().join("out/InterfaceTarget.sol/InterfaceTarget.json");
+    let output =
+        cmd.cast_fuse().arg("interface").arg(&source).assert_success().get_output().stdout_lossy();
+    assert!(output.contains("interface InterfaceTarget"), "{output}");
+    assert!(output.contains("event ValueSet(uint256 value);"), "{output}");
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.cast_fuse().arg("interface").arg(&source).assert_success();
+    let after = fs::read(&artifact).unwrap();
+    assert_eq!(after, b"sentinel");
+});
+
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
 casttest!(flaky_fetch_weth_interface_from_etherscan, |_prj, cmd| {
