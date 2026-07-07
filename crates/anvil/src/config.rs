@@ -60,9 +60,9 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tempo_chainspec::{
-    hardfork::TempoHardfork,
-    spec::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
+use tempo_hardfork::{
+    TempoHardfork,
+    constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
 };
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
@@ -1197,6 +1197,10 @@ impl NodeConfig {
         let base_fee_params: BaseFeeParams =
             self.networks.base_fee_params(self.get_genesis_timestamp());
 
+        // On Tempo, the base fee follows the chain's hardfork rules instead of EIP-1559.
+        let tempo_hardfork =
+            self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork()));
+
         let fees = FeeManager::new(
             spec_id,
             self.get_base_fee(),
@@ -1205,6 +1209,7 @@ impl NodeConfig {
             self.get_blob_excess_gas_and_price(),
             self.get_blob_params(),
             base_fee_params,
+            tempo_hardfork,
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
@@ -1423,6 +1428,12 @@ latest block number: {latest_block}"
             self.hardfork = Some(hardfork);
         }
 
+        // The fee manager was built before the fork hardfork was known, so refresh the Tempo
+        // hardfork it uses for base fee calculations.
+        if self.networks.is_tempo() {
+            fees.set_tempo_hardfork(Some(TempoHardfork::from(self.get_hardfork())));
+        }
+
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none()
             && let Some(base_fee) = block.header.base_fee_per_gas()
@@ -1574,7 +1585,7 @@ latest block number: {latest_block}"
     }
 }
 
-const fn tempo_default_base_fee(hardfork: TempoHardfork) -> u64 {
+pub(crate) const fn tempo_default_base_fee(hardfork: TempoHardfork) -> u64 {
     if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE }
 }
 

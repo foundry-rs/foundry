@@ -114,10 +114,28 @@ impl PubSubEthRpcHandler {
                         }
                     }
                     SubscriptionKind::TransactionReceipts => {
-                        return RpcError::internal_error_with("Not implemented").into();
+                        trace!(target: "rpc::ws", "received transaction receipts subscription");
+                        match *raw_params {
+                            Params::None => EthSubscription::TransactionReceipts(
+                                self.api.transaction_receipts_subscription(Default::default()),
+                                id.clone(),
+                            ),
+                            Params::TransactionReceipts(filter) => {
+                                EthSubscription::TransactionReceipts(
+                                    self.api.transaction_receipts_subscription(filter),
+                                    id.clone(),
+                                )
+                            }
+                            _ => {
+                                return ResponseResult::Error(RpcError::invalid_params(
+                                    "Expected transactionReceipts params",
+                                ));
+                            }
+                        }
                     }
                     SubscriptionKind::Syncing => {
-                        return RpcError::internal_error_with("Not implemented").into();
+                        trace!(target: "rpc::ws", "received syncing subscription");
+                        EthSubscription::Syncing(Some(id.clone()))
                     }
                 };
 

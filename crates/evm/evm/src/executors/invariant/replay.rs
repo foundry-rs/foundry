@@ -1,7 +1,9 @@
 use super::{call_after_invariant_function, call_invariant_function, execute_tx};
 use crate::executors::{
     EarlyExit, Executor,
-    invariant::shrink::{reset_shrink_progress, shrink_sequence, shrink_sequence_value},
+    invariant::shrink::{
+        CheckSequenceOutcome, ShrinkProgress, shrink_sequence, shrink_sequence_value,
+    },
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -12,13 +14,18 @@ use alloy_primitives::{
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::evm::FoundryEvmNetwork;
+use foundry_evm_core::{decode::RevertDecoder, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
-use foundry_evm_traces::{TraceKind, TraceMode, Traces, load_contracts};
+use foundry_evm_traces::{TraceKind, TraceRequirements, Traces, load_contracts};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use std::sync::Arc;
+
+pub struct ReplayErrorResult {
+    pub counterexample_sequence: Vec<BaseCounterExample>,
+    pub check_result: Option<CheckSequenceOutcome>,
+}
 
 /// Replays a call sequence for collecting logs and traces.
 /// Returns counterexample to be used when the call sequence is a failed scenario.
@@ -39,7 +46,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     if executor.inspector().tracer.is_none() {
-        executor.set_tracing(TraceMode::Call);
+        executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
     }
 
     let mut counterexample_sequence = vec![];
@@ -47,10 +54,10 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs {
         let mut call_result = execute_tx(&mut executor, tx)?;
-        logs.extend(call_result.logs.clone());
-        debug_bytecodes.extend(call_result.debug_bytecodes.clone());
+        logs.append(&mut call_result.logs);
+        debug_bytecodes.extend(std::mem::take(&mut call_result.debug_bytecodes));
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-        HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
+        HitMaps::merge_opt(line_coverage, call_result.line_coverage.take());
 
         // Commit state changes to persist across calls in the sequence.
         executor.commit(&mut call_result);
@@ -111,6 +118,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     calls: &[BasicTxDetails],
     inner_sequence: Option<Vec<Option<BasicTxDetails>>>,
     expect_assertion_failure: bool,
+    rd: Option<&RevertDecoder>,
     target_value: Option<I256>,
     invariant_contract: &InvariantContract<'_>,
     target_invariant: &Function,
@@ -124,41 +132,52 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
     position: Option<(usize, usize)>,
-) -> Result<Vec<BaseCounterExample>> {
-    // Reset progress bar for this invariant's shrink phase. Multi-invariant runs call this once
-    // per target so the bar's message reflects which invariant is currently being shrunk and
-    // (when more than one invariant needs shrinking) the `[i/N]` counter shows queue depth.
-    reset_shrink_progress(&config, progress, &target_invariant.name, position);
+) -> Result<ReplayErrorResult> {
+    // Multi-invariant runs include `[i/N]` in the shrink progress message so users see how many
+    // shrinkers are queued behind the current one.
+    let shrink_progress = ShrinkProgress::new(
+        &config,
+        progress,
+        &target_invariant.name,
+        position,
+        Some(&ided_contracts),
+        config.show_solidity,
+    );
 
-    let calls = if let Some(target) = target_value {
-        shrink_sequence_value(
-            &config,
-            invariant_contract,
-            target_invariant,
-            calls,
-            &executor,
-            target,
-            progress,
-            early_exit,
-        )?
+    let (calls, check_result) = if let Some(target) = target_value {
+        (
+            shrink_sequence_value(
+                &config,
+                invariant_contract,
+                target_invariant,
+                calls,
+                &executor,
+                target,
+                &shrink_progress,
+                early_exit,
+            )?,
+            None,
+        )
     } else {
-        shrink_sequence(
+        let shrunk = shrink_sequence(
             &config,
             invariant_contract,
             target_invariant,
             calls,
             expect_assertion_failure,
             &executor,
-            progress,
+            rd,
+            &shrink_progress,
             early_exit,
-        )?
+        )?;
+        (shrunk.calls, shrunk.result)
     };
 
     if let Some(sequence) = inner_sequence {
         set_up_inner_replay(&mut executor, &sequence);
     }
 
-    replay_run(
+    let counterexample_sequence = replay_run(
         invariant_contract,
         target_invariant,
         executor,
@@ -171,7 +190,9 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         deprecated_cheatcodes,
         &calls,
         config.show_solidity,
-    )
+    )?;
+
+    Ok(ReplayErrorResult { counterexample_sequence, check_result })
 }
 
 /// Sets up the calls generated by the internal fuzzer, if they exist.

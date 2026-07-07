@@ -344,6 +344,11 @@ impl Wallets {
         Ok(self.inner.lock().multi_wallet.signers()?.keys().copied().collect())
     }
 
+    /// Locks inner Mutex and returns all available addresses in the [MultiWallet].
+    pub fn addresses(&self) -> Vec<Address> {
+        self.inner.lock().multi_wallet.available_addresses()
+    }
+
     /// Number of signers in the [MultiWallet].
     pub fn len(&self) -> usize {
         let mut inner = self.inner.lock();
