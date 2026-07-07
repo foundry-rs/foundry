@@ -21,5 +21,7 @@ contract BooleanCst {
         return true;
     }
 
-    function takesBool(bool value) internal pure {}
+    function takesBool(bool value) internal pure {
+        value;
+    }
 }

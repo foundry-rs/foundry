@@ -63,7 +63,8 @@ impl DocArgs {
         }
 
         let root = &config.root;
-        let project = config.project()?;
+        let mut project = config.solar_project()?;
+        project.no_artifacts = true;
 
         // Compile the project first so the doc renderer has access to a fully
         // resolved HIR (needed for `@inheritdoc`, cross-references, etc.).

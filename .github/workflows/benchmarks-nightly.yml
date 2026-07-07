@@ -9,6 +9,10 @@ on:
 
 env:
   AAVE_V4_REPO: "aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
+  SYMBOLIC_REPOS: >-
+    Vectorized/solady:v0.1.26,
+    SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5,
+    farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b
   RUSTC_WRAPPER: "sccache"
 
 jobs:
@@ -21,14 +25,14 @@ jobs:
       has_regression: ${{ steps.compare.outputs.has_regression }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config
+          sudo apt-get install -y build-essential pkg-config z3
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
@@ -115,6 +119,19 @@ jobs:
             --json-output "stable-${DATE}-forge_coverage.json" \
             --verbose
 
+      - name: Run forge symbolic benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable \
+            --repos "$SYMBOLIC_REPOS" \
+            --benchmarks forge_symbolic_test \
+            --json-output "stable-${DATE}-forge_symbolic.json" \
+            --verbose
+
       # --- Nightly benchmarks ---
 
       - name: Run forge test benchmarks (nightly)
@@ -167,6 +184,19 @@ jobs:
             --repos "$AAVE_V4_REPO" \
             --benchmarks forge_coverage \
             --json-output "nightly-${DATE}-forge_coverage.json" \
+            --verbose
+
+      - name: Run forge symbolic benchmarks (nightly)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions nightly \
+            --repos "$SYMBOLIC_REPOS" \
+            --benchmarks forge_symbolic_test \
+            --json-output "nightly-${DATE}-forge_symbolic.json" \
             --verbose
 
       - name: Merge benchmark JSON results

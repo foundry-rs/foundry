@@ -263,6 +263,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     state_changeset: &StateChangeset,
     handler_target: Address,
     handler_selector: Selector,
+    assertion_failure: bool,
     pre_merge_edges_hash: Option<B256>,
 ) -> Result<ContinueOutcome<'a>> {
     let is_optimization = invariant_contract.is_optimization();
@@ -318,7 +319,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             )?;
         }
     } else {
-        let is_assert_failure = did_fail_on_assert(&call_result, state_changeset);
+        let is_assert_failure = assertion_failure;
         let reverted = call_result.reverted;
 
         if reverted {
