@@ -247,3 +247,40 @@ contract UsesConsecutiveUpgradeableName is ERC721ConsecutiveUpgradeable {
         _mint(account, amount);
     }
 }
+
+interface IERC721Receiver {
+    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data)
+        external
+        returns (bytes4);
+}
+
+// An override that performs the receiver check itself before forwarding is a safe wrapper,
+// like the canonical `_safeMint`: its direct callers are not reported.
+contract CheckedOverrideNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        if (to.code.length > 0) {
+            require(
+                IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                    == IERC721Receiver.onERC721Received.selector,
+                "unsafe receiver"
+            );
+        }
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// The address code inspection alone also counts as the receiver check.
+contract CodeGuardedOverrideNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length > 0, "no receiver");
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}

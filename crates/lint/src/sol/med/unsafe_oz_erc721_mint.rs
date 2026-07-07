@@ -4,6 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
+    ast::ElementaryType,
     interface::source_map::FileName,
     sema::{
         Gcx,
@@ -128,19 +129,29 @@ impl MintCallFinder<'_, '_, '_, '_> {
         {
             return true;
         }
-        // A delegating override: any call in its body dispatching to an unsafe `_mint`.
+        // A delegating override: any call in its body dispatching to an unsafe `_mint`. An
+        // override that performs the receiver check itself before forwarding (a resolved
+        // `onERC721Received` call or an `address.code` inspection) is a safe wrapper like
+        // the canonical `_safeMint`, so it is not an unsafe target.
         if function.override_
             && let Some(body) = &function.body
         {
-            let mut calls = CalleeCollector { gcx: self.gcx, hir: self.hir, callees: Vec::new() };
-            // The body's resolved callees are collected first, then judged recursively.
+            let mut scan = BodyScanner {
+                gcx: self.gcx,
+                hir: self.hir,
+                callees: Vec::new(),
+                has_receiver_check: false,
+            };
+            // The body's resolved callees and check markers are collected first.
             for stmt in body.stmts {
-                let _ = calls.visit_stmt(stmt);
+                let _ = scan.visit_stmt(stmt);
             }
             // Each callee is judged with the shared `seen` set, so override cycles stop.
-            for callee in calls.callees {
-                if self.is_unsafe_mint_target(callee, seen) {
-                    return true;
+            if !scan.has_receiver_check {
+                for callee in scan.callees {
+                    if self.is_unsafe_mint_target(callee, seen) {
+                        return true;
+                    }
                 }
             }
         }
@@ -157,14 +168,17 @@ fn is_openzeppelin_source(hir: &Hir<'_>, source_id: hir::SourceId) -> bool {
     }
 }
 
-/// Collects the resolved targets of every call in a subtree.
-struct CalleeCollector<'hir> {
+/// Collects the resolved targets of every call in a subtree, and whether the subtree
+/// performs a receiver check: a call resolving to a function named `onERC721Received`, or
+/// a `.code` inspection on an address value.
+struct BodyScanner<'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     callees: Vec<FunctionId>,
+    has_receiver_check: bool,
 }
 
-impl<'hir> Visit<'hir> for CalleeCollector<'hir> {
+impl<'hir> Visit<'hir> for BodyScanner<'hir> {
     type BreakValue = Infallible;
 
     fn hir(&self) -> &'hir Hir<'hir> {
@@ -172,13 +186,37 @@ impl<'hir> Visit<'hir> for CalleeCollector<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        // Each call's dispatch target, as the type checker resolved it.
-        if let ExprKind::Call(callee, _, _) = &expr.kind
-            && let Some(ty) = self.gcx.type_of_expr(callee.peel_parens().id)
-            && let TyKind::Fn(function_ty) = ty.kind
-            && let Some(function_id) = function_ty.function_id
-        {
-            self.callees.push(function_id);
+        match &expr.kind {
+            // Each call's dispatch target, as the type checker resolved it. A callee named
+            // `onERC721Received` is the receiver check itself.
+            ExprKind::Call(callee, _, _) => {
+                if let Some(ty) = self.gcx.type_of_expr(callee.peel_parens().id)
+                    && let TyKind::Fn(function_ty) = ty.kind
+                    && let Some(function_id) = function_ty.function_id
+                {
+                    self.callees.push(function_id);
+                    // The name is judged on the resolved declaration, not the call site.
+                    if self
+                        .hir
+                        .function(function_id)
+                        .name
+                        .is_some_and(|name| name.as_str() == "onERC721Received")
+                    {
+                        self.has_receiver_check = true;
+                    }
+                }
+            }
+            // `to.code.length` style inspections: the `code` member of an address value,
+            // judged on the base's type so a user field named `code` does not count.
+            ExprKind::Member(base, member) => {
+                if member.as_str() == "code"
+                    && let Some(ty) = self.gcx.type_of_expr(base.peel_parens().id)
+                    && matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
+                {
+                    self.has_receiver_check = true;
+                }
+            }
+            _ => {}
         }
         self.walk_expr(expr)
     }
