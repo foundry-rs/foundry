@@ -131,20 +131,24 @@ library PrivateLib {
     }
 }
 
-// Public and external library functions attach through the library form too: the directive
-// is live even without any internal function.
-library VisibleLib {
+// Public and external library functions attach through the library form too, each proven on
+// its own so neither visibility hides the other: both directives are live without any
+// internal function.
+library PublicOnlyLib {
     function pubDouble(uint256 v) public pure returns (uint256) {
         return v * 2;
     }
+}
 
+library ExternalOnlyLib {
     function extTriple(uint256 v) external pure returns (uint256) {
         return v * 3;
     }
 }
 
 contract UsesVisibleAttachments {
-    using VisibleLib for uint256;
+    using PublicOnlyLib for uint256;
+    using ExternalOnlyLib for uint256;
 
     function double(uint256 x) internal pure returns (uint256) {
         return x.pubDouble();
