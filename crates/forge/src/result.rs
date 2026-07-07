@@ -16,7 +16,10 @@ use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
-    fuzz::{CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
+    fuzz::{
+        CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
+        strategies::EvmFuzzState,
+    },
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats, SymbolicStopReason};
@@ -25,6 +28,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
+    sync::OnceLock,
     time::Duration,
 };
 use yansi::Paint;
@@ -176,6 +180,11 @@ impl TestOutcome {
         self.failures().any(|(_, t)| t.kind.is_invariant())
     }
 
+    /// Returns `true` if all failing tests can be meaningfully inspected with `forge test --debug`.
+    pub fn failed_tests_are_debuggable(&self) -> bool {
+        self.failures().all(|(_, result)| result.is_debuggable_failure())
+    }
+
     fn invariant_workers_hint(&self) -> Option<usize> {
         let mut workers = self.failures().filter_map(|(_, result)| result.kind.invariant_workers());
         let first = workers.next()?;
@@ -211,10 +220,6 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed.
-    //
-    // Exit-code policy: under `--machine` we honor the agent contract
-    // ([`ExitCode::TestFailure`]); legacy invocations preserve the
-    // historical exit-1 contract that scripts and CIs already depend on.
     pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
@@ -223,7 +228,7 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            std::process::exit(test_failure_exit_code());
+            std::process::exit(1);
         }
 
         sh_println!("\nFailing tests:")?;
@@ -255,6 +260,12 @@ impl TestOutcome {
             failures,
             test_word
         )?;
+        if outcome.failed_tests_are_debuggable() {
+            sh_println!(
+                "Tip: Run {} to inspect one failing test in the debugger",
+                "`forge test --debug --match-test <TEST_NAME>`".cyan()
+            )?;
+        }
 
         // Print seed for fuzz/invariant test failures to enable reproduction.
         if let Some(seed) = self.fuzz_seed
@@ -274,7 +285,7 @@ impl TestOutcome {
             }
         }
 
-        std::process::exit(test_failure_exit_code());
+        std::process::exit(1);
     }
 
     /// Removes first test result, if any.
@@ -288,11 +299,6 @@ impl TestOutcome {
             }
         })
     }
-}
-
-/// Process exit code emitted when at least one test failed.
-fn test_failure_exit_code() -> i32 {
-    if foundry_cli::is_machine() { foundry_cli::ExitCode::TestFailure.to_i32() } else { 1 }
 }
 
 #[cfg(test)]
@@ -351,6 +357,32 @@ mod tests {
         }
 
         visit_refs(&counterexample_schema, result_defs, counterexample_defs);
+    }
+
+    #[test]
+    fn symbolic_result_schema_includes_solver_stats() {
+        let schema: serde_json::Value = serde_json::from_str(SYMBOLIC_RESULT_SCHEMA_JSON).unwrap();
+        let stats = schema["$defs"]["solver_stats"]["properties"]
+            .as_object()
+            .expect("solver stats properties");
+
+        for key in [
+            "paths",
+            "solver_queries",
+            "smt_queries",
+            "sat_queries",
+            "model_queries",
+            "sat_cache_hits",
+            "model_cache_hits",
+            "heuristic_witnesses",
+            "solver_time_ms",
+            "smt_input_bytes",
+            "smt_max_query_bytes",
+            "smt_build_time_ms",
+            "smt_max_query_time_ms",
+        ] {
+            assert!(stats.contains_key(key), "missing solver stats schema key {key}");
+        }
     }
 
     fn assert_counterexample_artifact_shape(value: &serde_json::Value) {
@@ -442,6 +474,83 @@ mod tests {
             false,
             None,
         )
+    }
+
+    fn outcome_with_results(test_results: Vec<TestResult>) -> TestOutcome {
+        TestOutcome::new(
+            None,
+            BTreeMap::from([(
+                "suite".to_string(),
+                SuiteResult::new(
+                    Duration::ZERO,
+                    test_results
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, result)| (format!("test{idx}()"), result))
+                        .collect(),
+                    Vec::new(),
+                ),
+            )]),
+            false,
+            None,
+        )
+    }
+
+    fn failed_result(kind: TestKind) -> TestResult {
+        TestResult { status: TestStatus::Failure, kind, ..Default::default() }
+    }
+
+    #[test]
+    fn failed_tests_are_debuggable_for_unit_failures() {
+        let outcome = outcome_with_results(vec![failed_result(TestKind::Unit { gas: 0 })]);
+
+        assert!(outcome.failed_tests_are_debuggable());
+    }
+
+    #[test]
+    fn failed_tests_are_not_debuggable_for_invariant_failures() {
+        let outcome = outcome_with_results(vec![failed_result(TestKind::Invariant {
+            runs: 0,
+            calls: 0,
+            reverts: 0,
+            workers: 1,
+            metrics: Map::new(),
+            failed_corpus_replays: 0,
+            optimization_best_value: None,
+        })]);
+
+        assert!(!outcome.failed_tests_are_debuggable());
+    }
+
+    #[test]
+    fn failed_tests_are_not_debuggable_for_symbolic_failures() {
+        let outcome = outcome_with_results(vec![failed_result(TestKind::Symbolic {
+            paths: 0,
+            solver_queries: 0,
+            smt_queries: 0,
+            sat_queries: 0,
+            model_queries: 0,
+            sat_cache_hits: 0,
+            model_cache_hits: 0,
+            heuristic_witnesses: 0,
+            solver_time_ms: 0,
+            smt_input_bytes: 0,
+            smt_max_query_bytes: 0,
+            smt_build_time_ms: 0,
+            smt_max_query_time_ms: 0,
+        })]);
+
+        assert!(!outcome.failed_tests_are_debuggable());
+    }
+
+    #[test]
+    fn failed_tests_are_not_debuggable_for_symbolic_backed_failures() {
+        let mut result = failed_result(TestKind::Unit { gas: 0 });
+        result.symbolic =
+            Some(SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default()));
+        let outcome = outcome_with_results(vec![result]);
+
+        assert!(!outcome.failed_tests_are_debuggable());
     }
 
     #[test]
@@ -730,6 +839,9 @@ pub enum InvariantFailure {
         /// Durable replay artifact for this counterexample, when one was written.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         artifact: Option<SymbolicArtifactRef>,
+        /// Deterministic concrete minimization details for this sequence, when minimized.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        minimization: Option<SymbolicCounterexampleMinimization>,
         /// Path where the counterexample was persisted for re-running and shrinking.
         persisted_path: std::path::PathBuf,
         /// Whether this failure is the stable campaign anchor.
@@ -796,6 +908,14 @@ impl InvariantFailure {
             Self::Predicate { artifact, .. } | Self::Handler { artifact, .. } => artifact.as_ref(),
         }
     }
+
+    /// Deterministic concrete minimization details for predicate failures.
+    pub const fn minimization(&self) -> Option<&SymbolicCounterexampleMinimization> {
+        match self {
+            Self::Predicate { minimization, .. } => minimization.as_ref(),
+            Self::Handler { .. } => None,
+        }
+    }
 }
 
 /// Pass/fail status for an invariant predicate evaluated inside a contract-level campaign.
@@ -832,9 +952,15 @@ pub struct SymbolicResult {
     pub replay: SymbolicReplayMetadata,
     /// Concrete counterexample data, when the solver produced a candidate.
     pub counterexample: Option<SymbolicCounterexample>,
+    /// Fuzz corpus seeds imported into symbolic execution, when enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_seeds: Option<SymbolicCorpusSeedMetadata>,
     /// Durable counterexample artifact, when one was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<SymbolicArtifactRef>,
+    /// Deterministic concrete minimization details, when a replayed counterexample was minimized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimization: Option<SymbolicCounterexampleMinimization>,
 }
 
 impl SymbolicResult {
@@ -909,8 +1035,16 @@ impl SymbolicResult {
             call_trace,
             replay,
             counterexample,
+            corpus_seeds: None,
             artifact: None,
+            minimization: None,
         }
+    }
+
+    /// Attaches fuzz corpus import metadata to this symbolic result.
+    pub fn with_corpus_seeds(mut self, corpus_seeds: SymbolicCorpusSeedMetadata) -> Self {
+        self.corpus_seeds = Some(corpus_seeds);
+        self
     }
 
     /// Attaches a durable replay artifact reference to this symbolic result.
@@ -918,6 +1052,36 @@ impl SymbolicResult {
         self.artifact = Some(artifact);
         self
     }
+
+    /// Attaches deterministic minimization metadata to this symbolic result.
+    pub fn with_minimization(mut self, minimization: SymbolicCounterexampleMinimization) -> Self {
+        self.minimization = Some(minimization);
+        self
+    }
+}
+
+/// Fuzz corpus import metadata for a symbolic run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicCorpusSeedMetadata {
+    /// Corpus root used for the current test, after contract/test path expansion.
+    pub corpus_dir: Option<std::path::PathBuf>,
+    /// Maximum imported seeds allowed by configuration.
+    pub limit: usize,
+    /// Number of corpus files considered.
+    pub loaded: usize,
+    /// Number of corpus files skipped because they were unreadable or not a matching single call.
+    pub skipped: usize,
+    /// Seeds modeled by symbolic execution as path-priority hints.
+    pub used: Vec<SymbolicCorpusSeedRef>,
+}
+
+/// One fuzz corpus seed modeled by symbolic execution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicCorpusSeedRef {
+    /// Corpus file path.
+    pub path: std::path::PathBuf,
+    /// ABI-encoded calldata imported from the corpus file.
+    pub calldata: Bytes,
 }
 
 /// Reference to a durable symbolic counterexample artifact.
@@ -933,6 +1097,73 @@ impl SymbolicArtifactRef {
     /// Creates a reference to a symbolic counterexample artifact.
     pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
         Self { schema: SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA.to_string(), path: path.into() }
+    }
+}
+
+/// Reference to a generated Solidity regression test for a symbolic counterexample.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicRegressionRef {
+    /// Source counterexample artifact path.
+    pub artifact: std::path::PathBuf,
+    /// Generated Solidity regression test path.
+    pub path: std::path::PathBuf,
+}
+
+/// Before/after artifact references and counters for concrete symbolic counterexample minimization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolicCounterexampleMinimization {
+    /// Original confirmed replay artifact before minimization.
+    pub original: SymbolicArtifactRef,
+    /// Minimized confirmed replay artifact after minimization.
+    pub minimized: SymbolicArtifactRef,
+    /// Number of concrete replay candidates tried.
+    pub attempts: usize,
+    /// Number of replay candidates accepted.
+    pub accepted: usize,
+    /// ABI calldata byte length before minimization.
+    pub original_calldata_bytes: usize,
+    /// ABI calldata byte length after minimization.
+    pub minimized_calldata_bytes: usize,
+    /// Stateful sequence length before minimization, when this minimized a sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_sequence_len: Option<usize>,
+    /// Stateful sequence length after minimization, when this minimized a sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimized_sequence_len: Option<usize>,
+}
+
+impl SymbolicCounterexampleMinimization {
+    /// Creates concrete minimization metadata.
+    pub const fn new(
+        original: SymbolicArtifactRef,
+        minimized: SymbolicArtifactRef,
+        attempts: usize,
+        accepted: usize,
+        original_calldata_bytes: usize,
+        minimized_calldata_bytes: usize,
+    ) -> Self {
+        Self {
+            original,
+            minimized,
+            attempts,
+            accepted,
+            original_calldata_bytes,
+            minimized_calldata_bytes,
+            original_sequence_len: None,
+            minimized_sequence_len: None,
+        }
+    }
+
+    /// Adds stateful sequence lengths to minimization metadata.
+    pub const fn with_sequence_lengths(
+        mut self,
+        original_sequence_len: usize,
+        minimized_sequence_len: usize,
+    ) -> Self {
+        self.original_sequence_len = Some(original_sequence_len);
+        self.minimized_sequence_len = Some(minimized_sequence_len);
+        self
     }
 }
 
@@ -1077,6 +1308,18 @@ pub struct SymbolicSolverStats {
     pub heuristic_witnesses: usize,
     /// Wall-clock time spent waiting on backend solver subprocesses, in milliseconds.
     pub solver_time_ms: u64,
+    /// Total SMT-LIB input bytes sent to backend solver subprocesses.
+    #[serde(default)]
+    pub smt_input_bytes: u64,
+    /// Largest single SMT-LIB query input sent to a backend solver subprocess, in bytes.
+    #[serde(default)]
+    pub smt_max_query_bytes: u64,
+    /// Wall-clock time spent building SMT-LIB query strings, in milliseconds.
+    #[serde(default)]
+    pub smt_build_time_ms: u64,
+    /// Longest single backend solver subprocess query, in milliseconds.
+    #[serde(default)]
+    pub smt_max_query_time_ms: u64,
 }
 
 impl From<SymbolicStats> for SymbolicSolverStats {
@@ -1091,6 +1334,10 @@ impl From<SymbolicStats> for SymbolicSolverStats {
             model_cache_hits: stats.model_cache_hits,
             heuristic_witnesses: stats.heuristic_witnesses,
             solver_time_ms: stats.solver_time_ms,
+            smt_input_bytes: stats.smt_input_bytes,
+            smt_max_query_bytes: stats.smt_max_query_bytes,
+            smt_build_time_ms: stats.smt_build_time_ms,
+            smt_max_query_time_ms: stats.smt_max_query_time_ms,
         }
     }
 }
@@ -1311,7 +1558,7 @@ pub struct SymbolicCounterexampleTestIdentity {
 }
 
 /// One concrete call in a symbolic counterexample artifact.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolicCounterexampleCall {
     /// Amount to increase block timestamp before executing the call.
@@ -1453,6 +1700,10 @@ pub struct TestResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub counterexample_artifacts: Vec<SymbolicArtifactRef>,
 
+    /// Generated Solidity regression tests for this symbolic counterexample.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symbolic_regressions: Vec<SymbolicRegressionRef>,
+
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
     pub logs: Vec<Log>,
@@ -1518,6 +1769,15 @@ impl fmt::Display for TestResult {
 }
 
 impl TestResult {
+    /// Returns `true` if this failed result can be meaningfully inspected with
+    /// `forge test --debug --match-test`.
+    const fn is_debuggable_failure(&self) -> bool {
+        self.status.is_failure()
+            && !self.kind.is_invariant()
+            && !self.kind.is_symbolic()
+            && self.symbolic.is_none()
+    }
+
     /// Adds a durable replay artifact to the normalized list and legacy top-level field.
     pub fn add_counterexample_artifact(&mut self, artifact: SymbolicArtifactRef) {
         if !self.counterexample_artifacts.contains(&artifact) {
@@ -1826,7 +2086,7 @@ impl TestResult {
             deployed_libs: _,
             reason,
             skipped,
-            deployment_failure: _,
+            ..
         } = setup;
         Self {
             status: if skipped { TestStatus::Skipped } else { TestStatus::Failure },
@@ -2060,8 +2320,17 @@ impl TestResult {
             .invariant_failures
             .iter()
             .chain(&self.invariant_handler_failures)
-            .filter_map(InvariantFailure::artifact)
-            .cloned()
+            .flat_map(|failure| {
+                let mut artifacts = Vec::new();
+                if let Some(artifact) = failure.artifact().cloned() {
+                    artifacts.push(artifact);
+                }
+                if let Some(minimization) = failure.minimization().cloned() {
+                    artifacts.push(minimization.original);
+                    artifacts.push(minimization.minimized);
+                }
+                artifacts
+            })
             .collect::<Vec<_>>();
         for artifact in artifacts {
             self.add_counterexample_artifact(artifact);
@@ -2115,12 +2384,20 @@ impl TestResult {
             model_cache_hits: stats.model_cache_hits,
             heuristic_witnesses: stats.heuristic_witnesses,
             solver_time_ms: stats.solver_time_ms,
+            smt_input_bytes: stats.smt_input_bytes,
+            smt_max_query_bytes: stats.smt_max_query_bytes,
+            smt_build_time_ms: stats.smt_build_time_ms,
+            smt_max_query_time_ms: stats.smt_max_query_time_ms,
         };
         self.status = status;
         self.reason = reason;
         self.counterexample = counterexample;
         if let Some(artifact) = symbolic.artifact.clone() {
             self.add_counterexample_artifact(artifact);
+        }
+        if let Some(minimization) = symbolic.minimization.clone() {
+            self.add_counterexample_artifact(minimization.original);
+            self.add_counterexample_artifact(minimization.minimized);
         }
         self.symbolic = Some(symbolic);
         self.duration = Duration::default();
@@ -2257,6 +2534,10 @@ pub enum TestKindReport {
         model_cache_hits: usize,
         heuristic_witnesses: usize,
         solver_time_ms: u64,
+        smt_input_bytes: u64,
+        smt_max_query_bytes: u64,
+        smt_build_time_ms: u64,
+        smt_max_query_time_ms: u64,
     },
     /// Showmap corpus replay (no campaign performed).
     Replay {
@@ -2315,6 +2596,10 @@ impl fmt::Display for TestKindReport {
                 model_cache_hits,
                 heuristic_witnesses,
                 solver_time_ms,
+                smt_input_bytes: _,
+                smt_max_query_bytes: _,
+                smt_build_time_ms: _,
+                smt_max_query_time_ms: _,
             } => {
                 write!(
                     f,
@@ -2395,6 +2680,14 @@ pub enum TestKind {
         heuristic_witnesses: usize,
         #[serde(default)]
         solver_time_ms: u64,
+        #[serde(default)]
+        smt_input_bytes: u64,
+        #[serde(default)]
+        smt_max_query_bytes: u64,
+        #[serde(default)]
+        smt_build_time_ms: u64,
+        #[serde(default)]
+        smt_max_query_time_ms: u64,
     },
     /// Showmap corpus replay (no campaign performed).
     Replay { corpus_entries: usize, showmap_files: usize, skipped_entries: usize },
@@ -2415,6 +2708,11 @@ impl TestKind {
     /// Returns `true` if this is an invariant test.
     pub const fn is_invariant(&self) -> bool {
         matches!(self, Self::Invariant { .. })
+    }
+
+    /// Returns `true` if this is a symbolic test.
+    pub const fn is_symbolic(&self) -> bool {
+        matches!(self, Self::Symbolic { .. })
     }
 
     /// Actual invariant campaign worker count, if this is an invariant test.
@@ -2466,6 +2764,10 @@ impl TestKind {
                 model_cache_hits,
                 heuristic_witnesses,
                 solver_time_ms,
+                smt_input_bytes,
+                smt_max_query_bytes,
+                smt_build_time_ms,
+                smt_max_query_time_ms,
             } => TestKindReport::Symbolic {
                 paths: *paths,
                 solver_queries: *solver_queries,
@@ -2476,6 +2778,10 @@ impl TestKind {
                 model_cache_hits: *model_cache_hits,
                 heuristic_witnesses: *heuristic_witnesses,
                 solver_time_ms: *solver_time_ms,
+                smt_input_bytes: *smt_input_bytes,
+                smt_max_query_bytes: *smt_max_query_bytes,
+                smt_build_time_ms: *smt_build_time_ms,
+                smt_max_query_time_ms: *smt_max_query_time_ms,
             },
             Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
                 TestKindReport::Replay {
@@ -2515,6 +2821,8 @@ pub struct TestSetup {
     pub coverage: Option<HitMaps>,
     /// Addresses of external libraries deployed during setup.
     pub deployed_libs: Vec<Address>,
+    /// Cached setup-derived fuzz dictionary for stateless fuzz tests.
+    pub(crate) fuzz_state: OnceLock<EvmFuzzState>,
 
     /// The reason the setup failed, if it did.
     pub reason: Option<String>,

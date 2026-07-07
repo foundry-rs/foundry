@@ -96,7 +96,7 @@ interface Vm {
         address emitter;
     }
 
-    /// Gas used. Returned by `lastCallGas`.
+    /// Gas used. Returned by `lastCallGas` and `lastFrameGas`.
     struct Gas {
         /// The gas limit of the call.
         uint64 gasLimit;
@@ -627,6 +627,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function coolSlot(address target, bytes32 slot) external;
 
+    /// Returns true if isolated test execution is enabled.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isIsolateMode() external view returns (bool result);
+
     /// Returns the test or script execution evm version.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
@@ -778,13 +782,23 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
@@ -1012,9 +1026,14 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
+    /// DEPRECATED: use `lastFrameGas` instead.
     /// Gets the gas used in the last call from the callee perspective.
-    #[cheatcode(group = Evm, safety = Safe)]
+    #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
+
+    /// Gets the gas used in the last call or create from the callee perspective.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastFrameGas() external view returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 

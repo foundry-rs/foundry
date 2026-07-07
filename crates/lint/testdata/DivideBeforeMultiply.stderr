@@ -1,3 +1,27 @@
+note[custom-errors]: prefer using custom errors on revert and require calls
+   ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
+   │
+LL │             revert("done");
+   │             ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/custom-errors
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │

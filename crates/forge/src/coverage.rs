@@ -1,5 +1,6 @@
 //! Coverage reports.
 
+use crate::result::{TestKind, TestOutcome, TestResult, TestStatus};
 use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{
     Attribute, Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
@@ -7,8 +8,9 @@ use comfy_table::{
 use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};
 use semver::Version;
+use serde::{Serialize, ser::SerializeSeq};
 use std::{
-    collections::hash_map,
+    collections::{BTreeMap, hash_map},
     io::Write,
     path::{Path, PathBuf},
 };
@@ -218,6 +220,223 @@ impl CoverageReporter for LcovReporter {
     }
 }
 
+/// Writes per-test coverage attribution as JSON.
+pub struct CoverageAttributionReporter {
+    path: PathBuf,
+}
+
+/// A hit map resolved to the contract coverage metadata it belongs to.
+pub struct ResolvedHitMap {
+    pub contract_id: ContractId,
+    pub is_deployed_code: bool,
+}
+
+pub type ResolvedHitMaps = alloy_primitives::map::B256HashMap<ResolvedHitMap>;
+
+impl CoverageAttributionReporter {
+    /// Create a new attribution reporter.
+    pub const fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    /// Writes per-test coverage attribution for the provided outcome.
+    pub fn report(
+        &self,
+        report: &CoverageReport,
+        outcome: &TestOutcome,
+        resolved_hit_maps: &ResolvedHitMaps,
+    ) -> eyre::Result<()> {
+        let payload = AttributionReport {
+            version: 1,
+            tests: AttributionTests { report, outcome, resolved_hit_maps },
+        };
+        let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
+        serde_json::to_writer(&mut out, &payload)?;
+        writeln!(out)?;
+        out.flush()?;
+
+        sh_println!("Wrote coverage attribution report.")?;
+
+        Ok(())
+    }
+}
+
+/// Top-level JSON payload for per-test coverage attribution.
+#[derive(Serialize)]
+struct AttributionReport<'a> {
+    version: u8,
+    tests: AttributionTests<'a>,
+}
+
+/// Coverage attributed to a single executed test.
+#[derive(Serialize)]
+struct AttributionTest {
+    suite: String,
+    test: String,
+    status: &'static str,
+    kind: &'static str,
+    covered: Vec<AttributionItem>,
+}
+
+/// A source range covered by a test, with hit counts and item metadata.
+#[derive(Serialize)]
+struct AttributionItem {
+    source: String,
+    contract: String,
+    kind: &'static str,
+    /// The start of a 1-based, half-open line range.
+    line_start: u32,
+    /// The end of a 1-based, half-open line range.
+    line_end: u32,
+    /// The start of a 0-based, half-open byte range.
+    byte_start: u32,
+    /// The end of a 0-based, half-open byte range.
+    byte_end: u32,
+    hits: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_id: Option<u32>,
+}
+
+/// Serializer state for streaming attribution entries from test results.
+struct AttributionTests<'a> {
+    report: &'a CoverageReport,
+    outcome: &'a TestOutcome,
+    resolved_hit_maps: &'a ResolvedHitMaps,
+}
+
+impl Serialize for AttributionTests<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let len = self.outcome.results.values().map(|suite| suite.test_results.len()).sum();
+        let mut seq = serializer.serialize_seq(Some(len))?;
+
+        for (suite, suite_result) in &self.outcome.results {
+            for (test, result) in &suite_result.test_results {
+                seq.serialize_element(&AttributionTest {
+                    suite: suite.clone(),
+                    test: test.clone(),
+                    status: test_status_name(result.status),
+                    kind: test_kind_name(&result.kind),
+                    covered: attributed_items(self.report, self.resolved_hit_maps, result),
+                })?;
+            }
+        }
+
+        seq.end()
+    }
+}
+
+fn attributed_items(
+    report: &CoverageReport,
+    resolved_hit_maps: &ResolvedHitMaps,
+    result: &TestResult,
+) -> Vec<AttributionItem> {
+    type AttributionItemKey = (
+        String,
+        String,
+        &'static str,
+        u32,
+        u32,
+        u32,
+        u32,
+        Option<String>,
+        Option<u32>,
+        Option<u32>,
+    );
+
+    let mut items = BTreeMap::<AttributionItemKey, AttributionItem>::new();
+    let Some(hit_maps) = result.line_coverage.as_ref() else { return Vec::new() };
+
+    for (code_hash, map) in &hit_maps.0 {
+        let Some(resolved) = resolved_hit_maps.get(code_hash) else { continue };
+
+        for (item, hits) in
+            report.hit_items_for_hit_map(&resolved.contract_id, map, resolved.is_deployed_code)
+        {
+            let Some(source_path) = report
+                .source_paths
+                .get(&(resolved.contract_id.version.clone(), item.loc.source_id))
+            else {
+                continue;
+            };
+
+            let source = source_path.display().to_string();
+            let contract = item.loc.contract_name.to_string();
+            let (kind, function, branch_id, path_id) = coverage_item_kind_fields(&item.kind);
+            let line_start = item.loc.lines.start;
+            let line_end = item.loc.lines.end;
+            let byte_start = item.loc.bytes.start;
+            let byte_end = item.loc.bytes.end;
+            let key = (
+                source.clone(),
+                contract.clone(),
+                kind,
+                line_start,
+                line_end,
+                byte_start,
+                byte_end,
+                function.clone(),
+                branch_id,
+                path_id,
+            );
+
+            items.entry(key).and_modify(|item| item.hits += hits).or_insert(AttributionItem {
+                source,
+                contract,
+                kind,
+                line_start,
+                line_end,
+                byte_start,
+                byte_end,
+                hits,
+                function,
+                branch_id,
+                path_id,
+            });
+        }
+    }
+
+    items.into_values().collect()
+}
+
+fn coverage_item_kind_fields(
+    kind: &CoverageItemKind,
+) -> (&'static str, Option<String>, Option<u32>, Option<u32>) {
+    match kind {
+        CoverageItemKind::Line => ("line", None, None, None),
+        CoverageItemKind::Statement => ("statement", None, None, None),
+        CoverageItemKind::Branch { branch_id, path_id, .. } => {
+            ("branch", None, Some(*branch_id), Some(*path_id))
+        }
+        CoverageItemKind::Function { name } => ("function", Some(name.to_string()), None, None),
+    }
+}
+
+const fn test_status_name(status: TestStatus) -> &'static str {
+    match status {
+        TestStatus::Success => "success",
+        TestStatus::Failure => "failure",
+        TestStatus::Skipped => "skipped",
+    }
+}
+
+const fn test_kind_name(kind: &TestKind) -> &'static str {
+    match kind {
+        TestKind::Unit { .. } => "unit",
+        TestKind::Fuzz { .. } => "fuzz",
+        TestKind::Invariant { .. } => "invariant",
+        TestKind::Table { .. } => "table",
+        TestKind::Symbolic { .. } => "symbolic",
+        TestKind::Replay { .. } => "replay",
+    }
+}
+
 /// A super verbose reporter for debugging coverage while it is still unstable.
 pub struct DebugReporter;
 
@@ -241,21 +460,31 @@ impl CoverageReporter for DebugReporter {
                 continue;
             }
 
-            sh_println!("Anchors for {contract_id}:")?;
             let anchors = cta
                 .iter()
                 .map(|anchor| (false, anchor))
-                .chain(rta.iter().map(|anchor| (true, anchor)));
-            for (is_runtime, anchor) in anchors {
-                let kind = if is_runtime { " runtime" } else { "creation" };
-                sh_println!(
-                    "- {kind} {anchor}: {}",
-                    report
+                .chain(rta.iter().map(|anchor| (true, anchor)))
+                .filter_map(|(is_runtime, anchor)| {
+                    let item = report
                         .analyses
                         .get(&contract_id.version)
-                        .and_then(|items| items.get(anchor.item_id))
-                        .map_or_else(|| "None".to_owned(), |item| item.to_string())
-                )?;
+                        .and_then(|items| items.get(anchor.item_id))?;
+                    // Source filters retain analyses to keep anchor item IDs stable, so debug
+                    // output must apply the same reportable-source filter as other reporters.
+                    report
+                        .source_paths
+                        .contains_key(&(contract_id.version.clone(), item.loc.source_id))
+                        .then_some((is_runtime, anchor, item))
+                })
+                .collect::<Vec<_>>();
+            if anchors.is_empty() {
+                continue;
+            }
+
+            sh_println!("Anchors for {contract_id}:")?;
+            for (is_runtime, anchor, item) in anchors {
+                let kind = if is_runtime { " runtime" } else { "creation" };
+                sh_println!("- {kind} {anchor}: {item}")?;
             }
             sh_println!()?;
         }

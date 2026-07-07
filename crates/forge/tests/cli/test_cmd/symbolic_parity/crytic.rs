@@ -74,14 +74,16 @@ contract CryticPropertiesErc20Parity is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/CryticPropertiesErc20Parity.t.sol:CryticPropertiesErc20Parity
-[FAIL: symbolic invariant counterexample]
-	[Sequence] (original: 1, shrunk: 1)
+[FAIL: [..]]
+	[Sequence] (original: [..], shrunk: 1)
 		[SENDER] addr=[test/CryticPropertiesErc20Parity.t.sol:BuggyToken]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=transfer(address,uint256) [ARGS]
- invariant_sumOfBalances() ([METRICS])
+ invariant_sumOfBalances() (runs: [..], calls: [..], reverts: [..])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });

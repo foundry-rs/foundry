@@ -126,14 +126,36 @@ impl InlineConfig {
         contract: &str,
         function: &str,
     ) -> Option<NetworkVariant> {
-        let data = self.provide(contract, function).data().ok()?;
-        let dict = data.get(profile).or_else(|| data.get(&Profile::Default))?;
-        if let Some(Value::Dict(_, networks)) = dict.get("networks")
-            && let Some(Value::String(_, s)) = networks.get("network")
-        {
-            return s.parse().ok();
-        }
-        None
+        inline_value_for_profile(
+            profile,
+            &[self.get_function(contract, function), self.get_contract(contract)],
+            |dict| {
+                if let Some(Value::Dict(_, networks)) = dict.get("networks")
+                    && let Some(Value::String(_, s)) = networks.get("network")
+                {
+                    return s.parse().ok();
+                }
+                None
+            },
+        )
+    }
+
+    /// Returns whether contract-level inline config enables symbolic execution.
+    pub fn contract_symbolic_enabled(
+        &self,
+        profile: &Profile,
+        contract: &str,
+        default: bool,
+    ) -> bool {
+        inline_value_for_profile(profile, &[self.get_contract(contract)], |dict| {
+            if let Some(Value::Dict(_, symbolic)) = dict.get("symbolic")
+                && let Some(Value::Bool(_, enabled)) = symbolic.get("enabled")
+            {
+                return Some(*enabled);
+            }
+            None
+        })
+        .unwrap_or(default)
     }
 
     /// Returns all distinct [`NetworkVariant`]s referenced in any inline config annotation.
@@ -162,6 +184,26 @@ impl InlineConfig {
         let key = (contract.to_string(), function.to_string());
         self.fn_level.get(&key)
     }
+}
+
+fn inline_value_for_profile<T>(
+    profile: &Profile,
+    levels: &[Option<&DataMap>],
+    value_from_dict: impl Fn(&Dict) -> Option<T> + Copy,
+) -> Option<T> {
+    inline_value_for_exact_profile(profile, levels, value_from_dict).or_else(|| {
+        (profile != Profile::Default)
+            .then(|| inline_value_for_exact_profile(&Profile::Default, levels, value_from_dict))
+            .flatten()
+    })
+}
+
+fn inline_value_for_exact_profile<T>(
+    profile: &Profile,
+    levels: &[Option<&DataMap>],
+    value_from_dict: impl Fn(&Dict) -> Option<T> + Copy,
+) -> Option<T> {
+    levels.iter().find_map(|data| data.and_then(|data| data.get(profile)).and_then(value_from_dict))
 }
 
 fn parse_config_values<'a>(
@@ -322,5 +364,125 @@ forge-config: default.symbolic.default_dynamic_length = 4
 
         assert_eq!(config.symbolic.array_lengths, vec![3]);
         assert_eq!(config.symbolic.default_dynamic_length, 4);
+    }
+
+    #[test]
+    fn merge_inline_provider_uses_selected_profile() {
+        let mut inline = InlineConfig::new();
+        inline
+            .insert(&natspec(
+                r#"
+forge-config: default.fuzz.runs = 1
+forge-config: ci.fuzz.runs = 2
+"#,
+            ))
+            .unwrap();
+
+        let profile = Profile::new("ci");
+        let config = Config {
+            profile: profile.clone(),
+            profiles: vec![Profile::Default, profile],
+            ..Default::default()
+        }
+        .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+        .unwrap();
+
+        assert_eq!(config.fuzz.runs, 2);
+    }
+
+    #[test]
+    fn merge_inline_provider_preserves_root_for_default_profile_fallback() {
+        let mut inline = InlineConfig::new();
+        inline.insert(&natspec("forge-config: default.isolate = false")).unwrap();
+
+        let profile = Profile::new("ci");
+        let root = std::path::PathBuf::from("project-root");
+        let config = Config {
+            profile: profile.clone(),
+            profiles: vec![Profile::Default, profile],
+            root: root.clone(),
+            ..Default::default()
+        }
+        .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+        .unwrap();
+
+        assert_eq!(config.root, root);
+        assert!(!config.isolate);
+    }
+
+    #[test]
+    fn contract_symbolic_enabled_reads_contract_inline_config() {
+        let mut inline = InlineConfig::new();
+        inline
+            .insert(&NatSpec {
+                contract: "test/Symbolic.t.sol:Symbolic".to_string(),
+                function: None,
+                line: "10:5".to_string(),
+                docs: r#"
+forge-config: default.symbolic.enabled = true
+forge-config: ci.symbolic.enabled = false
+"#
+                .to_string(),
+            })
+            .unwrap();
+
+        assert!(inline.contract_symbolic_enabled(
+            &Profile::new("default"),
+            "test/Symbolic.t.sol:Symbolic",
+            false,
+        ));
+        assert!(!inline.contract_symbolic_enabled(
+            &Profile::new("ci"),
+            "test/Symbolic.t.sol:Symbolic",
+            true,
+        ));
+        assert!(inline.contract_symbolic_enabled(
+            &Profile::new("nightly"),
+            "test/Symbolic.t.sol:Symbolic",
+            false,
+        ));
+        assert!(!inline.contract_symbolic_enabled(
+            &Profile::new("default"),
+            "test/Other.t.sol:Other",
+            false,
+        ));
+    }
+
+    #[test]
+    fn network_for_preserves_profile_then_level_precedence() {
+        let mut inline = InlineConfig::new();
+        inline
+            .insert(&NatSpec {
+                contract: "test/Network.t.sol:Network".to_string(),
+                function: None,
+                line: "10:5".to_string(),
+                docs: r#"
+forge-config: default.networks.network = "optimism"
+forge-config: ci.networks.network = "tempo"
+"#
+                .to_string(),
+            })
+            .unwrap();
+        inline
+            .insert(&NatSpec {
+                contract: "test/Network.t.sol:Network".to_string(),
+                function: Some("testNetwork".to_string()),
+                line: "20:5".to_string(),
+                docs: r#"forge-config: default.networks.network = "ethereum""#.to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            inline.network_for(
+                &Profile::new("default"),
+                "test/Network.t.sol:Network",
+                "testNetwork"
+            ),
+            Some(NetworkVariant::Ethereum),
+        );
+        assert_eq!(
+            inline.network_for(&Profile::new("ci"), "test/Network.t.sol:Network", "testNetwork"),
+            Some(NetworkVariant::Tempo),
+        );
     }
 }
