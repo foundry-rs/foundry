@@ -11,7 +11,12 @@ use foundry_common::{
     selectors::{SelectorImportData, import_selectors},
     shell,
 };
-use foundry_compilers::{Project, info::ContractInfo, multi::MultiCompiler};
+use foundry_compilers::{
+    Project,
+    artifacts::output_selection::{ContractOutputSelection, EvmOutputSelection, OutputSelection},
+    info::ContractInfo,
+    multi::MultiCompiler,
+};
 use std::{collections::BTreeMap, fs::canonicalize};
 
 /// CLI arguments for `forge selectors`.
@@ -163,7 +168,18 @@ impl SelectorsSubcommands {
             }
             Self::Collision { mut first_contract, mut second_contract, build } => {
                 // Compile the project with the two contracts included
-                let project = build.project()?;
+                let user_extra_output = !build.compiler.extra_output.is_empty()
+                    || !build.compiler.extra_output_files.is_empty();
+                let mut project = build.project()?;
+                if !user_extra_output && !project.build_info {
+                    project.no_artifacts = true;
+                    project.update_output_selection(|selection| {
+                        *selection = OutputSelection::common_output_selection([
+                            ContractOutputSelection::Evm(EvmOutputSelection::MethodIdentifiers)
+                                .to_string(),
+                        ]);
+                    });
+                }
                 let mut compiler = ProjectCompiler::new().quiet(true);
 
                 if let Some(contract_path) = &mut first_contract.path {
@@ -435,5 +451,9 @@ impl SelectorsSubcommands {
 
 fn project_from_paths(project_paths: ProjectPathOpts) -> Result<Project<MultiCompiler>> {
     let config = BuildOpts { project_paths, ..Default::default() }.load_config()?;
-    Ok(config.project()?)
+    let mut project = config.project()?;
+    if !project.build_info {
+        project.no_artifacts = true;
+    }
+    Ok(project)
 }
