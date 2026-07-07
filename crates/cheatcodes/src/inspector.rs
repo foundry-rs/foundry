@@ -27,6 +27,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_rpc_types::AccessList;
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
@@ -355,6 +356,10 @@ pub struct GasMetering {
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
 
+    /// Cache of the amount of gas used in previous call or create frame.
+    /// This is used by the `lastFrameGas` cheatcode.
+    pub last_frame_gas: Option<crate::Vm::Gas>,
+
     /// True if gas recording is enabled.
     pub recording: bool,
     /// The gas used in the last frame.
@@ -631,6 +636,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
+    /// Parsed secp256k1 private-key signers for repeated `vm.addr` / `vm.sign` calls.
+    pub private_key_signers: HashMap<U256, PrivateKeySigner>,
     /// Signatures identifier for decoding events and functions
     signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
     /// Used to determine whether the broadcasted call has dynamic gas limit.
@@ -725,6 +732,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
+            private_key_signers: Default::default(),
             signatures_identifier: Default::default(),
             dynamic_gas_limit: Default::default(),
             execution_evm_version: None,
@@ -1327,6 +1335,50 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    #[inline(always)]
+    pub fn has_step_hooks(&self) -> bool {
+        self.broadcast.is_some()
+            || self.gas_metering.paused
+            || self.gas_metering.reset
+            || self.recording_accesses
+            || self.recorded_account_diffs_stack.is_some()
+            || !self.allowed_mem_writes.is_empty()
+            || self.mapping_slots.is_some()
+            || self.gas_metering.recording
+            || self.has_active_env_overrides()
+    }
+
+    #[inline(always)]
+    pub fn has_step_end_hooks(&self) -> bool {
+        self.gas_metering.paused
+            || self.gas_metering.touched
+            || self.arbitrary_storage.is_some()
+            || self.has_active_env_overrides()
+    }
+
+    #[inline(always)]
+    pub fn has_log_hooks(&self) -> bool {
+        !self.expected_emits.is_empty() || self.recorded_logs.is_some()
+    }
+
+    #[inline(always)]
+    pub fn has_recording_accesses_only_step_hook(&self) -> bool {
+        self.recording_accesses
+            && self.broadcast.is_none()
+            && !self.gas_metering.paused
+            && !self.gas_metering.reset
+            && self.recorded_account_diffs_stack.is_none()
+            && self.allowed_mem_writes.is_empty()
+            && self.mapping_slots.is_none()
+            && !self.gas_metering.recording
+            && !self.has_active_env_overrides()
+    }
+
+    #[inline(always)]
+    fn has_active_env_overrides(&self) -> bool {
+        self.env_overrides.values().any(EnvOverrides::is_any_set)
+    }
+
     /// Returns struct definitions from the analysis, if available.
     pub fn struct_defs(&self) -> Option<&foundry_common::fmt::StructDefinitions> {
         self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok())
@@ -1361,6 +1413,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.pc = interpreter.bytecode.pc();
+
+        if !self.has_step_hooks() {
+            return;
+        }
 
         if self.broadcast.is_some() {
             self.set_gas_limit_type(interpreter);
@@ -1436,6 +1492,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
+        if !self.has_step_end_hooks() {
+            return;
+        }
+
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1654,6 +1714,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
                 if needs_processing {
                     let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                    let clear_last_frame_gas =
+                        matches!(expected_revert.kind, ExpectedRevertKind::Default);
                     return match revert_handlers::handle_expect_revert(
                         cheatcode_call,
                         false,
@@ -1672,6 +1734,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
                                 self.expected_revert = Some(expected_revert);
+                            }
+                            if clear_last_frame_gas {
+                                self.gas_metering.last_frame_gas = None;
                             }
                             outcome.result.result = InstructionResult::Return;
                             outcome.result.output = retdata;
@@ -1695,16 +1760,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
-        // Record the gas usage of the call, this allows the `lastCallGas` cheatcode to
-        // retrieve the gas usage of the last call.
+        // Record the gas usage of the call, this allows the `lastFrameGas` cheatcode to
+        // retrieve the gas usage of the last call or create.
         let gas = outcome.result.gas;
-        self.gas_metering.last_call_gas = Some(crate::Vm::Gas {
+        let frame_gas = crate::Vm::Gas {
             gasLimit: gas.limit(),
             gasTotalUsed: gas.total_gas_spent(),
             gasMemoryUsed: 0,
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
-        });
+        };
+        self.gas_metering.last_call_gas = Some(frame_gas.clone());
+        self.gas_metering.last_frame_gas = Some(frame_gas);
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
@@ -1816,7 +1883,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 .find(|(expected, _)| !expected.found && expected.count > 0)
             {
                 outcome.result.result = InstructionResult::Revert;
-                let error_msg = expected.mismatch_error.as_deref().unwrap_or("log != expected log");
+                let mismatch_error = expected.mismatch_error.clone();
+                let expected_log = expected.log.clone();
+                let checks = expected.checks;
+                let anonymous = expected.anonymous;
+                let error_msg = mismatch_error
+                    .as_ref()
+                    .map(|mismatch| {
+                        mismatch.to_error_msg(self, checks, expected_log.as_ref(), anonymous)
+                    })
+                    .unwrap_or_else(|| "log != expected log".to_string());
                 outcome.result.output = error_msg.abi_encode().into();
                 return;
             }
@@ -2166,6 +2242,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         outcome.result.result = InstructionResult::Return;
                         outcome.result.output = retdata;
                         outcome.address = address;
+                        self.gas_metering.last_frame_gas = None;
                     }
                     Err(err) => {
                         outcome.result.result = InstructionResult::Revert;
@@ -2173,6 +2250,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     }
                 };
             }
+        }
+
+        if curr_depth > 0 {
+            // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
+            // retrieve the gas usage of the last call or create.
+            let gas = outcome.result.gas;
+            self.gas_metering.last_frame_gas = Some(crate::Vm::Gas {
+                gasLimit: gas.limit(),
+                gasTotalUsed: gas.total_gas_spent(),
+                gasMemoryUsed: 0,
+                gasRefunded: gas.refunded(),
+                gasRemaining: gas.remaining(),
+            });
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -2548,15 +2638,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let address = interpreter.input.target_address;
 
                 // Try to include present value for informational purposes, otherwise assume
-                // it's not set (zero value)
-                // Try to load the account and the slot's present value
-                let present_value = if ecx.journal_mut().load_account(address).is_ok()
-                    && let Some(previous) = ecx.sload(address, key)
-                {
-                    previous.data
-                } else {
-                    U256::ZERO
-                };
+                // it's not set (zero value). Revert the checkpoint so this read does not warm the
+                // slot for the actual SLOAD opcode.
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let present_value =
+                    ecx.sload(address, key).map(|previous| previous.data).unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
                 let access = crate::Vm::StorageAccess {
                     account: interpreter.input.target_address,
                     slot: key.into(),
@@ -2576,14 +2663,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let value = try_or_return!(interpreter.stack.peek(1));
                 let address = interpreter.input.target_address;
                 // Try to load the account and the slot's previous value, otherwise, assume it's
-                // not set (zero value)
-                let previous_value = if ecx.journal_mut().load_account(address).is_ok()
-                    && let Some(previous) = ecx.sload(address, key)
-                {
-                    previous.data
-                } else {
-                    U256::ZERO
-                };
+                // not set (zero value). Revert the checkpoint so this read does not warm the slot
+                // for the actual SSTORE opcode.
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let previous_value =
+                    ecx.sload(address, key).map(|previous| previous.data).unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
 
                 let access = crate::Vm::StorageAccess {
                     account: address,
@@ -2609,12 +2694,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 };
                 let address =
                     Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
-                let (initialized, balance, nonce) =
-                    if let Ok(acc) = ecx.journal_mut().load_account(address) {
-                        (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
-                    } else {
-                        (false, U256::ZERO, 0)
-                    };
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let (initialized, balance, nonce) = ecx
+                    .journal_mut()
+                    .load_account(address)
+                    .map(|acc| (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce))
+                    .unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
                 let curr_depth =
                     ecx.journal().depth().try_into().expect("journaled state depth exceeds u64");
                 let account_access = crate::Vm::AccountAccess {
@@ -3057,5 +3143,79 @@ mod tests {
     fn flag_on_with_broadcast_depth_match_returns_true() {
         let mut cheats = cheats(true, Some(broadcast_at(1)));
         assert!(cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+
+    #[test]
+    fn default_cheatcodes_have_no_opcode_hooks() {
+        let cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+        assert!(!cheats.has_step_hooks());
+        assert!(!cheats.has_step_end_hooks());
+        assert!(!cheats.has_log_hooks());
+    }
+
+    #[test]
+    fn active_cheatcode_state_enables_opcode_hooks() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+
+        cheats.recording_accesses = true;
+        assert!(cheats.has_step_hooks());
+        assert!(!cheats.has_step_end_hooks());
+        assert!(cheats.has_recording_accesses_only_step_hook());
+
+        cheats.recording_accesses = false;
+        cheats.gas_metering.touched = true;
+        assert!(!cheats.has_step_hooks());
+        assert!(cheats.has_step_end_hooks());
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+    }
+
+    #[test]
+    fn mixed_step_hooks_disable_record_access_fast_path() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+        cheats.recording_accesses = true;
+
+        cheats.gas_metering.reset = true;
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+
+        cheats.gas_metering.reset = false;
+        cheats.env_overrides.insert(None, EnvOverrides { basefee: Some(1), ..Default::default() });
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+    }
+
+    #[test]
+    fn inactive_env_override_entries_do_not_enable_opcode_hooks() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+        cheats.env_overrides.insert(None, EnvOverrides::default());
+
+        assert!(!cheats.has_step_hooks());
+        assert!(!cheats.has_step_end_hooks());
+
+        cheats.env_overrides.get_mut(&None).unwrap().basefee = Some(1);
+        assert!(cheats.has_step_hooks());
+        assert!(cheats.has_step_end_hooks());
+    }
+
+    #[test]
+    fn active_log_state_enables_log_hooks() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+
+        cheats.recorded_logs = Some(Default::default());
+        assert!(cheats.has_log_hooks());
+
+        cheats.recorded_logs = None;
+        cheats.expected_emits.push_back((
+            expect::ExpectedEmit {
+                depth: 0,
+                log: None,
+                checks: [false; 5],
+                address: None,
+                anonymous: false,
+                found: false,
+                count: 1,
+                mismatch_error: None,
+            },
+            Default::default(),
+        ));
+        assert!(cheats.has_log_hooks());
     }
 }

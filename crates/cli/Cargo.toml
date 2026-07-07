@@ -37,7 +37,6 @@ alloy-chains.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }
 
 cfg-if = "1.0"
-chrono.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
 clap_complete_nushell.workspace = true
@@ -55,7 +54,6 @@ serde_json.workspace = true
 serde.workspace = true
 toml.workspace = true
 strsim = "0.11"
-strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true

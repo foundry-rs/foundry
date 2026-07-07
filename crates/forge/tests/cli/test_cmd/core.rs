@@ -99,310 +99,191 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 "#]]);
 });
 
-// `forge --machine test` on passing tests: NDJSON stream + success envelope.
-// Asserts record shape, per-suite ordering, and envelope payload.
-forgetest_init!(machine_mode_emits_ndjson_stream, |prj, cmd| {
-    use std::collections::HashSet;
+forgetest_init!(evm_profile_no_open_writes_profile_and_exits, |prj, cmd| {
     prj.add_test(
-        "MachinePass.t.sol",
+        "EvmProfileNoOpen.t.sol",
         r#"
-import "forge-std/Test.sol";
-contract MachinePassTest is Test {
-    function testAlwaysPasses() public { assertTrue(true); }
-    function testAlsoPasses() public { assertEq(uint256(1), uint256(1)); }
+contract EvmProfileNoOpenTest {
+    function testProfile() public {}
 }
 "#,
     );
-    let assert = cmd.args(["--machine", "test"]).assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
 
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-    assert!(lines.len() >= 2, "expected stream + envelope lines, got: {stdout}");
+    cmd.args(["test", "--match-test", "testProfile", "--evm-profile", "--no-open"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Profile saved to cache/evm_profile_EvmProfileNoOpenTest_testProfile.json
 
-    // Per-suite lifecycle: every opened suite is closed exactly once, and no
-    // record of any kind targets a suite after its `suite_finished`.
-    let mut saw_test_result = false;
-    let mut opened_suites: HashSet<String> = HashSet::new();
-    let mut closed_suites: HashSet<String> = HashSet::new();
-    for line in &lines[..lines.len() - 1] {
-        let v: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("non-json stream line: {line}: {e}"));
-        assert_eq!(v["schema_id"], "foundry:forge.test.event@v1");
-        assert_eq!(v["command_id"], "forge.test");
-        let ts = v["ts"].as_str().unwrap_or_else(|| panic!("missing ts on line: {line}"));
-        chrono::DateTime::parse_from_rfc3339(ts)
-            .unwrap_or_else(|e| panic!("ts `{ts}` not RFC 3339 on line {line}: {e}"));
-        let suite = v["suite"].as_str().unwrap_or_else(|| panic!("missing suite: {line}"));
-        let kind = v["kind"].as_str().unwrap_or("");
-        assert!(
-            !closed_suites.contains(suite),
-            "`{kind}` for `{suite}` after its suite_finished: {line}"
-        );
-        opened_suites.insert(suite.to_string());
-        match kind {
-            "test_result" => saw_test_result = true,
-            "suite_finished" => {
-                assert!(
-                    closed_suites.insert(suite.to_string()),
-                    "duplicate suite_finished for `{suite}`: {line}"
-                );
-            }
-            "warning" => {}
-            other => panic!("unexpected event kind `{other}` on line: {line}"),
-        }
+"#]]);
+
+    let profile_path = prj.root().join("cache/evm_profile_EvmProfileNoOpenTest_testProfile.json");
+    let profile: Value = serde_json::from_str(&std::fs::read_to_string(profile_path).unwrap())
+        .expect("profile should be valid JSON");
+    assert_eq!(profile["exporter"], "foundry");
+    assert_eq!(profile["profiles"][0]["type"], "evented");
+});
+
+forgetest_init!(evm_profile_conflicts_with_early_return_outputs, |_prj, cmd| {
+    cmd.args(["test", "--evm-profile", "--json"]).assert_failure().stderr_eq(str![[r#"
+error: the argument '--evm-profile [<FORMAT>]' cannot be used with '--json'
+
+Usage: forge[..] test --evm-profile [<FORMAT>] [PATH]
+
+For more information, try '--help'.
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--evm-profile", "--junit"]).assert_failure().stderr_eq(str![[
+        r#"
+error: the argument '--evm-profile [<FORMAT>]' cannot be used with '--junit'
+
+Usage: forge[..] test --evm-profile [<FORMAT>] [PATH]
+
+For more information, try '--help'.
+
+"#
+    ]]);
+
+    cmd.forge_fuse().args(["test", "--evm-profile", "--list"]).assert_failure().stderr_eq(str![[
+        r#"
+error: the argument '--evm-profile [<FORMAT>]' cannot be used with '--list'
+
+Usage: forge[..] test --evm-profile [<FORMAT>] [PATH]
+
+For more information, try '--help'.
+
+"#
+    ]]);
+});
+
+forgetest_init!(flame_outputs_conflict_with_early_return_outputs, |_prj, cmd| {
+    cmd.args(["test", "--flamegraph", "--json"]).assert_failure().stderr_eq(str![[r#"
+error: the argument '--flamegraph' cannot be used with '--json'
+
+Usage: forge[..] test --flamegraph [PATH]
+
+For more information, try '--help'.
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--flamechart", "--list"]).assert_failure().stderr_eq(str![[
+        r#"
+error: the argument '--flamechart' cannot be used with '--list'
+
+Usage: forge[..] test --flamechart [PATH]
+
+For more information, try '--help'.
+
+"#
+    ]]);
+});
+
+forgetest_init!(test_list_outputs_matching_tests, |prj, cmd| {
+    prj.add_test(
+        "ListTests.t.sol",
+        r#"
+contract ListTests {
+    function test_alpha() public pure {}
+    function test_beta() public pure {}
+    function testFuzz_value(uint256 value) public pure {
+        value;
     }
-    assert!(saw_test_result, "missing any test_result event in: {stdout}");
-    assert_eq!(
-        opened_suites, closed_suites,
-        "every opened suite must be terminated by a suite_finished"
-    );
-
-    // Terminal envelope.
-    let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
-    assert_eq!(envelope["schema_version"], 1);
-    assert_eq!(envelope["success"], true);
-    assert!(envelope["data"]["passed"].as_u64().is_some(), "missing passed: {envelope}");
-    assert!(envelope["data"]["failed"].as_u64().is_some(), "missing failed: {envelope}");
-    assert!(envelope["data"]["suites"].as_u64().is_some(), "missing suites: {envelope}");
-});
-
-// Failing test → error envelope + exit `TestFailure (5)`.
-forgetest_init!(machine_mode_failing_test_emits_error_envelope, |prj, cmd| {
-    prj.add_test(
-        "MachineFail.t.sol",
-        r#"
-import "forge-std/Test.sol";
-contract MachineFailTest is Test {
-    function testAlwaysFails() public { assertTrue(false); }
 }
 "#,
     );
-    let assert = cmd.args(["--machine", "test"]).assert_failure();
-    assert_eq!(assert.get_output().status.code(), Some(5));
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-    let envelope: Value = serde_json::from_str(lines.last().unwrap())
-        .unwrap_or_else(|e| panic!("trailing line not envelope: {stdout}: {e}"));
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "test.failed");
-    let failed = envelope["errors"][0]["details"]["failed"].as_u64().unwrap_or(0);
-    assert!(failed >= 1, "expected at least one failed test in details: {envelope}");
-});
-
-// Rejection envelope: stable `code`, exit code, structured `details.unsupported_flags`.
-forgetest_init!(machine_mode_rejects_unsupported_flags, |_prj, cmd| {
-    let assert = cmd.args(["--machine", "test", "--gas-report"]).assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim())
-        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("--gas-report"), "missing --gas-report mention: {envelope}");
-    assert_eq!(
-        envelope["errors"][0]["details"]["unsupported_flags"],
-        serde_json::json!(["--gas-report"]),
-        "missing structured unsupported_flags details: {envelope}"
-    );
-});
-
-forgetest_init!(machine_mode_rejects_mutation_testing, |_prj, cmd| {
-    let assert = cmd.args(["--machine", "test", "--mutate"]).assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim())
-        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("--mutate"), "missing --mutate mention: {envelope}");
-    assert_eq!(
-        envelope["errors"][0]["details"]["unsupported_flags"],
-        serde_json::json!(["--mutate"]),
-        "missing structured unsupported_flags details: {envelope}"
-    );
-});
-
-// `--allow-failure`: success envelope with `data.failed > 0` and exit 0.
-forgetest_init!(machine_mode_allow_failure_emits_success_envelope, |prj, cmd| {
     prj.add_test(
-        "MachineAllowFailure.t.sol",
+        "ConstructorArgListTests.t.sol",
         r#"
-import "forge-std/Test.sol";
-contract MachineAllowFailureTest is Test {
-    function testAlwaysFails() public { assertTrue(false); }
-}
-"#,
-    );
-    let assert = cmd.args(["--machine", "test", "--allow-failure"]).assert_success();
-    assert_eq!(assert.get_output().status.code(), Some(0));
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-    let envelope: Value = serde_json::from_str(lines.last().unwrap())
-        .unwrap_or_else(|e| panic!("trailing line not envelope: {stdout}: {e}"));
-    assert_eq!(envelope["success"], true);
-    assert_eq!(envelope["errors"], serde_json::json!([]));
-    let failed = envelope["data"]["failed"].as_u64().unwrap_or(0);
-    assert!(failed >= 1, "expected at least one tolerated failure in data: {envelope}");
-});
-
-// Main-compile errors → `compiler.solc.error` + `Build (4)`, not `cli.unknown`.
-forgetest_init!(machine_mode_compile_failure_emits_typed_envelope, |prj, cmd| {
-    prj.add_test(
-        "BadCompile.t.sol",
-        r#"
-import "forge-std/Test.sol";
-contract BadCompileTest is Test {
-    function testWillNotCompile() public { this is not valid solidity; }
-}
-"#,
-    );
-    let assert = cmd.args(["--machine", "test"]).assert_failure();
-    assert_eq!(assert.get_output().status.code(), Some(4));
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim())
-        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "compiler.solc.error");
-});
-
-// Same contract with a filter so the precompile path runs; same typed envelope.
-forgetest_init!(machine_mode_precompile_failure_emits_typed_envelope, |prj, cmd| {
-    prj.add_test(
-        "BadCompilePrecompile.t.sol",
-        r#"
-import "forge-std/Test.sol";
-contract BadCompilePrecompileTest is Test {
-    function testWillNotCompile() public { this is not valid solidity; }
-}
-"#,
-    );
-    let assert =
-        cmd.args(["--machine", "test", "--match-test", "testWillNotCompile"]).assert_failure();
-    assert_eq!(assert.get_output().status.code(), Some(4));
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim())
-        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "compiler.solc.error");
-});
-
-// `live_logs = true` in foundry.toml is silently overridden under `--machine`.
-forgetest_init!(machine_mode_overrides_live_logs_config, |prj, cmd| {
-    prj.update_config(|c| c.live_logs = true);
-    prj.add_test(
-        "LiveLogs.t.sol",
-        r#"
-import "forge-std/Test.sol";
-import "forge-std/console.sol";
-contract LiveLogsTest is Test {
-    function testLogs() public { console.log("HUMAN_PROSE_LINE"); assertTrue(true); }
-}
-"#,
-    );
-    let assert = cmd.args(["--machine", "test"]).assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(
-        !stdout.contains("HUMAN_PROSE_LINE"),
-        "raw console.log leaked to stdout under --machine: {stdout}"
-    );
-    for line in stdout.lines().filter(|l| !l.is_empty()) {
-        serde_json::from_str::<Value>(line)
-            .unwrap_or_else(|e| panic!("non-json stdout line `{line}`: {e}"));
+contract ConstructorArgListTests {
+    constructor(uint256 value) {
+        value;
     }
-});
 
-// `show_progress = true` in foundry.toml is silently overridden under `--machine`.
-forgetest_init!(machine_mode_overrides_show_progress_config, |prj, cmd| {
-    prj.update_config(|c| c.show_progress = true);
-    prj.add_test(
-        "Progress.t.sol",
-        r#"
-import "forge-std/Test.sol";
-contract ProgressTest is Test {
-    function testOne() public { assertTrue(true); }
-    function testTwo() public { assertTrue(true); }
+    function test_constructor_arg() public pure {}
 }
 "#,
     );
-    let assert = cmd.args(["--machine", "test"]).assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    for line in stdout.lines().filter(|l| !l.is_empty()) {
-        serde_json::from_str::<Value>(line)
-            .unwrap_or_else(|e| panic!("non-json stdout line `{line}`: {e}"));
-    }
+
+    cmd.args(["test", "--list", "--match-test", "test_"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+test/ListTests.t.sol
+  ListTests
+    test_alpha
+    test_beta
+
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--list", "--match-test", "test_alpha", "--json"])
+        .assert_success()
+        .stdout_eq("{\"test/ListTests.t.sol\":{\"ListTests\":[\"test_alpha\"]}}\n");
 });
 
-// `--watch` is dispatched before `cmd.run()`; guards the top-level preflight.
-forgetest_init!(machine_mode_rejects_watch, |_prj, cmd| {
-    let assert = cmd.args(["--machine", "test", "--watch"]).assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim())
-        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("--watch"), "missing --watch mention: {envelope}");
-});
-
-// Unadopted forge subcommands (snapshot, coverage, ...) must reject `--machine`
-// at the top level — otherwise they'd inherit TestArgs's stream emission and
-// spoof `command_id: forge.test` without ever emitting a terminal envelope.
-forgetest_init!(machine_mode_rejects_unadopted_subcommand, |_prj, cmd| {
-    let assert = cmd.args(["--machine", "snapshot"]).assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim())
-        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    assert_eq!(envelope["errors"][0]["details"]["subcommand"], "snapshot");
-    // No spurious stream events leaked before the rejection envelope.
-    assert!(
-        !stdout.contains("forge.test.event"),
-        "unadopted subcommand emitted stream events: {stdout}"
-    );
-});
-
-// Warning duality: same `code`/`message`/`suite` on stream + envelope surfaces.
-forgetest_init!(machine_mode_warning_appears_in_stream_and_envelope, |prj, cmd| {
-    // Mis-cased `setup()` triggers a SuiteResult warning.
+forgetest_init!(evm_profile_requires_execution_trace, |prj, cmd| {
     prj.add_test(
-        "MachineWarning.t.sol",
+        "EvmProfileNoExecutionTrace.t.sol",
         r#"
-import "forge-std/Test.sol";
-contract MachineWarningTest is Test {
-    function setup() public {}
-    function testPasses() public { assertTrue(true); }
+contract EvmProfileNoExecutionTraceTest {
+    function setUp() public {
+        revert("setUp failed");
+    }
+
+    function testProfile() public {}
 }
 "#,
     );
-    let assert = cmd.args(["--machine", "test"]).assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
 
-    let mut stream_warning: Option<Value> = None;
-    for line in &lines[..lines.len() - 1] {
-        let v: Value = serde_json::from_str(line).unwrap();
-        if v["kind"] == "warning" {
-            stream_warning = Some(v);
-            break;
-        }
+    cmd.args(["test", "--match-test", "testProfile", "--evm-profile", "--no-open"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: cannot generate EVM profile for EvmProfileNoExecutionTraceTest::setUp: no execution trace (test may have failed in setUp/constructor or been skipped)
+
+"#]]);
+});
+
+forgetest_init!(evm_profile_errors_when_no_tests_match, |prj, cmd| {
+    prj.add_test(
+        "EvmProfileNoMatch.t.sol",
+        r#"
+contract EvmProfileNoMatchTest {
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "missing", "--evm-profile", "--no-open"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+Error: cannot generate EVM profile: no tests were executed
+
+"#]]);
+});
+
+forgetest_init!(flamegraph_requires_execution_trace, |prj, cmd| {
+    prj.add_test(
+        "FlamegraphNoExecutionTrace.t.sol",
+        r#"
+contract FlamegraphNoExecutionTraceTest {
+    function setUp() public {
+        revert("setUp failed");
     }
-    let stream_warning = stream_warning.expect("no stream warning event emitted");
-    assert_eq!(stream_warning["code"], "test.warning");
-    let stream_message = stream_warning["message"].as_str().unwrap();
-    let stream_suite = stream_warning["suite"].as_str().unwrap();
 
-    let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
-    let envelope_warning = envelope["warnings"]
-        .as_array()
-        .and_then(|ws| ws.iter().find(|w| w["code"] == "test.warning"))
-        .expect("envelope warnings[] missing test.warning entry");
-    assert_eq!(envelope_warning["message"].as_str().unwrap(), stream_message);
-    assert_eq!(envelope_warning["details"]["suite"].as_str().unwrap(), stream_suite);
+    function testProfile() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testProfile", "--flamegraph"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: cannot generate flamegraph for FlamegraphNoExecutionTraceTest::setUp: no execution trace (test may have failed in setUp/constructor or been skipped)
+
+"#]]);
 });
 
 forgetest_init!(payment_failure, |prj, cmd| {

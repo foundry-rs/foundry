@@ -290,6 +290,8 @@ pub struct BlockchainStorage<N: Network> {
     pub best_number: u64,
     /// genesis hash of the chain
     pub genesis_hash: B256,
+    /// genesis block number of the chain
+    pub genesis_number: u64,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
     pub transactions: B256HashMap<MinedTransaction<N>>,
@@ -341,6 +343,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_hash,
             best_number,
             genesis_hash,
+            genesis_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
         }
@@ -356,6 +359,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_hash: block_hash,
             best_number: block_number,
             genesis_hash: Default::default(),
+            genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
         }
@@ -392,6 +396,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_hash: Default::default(),
             best_number: Default::default(),
             genesis_hash: Default::default(),
+            genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
         }
@@ -428,10 +433,11 @@ impl<N: Network> BlockchainStorage<N> {
             self.blocks.insert(block_hash, block);
             self.hashes.insert(block_number, block_hash);
 
-            // Update genesis_hash if we are loading block 0, so that Finalized/Safe/Earliest
-            // block tag lookups return the correct hash.
+            // Update genesis_hash if we are loading the genesis block, so that
+            // Finalized/Safe/Earliest block tag lookups return the correct hash. The genesis
+            // number can be non-zero when configured via `--block-number`.
             // See: https://github.com/foundry-rs/foundry/issues/12645
-            if block_number == 0 {
+            if block_number == self.genesis_number {
                 self.genesis_hash = block_hash;
             }
         }
@@ -827,5 +833,49 @@ mod tests {
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
+    }
+
+    // Regression test for https://github.com/foundry-rs/foundry/issues/12645:
+    // when a non-zero genesis number is configured (e.g. `--block-number 73 --load-state ...`),
+    // `load_blocks` must set `genesis_hash` to the loaded block matching `genesis_number`,
+    // not the hardcoded block 0.
+    #[test]
+    fn test_load_blocks_sets_genesis_hash_with_non_zero_genesis_number() {
+        const GENESIS_NUMBER: u64 = 73;
+
+        // Build a serialized block at the configured genesis number.
+        let header = Header { number: GENESIS_NUMBER, gas_limit: 123456, ..Default::default() };
+        let block =
+            create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
+        let block_hash = block.header.hash_slow();
+        let serialized_blocks: Vec<SerializableBlock> = vec![block.into()];
+
+        // Simulate a fresh storage started with `--block-number 73`: the dummy block created by
+        // `new()` is hash X, and `genesis_number` is 73. Loading a state snapshot whose genesis
+        // is also 73 must rewrite `genesis_hash` to the loaded block's hash.
+        let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        load_storage.genesis_number = GENESIS_NUMBER;
+        let dummy_genesis_hash = B256::repeat_byte(0xab);
+        load_storage.genesis_hash = dummy_genesis_hash;
+
+        load_storage.load_blocks(serialized_blocks);
+
+        assert_eq!(load_storage.genesis_hash, block_hash);
+        assert_ne!(load_storage.genesis_hash, dummy_genesis_hash);
+
+        // Sanity check: with the old hardcoded `block_number == 0` logic, `genesis_hash` would
+        // never be updated when no block 0 is present, so the dummy hash would leak through.
+        let mut sanity_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        sanity_storage.genesis_number = 0;
+        sanity_storage.genesis_hash = dummy_genesis_hash;
+
+        let header_only_73 =
+            Header { number: GENESIS_NUMBER, gas_limit: 123456, ..Default::default() };
+        let block_73 = create_block(
+            header_only_73,
+            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+        );
+        sanity_storage.load_blocks(vec![block_73.into()]);
+        assert_eq!(sanity_storage.genesis_hash, dummy_genesis_hash);
     }
 }
