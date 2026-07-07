@@ -5,7 +5,7 @@ use crate::{
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
@@ -216,7 +216,9 @@ impl Cheatcode for rpc_0Call {
         let Self { method, params } = self;
         let url =
             ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        rpc_call(&url, method, params)
+        let result = rpc_call(&url, method, params)?;
+        invalidate_active_fork_cache(ccx, method, params);
+        Ok(result)
     }
 }
 
@@ -233,7 +235,9 @@ impl Cheatcode for rpcJson_0Call {
         let Self { method, params } = self;
         let url =
             ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        rpc_json_call(&url, method, params)
+        let result = rpc_json_call(&url, method, params)?;
+        invalidate_active_fork_cache(ccx, method, params);
+        Ok(result)
     }
 }
 
@@ -451,6 +455,52 @@ fn rpc_call(url: &str, method: &str, params: &str) -> Result {
 fn rpc_json_call(url: &str, method: &str, params: &str) -> Result {
     let result = rpc_result(url, method, params)?;
     Ok(serde_json::to_string(&result)?.abi_encode())
+}
+
+/// Invalidates the fork DB cache after a `vm.rpc` call on the active fork that mutates the node
+/// directly (bypassing the cache), so later DB reads (e.g. the broadcast simulation runner)
+/// re-fetch the new value. Only well-known Anvil/Hardhat account/storage setters are handled;
+/// chain-advancing methods (e.g. `eth_sendTransaction`) need re-forking, not eviction.
+fn invalidate_active_fork_cache<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    method: &str,
+    params: &str,
+) {
+    const ACCOUNT_SETTERS: &[&str] = &[
+        "anvil_setBalance",
+        "hardhat_setBalance",
+        "tenderly_setBalance",
+        "anvil_addBalance",
+        "hardhat_addBalance",
+        "tenderly_addBalance",
+        "anvil_setNonce",
+        "hardhat_setNonce",
+        "evm_setAccountNonce",
+        "anvil_setCode",
+        "hardhat_setCode",
+    ];
+    let is_storage_setter = matches!(method, "anvil_setStorageAt" | "hardhat_setStorageAt");
+    if !is_storage_setter && !ACCOUNT_SETTERS.contains(&method) {
+        return;
+    }
+
+    let Ok(params) = serde_json::from_str::<serde_json::Value>(params) else { return };
+    let Some(address) =
+        params.get(0).and_then(|v| v.as_str()).and_then(|s| s.parse::<Address>().ok())
+    else {
+        return;
+    };
+
+    if is_storage_setter {
+        let Some(slot) =
+            params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok())
+        else {
+            return;
+        };
+        ccx.ecx.db_mut().invalidate_fork_cache_storage(address, slot);
+    } else {
+        ccx.ecx.db_mut().invalidate_fork_cache_account(address);
+    }
 }
 
 fn rpc_result(url: &str, method: &str, params: &str) -> Result<serde_json::Value> {

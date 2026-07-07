@@ -69,6 +69,7 @@ tempo-alloy.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
 dunce.workspace = true
+flate2.workspace = true
 globset = "0.4"
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
@@ -80,7 +81,6 @@ semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }
 solar.workspace = true
-strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "signal"] }
 toml_edit.workspace = true
@@ -93,6 +93,8 @@ path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 
+axum.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
 opener = "0.8"
 
 # soldeer
@@ -104,11 +106,10 @@ tempfile.workspace = true
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
-axum.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 
-mockall = "0.14"
+mockall = "0.15"
 globset = "0.4"
 similar-asserts.workspace = true
 svm.workspace = true

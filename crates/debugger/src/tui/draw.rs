@@ -1,6 +1,9 @@
 //! TUI draw implementation.
 
-use super::context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext};
+use super::{
+    context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext},
+    storage::{StorageAccess, storage_access_at},
+};
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
@@ -17,10 +20,8 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use revm::bytecode::opcode;
-use revm_inspectors::tracing::types::{
-    CallKind, DecodedInternalCall, DecodedTraceStep, StorageChange, StorageChangeReason,
-};
+use revm::interpreter::InstructionResult;
+use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -97,9 +98,6 @@ impl TUIContext<'_> {
         let area = f.area();
         let footer_height = self.footer_height();
 
-        // NOTE: `Layout::split` always returns a slice of the same length as the number of
-        // constraints, so the `else` branch is unreachable.
-
         // Split off footer.
         let [app, footer] = Layout::new(
             Direction::Vertical,
@@ -109,29 +107,49 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        // Split the app vertically to construct all the panes.
-        let [op_pane, variables_pane, stack_pane, memory_pane, src_pane] = Layout::new(
-            Direction::Vertical,
-            [
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(1, 7),
-                Constraint::Ratio(3, 7),
-            ],
-        )
-        .split(app)[..] else {
-            unreachable!()
-        };
-
         if footer_height > 0 {
             self.draw_footer(f, footer);
         }
-        self.draw_src(f, src_pane);
-        self.draw_op_list(f, op_pane);
-        self.draw_variables(f, variables_pane);
-        self.draw_stack(f, stack_pane);
+
+        let opcodes_weight = if self.show_opcodes { 1 } else { 0 };
+        let source_weight = if self.show_source { 3 } else { 0 };
+        let memory_weight = if self.show_source { 1 } else { 2 };
+        let total_weight = opcodes_weight
+            + memory_weight
+            + source_weight
+            + if self.show_variables { 1 } else { 0 }
+            + if self.show_stack { 1 } else { 0 };
+        let mut constraints = Vec::with_capacity(5);
+        if self.show_opcodes {
+            constraints.push(Constraint::Ratio(opcodes_weight, total_weight));
+        }
+        if self.show_variables {
+            constraints.push(Constraint::Ratio(1, total_weight));
+        }
+        if self.show_stack {
+            constraints.push(Constraint::Ratio(1, total_weight));
+        }
+        constraints.push(Constraint::Ratio(memory_weight, total_weight));
+        if self.show_source {
+            constraints.push(Constraint::Ratio(source_weight, total_weight));
+        }
+
+        let panes = Layout::new(Direction::Vertical, constraints).split(app);
+        let mut panes = panes.iter();
+        if self.show_opcodes {
+            self.draw_op_list(f, *panes.next().expect("opcodes pane is visible"));
+        }
+        if self.show_variables {
+            self.draw_variables(f, *panes.next().expect("variables pane is visible"));
+        }
+        if self.show_stack {
+            self.draw_stack(f, *panes.next().expect("stack pane is visible"));
+        }
+        let memory_pane = *panes.next().expect("memory pane is always visible");
         self.draw_buffer(f, memory_pane);
+        if self.show_source {
+            self.draw_src(f, *panes.next().expect("source pane is visible"));
+        }
     }
 
     /// Draws the layout in horizontal mode.
@@ -160,53 +178,88 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        // Split app in 2 horizontally.
-        let [app_left, app_right] =
-            Layout::new(Direction::Horizontal, [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-                .split(app)[..]
-        else {
-            unreachable!()
-        };
-
-        // Split left pane in 2 vertically to opcode list and source.
-        let [op_pane, src_pane] =
-            Layout::new(Direction::Vertical, [Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
-                .split(app_left)[..]
-        else {
-            unreachable!()
-        };
-
-        // Split right pane vertically to construct variables, stack and memory.
-        let [variables_pane, stack_pane, memory_pane] = Layout::new(
-            Direction::Vertical,
-            [Constraint::Ratio(1, 4), Constraint::Ratio(1, 4), Constraint::Ratio(2, 4)],
-        )
-        .split(app_right)[..] else {
-            unreachable!()
+        let has_left_pane = self.show_opcodes || self.show_source;
+        let (app_left, app_right) = if has_left_pane {
+            // Split app in 2 horizontally.
+            let [app_left, app_right] = Layout::new(
+                Direction::Horizontal,
+                [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)],
+            )
+            .split(app)[..] else {
+                unreachable!()
+            };
+            (Some(app_left), app_right)
+        } else {
+            (None, app)
         };
 
         if footer_height > 0 {
             self.draw_footer(f, footer);
         }
-        self.draw_src(f, src_pane);
-        self.draw_op_list(f, op_pane);
-        self.draw_variables(f, variables_pane);
-        self.draw_stack(f, stack_pane);
-        self.draw_buffer(f, memory_pane);
+        if let Some(app_left) = app_left {
+            let total_weight =
+                if self.show_opcodes { 1 } else { 0 } + if self.show_source { 3 } else { 0 };
+            let mut constraints = Vec::with_capacity(2);
+            if self.show_opcodes {
+                constraints.push(Constraint::Ratio(1, total_weight));
+            }
+            if self.show_source {
+                constraints.push(Constraint::Ratio(3, total_weight));
+            }
+
+            let panes = Layout::new(Direction::Vertical, constraints).split(app_left);
+            let mut panes = panes.iter();
+            if self.show_opcodes {
+                self.draw_op_list(f, *panes.next().expect("opcodes pane is visible"));
+            }
+            if self.show_source {
+                self.draw_src(f, *panes.next().expect("source pane is visible"));
+            }
+        }
+
+        let total_weight =
+            2 + if self.show_variables { 1 } else { 0 } + if self.show_stack { 1 } else { 0 };
+        let mut constraints = Vec::with_capacity(3);
+        if self.show_variables {
+            constraints.push(Constraint::Ratio(1, total_weight));
+        }
+        if self.show_stack {
+            constraints.push(Constraint::Ratio(1, total_weight));
+        }
+        constraints.push(Constraint::Ratio(2, total_weight));
+
+        let panes = Layout::new(Direction::Vertical, constraints).split(app_right);
+        let mut panes = panes.iter();
+        if self.show_variables {
+            self.draw_variables(f, *panes.next().expect("variables pane is visible"));
+        }
+        if self.show_stack {
+            self.draw_stack(f, *panes.next().expect("stack pane is visible"));
+        }
+        self.draw_buffer(f, *panes.next().expect("memory pane is always visible"));
     }
 
     fn footer_height(&self) -> u16 {
-        let status_or_input = u16::from(
-            self.pc_input.is_some()
-                || self.buffer_offset_input.is_some()
-                || self.opcode_search_input.is_some()
-                || self.status.is_some(),
-        );
+        let status_or_input = if self.command_input.is_some() {
+            3
+        } else {
+            u16::from(
+                self.pc_input.is_some()
+                    || self.buffer_offset_input.is_some()
+                    || self.opcode_search_input.is_some()
+                    || self.status.is_some(),
+            )
+        };
         let shortcuts = if self.show_shortcuts { 3 } else { 0 };
         status_or_input + shortcuts
     }
 
     fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
+        if let Some(input) = &self.command_input {
+            self.draw_command_prompt(f, area, input);
+            return;
+        }
+
         let mut lines = Vec::with_capacity(self.footer_height() as usize);
 
         if let Some(input) = &self.pc_input {
@@ -256,19 +309,39 @@ impl TUIContext<'_> {
             lines.push(Line::from(Span::styled(status.text.as_str(), style)));
         }
 
-        let l1 =
-            "[q] quit | [j/k] op | [a/s] jump | [c/C] call | [g/G] start/end | [p] PC | [o] offset";
-        let l2 = "[/] search | [n/N] repeat | [l] layout | [b] buffer | [t] labels | [m] decode | [h] help";
-        let l3 = "[J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint";
-        let dimmed = Style::new().add_modifier(Modifier::DIM);
         if self.show_shortcuts {
-            lines.push(Line::from(Span::styled(l1, dimmed)));
-            lines.push(Line::from(Span::styled(l2, dimmed)));
-            lines.push(Line::from(Span::styled(l3, dimmed)));
+            lines.extend(shortcut_lines());
         }
 
         let paragraph =
             Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: false });
+        f.render_widget(paragraph, area);
+    }
+
+    fn draw_command_prompt(&self, f: &mut Frame<'_>, area: Rect, input: &str) {
+        let shortcuts = if self.show_shortcuts { 3 } else { 0 };
+        let [prompt, shortcuts_area] = Layout::new(
+            Direction::Vertical,
+            [Constraint::Length(3), Constraint::Length(shortcuts)],
+        )
+        .split(area)[..] else {
+            unreachable!()
+        };
+
+        let prompt_line = command_prompt_line(input, prompt.width.saturating_sub(2));
+        let block = Block::default().title("Command").borders(Borders::ALL);
+        let paragraph = Paragraph::new(prompt_line).block(block);
+        f.render_widget(paragraph, prompt);
+
+        if self.show_shortcuts {
+            self.draw_shortcuts(f, shortcuts_area);
+        }
+    }
+
+    fn draw_shortcuts(&self, f: &mut Frame<'_>, area: Rect) {
+        let paragraph = Paragraph::new(shortcut_lines())
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
@@ -282,10 +355,10 @@ impl TUIContext<'_> {
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
         };
-        let title = format!(
-            "{} {} ",
+        let title = source_pane_title(
             call_kind_text,
-            source_name.map(|s| format!("| {s}")).unwrap_or_default()
+            source_name,
+            self.current_step_notice_text().map(step_notice_title),
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text_output).block(block).wrap(Wrap { trim: false });
@@ -436,6 +509,13 @@ impl TUIContext<'_> {
             .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 
+    fn current_step_notice_text(&self) -> Option<&str> {
+        let DecodedTraceStep::Line(line) = self.current_step().decoded.as_deref()? else {
+            return None;
+        };
+        (!line.is_empty()).then_some(line.as_str())
+    }
+
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
         let debug_steps = self.debug_steps();
         let max_pc = debug_steps.iter().map(|step| step.pc).max().unwrap_or(0);
@@ -507,15 +587,22 @@ impl TUIContext<'_> {
     fn draw_variables(&mut self, f: &mut Frame<'_>, area: Rect) {
         let variables = self.scope_variables();
         let storage_access = self.current_storage_access_line();
+        let step_notice = self.current_step_notice_line();
         let known = variables.iter().filter(|variable| variable.value.is_some()).count();
-        let title = if variables.is_empty() && storage_access.is_none() {
-            "Variables".to_string()
-        } else {
-            let storage_suffix = if storage_access.is_some() { " | Storage" } else { "" };
-            format!("Variables: {known}/{}{storage_suffix}", variables.len())
-        };
+        let title = variables_title(
+            variables.len(),
+            known,
+            storage_access.is_some(),
+            step_notice.is_some(),
+        );
 
         let mut text = variables.into_iter().map(scope_variable_line).collect::<Vec<_>>();
+        if let Some(step_notice) = step_notice {
+            if !text.is_empty() {
+                text.push(Line::from(""));
+            }
+            text.push(step_notice);
+        }
         if let Some(storage_access) = storage_access {
             if !text.is_empty() {
                 text.push(Line::from(""));
@@ -535,28 +622,12 @@ impl TUIContext<'_> {
         f.render_widget(paragraph, area);
     }
 
+    fn current_step_notice_line(&self) -> Option<Line<'static>> {
+        self.current_step_notice_text().map(step_notice_line)
+    }
+
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
-        let step = self.current_step();
-        if let Some(change) = step.storage_change.as_deref() {
-            return Some(storage_access_line(change));
-        }
-
-        // `revm-inspectors` records `storage_change` from journal entries, so warm `SLOAD`s do not
-        // get one. Debug mode records full stack snapshots before each opcode; the following step's
-        // stack contains the loaded value after this `SLOAD` executes.
-        if step.op.get() == opcode::SLOAD {
-            let key = step.stack.as_deref()?.last().copied()?;
-            let value = self
-                .debug_steps()
-                .get(self.current_step.checked_add(1)?)?
-                .stack
-                .as_deref()?
-                .last()
-                .copied()?;
-            return Some(sload_storage_access_line(key, value));
-        }
-
-        None
+        storage_access_at(self.debug_steps(), self.current_step).map(storage_access_line)
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
@@ -714,6 +785,8 @@ struct ActiveInternalCall<'a> {
     decoded: &'a DecodedInternalCall,
 }
 
+const PRECOMPILE_NOTICE_PREFIX: &str = "precompile:";
+
 impl ScopeVariableKind {
     const fn label(self) -> &'static str {
         match self {
@@ -790,12 +863,32 @@ impl TUIContext<'_> {
 
     fn decode_return_values(&mut self, scope: &DebugSourceScope) -> Option<Vec<String>> {
         let current_step = self.absolute_current_step();
-        self.active_internal_call().and_then(|active| {
-            (current_step >= active.end_step
-                && decoded_internal_name_matches(&active.decoded.func_name, scope))
-            .then(|| active.decoded.return_data.clone())
+        if let Some(values) = self
+            .active_internal_call()
+            .and_then(|active| {
+                (current_step >= active.end_step
+                    && decoded_internal_name_matches(&active.decoded.func_name, scope))
+                .then(|| active.decoded.return_data.clone())
+            })
             .flatten()
-        })
+        {
+            return Some(values);
+        }
+
+        if self.current_step + 1 < self.debug_steps().len()
+            || !matches!(
+                self.current_step().status,
+                Some(InstructionResult::Return | InstructionResult::Stop)
+            )
+        {
+            return None;
+        }
+
+        decode_external_return_values(
+            scope,
+            &self.debug_call().calldata,
+            &self.debug_call().returndata,
+        )
     }
 
     fn decode_internal_parameter_values(
@@ -911,6 +1004,122 @@ impl TUIContext<'_> {
     }
 }
 
+fn source_pane_title(
+    call_kind_text: &str,
+    source_name: Option<&str>,
+    step_notice: Option<&str>,
+) -> String {
+    let mut title = call_kind_text.to_string();
+    if let Some(step_notice) = step_notice {
+        write!(title, " | {step_notice}").unwrap();
+    }
+    if let Some(source_name) = source_name {
+        write!(title, " | {source_name}").unwrap();
+    }
+    title.push(' ');
+    title
+}
+
+fn variables_title(
+    total_variables: usize,
+    known_variables: usize,
+    has_storage_access: bool,
+    has_step_notice: bool,
+) -> String {
+    if total_variables == 0 && !has_storage_access && !has_step_notice {
+        return "Variables".to_string();
+    }
+
+    let mut title = format!("Variables: {known_variables}/{total_variables}");
+    if has_step_notice {
+        title.push_str(" | Trace");
+    }
+    if has_storage_access {
+        title.push_str(" | Storage");
+    }
+    title
+}
+
+fn shortcut_lines() -> Vec<Line<'static>> {
+    let dimmed = Style::new().add_modifier(Modifier::DIM);
+    vec![
+        Line::from(Span::styled(
+            "[q] quit | [j/k] op | [a/s] jump | [c/C] call | [g/G] start/end | [p] PC | [o] offset",
+            dimmed,
+        )),
+        Line::from(Span::styled(
+            "[/] search | [:] command | [n/N] repeat | [l] layout | [b] buffer",
+            dimmed,
+        )),
+        Line::from(Span::styled(
+            "[t] labels | [m] decode | [h] help | [J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint",
+            dimmed,
+        )),
+    ]
+}
+
+const COMMAND_PROMPT_HINT: &str = "  Enter: run | Esc: cancel | help: command list";
+
+fn command_prompt_line(input: &str, width: u16) -> Line<'static> {
+    let width = width as usize;
+    let fixed_width = 2;
+    let hint_width = text_width(COMMAND_PROMPT_HINT);
+    let input_width = text_width(input);
+    let include_hint = fixed_width + input_width + hint_width <= width;
+    let input_width = if include_hint {
+        width.saturating_sub(fixed_width + hint_width)
+    } else {
+        width.saturating_sub(fixed_width)
+    };
+
+    let mut spans = vec![
+        Span::styled(":", Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(input_tail(input, input_width)),
+        Span::styled("█", Style::new().fg(Color::Cyan)),
+    ];
+    if include_hint {
+        spans.push(Span::styled(COMMAND_PROMPT_HINT, Style::new().add_modifier(Modifier::DIM)));
+    }
+    Line::from(spans)
+}
+
+/// Returns the rendered display width of `text` in terminal cells.
+fn text_width(text: &str) -> usize {
+    Span::raw(text).width()
+}
+
+fn input_tail(input: &str, max_width: usize) -> String {
+    if text_width(input) <= max_width {
+        return input.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "<".to_string();
+    }
+
+    // Reserve one cell for the leading `<` truncation indicator, then keep the widest
+    // suffix that fits in the remaining width.
+    let tail_width = max_width - 1;
+    let mut start = input.len();
+    for (idx, _) in input.char_indices().rev() {
+        if text_width(&input[idx..]) > tail_width {
+            break;
+        }
+        start = idx;
+    }
+    format!("<{}", &input[start..])
+}
+
+fn step_notice_title(line: &str) -> &'static str {
+    if line.starts_with(PRECOMPILE_NOTICE_PREFIX) { "precompile call" } else { "decoded step" }
+}
+
+fn step_notice_line(line: &str) -> Line<'static> {
+    Line::from(Span::styled(line.to_string(), Style::new().fg(Color::Magenta)))
+}
+
 fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     let color = variable.kind.color();
     let mut spans = Vec::with_capacity(6);
@@ -926,34 +1135,8 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     Line::from(spans)
 }
 
-fn storage_access_line(change: &StorageChange) -> Line<'static> {
-    let op = match change.reason {
-        StorageChangeReason::SLOAD => "SLOAD",
-        StorageChangeReason::SSTORE => "SSTORE",
-    };
-
-    let text = match (change.reason, change.had_value) {
-        (StorageChangeReason::SSTORE, Some(previous)) => format!(
-            "storage {op} slot {}: {} -> {}",
-            hex_u256(change.key),
-            hex_u256(previous),
-            hex_u256(change.value)
-        ),
-        _ => format!("storage {op} slot {} = {}", hex_u256(change.key), hex_u256(change.value)),
-    };
-
-    Line::from(Span::styled(text, Style::new().fg(Color::Yellow)))
-}
-
-fn sload_storage_access_line(key: U256, value: U256) -> Line<'static> {
-    Line::from(Span::styled(
-        format!("storage SLOAD slot {} = {}", hex_u256(key), hex_u256(value)),
-        Style::new().fg(Color::Yellow),
-    ))
-}
-
-fn hex_u256(value: U256) -> String {
-    format!("{value:#x}")
+fn storage_access_line(access: StorageAccess) -> Line<'static> {
+    Line::from(Span::styled(access.describe(), Style::new().fg(Color::Yellow)))
 }
 
 fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) -> String {
@@ -984,6 +1167,27 @@ fn decode_external_parameter_values(
     scope: &DebugSourceScope,
     calldata: &[u8],
 ) -> Option<Vec<String>> {
+    let types = external_scope_parameter_types(scope, calldata)?;
+
+    decode_abi_sequence(&types, &calldata[4..])
+}
+
+fn decode_external_return_values(
+    scope: &DebugSourceScope,
+    calldata: &[u8],
+    returndata: &[u8],
+) -> Option<Vec<String>> {
+    external_scope_parameter_types(scope, calldata)?;
+    let returns_src = scope.returns_src.as_deref()?;
+    let returns = Parameters::parse(returns_src).ok()?;
+    let types = resolved_types(&returns)?;
+    decode_abi_sequence(&types, returndata)
+}
+
+fn external_scope_parameter_types(
+    scope: &DebugSourceScope,
+    calldata: &[u8],
+) -> Option<Vec<DynSolType>> {
     if calldata.len() < 4 {
         return None;
     }
@@ -995,7 +1199,7 @@ fn decode_external_parameter_values(
         return None;
     }
 
-    decode_abi_sequence(&types, &calldata[4..])
+    Some(types)
 }
 
 fn resolved_types(parameters: &Parameters<'_>) -> Option<Vec<DynSolType>> {
@@ -1145,7 +1349,7 @@ fn hex_digits(n: usize) -> usize {
 mod tests {
     use super::TUIContext;
     use crate::{
-        DebugNode,
+        DebugNode, DebuggerLayout,
         debugger::{DebuggerContext, DebuggerStats},
         op::OpcodeParam,
     };
@@ -1181,6 +1385,17 @@ mod tests {
             parameters: Vec::new(),
             returns: Vec::new(),
             locals: Vec::new(),
+        }
+    }
+
+    fn scope_with_returns(
+        function_name: &str,
+        parameters_src: &str,
+        returns_src: &str,
+    ) -> DebugSourceScope {
+        DebugSourceScope {
+            returns_src: Some(returns_src.to_string()),
+            ..scope(function_name, parameters_src)
         }
     }
 
@@ -1280,6 +1495,145 @@ mod tests {
     }
 
     #[test]
+    fn hidden_source_pane_omits_source_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_source = false;
+        let backend = TestBackend::new(220, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("Contract call"));
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn hidden_opcodes_pane_omits_opcode_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_opcodes = false;
+        let backend = TestBackend::new(220, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("address:"));
+        assert!(screen.contains("Contract call"));
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn hidden_variables_pane_omits_variables_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_variables = false;
+        let backend = TestBackend::new(220, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("Variables"));
+        assert!(screen.contains("Stack"));
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn hidden_stack_pane_omits_stack_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_stack = false;
+        let backend = TestBackend::new(220, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("Stack:"));
+        assert!(screen.contains("Variables"));
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn command_prompt_draws_in_bordered_block() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.command_input = Some("pc 0".to_string());
+        let backend = TestBackend::new(120, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_footer(f, Rect::new(0, 0, 120, 6))).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Command"));
+        assert!(screen.contains(":pc 0"));
+        assert!(screen.contains("Enter: run"));
+        assert!(screen.contains("[:] command"));
+    }
+
+    #[test]
+    fn command_prompt_line_clips_long_input_to_tail() {
+        let input = "continue 0123456789abcdef";
+        let line = super::command_prompt_line(input, 12);
+        let text = line_text(&line);
+
+        assert!(line.width() <= 12);
+        assert_eq!(text, ":<789abcdef█");
+        assert!(!text.contains("Enter: run"));
+    }
+
+    #[test]
+    fn command_prompt_line_clips_wide_unicode_to_width() {
+        // Full-width characters render two cells each, so clipping must respect display
+        // width rather than character count.
+        let input = "界界界界界界界界";
+        let line = super::command_prompt_line(input, 8);
+
+        assert!(line.width() <= 8);
+    }
+
+    #[test]
     fn decode_external_parameter_values_decodes_named_params() {
         let scope = scope("foo", "(uint256 amount, bool ok)");
         let parameters = Parameters::parse(&scope.parameters_src).unwrap();
@@ -1304,6 +1658,65 @@ mod tests {
         calldata.extend_from_slice(&abi_word(U256::from(42)));
 
         assert_eq!(super::decode_external_parameter_values(&scope, &calldata), None);
+    }
+
+    #[test]
+    fn decode_external_return_values_decodes_named_returns() {
+        let scope = scope_with_returns("foo", "(uint256 amount)", "(uint256 total, bool ok)");
+        let parameters = Parameters::parse(&scope.parameters_src).unwrap();
+        let types = super::resolved_types(&parameters).unwrap();
+        let mut calldata = Vec::new();
+        calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
+        calldata.extend_from_slice(&abi_word(U256::from(42)));
+        let mut returndata = Vec::new();
+        returndata.extend_from_slice(&abi_word(U256::from(99)));
+        returndata.extend_from_slice(&abi_word(U256::from(1)));
+
+        let values = super::decode_external_return_values(&scope, &calldata, &returndata).unwrap();
+
+        assert_eq!(values, ["99", "true"]);
+    }
+
+    #[test]
+    fn decode_return_values_uses_external_output_at_frame_end() {
+        let scope = scope_with_returns("foo", "()", "(uint256 total)");
+        let parameters = Parameters::parse(&scope.parameters_src).unwrap();
+        let types = super::resolved_types(&parameters).unwrap();
+        let mut calldata = Vec::new();
+        calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
+        let mut node = debug_node(
+            0,
+            0,
+            vec![trace_step(Vec::new()), {
+                let mut step = trace_step(Vec::new());
+                step.op = OpCode::RETURN;
+                step.status = Some(InstructionResult::Return);
+                step
+            }],
+        );
+        node.calldata = Bytes::from(calldata);
+        node.returndata = Bytes::from(abi_word(U256::from(123)).to_vec());
+        let mut context = context_with_arena(vec![node]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 1;
+
+        assert_eq!(tui.decode_return_values(&scope), Some(vec!["123".to_string()]));
+    }
+
+    #[test]
+    fn decode_return_values_waits_for_external_frame_end() {
+        let scope = scope_with_returns("foo", "()", "(uint256 total)");
+        let parameters = Parameters::parse(&scope.parameters_src).unwrap();
+        let types = super::resolved_types(&parameters).unwrap();
+        let mut calldata = Vec::new();
+        calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
+        let mut node = debug_node(0, 0, vec![trace_step(Vec::new()), trace_step(Vec::new())]);
+        node.calldata = Bytes::from(calldata);
+        node.returndata = Bytes::from(abi_word(U256::from(123)).to_vec());
+        let mut context = context_with_arena(vec![node]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(tui.decode_return_values(&scope), None);
     }
 
     #[test]
@@ -1521,30 +1934,33 @@ mod tests {
 
     #[test]
     fn storage_access_line_formats_sload() {
-        let change = StorageChange {
+        let mut step = trace_step(Vec::new());
+        step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
             value: U256::from(42),
             had_value: None,
             reason: StorageChangeReason::SLOAD,
-        };
+        }));
+        let steps = [step];
+        let access = super::storage_access_at(&steps, 0).unwrap();
 
-        assert_eq!(
-            line_text(&super::storage_access_line(&change)),
-            "storage SLOAD slot 0x1 = 0x2a"
-        );
+        assert_eq!(line_text(&super::storage_access_line(access)), "storage SLOAD slot 0x1 = 0x2a");
     }
 
     #[test]
     fn storage_access_line_formats_sstore_with_previous_value() {
-        let change = StorageChange {
+        let mut step = trace_step(Vec::new());
+        step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
             value: U256::from(42),
             had_value: Some(U256::from(7)),
             reason: StorageChangeReason::SSTORE,
-        };
+        }));
+        let steps = [step];
+        let access = super::storage_access_at(&steps, 0).unwrap();
 
         assert_eq!(
-            line_text(&super::storage_access_line(&change)),
+            line_text(&super::storage_access_line(access)),
             "storage SSTORE slot 0x1: 0x7 -> 0x2a"
         );
     }
@@ -1569,6 +1985,49 @@ mod tests {
         let variable = DebugVariable { name: None, declaration: 0..1, scope: 0..2 };
 
         assert_eq!(super::variable_name(&variable, 2, "arg"), "arg2");
+    }
+
+    #[test]
+    fn current_step_notice_text_reads_decoded_line_steps() {
+        let mut step = trace_step(Vec::new());
+        step.decoded = Some(Box::new(DecodedTraceStep::Line(
+            "precompile: PRECOMPILES::sha256(0x68656c6c6f)".to_string(),
+        )));
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![step])]);
+        let tui = TUIContext::new(&mut context);
+
+        assert_eq!(
+            tui.current_step_notice_text(),
+            Some("precompile: PRECOMPILES::sha256(0x68656c6c6f)")
+        );
+    }
+
+    #[test]
+    fn source_pane_title_includes_precompile_notice_before_source() {
+        assert_eq!(
+            super::source_pane_title(
+                "Contract call",
+                Some("test/Precompile.t.sol"),
+                Some("precompile call")
+            ),
+            "Contract call | precompile call | test/Precompile.t.sol "
+        );
+    }
+
+    #[test]
+    fn variables_title_tracks_decoded_step_notices() {
+        assert_eq!(super::variables_title(0, 0, false, false), "Variables");
+        assert_eq!(super::variables_title(0, 0, false, true), "Variables: 0/0 | Trace");
+        assert_eq!(super::variables_title(2, 1, true, true), "Variables: 1/2 | Trace | Storage");
+    }
+
+    #[test]
+    fn step_notice_line_highlights_precompile_clue() {
+        let line = super::step_notice_line("precompile: PRECOMPILES::sha256(0x68656c6c6f)");
+
+        assert_eq!(line_text(&line), "precompile: PRECOMPILES::sha256(0x68656c6c6f)");
+        assert_eq!(line.spans[0].style, Style::new().fg(Color::Magenta));
+        assert_eq!(super::step_notice_title(&line_text(&line)), "precompile call");
     }
 
     #[test]

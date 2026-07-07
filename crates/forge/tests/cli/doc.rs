@@ -4,6 +4,7 @@ use foundry_test_utils::{
     str,
     util::{RemoteProject, setup_forge_remote},
 };
+use std::fs;
 
 #[test]
 fn can_generate_solmate_docs() {
@@ -11,6 +12,34 @@ fn can_generate_solmate_docs() {
         setup_forge_remote(RemoteProject::new("transmissions11/solmate").set_build(false));
     prj.forge_command().args(["doc"]).assert_success();
 }
+
+forgetest_init!(doc_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source(
+        "DocTarget.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract DocTarget {
+    /// @notice Returns a value.
+    function value() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    let artifact = prj.root().join("out/DocTarget.sol/DocTarget.json");
+    cmd.args(["doc"]).assert_success();
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.forge_fuse().args(["doc"]).assert_success();
+    let after = fs::read(&artifact).unwrap();
+    assert_eq!(after, b"sentinel");
+});
 
 // Test that overloaded functions in interfaces inherit the correct NatSpec comments
 // fixes <https://github.com/foundry-rs/foundry/issues/11823>
