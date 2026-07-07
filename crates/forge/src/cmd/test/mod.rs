@@ -475,6 +475,7 @@ pub(crate) struct SuppliedEngineFlags {
     pub(crate) frontier_dir: bool,
     pub(crate) frontier_limit: bool,
     pub(crate) fuzz_run: bool,
+    pub(crate) fuzz_input_file: bool,
     pub(crate) depth: bool,
     pub(crate) min_depth: bool,
     pub(crate) depth_mode: bool,
@@ -487,6 +488,7 @@ impl SuppliedEngineFlags {
             frontier_dir: false,
             frontier_limit: false,
             fuzz_run: false,
+            fuzz_input_file: false,
             depth: false,
             min_depth: false,
             depth_mode: false,
@@ -1193,6 +1195,11 @@ impl TestArgs {
                     "`--fuzz-run` only applies to fuzz tests; no matched fuzz tests were found."
                 )?;
             }
+            if flags.fuzz_input_file {
+                sh_warn!(
+                    "`--fuzz-input-file` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
         }
 
         if counts.invariant == 0 && counts.fuzz > 0 {
@@ -1225,6 +1232,7 @@ impl TestArgs {
     pub(crate) fn from_fuzz_run(args: FuzzRunArgs) -> Self {
         let mut supplied = args.campaign.supplied_engine_flags();
         supplied.fuzz_run = args.fuzz_run.is_some();
+        supplied.fuzz_input_file = args.fuzz_input_file.is_some();
 
         Self {
             fuzz_only: true,

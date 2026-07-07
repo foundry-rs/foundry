@@ -758,12 +758,20 @@ contract ForgeFuzzRunInvariantWarningsTest is Test {
             "1",
             "--frontier-dir",
             "frontier",
+            "--fuzz-input-file",
+            "failure",
         ])
         .assert_success();
     let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
     assert!(
         stderr.contains(
             "`--frontier-dir` only applies to fuzz tests; no matched fuzz tests were found."
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "`--fuzz-input-file` only applies to fuzz tests; no matched fuzz tests were found."
         ),
         "{stderr}"
     );
