@@ -2,36 +2,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+import {
+    ERC721,
+    ERC721Upgradeable,
+    ERC721Consecutive
+} from "./auxiliary/openzeppelin-contracts/Erc721Mocks.sol";
+
 // Tests for `unsafe-oz-erc721-mint`: `ERC721._mint` credits a token without checking that the
 // recipient can receive it (no `onERC721Received` call), so minting to a non-receiver contract
 // locks the token; `_safeMint` performs the check. A call is flagged when it resolves to a
 // function named `_mint` declared in a contract named exactly `ERC721`, `ERC721Upgradeable`,
 // `ERC721Consecutive` or `ERC721ConsecutiveUpgradeable` (the v4 Consecutive extensions forward
-// to the base without the check), wherever that contract sits in the inheritance chain. Calls
-// to `_safeMint`, calls made inside the canonical `_safeMint` wrapper, and `_mint` functions
-// of other contracts stay clean.
-
-// Minimal mirror of OpenZeppelin's ERC721: unchecked `_mint`, checking `_safeMint`.
-contract ERC721 {
-    mapping(uint256 => address) internal _owners;
-
-    function _mint(address to, uint256 tokenId) internal virtual {
-        _owners[tokenId] = to;
-    }
-
-    // The wrapper legitimately calls `_mint` after its receiver check: exempt.
-    function _safeMint(address to, uint256 tokenId) internal virtual {
-        _mint(to, tokenId);
-    }
-}
-
-contract ERC721Upgradeable {
-    mapping(uint256 => address) internal _owners;
-
-    function _mint(address to, uint256 tokenId) internal virtual {
-        _owners[tokenId] = to;
-    }
-}
+// to the base without the check) whose source comes from an OpenZeppelin package path, or to a
+// user `_mint` override that transitively delegates to one of those. Calls to `_safeMint`,
+// calls made inside the canonical `_safeMint` wrapper, `_mint` functions of other contracts
+// and same-name local contracts stay clean.
 
 // Same `_mint` shape on a fungible token: transfers need no receiver check, out of scope.
 contract ERC20 {
@@ -75,17 +60,9 @@ contract UpgradeableNft is ERC721Upgradeable {
     }
 }
 
-// Mirror of OZ v4's ERC721Consecutive: it overrides `_mint` with a construction guard and
-// forwards to the base without a receiver check, so its `_mint` is as unsafe as the base's.
-// Its own `super._mint` sits inside a `_mint` override and stays exempt.
-contract ERC721Consecutive is ERC721 {
-    function _mint(address to, uint256 tokenId) internal virtual override {
-        require(address(this).code.length > 0, "no construction mint");
-        super._mint(to, tokenId);
-    }
-}
-
 // A consumer of the extension resolves `_mint` to the Consecutive override: still unchecked.
+// The mirror lives under the OpenZeppelin auxiliary path; its own `super._mint` sits inside a
+// `_mint` override and stays exempt.
 contract ConsecutiveNft is ERC721Consecutive {
     function mint(address to, uint256 id) external {
         _mint(to, id); //~WARN: `ERC721._mint` does not check
@@ -135,8 +112,10 @@ contract SafeOverride is ERC721 {
 }
 
 // A `_mint` override delegating to the base with its own guard (the capped/pausable
-// pattern): the receiver check belongs to this override's callers, and `_safeMint` here
-// would re-enter the override through the virtual dispatch.
+// pattern) is an unsafe call target: the path still reaches the unchecked base. Direct
+// calls dispatching to it report; the `super._mint` inside the override itself does not,
+// since the override is the mint primitive and `_safeMint` there would re-enter it through
+// the virtual dispatch.
 contract CappedNft is ERC721 {
     uint256 internal total;
     uint256 internal constant CAP = 10;
@@ -148,7 +127,23 @@ contract CappedNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id);
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// The delegation is judged transitively: an override that simply forwards still reaches the
+// unchecked base, so its direct callers report, while `_safeMint` stays the clean path.
+contract DelegatingOverrideNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+    }
+
+    function unsafeMint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+
+    function safeMint(address to, uint256 id) external {
+        _safeMint(to, id);
     }
 }
 
@@ -234,5 +229,21 @@ contract Standalone {
 
     function mint(uint256 amount) external {
         _mint(amount);
+    }
+}
+
+// A local contract reusing the exact `ERC721ConsecutiveUpgradeable` name, unrelated to
+// OpenZeppelin: the provenance check keeps its `_mint` out of scope.
+contract ERC721ConsecutiveUpgradeable {
+    mapping(uint256 => address) internal _holders;
+
+    function _mint(address account, uint256 amount) internal {
+        _holders[amount] = account;
+    }
+}
+
+contract UsesConsecutiveUpgradeableName is ERC721ConsecutiveUpgradeable {
+    function mint(address account, uint256 amount) external {
+        _mint(account, amount);
     }
 }

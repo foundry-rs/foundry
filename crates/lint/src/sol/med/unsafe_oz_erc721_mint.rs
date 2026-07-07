@@ -3,10 +3,13 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::sema::{
-    Gcx,
-    hir::{self, Expr, ExprKind, FunctionId, Hir, Visit},
-    ty::TyKind,
+use solar::{
+    interface::source_map::FileName,
+    sema::{
+        Gcx,
+        hir::{self, Expr, ExprKind, FunctionId, Hir, Visit},
+        ty::TyKind,
+    },
 };
 use std::{convert::Infallible, ops::ControlFlow};
 
@@ -30,13 +33,14 @@ impl<'hir> LateLintPass<'hir> for UnsafeOzErc721Mint {
         // it can call `_mint` directly without any check.
         if func.name.is_some_and(|name| name.as_str() == "_safeMint")
             && func.contract.is_some_and(|id| is_canonical_erc721(hir.contract(id).name.as_str()))
+            && is_openzeppelin_source(hir, func.source)
         {
             return;
         }
         // A user `_mint` override is part of the mint primitive itself: `super._mint` there is
-        // delegation (the capped/pausable pattern), the receiver check belongs to the
-        // override's callers, and `_safeMint` there would re-enter the override through the
-        // virtual dispatch.
+        // delegation (the capped/pausable pattern), and `_safeMint` there would re-enter the
+        // override through the virtual dispatch. A delegating override reports at its call
+        // sites instead, where `_safeMint` is the fix.
         if func.name.is_some_and(|name| name.as_str() == "_mint") && func.override_ {
             return;
         }
@@ -89,18 +93,94 @@ impl MintCallFinder<'_, '_, '_, '_> {
         }
     }
 
-    /// Whether `function_id` is a function named `_mint` declared in a non-library contract
-    /// named exactly like an OZ contract carrying the unchecked `_mint`. Most extensions
-    /// (`ERC721Enumerable`, ...) inherit `_mint` rather than redeclare it, so resolution still
-    /// lands on the canonical base; exact names avoid flagging a safe override just because
-    /// its contract name contains the substring `ERC721`.
+    /// Whether `function_id` is a `_mint` whose execution skips the receiver check: the
+    /// canonical OZ declaration, or a user override that transitively delegates to one.
     fn is_erc721_mint(&self, function_id: FunctionId) -> bool {
+        self.is_unsafe_mint_target(function_id, &mut Vec::new())
+    }
+
+    /// The canonical case requires the exact OZ contract name AND an OpenZeppelin source
+    /// path, so a local contract reusing a name like `ERC721Consecutive` stays out. The
+    /// delegation case covers a `_mint` override whose body calls a `_mint` that is itself
+    /// unsafe (the capped/pausable pattern forwarding through `super._mint`): direct calls
+    /// dispatch to the override, but the path still reaches the unchecked base. `seen`
+    /// cuts override cycles.
+    fn is_unsafe_mint_target(&self, function_id: FunctionId, seen: &mut Vec<FunctionId>) -> bool {
+        // A cycle of overrides never reaches the canonical declaration.
+        if seen.contains(&function_id) {
+            return false;
+        }
+        seen.push(function_id);
         let function = self.hir.function(function_id);
-        function.name.is_some_and(|name| name.as_str() == "_mint")
-            && function.contract.is_some_and(|id| {
-                let contract = self.hir.contract(id);
-                !contract.kind.is_library() && is_canonical_erc721(contract.name.as_str())
-            })
+        if !function.name.is_some_and(|name| name.as_str() == "_mint") {
+            return false;
+        }
+        let Some(contract_id) = function.contract else { return false };
+        let contract = self.hir.contract(contract_id);
+        if contract.kind.is_library() {
+            return false;
+        }
+        // The canonical unchecked `_mint`: exact OZ name, OZ package provenance. Most
+        // extensions (`ERC721Enumerable`, ...) inherit `_mint` rather than redeclare it, so
+        // resolution still lands here.
+        if is_canonical_erc721(contract.name.as_str())
+            && is_openzeppelin_source(self.hir, function.source)
+        {
+            return true;
+        }
+        // A delegating override: any call in its body dispatching to an unsafe `_mint`.
+        if function.override_
+            && let Some(body) = &function.body
+        {
+            let mut calls = CalleeCollector { gcx: self.gcx, hir: self.hir, callees: Vec::new() };
+            // The body's resolved callees are collected first, then judged recursively.
+            for stmt in body.stmts {
+                let _ = calls.visit_stmt(stmt);
+            }
+            // Each callee is judged with the shared `seen` set, so override cycles stop.
+            for callee in calls.callees {
+                if self.is_unsafe_mint_target(callee, seen) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Whether a source file belongs to an OpenZeppelin package, judged by its path. A
+/// vendored copy under a path that does not name OpenZeppelin is not recognized.
+fn is_openzeppelin_source(hir: &Hir<'_>, source_id: hir::SourceId) -> bool {
+    match &hir.source(source_id).file.name {
+        FileName::Real(path) => path.to_string_lossy().to_lowercase().contains("openzeppelin"),
+        _ => false,
+    }
+}
+
+/// Collects the resolved targets of every call in a subtree.
+struct CalleeCollector<'hir> {
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    callees: Vec<FunctionId>,
+}
+
+impl<'hir> Visit<'hir> for CalleeCollector<'hir> {
+    type BreakValue = Infallible;
+
+    fn hir(&self) -> &'hir Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        // Each call's dispatch target, as the type checker resolved it.
+        if let ExprKind::Call(callee, _, _) = &expr.kind
+            && let Some(ty) = self.gcx.type_of_expr(callee.peel_parens().id)
+            && let TyKind::Fn(function_ty) = ty.kind
+            && let Some(function_id) = function_ty.function_id
+        {
+            self.callees.push(function_id);
+        }
+        self.walk_expr(expr)
     }
 }
 

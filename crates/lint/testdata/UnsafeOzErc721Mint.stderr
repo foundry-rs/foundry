@@ -89,6 +89,22 @@ LL │         _mint(to, id);
 warning[unsafe-oz-erc721-mint]: `ERC721._mint` does not check that the recipient can receive the token; use `_safeMint`
    ╭▸ ROOT/testdata/UnsafeOzErc721Mint.sol:LL:CC
    │
+LL │         _mint(to, id);
+   │         ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-oz-erc721-mint
+
+warning[unsafe-oz-erc721-mint]: `ERC721._mint` does not check that the recipient can receive the token; use `_safeMint`
+   ╭▸ ROOT/testdata/UnsafeOzErc721Mint.sol:LL:CC
+   │
+LL │         _mint(to, id);
+   │         ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-oz-erc721-mint
+
+warning[unsafe-oz-erc721-mint]: `ERC721._mint` does not check that the recipient can receive the token; use `_safeMint`
+   ╭▸ ROOT/testdata/UnsafeOzErc721Mint.sol:LL:CC
+   │
 LL │         _mint(to, 0);
    │         ━━━━━━━━━━━━
    │
