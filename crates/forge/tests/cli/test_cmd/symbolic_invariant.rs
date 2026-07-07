@@ -1,6 +1,6 @@
 use super::symbolic_helpers::{
     assert_relevant_lines, assert_symbolic, assert_symbolic_engine, assert_symbolic_engine_witness,
-    assert_symbolic_witness, json_test_result,
+    assert_symbolic_witness, json_test_result, read_artifact_ref,
 };
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
@@ -164,31 +164,65 @@ contract SymbolicInvariantSetupStorage is Test {
 "#,
     );
 
-    let stdout = assert_symbolic_engine_witness(cmd.args([
-        "test",
-        "--symbolic",
-        "--fuzz-runs",
-        "0",
-        "--match-test",
-        "invariant_notHit",
-    ]))
-    .failure()
-    .get_output()
-    .stdout_lossy();
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_notHit",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_notHit()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
 
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    let failure = failures.first().expect("invariant failure");
+    let artifact_ref = &failure["artifact"];
+    let artifact = read_artifact_ref(artifact_ref);
+    assert_eq!(artifact["invariant_failure"]["kind"], "predicate");
+    assert_eq!(artifact["invariant_failure"]["name"], "invariant_notHit");
+    assert_eq!(artifact["storage"].as_array().expect("storage assignments").len(), 1);
+    assert_eq!(artifact["storage"][0]["value"], "0x2a");
+
+    let fuzz_replay_stdout = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "SymbolicInvariantSetupStorage"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
     assert_relevant_lines(
-        &stdout,
+        &fuzz_replay_stdout,
+        str![[r#"
+[FAIL: hit]
+"#]],
+    );
+
+    let artifact_path = artifact_ref["path"].as_str().expect("artifact path").to_string();
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
         str![[r#"
 [FAIL: hit]
 "#]],
     );
     assert_relevant_lines(
-        &stdout,
+        &replay_stdout,
         str![[r#"
-calldata=useStore()
+invariant_notHit()
 "#]],
     );
-    assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
 });
 
 forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
@@ -264,7 +298,101 @@ contract SymbolicInvariantHandlerFailure is Test {
         handler_failure["reason"].as_str().expect("handler reason").contains("assertion failed"),
         "{handler_failure}"
     );
-    assert!(handler_failure["artifact"]["path"].as_str().is_some(), "{handler_failure}");
+    let artifact_ref = &handler_failure["artifact"];
+    let artifact_path = artifact_ref["path"].as_str().expect("artifact path").to_string();
+    let artifact = read_artifact_ref(artifact_ref);
+    assert_eq!(artifact["invariant_failure"]["kind"], "handler");
+    assert!(
+        artifact["invariant_failure"]["name"]
+            .as_str()
+            .expect("artifact handler name")
+            .ends_with("SymbolicInvariantHandlerFailureTarget::boom"),
+        "{artifact}"
+    );
+
+    let replay_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let replay_result = json_test_result(&replay_output, "invariant_ok()");
+    assert!(
+        replay_result
+            .get("invariant_failures")
+            .and_then(|value| value.as_array())
+            .is_none_or(Vec::is_empty),
+        "{replay_result}"
+    );
+    let replay_handler_failures =
+        replay_result["invariant_handler_failures"].as_array().expect("replay handler failures");
+    assert_eq!(replay_handler_failures.len(), 1);
+    assert_eq!(replay_handler_failures[0]["kind"], "handler");
+});
+
+forgetest_init!(symbolic_invariant_omits_unchecked_predicate_pass_rows, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_omits_unchecked_predicate_pass_rows");
+
+    prj.add_test(
+        "SymbolicInvariantMultiPredicate.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantMultiPredicateTarget {
+    uint256 public value;
+
+    function set(uint8 x) external {
+        if (x == 7) {
+            value = 1;
+        }
+    }
+}
+
+contract SymbolicInvariantMultiPredicate is Test {
+    SymbolicInvariantMultiPredicateTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantMultiPredicateTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_anchorBreak() public view {
+        assertEq(target.value(), 0);
+    }
+
+    function invariant_neverCheckedBySymbolicFastFail() public pure {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-contract",
+            "SymbolicInvariantMultiPredicate",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_anchorBreak()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["invariant_count"], 2);
+
+    let predicates = result["invariant_predicate_results"].as_array().unwrap();
+    assert_eq!(predicates.len(), 1);
+    assert_eq!(predicates[0]["name"], "invariant_anchorBreak");
+    assert_eq!(predicates[0]["status"], "Failure");
+    assert!(predicates.iter().all(|predicate| predicate["status"] != "Success"));
 });
 
 forgetest_init!(symbolic_invariant_replays_copied_arbitrary_storage, |prj, cmd| {

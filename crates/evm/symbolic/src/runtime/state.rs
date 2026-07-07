@@ -150,8 +150,8 @@ impl PathState {
             for target in cheats.arbitrary_storage_targets() {
                 self.world.enable_arbitrary_storage(target);
             }
-            for target in cheats.arbitrary_storage_copied_targets() {
-                self.world.enable_arbitrary_storage(target);
+            for (target, source) in cheats.arbitrary_storage_copied_target_sources() {
+                self.world.enable_arbitrary_storage_copy(source, target);
             }
         }
     }
@@ -1494,10 +1494,11 @@ struct SymbolicWorldSnapshot {
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
     arbitrary_storage_accounts: HashSet<Address>,
+    arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
-    replay_storage_slots: HashMap<Symbol, SymbolicReplayStorageSlot>,
+    replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
 }
 
 impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
@@ -1514,6 +1515,7 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
             existing_accounts: world.existing_accounts.clone(),
             destroyed_accounts: world.destroyed_accounts.clone(),
             arbitrary_storage_accounts: world.arbitrary_storage_accounts.clone(),
+            arbitrary_storage_copies: world.arbitrary_storage_copies.clone(),
             arbitrary_storage_all: world.arbitrary_storage_all,
             zero_init_symbolic_storage: world.zero_init_symbolic_storage,
             symbolic_address_aliases: world.symbolic_address_aliases.clone(),
@@ -1539,10 +1541,11 @@ pub(crate) struct SymbolicWorld {
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
     arbitrary_storage_accounts: HashSet<Address>,
+    arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
-    replay_storage_slots: HashMap<Symbol, SymbolicReplayStorageSlot>,
+    replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
     snapshots: HashMap<U256, SymbolicWorldSnapshot>,
     next_snapshot_id: u64,
 }
@@ -1622,17 +1625,23 @@ impl SymbolicWorld {
         self.arbitrary_storage_accounts.insert(address);
     }
 
+    pub(crate) fn enable_arbitrary_storage_copy(&mut self, source: Address, target: Address) {
+        self.arbitrary_storage_copies.insert(target, source);
+    }
+
     pub(crate) fn replay_storage_assignments(
         &self,
         model: &SymbolicModel,
     ) -> Vec<SymbolicStorageAssignment> {
         self.replay_storage_slots
             .iter()
-            .filter_map(|(symbol, slot)| {
-                model.get(symbol).copied().map(|value| SymbolicStorageAssignment {
-                    address: slot.address,
-                    slot: slot.slot,
-                    value,
+            .flat_map(|(symbol, slots)| {
+                model.get(symbol).copied().into_iter().flat_map(|value| {
+                    slots.iter().map(move |slot| SymbolicStorageAssignment {
+                        address: slot.address,
+                        slot: slot.slot,
+                        value,
+                    })
                 })
             })
             .collect()
@@ -1683,6 +1692,7 @@ impl SymbolicWorld {
         self.existing_accounts = snapshot.existing_accounts;
         self.destroyed_accounts = snapshot.destroyed_accounts;
         self.arbitrary_storage_accounts = snapshot.arbitrary_storage_accounts;
+        self.arbitrary_storage_copies = snapshot.arbitrary_storage_copies;
         self.arbitrary_storage_all = snapshot.arbitrary_storage_all;
         self.zero_init_symbolic_storage = snapshot.zero_init_symbolic_storage;
         self.symbolic_address_aliases = snapshot.symbolic_address_aliases;
@@ -1706,15 +1716,8 @@ impl SymbolicWorld {
         key: &SymExpr,
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
-        let has_arbitrary_storage = self.arbitrary_storage_accounts.contains(&address);
-        if self.arbitrary_storage_all || has_arbitrary_storage {
-            let name = symbolic_storage_symbol(cx, address, key);
-            if has_arbitrary_storage && let Some(slot) = concrete_key.or_else(|| key.as_const()) {
-                self.replay_storage_slots
-                    .entry(name)
-                    .or_insert(SymbolicReplayStorageSlot { address, slot });
-            }
-            return Ok(SymExpr::get_var(cx, name));
+        if let Some(base) = self.arbitrary_storage_base(cx, address, key, concrete_key) {
+            return Ok(base);
         }
         if let Some(key) = concrete_key {
             return executor
@@ -1734,6 +1737,37 @@ impl SymbolicWorld {
         } else {
             let name = symbolic_storage_symbol(cx, address, key);
             Ok(SymExpr::get_var(cx, name))
+        }
+    }
+
+    fn arbitrary_storage_base(
+        &mut self,
+        cx: &mut SymCx,
+        address: Address,
+        key: &SymExpr,
+        concrete_key: Option<U256>,
+    ) -> Option<SymExpr> {
+        let copied_source = self.arbitrary_storage_copies.get(&address).copied();
+        let has_arbitrary_storage = self.arbitrary_storage_accounts.contains(&address);
+        let symbol_address = copied_source
+            .or_else(|| (self.arbitrary_storage_all || has_arbitrary_storage).then_some(address))?;
+        let symbol = symbolic_storage_symbol(cx, symbol_address, key);
+        if let Some(slot) = concrete_key.or_else(|| key.as_const()) {
+            if has_arbitrary_storage {
+                self.record_replay_storage_slot(symbol, address, slot);
+            }
+            if let Some(source) = copied_source {
+                self.record_replay_storage_slot(symbol, source, slot);
+                self.record_replay_storage_slot(symbol, address, slot);
+            }
+        }
+        Some(SymExpr::get_var(cx, symbol))
+    }
+
+    fn record_replay_storage_slot(&mut self, symbol: Symbol, address: Address, slot: U256) {
+        let slots = self.replay_storage_slots.entry(symbol).or_default();
+        if !slots.iter().any(|existing| existing.address == address && existing.slot == slot) {
+            slots.push(SymbolicReplayStorageSlot { address, slot });
         }
     }
 
@@ -2148,6 +2182,40 @@ impl SymbolicWorld {
 
 fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> Symbol {
     stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copied_arbitrary_storage_uses_source_symbol_and_replays_both_accounts() {
+        let source = Address::repeat_byte(0x11);
+        let copied = Address::repeat_byte(0x22);
+        let slot = U256::from(7);
+        let mut cx = SymCx::new();
+        let key = SymExpr::constant(&mut cx, slot);
+        let mut world = SymbolicWorld::default();
+        world.enable_arbitrary_storage(source);
+        world.enable_arbitrary_storage_copy(source, copied);
+
+        let source_base = world.arbitrary_storage_base(&mut cx, source, &key, Some(slot)).unwrap();
+        let copied_base = world.arbitrary_storage_base(&mut cx, copied, &key, Some(slot)).unwrap();
+
+        assert_eq!(source_base, copied_base);
+        let symbol = source_base.kind().get_var().expect("storage symbol");
+        let mut model = SymbolicModel::default();
+        model.insert(symbol, U256::from(42));
+        let mut assignments = world.replay_storage_assignments(&model);
+        assignments.sort_by_key(|assignment| assignment.address);
+        assert_eq!(
+            assignments,
+            vec![
+                SymbolicStorageAssignment { address: source, slot, value: U256::from(42) },
+                SymbolicStorageAssignment { address: copied, slot, value: U256::from(42) },
+            ]
+        );
+    }
 }
 
 #[derive(Clone, Debug)]

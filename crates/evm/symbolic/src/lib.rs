@@ -341,7 +341,7 @@ pub struct SymbolicInvariantRunInput<'a, FEN: FoundryEvmNetwork> {
 }
 
 /// One concrete storage value required to replay a symbolic invariant candidate.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolicStorageAssignment {
     /// Account whose storage slot should be initialized.
     pub address: Address,

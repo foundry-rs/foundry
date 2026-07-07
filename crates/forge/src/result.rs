@@ -5,7 +5,7 @@ use crate::{
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    Address, Bytes, I256, Log, Selector, U256,
+    Address, B256, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
@@ -22,7 +22,9 @@ use foundry_evm::{
     },
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
-use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats, SymbolicStopReason};
+use foundry_evm_symbolic::{
+    PortfolioDiagnostics, SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -612,12 +614,78 @@ mod tests {
         assert_eq!(value["schema"], SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA);
         assert_eq!(value["kind"], "sequence");
         assert_eq!(value["replay_semantics"]["fail_on_revert"], false);
+        assert!(value.get("storage").is_none());
+        assert!(value.get("invariant_failure").is_none());
         assert_eq!(value["calls"].as_array().unwrap().len(), 2);
         assert_eq!(value["calls"][0]["calldata"], "0x12345678");
         assert_eq!(value["calls"][0]["warp"], "0xc");
         assert_eq!(value["calls"][0]["roll"], "0x3");
         assert_eq!(value["calls"][0]["value"], "0x9");
         assert_counterexample_artifact_shape(&value);
+
+        let decoded = serde_json::from_value::<SymbolicCounterexampleArtifact>(value).unwrap();
+        assert!(decoded.storage.is_empty());
+        assert!(decoded.invariant_failure.is_none());
+    }
+
+    #[test]
+    fn symbolic_counterexample_artifact_serializes_invariant_replay_metadata() {
+        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
+        let call = SymbolicCounterexampleCall {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            target: Address::repeat_byte(0x22),
+            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
+            value: None,
+            contract_name: Some("Target".to_string()),
+            function_name: Some("step".to_string()),
+            signature: Some("step()".to_string()),
+            args: Some(String::new()),
+            raw_args: Some(String::new()),
+        };
+        let artifact = SymbolicCounterexampleArtifact::new(
+            SymbolicCounterexampleArtifactKind::Sequence,
+            SymbolicCounterexampleTestIdentity {
+                contract: "InvariantTest".to_string(),
+                test: "invariant_counter()".to_string(),
+            },
+            &symbolic,
+            SymbolicCounterexampleReplaySemantics { fail_on_revert: true },
+            vec![call],
+        )
+        .with_storage(vec![SymbolicStorageAssignment {
+            address: Address::repeat_byte(0x11),
+            slot: U256::from(7),
+            value: U256::from(42),
+        }])
+        .with_invariant_failure(SymbolicInvariantArtifactFailure::Handler {
+            name: Some("Target::step".to_string()),
+            reverter: Address::repeat_byte(0x22),
+            selector: Selector::from([0x12, 0x34, 0x56, 0x78]),
+            fingerprint: B256::repeat_byte(0x33),
+        });
+
+        let value = serde_json::to_value(artifact.clone()).unwrap();
+        assert_eq!(value["storage"][0]["address"], format!("{:?}", Address::repeat_byte(0x11)));
+        assert_eq!(value["storage"][0]["slot"], "0x7");
+        assert_eq!(value["storage"][0]["value"], "0x2a");
+        assert_eq!(value["invariant_failure"]["kind"], "handler");
+        assert_eq!(value["invariant_failure"]["name"], "Target::step");
+        assert_eq!(
+            value["invariant_failure"]["reverter"],
+            format!("{:?}", Address::repeat_byte(0x22))
+        );
+        assert_eq!(value["invariant_failure"]["selector"], "0x12345678");
+        assert_eq!(
+            value["invariant_failure"]["fingerprint"],
+            format!("{:?}", B256::repeat_byte(0x33))
+        );
+        assert_counterexample_artifact_shape(&value);
+
+        let decoded = serde_json::from_value::<SymbolicCounterexampleArtifact>(value).unwrap();
+        assert_eq!(decoded.storage, artifact.storage);
+        assert_eq!(decoded.invariant_failure, artifact.invariant_failure);
     }
 
     #[test]
@@ -1517,6 +1585,12 @@ pub struct SymbolicCounterexampleArtifact {
     pub assumptions: Vec<SymbolicAssumption>,
     /// Where an agent can find the concrete replay trace, when one was produced.
     pub call_trace: SymbolicCallTrace,
+    /// Concrete setup-storage assignments required before replaying this artifact.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub storage: Vec<SymbolicStorageAssignment>,
+    /// Stateful invariant failure origin, when this sequence came from symbolic invariants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invariant_failure: Option<SymbolicInvariantArtifactFailure>,
     /// Concrete replay calls.
     pub calls: Vec<SymbolicCounterexampleCall>,
 }
@@ -1541,8 +1615,25 @@ impl SymbolicCounterexampleArtifact {
             solver: symbolic.solver.clone(),
             assumptions: symbolic.assumptions.clone(),
             call_trace: symbolic.call_trace.clone(),
+            storage: Vec::new(),
+            invariant_failure: None,
             calls,
         }
+    }
+
+    /// Attaches setup-storage assignments required for concrete replay.
+    pub fn with_storage(mut self, storage: Vec<SymbolicStorageAssignment>) -> Self {
+        self.storage = storage;
+        self
+    }
+
+    /// Attaches stateful invariant failure origin metadata.
+    pub fn with_invariant_failure(
+        mut self,
+        invariant_failure: SymbolicInvariantArtifactFailure,
+    ) -> Self {
+        self.invariant_failure = Some(invariant_failure);
+        self
     }
 }
 
@@ -1562,6 +1653,29 @@ pub enum SymbolicCounterexampleArtifactKind {
     SingleCall,
     /// A stateful sequence of calls.
     Sequence,
+}
+
+/// Stateful invariant failure origin for a persisted symbolic sequence artifact.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SymbolicInvariantArtifactFailure {
+    /// An invariant predicate failed.
+    Predicate {
+        /// Invariant function name.
+        name: String,
+    },
+    /// A target/handler call asserted before an invariant predicate failed.
+    Handler {
+        /// Best-effort human-readable handler function name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Address of the handler whose call asserted.
+        reverter: Address,
+        /// 4-byte selector of the failing handler call.
+        selector: Selector,
+        /// Stable edge fingerprint for the failing handler site.
+        fingerprint: B256,
+    },
 }
 
 /// Test identity for a symbolic counterexample artifact.
@@ -2233,7 +2347,7 @@ impl TestResult {
     pub fn invariant_replay_fail(
         &mut self,
         replayed_entirely: bool,
-        invariant_name: &String,
+        invariant_name: &str,
         replay_reason: Option<String>,
         calls: usize,
         reverts: usize,
