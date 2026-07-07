@@ -85,7 +85,7 @@ impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
             // (overload selection by argument types, override shadowing, `super.` and the
             // qualified forms), so judge that target alone and walk the rest manually,
             // skipping the default walk that would re-judge the callee by name matching.
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, args, opts) => {
                 if let Some(function_id) = self.resolved_function(callee) {
                     self.judge_function(function_id);
                 }
@@ -105,6 +105,11 @@ impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
                     }
                     _ => {
                         let _ = self.visit_expr(callee);
+                    }
+                }
+                if let Some(opts) = opts {
+                    for arg in opts.args {
+                        let _ = self.visit_expr(&arg.value);
                     }
                 }
                 match &args.kind {

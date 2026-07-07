@@ -27,6 +27,12 @@ contract Oracle {
 
 contract OracleChild is Oracle {}
 
+interface GasTarget {
+    function pureRead() external pure returns (uint256);
+}
+
+contract CreatedWithSalt {}
+
 contract OverrideBase {
     function maybePure() public view virtual returns (uint256) {
         return address(this).balance;
@@ -67,6 +73,12 @@ contract InitFromFunction is Base {
 
     // the state reference hides in the argument of a pure call
     uint256 public fromPureWithStateArg = double(seed); //~NOTE: state variable initializer
+
+    // the state reference hides in an external call option
+    uint256 public fromPureWithStateGas = GasTarget(address(0x1234)).pureRead{gas: seed}(); //~NOTE: state variable initializer
+
+    // the state reference hides in a creation call option
+    CreatedWithSalt public fromStateSalt = new CreatedWithSalt{salt: bytes32(seed)}(); //~NOTE: state variable initializer
 
     uint256 public fromInherited = baseValue(); //~NOTE: state variable initializer
 
