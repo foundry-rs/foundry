@@ -151,10 +151,13 @@ fn only_referenced_within_cycle(
     let Some(mut current) = refs.get(&start).and_then(|info| info.first_from) else {
         return false;
     };
-    // Each hop follows the unique referencing function; a repeat closes the cycle.
+    // Each hop follows the unique referencing function. The chain is linear, so when it
+    // loops, the cycle contains `start` exactly when the loop closes on `start` itself: a
+    // loop closing on a later node is someone else's cycle, and `start` hangs off it as an
+    // inlineable tail.
     loop {
         if visited.contains(&current) {
-            return true;
+            return current == start;
         }
         visited.push(current);
         let Some(info) = refs.get(&current) else { return false };

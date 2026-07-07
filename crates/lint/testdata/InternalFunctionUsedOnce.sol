@@ -158,3 +158,23 @@ contract Recursion {
         return mutualEven(v - 1);
     }
 }
+
+// A helper hanging off someone else's cycle is still inlineable: the cycle suppression only
+// applies when the cycle contains the candidate itself, not when the single-reference chain
+// runs into a later cycle.
+contract TailOffCycle {
+    function tail(uint256 v) internal pure returns (uint256) { //~NOTE: this internal function is used only once
+        return v + 1;
+    }
+
+    function cycleA(uint256 v) internal pure returns (uint256) {
+        if (v == 0) {
+            return tail(v);
+        }
+        return cycleB(v - 1);
+    }
+
+    function cycleB(uint256 v) internal pure returns (uint256) {
+        return cycleA(v);
+    }
+}
