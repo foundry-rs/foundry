@@ -452,7 +452,7 @@ evmole = "0.8"
 eyre = "0.6"
 figment = { package = "figment2", version = "0.11" }
 futures = { version = "0.3", default-features = false }
-hashbrown = "0.16.1"
+hashbrown = "0.17.1"
 hyper = "1.8"
 indicatif = "0.18"
 inturn = "0.2.0"
@@ -474,7 +474,7 @@ rustls = "0.23"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
-shlex = "1"
+shlex = "2"
 similar-asserts = "2.0"
 soldeer-commands = "=0.11.0"
 soldeer-core = { version = "=0.11.0", features = ["serde"] }
