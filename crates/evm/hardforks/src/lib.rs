@@ -137,7 +137,7 @@ impl FoundryHardfork {
 
     /// Auto-detect the active hardfork for a given chain at a specific timestamp.
     ///
-    /// Tries Ethereum, then Optimism. Returns `None` for unknown chains.
+    /// Tries Ethereum, then Optimism, Tempo, and Monad. Returns `None` for unknown chains.
     pub fn from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<Self> {
         let chain = Chain::from_id(chain_id);
         if let Some(fork) = EthereumHardfork::from_chain_and_timestamp(chain, timestamp) {
@@ -147,7 +147,10 @@ impl FoundryHardfork {
         if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Optimism(fork));
         }
-        TempoHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Self::Tempo)
+        if let Some(fork) = TempoHardfork::from_chain_and_timestamp(chain_id, timestamp) {
+            return Some(Self::Tempo(fork));
+        }
+        MonadHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Self::Monad)
     }
 }
 
@@ -509,6 +512,7 @@ pub fn ethereum_hardfork_from_block_tag(block: impl Into<BlockNumberOrTag>) -> E
 mod tests {
     use super::*;
     use alloy_hardforks::ethereum::mainnet::*;
+    use monad_revm::{MONAD_MAINNET_CHAIN_ID, MONAD_TESTNET_CHAIN_ID};
     use tempo_chainspec::constants::{mainnet::*, moderato::*};
 
     #[test]
@@ -593,6 +597,26 @@ mod tests {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T6_TIMESTAMP),
             Some(FoundryHardfork::Tempo(TempoHardfork::T6))
+        );
+    }
+
+    #[test]
+    fn test_monad_hardfork_from_chain_and_timestamp() {
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MONAD_MAINNET_CHAIN_ID, 1_763_648_999),
+            Some(FoundryHardfork::Monad(MonadHardfork::MonadEight))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MONAD_MAINNET_CHAIN_ID, 1_773_930_600),
+            Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MONAD_TESTNET_CHAIN_ID, 1_773_152_999),
+            Some(FoundryHardfork::Monad(MonadHardfork::MonadEight))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MONAD_TESTNET_CHAIN_ID, 1_773_153_000),
+            Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
         );
     }
 
