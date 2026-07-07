@@ -841,12 +841,16 @@ impl Config {
                 || provider
                     .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
                     .unwrap_or(false);
+        let invariant_workers_configured = self.invariant.workers_configured
+            || provider.contains("invariant.workers")
+            || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false);
         let figment = self.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
+        config.invariant.workers_configured = invariant_workers_configured;
         config.normalize_hardfork_settings()?;
 
         Ok(config)

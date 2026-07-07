@@ -1220,7 +1220,6 @@ impl TestArgs {
             fail_fast: args.fail_fast,
             etherscan_api_key: args.etherscan_api_key,
             list: args.list,
-            fuzz_run: args.fuzz_run,
             fuzz_input_file: args.fuzz_input_file,
             show_progress: args.show_progress,
             rerun: args.rerun,
@@ -4272,6 +4271,7 @@ mod tests {
         assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
         assert_eq!(config.invariant.corpus.corpus_dir, Some(PathBuf::from("invariant_corpus")));
         assert!(config.invariant.corpus_random_sequence_weight_configured);
+        assert!(config.invariant.workers_configured);
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
