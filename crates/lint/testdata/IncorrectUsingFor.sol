@@ -130,3 +130,35 @@ library PrivateLib {
         return h.grab();
     }
 }
+
+// Public and external library functions attach through the library form too: the directive
+// is live even without any internal function.
+library VisibleLib {
+    function pubDouble(uint256 v) public pure returns (uint256) {
+        return v * 2;
+    }
+
+    function extTriple(uint256 v) external pure returns (uint256) {
+        return v * 3;
+    }
+}
+
+contract UsesVisibleAttachments {
+    using VisibleLib for uint256;
+
+    function double(uint256 x) internal pure returns (uint256) {
+        return x.pubDouble();
+    }
+}
+
+// A library whose only ordinary function takes no parameter attaches nothing: the library
+// form has no bound first parameter to match, so the directive is a no-op.
+library ZeroParamLib {
+    function answer() internal pure returns (uint256) {
+        return 42;
+    }
+}
+
+contract UsesZeroParamLib {
+    using ZeroParamLib for uint256; //~NOTE: `using ... for` names a library
+}
