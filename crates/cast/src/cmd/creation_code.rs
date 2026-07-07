@@ -141,7 +141,7 @@ pub async fn fetch_creation_code_from_etherscan(
     let client = config
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre!("No Etherscan API key configured for chain {chain}"))?
-        .into_client()?;
+        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
     let creation_data = client.contract_creation_data(contract).await?;
     let creation_tx_hash = creation_data.transaction_hash;
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;

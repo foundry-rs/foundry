@@ -5,13 +5,16 @@ use crate::{
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, TransactionResponse};
+use alloy_network::{BlockResponse, Network, TransactionResponse};
 use alloy_primitives::{
-    Address, Bytes, U256,
-    map::{AddressSet, HashMap},
+    Address, B256, Bytes, U256,
+    map::{AddressHashMap, AddressSet},
 };
-use alloy_provider::Provider;
-use alloy_rpc_types::BlockTransactions;
+use alloy_provider::{Provider, ext::DebugApi};
+use alloy_rpc_types::{
+    BlockId, BlockTransactions,
+    trace::geth::{GethDebugTracingOptions, PreStateConfig},
+};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -29,18 +32,20 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode, Traces},
+    traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use futures::TryFutureExt;
-use revm::{DatabaseRef, context::Block};
+use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -77,6 +82,14 @@ pub struct RunArgs {
     /// Disables the labels in the traces.
     #[arg(long, default_value_t = false)]
     disable_labels: bool,
+
+    /// Use debug_traceTransaction to fetch the prestate instead of replaying the block.
+    ///
+    /// This is significantly faster than replaying all previous transactions in the block, but
+    /// requires the node to expose the `debug_` namespace (most public RPCs don't). If the call
+    /// or response can't be used, cast silently falls back to replaying the block.
+    #[arg(long, default_value_t = false)]
+    prestate_tracer: bool,
 
     /// Label addresses in the trace.
     ///
@@ -123,12 +136,15 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
-            self.run_with_evm::<TempoEvmNetwork>().await
-        } else if evm_opts.networks.is_optimism() {
-            self.run_with_evm::<OpEvmNetwork>().await
-        } else {
-            self.run_with_evm::<EthEvmNetwork>().await
+            return self.run_with_evm::<TempoEvmNetwork>().await;
         }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_with_evm::<OpEvmNetwork>().await;
+        }
+
+        self.run_with_evm::<EthEvmNetwork>().await
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
@@ -184,6 +200,7 @@ impl RunArgs {
         )?;
 
         let mut evm_version = self.evm_version;
+        let mut resolved_tempo_hardfork = chain.is_tempo().then(|| config.evm_spec_id());
 
         evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
 
@@ -196,8 +213,10 @@ impl RunArgs {
         evm_env.cfg_env.limit_contract_code_size = None;
         evm_env.block_env.set_number(U256::from(tx_block_number));
 
+        let mut parent_beacon_block_root = None;
         if let Some(block) = &block {
             evm_env.block_env = block_env_from_header(block.header());
+            parent_beacon_block_root = block.header().parent_beacon_block_root();
 
             // Resolve the correct spec for the block using the same approach as reth: walk
             // known chain activation conditions to find the latest active fork. Falls back
@@ -207,6 +226,9 @@ impl RunArgs {
                     evm_env.cfg_env.chain_id,
                     block.header().timestamp(),
                 ) {
+                    if let FoundryHardfork::Tempo(hardfork) = hardfork {
+                        resolved_tempo_hardfork = Some(hardfork);
+                    }
                     evm_env.cfg_env.set_spec_and_mainnet_gas_params(hardfork.into());
                 } else if block.header().excess_blob_gas().is_some() {
                     // TODO: add glamsterdam header field checks in the future
@@ -220,7 +242,8 @@ impl RunArgs {
             );
         }
 
-        let trace_mode = TraceMode::Call
+        let trace_requirements = TraceRequirements::none()
+            .with_calls(true)
             .with_debug(self.debug)
             .with_decode_internal(if self.decode_internal {
                 InternalTraceMode::Full
@@ -232,7 +255,7 @@ impl RunArgs {
             (evm_env.clone(), tx_env),
             fork,
             evm_version,
-            trace_mode,
+            trace_requirements,
             networks,
             create2_deployer,
             None,
@@ -240,11 +263,49 @@ impl RunArgs {
 
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
-        // Set the state to the moment right before the transaction
-        if !self.quick {
-            if !shell::is_json() {
-                sh_println!("Executing previous transactions from the block.")?;
+        let spec_id = (*evm_env.cfg_env.spec()).into();
+
+        if let Some(parent_beacon_block_root) =
+            parent_beacon_block_root_for_spec(spec_id, parent_beacon_block_root)?
+        {
+            executor.apply_beacon_root(parent_beacon_block_root)?;
+        }
+
+        // Set the state to the moment right before the transaction.
+        //
+        // When `--prestate-tracer` is set, opportunistically try to fetch the prestate directly
+        // via `debug_traceTransaction` (much faster than replaying the block). This requires the
+        // `debug_` namespace, which most nodes don't expose, so it is opt-in and silently falls
+        // back to replaying previous transactions in the block if the call or parsing fails.
+        let mut prestate_applied = false;
+        if !self.quick && self.prestate_tracer {
+            trace!(?tx_hash, "attempting to fetch prestate via debug_traceTransaction");
+            match provider
+                .debug_trace_transaction(
+                    tx_hash,
+                    GethDebugTracingOptions::prestate_tracer(PreStateConfig::default()),
+                )
+                .await
+            {
+                Ok(trace) => match trace.try_into_pre_state_frame() {
+                    Ok(pre_state_frame) => {
+                        executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
+                        prestate_applied = true;
+                        trace!("prestate trace applied successfully, skipping block replay");
+                    }
+                    Err(err) => {
+                        trace!(%err, "failed to parse prestate trace response");
+                    }
+                },
+                Err(err) => {
+                    trace!(?err, "debug_traceTransaction failed, falling back to block replay");
+                }
             }
+        }
+
+        // Fall back to replaying previous transactions if prestate trace wasn't applied.
+        if !self.quick && !prestate_applied {
+            sh_status!("Executing previous transactions from the block.")?;
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions().len() as u64, "tx");
@@ -341,6 +402,7 @@ impl RunArgs {
             decode_internal,
             disable_labels,
             self.trace_depth,
+            resolved_tempo_hardfork,
         )
         .await?;
 
@@ -348,11 +410,26 @@ impl RunArgs {
     }
 }
 
+fn parent_beacon_block_root_for_spec(
+    spec_id: SpecId,
+    parent_beacon_block_root: Option<B256>,
+) -> Result<Option<B256>> {
+    if !spec_id.is_enabled_in(SpecId::CANCUN) {
+        return Ok(None);
+    }
+
+    parent_beacon_block_root.map(Some).ok_or_else(|| {
+        eyre::eyre!(
+            "MissingParentBeaconBlockRoot: missing parent beacon block root for Cancun block"
+        )
+    })
+}
+
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     result: &TraceResult,
-) -> Result<HashMap<Address, Bytes>> {
-    let mut contracts_bytecode = HashMap::default();
+) -> Result<AddressHashMap<Bytes>> {
+    let mut contracts_bytecode = AddressHashMap::default();
     if let Some(ref traces) = result.traces {
         contracts_bytecode.extend(gather_trace_addresses(traces).filter_map(|addr| {
             // All relevant bytecodes should already be cached in the executor.
@@ -368,6 +445,33 @@ pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
             }
             Some((addr, code))
         }));
+    }
+    Ok(contracts_bytecode)
+}
+
+/// Fetches the runtime bytecode of the addresses seen in `result` over RPC.
+///
+/// The RPC trace path (`cast call --debug-trace-call`) has no local executor to read code
+/// from, so the bytecode needed to match local artifacts is fetched from the node with
+/// `eth_getCode`. Addresses whose code cannot be fetched are skipped with a warning.
+pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
+    provider: &P,
+    result: &TraceResult,
+    block: BlockId,
+) -> Result<AddressHashMap<Bytes>> {
+    let mut contracts_bytecode = AddressHashMap::default();
+    if let Some(ref traces) = result.traces {
+        for addr in gather_trace_addresses(traces) {
+            match provider.get_code_at(addr).block_id(block).await {
+                Ok(code) if !code.is_empty() => {
+                    contracts_bytecode.insert(addr, code);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    let _ = sh_warn!("Failed to fetch code for {addr}: {err}");
+                }
+            }
+        }
     }
     Ok(contracts_bytecode)
 }
@@ -404,5 +508,24 @@ impl figment::Provider for RunArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), map)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_beacon_block_root_is_required_for_cancun() {
+        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None).unwrap_err();
+        assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
+
+        let root = B256::repeat_byte(0x42);
+        assert_eq!(
+            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root)).unwrap(),
+            Some(root),
+        );
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
     }
 }

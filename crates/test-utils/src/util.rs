@@ -17,7 +17,7 @@ const SKIP_DIRS: &[&str] = &["out", "cache", "broadcast"];
 pub use crate::{ext::*, prj::*};
 
 /// The commit of forge-std to use.
-pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
+pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev").trim_ascii();
 
 /// Global default template path. Contains the global template project from which all other
 /// temp projects are initialized. See [`initialize()`] for more info.
@@ -30,7 +30,7 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
     LazyLock::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 /// The default Solc version used when compiling tests.
-pub const SOLC_VERSION: &str = "0.8.33";
+pub const SOLC_VERSION: &str = "0.8.35";
 
 /// Another Solc version used when compiling tests.
 ///

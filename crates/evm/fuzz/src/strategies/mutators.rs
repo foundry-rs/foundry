@@ -525,7 +525,7 @@ fn validate_uint_mutation(original: U256, mutated: U256, size: usize) -> Option<
 
     // Check if mutated value fits the given size.
     let max = if size < 256 { (U256::from(1) << size) - U256::from(1) } else { U256::MAX };
-    (mutated < max).then_some(mutated)
+    (mutated <= max).then_some(mutated)
 }
 
 /// Returns mutated int value if different from the original value and if it fits in the given size,
@@ -537,10 +537,16 @@ fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I
     }
 
     // Check if mutated value fits the given size.
-    let max_abs = (U256::from(1) << (size - 1)) - U256::from(1);
+    // Valid signed range for `size` bits is `[-2^(size-1), 2^(size-1) - 1]`.
+    let max = I256::overflowing_from_sign_and_abs(
+        Sign::Positive,
+        (U256::from(1) << (size - 1)) - U256::from(1),
+    )
+    .0;
+    let min = I256::overflowing_from_sign_and_abs(Sign::Negative, U256::from(1) << (size - 1)).0;
     match mutated.sign() {
-        Sign::Positive => mutated < I256::overflowing_from_sign_and_abs(Sign::Positive, max_abs).0,
-        Sign::Negative => mutated > I256::overflowing_from_sign_and_abs(Sign::Negative, max_abs).0,
+        Sign::Positive => mutated <= max,
+        Sign::Negative => mutated >= min,
     }
     .then_some(mutated)
 }
@@ -549,6 +555,49 @@ fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I
 mod tests {
     use super::*;
     use proptest::test_runner::Config;
+
+    #[test]
+    fn validate_uint_mutation_accepts_inclusive_max() {
+        // For width `size`, valid unsigned values are 0..=max where max = 2^size - 1.
+        // Regression: `< max` incorrectly rejected `mutated == max`; must use `<= max`.
+        for size in [8usize, 16, 32, 64, 128] {
+            let max = (U256::from(1) << size) - U256::from(1);
+            assert_eq!(
+                super::validate_uint_mutation(U256::ZERO, max, size),
+                Some(max),
+                "size={size}"
+            );
+        }
+        let original = U256::from(1);
+        assert_eq!(super::validate_uint_mutation(original, U256::MAX, 256), Some(U256::MAX));
+    }
+
+    #[test]
+    fn validate_int_mutation_accepts_inclusive_bounds() {
+        // For width `size`, valid signed values are [-2^(size-1), 2^(size-1) - 1].
+        // Regression: strict comparisons rejected the inclusive max and min bounds.
+        for size in [8usize, 16, 32, 64, 128] {
+            let max = I256::overflowing_from_sign_and_abs(
+                Sign::Positive,
+                (U256::from(1) << (size - 1)) - U256::from(1),
+            )
+            .0;
+            let min =
+                I256::overflowing_from_sign_and_abs(Sign::Negative, U256::from(1) << (size - 1)).0;
+            assert_eq!(
+                super::validate_int_mutation(I256::ZERO, max, size),
+                Some(max),
+                "size={size} max"
+            );
+            assert_eq!(
+                super::validate_int_mutation(I256::ZERO, min, size),
+                Some(min),
+                "size={size} min"
+            );
+        }
+        assert_eq!(super::validate_int_mutation(I256::ZERO, I256::MAX, 256), Some(I256::MAX));
+        assert_eq!(super::validate_int_mutation(I256::ZERO, I256::MIN, 256), Some(I256::MIN));
+    }
 
     #[test]
     fn test_mutate_uint() {

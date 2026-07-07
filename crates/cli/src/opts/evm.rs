@@ -120,6 +120,11 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub isolate: bool,
 
+    /// Whether to disable isolation of calls.
+    #[arg(long, conflicts_with = "isolate")]
+    #[serde(skip)]
+    pub no_isolate: bool,
+
     /// Network selection.
     #[command(flatten)]
     #[serde(skip)]
@@ -150,7 +155,9 @@ impl Provider for EvmArgs {
             dict.insert("live_logs".to_string(), self.live_logs.into());
         }
 
-        if self.isolate {
+        if self.no_isolate {
+            dict.insert("isolate".to_string(), false.into());
+        } else if self.isolate {
             dict.insert("isolate".to_string(), self.isolate.into());
         }
 
@@ -305,6 +312,17 @@ mod tests {
         let dict = data.get(&Config::selected_profile()).expect("profile dict");
         let val = dict.get("compute_units_per_second").expect("cups present");
         assert_eq!(val, &Value::from(1000u64));
+    }
+
+    #[test]
+    fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
+        use clap::CommandFactory;
+
+        let command = EvmArgs::command();
+        let rpc_url =
+            command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");
+
+        assert!(rpc_url.get_env().is_none());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::ScreamingSnakeCase;
 use crate::{
     linter::{EarlyLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, naming::check_screaming_snake_case},
 };
 use solar::ast::{VarMut, VariableDefinition};
 
@@ -44,21 +44,4 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
             }
         }
     }
-}
-
-/// If the string `s` is not SCREAMING_SNAKE_CASE, returns a `Some(String)` with the suggested
-/// conversion. Otherwise, returns `None`.
-pub fn check_screaming_snake_case(s: &str) -> Option<String> {
-    if s.len() <= 1 {
-        return None;
-    }
-
-    // Handle leading/trailing underscores like `heck` does
-    let expected = format!(
-        "{prefix}{name}{suffix}",
-        prefix = if s.starts_with('_') { "_" } else { "" },
-        name = heck::AsShoutySnakeCase(s),
-        suffix = if s.ends_with('_') { "_" } else { "" }
-    );
-    if s == expected { None } else { Some(expected) }
 }

@@ -3,7 +3,8 @@ use crate::{
         erc20::build_provider_with_signer,
         send::{cast_send, cast_send_with_access_key},
     },
-    tx::{SendTxOpts, TxParams},
+    tempo,
+    tx::{SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_signer::Signer;
@@ -20,11 +21,11 @@ use tempo_primitives::{MasterId, TempoAddressExt, UserTag};
 
 const POW_BYTES: usize = 4;
 
-pub(super) struct Output {
-    pub(super) salt: B256,
-    pub(super) registration_hash: B256,
-    pub(super) master_id: MasterId,
-    pub(super) zero_tag_virtual_address: Address,
+pub(crate) struct Output {
+    pub(crate) salt: B256,
+    pub(crate) registration_hash: B256,
+    pub(crate) master_id: MasterId,
+    pub(crate) zero_tag_virtual_address: Address,
 }
 
 pub(super) fn run(
@@ -66,7 +67,7 @@ pub(super) fn run(
         rng.fill_bytes(&mut salt[..]);
     }
 
-    sh_println!("Mining TIP-1022 salt for {master} with {n_threads} threads...")?;
+    sh_status!("Mining TIP-1022 salt for {master} with {n_threads} threads...")?;
 
     let timer = Instant::now();
     let output = mine(master, salt, n_threads, POW_BYTES)?;
@@ -78,9 +79,16 @@ pub(super) async fn register(
     master: Address,
     salt: B256,
     send_tx: SendTxOpts,
-    tx_opts: TxParams,
+    mut tx_opts: TxParams,
 ) -> Result<()> {
-    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    let config = send_tx.eth.load_config()?;
+    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let chain = get_chain(config.chain, &provider).await?;
+    tempo::ensure_session_not_browser(&tx_opts.tempo, send_tx.browser.browser)?;
+    let (signer, tempo_access_key) =
+        tempo::resolve_session_or_wallet_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id())
+            .await?;
     let signer = signer.ok_or_else(|| {
         eyre::eyre!(
             "--register requires a signer or Tempo keychain identity (for example --private-key or --from)"
@@ -96,38 +104,71 @@ pub(super) async fn register(
         );
     }
 
-    let config = send_tx.eth.load_config()?;
-    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
     let mut tx = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider)
         .registerVirtualMaster(salt)
         .into_transaction_request();
-    tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+    let expires_at = tx_opts.tempo.resolve_expires();
+    tempo::print_expires(expires_at)?;
+    tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
 
-    sh_println!("Submitting registerVirtualMaster({salt}) on Tempo...")?;
+    sh_status!("Submitting registerVirtualMaster({salt}) on Tempo...")?;
 
     if let Some(ref access_key) = tempo_access_key {
+        tempo::fill_access_key_transaction(
+            &provider,
+            &mut tx,
+            access_key,
+            chain,
+            config.eip1559_fee_estimate,
+        )
+        .await?;
         cast_send_with_access_key(
             &provider,
             tx,
             &signer,
             access_key,
+            Some(chain),
+            None,
             send_tx.cast_async,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
-        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
-            .await?;
+        // Fill only the fees; the provider fills nonce and gas limit.
+        fill_transaction_gas_fees(
+            &provider,
+            &mut tx,
+            chain.is_legacy(),
+            false,
+            config.eip1559_fee_estimate,
+        )
+        .await?;
+        cast_send(
+            provider,
+            tx,
+            Some(chain),
+            None,
+            send_tx.cast_async,
+            send_tx.sync,
+            send_tx.confirmations,
+            timeout,
+            !config.eth_rpc_curl,
+        )
+        .await?;
     }
 
     Ok(())
 }
 
-fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Result<Output> {
+pub(crate) fn mine(
+    master: Address,
+    salt: B256,
+    n_threads: usize,
+    pow_bytes: usize,
+) -> Result<Output> {
     let mut packed = [0u8; 52];
     packed[..20].copy_from_slice(master.as_slice());
 
@@ -144,7 +185,7 @@ fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Resu
     .ok_or_else(|| eyre::eyre!("virtual master mining failed: all threads panicked"))
 }
 
-fn derive(master: Address, salt: B256) -> Output {
+pub(crate) fn derive(master: Address, salt: B256) -> Output {
     let registration_hash = registration_hash(master, salt);
     let master_id = MasterId::from_slice(&registration_hash[4..8]);
     let zero_tag_virtual_address = Address::new_virtual(master_id, UserTag::ZERO);
@@ -152,14 +193,14 @@ fn derive(master: Address, salt: B256) -> Output {
     Output { salt, registration_hash, master_id, zero_tag_virtual_address }
 }
 
-fn registration_hash(master: Address, salt: B256) -> B256 {
+pub(crate) fn registration_hash(master: Address, salt: B256) -> B256 {
     let mut packed = [0u8; 52];
     packed[..20].copy_from_slice(master.as_slice());
     packed[20..].copy_from_slice(salt.as_slice());
     keccak256(packed)
 }
 
-fn has_pow(registration_hash: &B256, pow_bytes: usize) -> bool {
+pub(crate) fn has_pow(registration_hash: &B256, pow_bytes: usize) -> bool {
     registration_hash[..pow_bytes].iter().all(|byte| *byte == 0)
 }
 

@@ -7,7 +7,6 @@ use eyre::Result;
 use foundry_common::sh_warn;
 use foundry_config::{Chain, Config, NamedChain, cache};
 use std::{ffi::OsStr, str::FromStr};
-use strum::VariantNames;
 
 /// CLI arguments for `forge cache`.
 #[derive(Debug, Parser)]
@@ -105,7 +104,7 @@ impl LsArgs {
                 ChainOrAll::All => cache = Config::list_foundry_cache()?,
             }
         }
-        sh_print!("{cache}")?;
+        sh_eprint!("{cache}")?;
         Ok(())
     }
 }
@@ -184,7 +183,7 @@ impl TypedValueParser for ChainOrAllValueParser {
 }
 
 fn possible_chains() -> PossibleValuesParser {
-    Some(&"all").into_iter().chain(NamedChain::VARIANTS).into()
+    Some(&"all").into_iter().chain(NamedChain::VARIANT_NAMES).into()
 }
 
 #[cfg(test)]

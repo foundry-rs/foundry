@@ -112,6 +112,14 @@ solc = "0.8.5"
 Warning: Found unknown config section in foundry.toml: [default]
 This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
 Please use [profile.default] instead or run `forge config --fix`.
+note[could-be-constant]: state variable could be declared constant
+  [FILE]:6:17
+  │
+6 │     uint public value = 42;
+  │                 ━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
 
 "#]]);
     // `forge clear` should not warn
@@ -140,7 +148,7 @@ forgetest!(
         fs::write(block2_file, "{}").unwrap();
         fs::create_dir_all(etherscan_cache_dir).unwrap();
 
-        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stdout_lossy();
+        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stderr_lossy();
         let output_lines = output.split('\n').collect::<Vec<_>>();
         println!("{output}");
 
@@ -300,21 +308,17 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
-
-"#]]);
+"#]],
+    );
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -352,18 +356,41 @@ ignore them in the `.gitignore` file.
 forgetest!(can_init_no_git, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
+    cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
     prj.assert_config_exists();
 
     assert!(!prj.root().join(".git").exists());
     assert!(prj.root().join("lib/forge-std").exists());
     assert!(!prj.root().join("lib/forge-std/.git").exists());
+});
+
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
+forgetest!(can_init_with_no_commit, |prj, cmd| {
+    prj.wipe();
+
+    cmd.arg("init")
+        .arg(prj.root())
+        .arg("--no-commit")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]]);
+    prj.assert_config_exists();
 });
 
 // Checks that quiet mode does not print anything
@@ -386,8 +413,10 @@ forgetest!(can_init_with_dir, |prj, cmd| {
 forgetest!(can_init_with_dir_and_template, |prj, cmd| {
     cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"])
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -412,8 +441,10 @@ forgetest!(can_init_with_dir_and_template_and_branch, |prj, cmd| {
         "test/deployments",
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -435,18 +466,13 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force")
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("--force").assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
-
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
 
 "#]]);
 
@@ -475,18 +501,13 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force")
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("--force").assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
-
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
 
 "#]]);
 
@@ -517,18 +538,13 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force")
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.arg("--force").assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
-
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
 
 "#]]);
 
@@ -559,15 +575,20 @@ forgetest!(can_init_using_parent_repo, |prj, cmd| {
     prj.create_file(".gitignore", "not foundry .gitignore");
 
     let folder = "foundry-folder";
-    cmd.arg("init").arg(folder).arg("--force").arg("--use-parent-git").assert_success().stdout_eq(
-        str![[r#"
+    cmd.arg("init")
+        .arg(folder)
+        .arg("--force")
+        .arg("--use-parent-git")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]],
-    );
+"#]]);
 
     assert!(root.join(folder).join("lib/forge-std").exists());
 
@@ -591,13 +612,16 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 forgetest!(can_init_vscode, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![[r#"
+    cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     let settings = prj.root().join(".vscode/settings.json");
     assert!(settings.is_file());
@@ -623,8 +647,10 @@ forgetest!(can_init_template, |prj, cmd| {
     cmd.args(["init", "--template", "foundry-rs/forge-template"])
         .arg(prj.root())
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -644,8 +670,10 @@ forgetest!(can_init_template_with_branch, |prj, cmd| {
     cmd.args(["init", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"])
         .arg(prj.root())
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -663,6 +691,7 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
 forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
+Initializing [..] from https://github.com/a...
 remote: Not Found
 fatal: repository 'https://github.com/a/' not found
 Error: git fetch exited with code 128
@@ -676,8 +705,10 @@ forgetest!(can_init_template_with_no_commit, |prj, cmd| {
     cmd.args(["init", "--template", "foundry-rs/forge-template"])
         .arg(prj.root())
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -711,20 +742,39 @@ forgetest!(flaky_can_clone, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
-Initializing [..]...
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-    Initialized forge project
-Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+    .stderr_eq(str![[r#"
+Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
+    Installed forge-std[..]
+    Initialized forge project
+Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 
 "#]]);
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag for clone
+forgetest!(flaky_can_clone_with_no_commit, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--no-commit",
+        "0x044b75f554b886A065b9567891e45c79542d7357",
+    ])
+    .arg(prj.root())
+    .assert_success();
 });
 
 // Checks that quiet mode does not print anything for clone
@@ -753,15 +803,19 @@ forgetest!(flaky_can_clone_sourcify, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
-Initializing [..]...
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-    Initialized forge project
-Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
+Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
+    Installed forge-std[..]
+    Initialized forge project
+Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 
 "#]]);
 
@@ -786,15 +840,19 @@ forgetest!(flaky_can_clone_no_remappings_txt, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
-Initializing [..]...
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-    Initialized forge project
-Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+    .stderr_eq(str![[r#"
+Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
+    Installed forge-std[..]
+    Initialized forge project
+Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 
 "#]]);
 
@@ -845,9 +903,10 @@ forgetest!(flaky_can_clone_keep_directory_structure, |prj, cmd| {
 forgetest!(can_init_project, |prj, cmd| {
     prj.wipe();
 
-    cmd.args(["init"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+    cmd.args(["init"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
@@ -873,13 +932,16 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 forgetest!(can_init_vyper_project, |prj, cmd| {
     prj.wipe();
 
-    cmd.args(["init", "--vyper"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+    cmd.args(["init", "--vyper"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     assert!(prj.root().join("foundry.toml").exists());
     assert!(prj.root().join("lib/forge-std").exists());
@@ -902,25 +964,37 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 forgetest!(can_init_tempo_project, |prj, cmd| {
     prj.wipe();
 
-    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success().stdout_eq(str![[
-        r#"
+    cmd.args(["init", "--network", "tempo"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..]...
+...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
 Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
+...
     Installed tempo-std[..]
     Initialized forge project
 
-"#
-    ]]);
+"#]]);
 
     assert!(prj.root().join("foundry.toml").exists());
 
-    // Verify foundry.toml contains `tempo = true` so subsequent commands auto-detect the network.
+    // Verify foundry.toml contains `network = "tempo"` so subsequent commands auto-detect the
+    // network.
     let foundry_toml = std::fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
     assert!(
-        foundry_toml.contains("tempo = true"),
-        "foundry.toml should contain `tempo = true`, got:\n{foundry_toml}"
+        foundry_toml.contains("network = \"tempo\""),
+        "foundry.toml should contain `network = \"tempo\"`, got:\n{foundry_toml}"
+    );
+    assert!(
+        foundry_toml.contains("[rpc_endpoints]")
+            && foundry_toml.contains("tempo = \"https://rpc.tempo.xyz/\"")
+            && foundry_toml.contains("moderato = \"https://rpc.moderato.tempo.xyz/\""),
+        "foundry.toml should contain tempo rpc_endpoints, got:\n{foundry_toml}"
     );
 
     assert!(prj.root().join("lib/forge-std").exists());
@@ -998,15 +1072,19 @@ forgetest!(flaky_can_clone_with_node_modules, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
-Initializing [..]...
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-    Initialized forge project
-Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+    .stderr_eq(str![[r#"
+Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
+    Installed forge-std[..]
+    Initialized forge project
+Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 
 "#]]);
 });
@@ -1060,13 +1138,20 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
     let _ = fs::create_dir(fuzz_cache_dir.clone());
     let invariant_cache_dir = prj.root().join("cache/invariant");
     let _ = fs::create_dir(invariant_cache_dir.clone());
+    let frontier_cache_dir = prj.root().join("cache/frontiers");
+    let _ = fs::create_dir(frontier_cache_dir.clone());
+    prj.update_config(|config| {
+        config.fuzz.corpus.frontier_dir = Some("cache/frontiers".into());
+    });
 
     assert!(fuzz_cache_dir.exists());
     assert!(invariant_cache_dir.exists());
+    assert!(frontier_cache_dir.exists());
 
     cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!fuzz_cache_dir.exists());
     assert!(!invariant_cache_dir.exists());
+    assert!(!frontier_cache_dir.exists());
 });
 
 // checks that extra output works
@@ -1273,6 +1358,15 @@ contract Foo {
 
 "#
     ]]);
+
+    // `--json` wraps the bytecode hex as a JSON string
+    cmd.forge_fuse()
+        .args(["inspect", contract_name, "bytecode", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+"0x60806040[..]"
+
+"#]]);
 });
 
 forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
@@ -1409,6 +1503,145 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest!(snapshot_expands_invariant_campaign_predicates, |prj, cmd| {
+    prj.add_test(
+        "InvariantSnapshot.t.sol",
+        r#"
+contract InvariantSnapshotHandler {
+    uint256 public count;
+
+    function increment() public {
+        count++;
+    }
+}
+
+contract InvariantSnapshotTest {
+    InvariantSnapshotHandler internal handler;
+
+    function setUp() public {
+        handler = new InvariantSnapshotHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_count_is_non_negative() public view {
+        require(handler.count() >= 0);
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_count_is_not_max() public view {
+        require(handler.count() != type(uint256).max);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["snapshot"]).assert_success();
+
+    let snapshot = read_string(prj.root().join(".gas-snapshot"));
+    assert_eq!(
+        snapshot.lines().filter(|line| line.starts_with("InvariantSnapshotTest:")).count(),
+        2
+    );
+    assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_non_negative()"));
+    assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_not_max()"));
+});
+
+// tests that `forge snapshot --diff` keeps per-test diff rows on stdout but moves summary to stderr
+forgetest!(snapshot_diff_summary_on_stderr, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
+import "./test.sol";
+contract ATest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+    );
+
+    // Baseline snapshot.
+    cmd.args(["snapshot"]).assert_success();
+
+    // Re-run with --diff so the per-test diff row is emitted.
+    let assert = cmd.forge_fuse().args(["snapshot", "--diff"]).assert_success();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stdout.contains("ATest::testExample()"),
+        "expected diff row on stdout, got stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains("Total tests:") && stderr.contains("Overall gas change:"),
+        "expected summary on stderr, got stderr: {stderr}"
+    );
+    assert!(
+        !stdout.contains("Total tests:") && !stdout.contains("Overall gas change:"),
+        "summary leaked to stdout: {stdout}"
+    );
+});
+
+// tests that `forge snapshot --check` reports mismatches on stderr
+forgetest!(snapshot_check_writes_diff_to_stderr, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
+import "./test.sol";
+contract ATest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+    );
+
+    // Pre-seed an empty snapshot so `--check` triggers the "No matching snapshot entry" path.
+    fs::write(prj.root().join(".gas-snapshot"), "").unwrap();
+
+    let assert = cmd.args(["snapshot", "--check"]).assert_failure();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("No matching snapshot entry found for \"ATest::testExample()\""),
+        "expected diff on stderr, got stderr: {stderr}\nstdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("No matching snapshot entry"),
+        "diff prose leaked to stdout: {stdout}"
+    );
+});
+
+forgetest!(snapshot_reports_when_snap_file_is_not_written, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "FailingSnapshot.t.sol",
+        r#"
+import "./test.sol";
+contract FailingSnapshotTest is DSTest {
+    function testSnapshotFailure() public {
+        assertTrue(false);
+    }
+}
+   "#,
+    );
+
+    let assert = cmd.args(["snapshot", "--snap", "failed.snap"]).assert_failure();
+    let output = assert.get_output();
+    assert!(output.stderr_lossy().contains(
+        "Error: gas snapshot file \"failed.snap\" was not written because the test run failed"
+    ));
+    assert!(!prj.root().join("failed.snap").exists());
+});
+
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
     // Ignoring path and setting empty error_codes as default would set some error codes
@@ -1500,7 +1733,11 @@ forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
         r"
 pragma solidity *;
 contract A {
-    function testExample() public {}
+    event Example();
+
+    function testExample() public {
+        emit Example();
+    }
 }
    ",
     );
@@ -1541,6 +1778,51 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]]);
+});
+
+// test that `forge build` ignores error codes only from matching path prefixes
+forgetest!(can_compile_without_warnings_ignored_error_codes_from, |prj, cmd| {
+    let contract = r"
+pragma solidity *;
+contract A {}
+    ";
+    prj.add_raw_source("A", contract);
+    prj.add_raw_test("A", contract);
+
+    // suppressed for both src and test
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+        config.ignored_error_codes_from = vec![
+            (std::path::PathBuf::from("src"), vec![SolidityErrorCode::SpdxLicenseNotProvided]),
+            (std::path::PathBuf::from("test"), vec![SolidityErrorCode::SpdxLicenseNotProvided]),
+        ];
+    });
+
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    // suppressed only for test, src warning still shows
+    prj.update_config(|config| {
+        config.ignored_error_codes_from = vec![(
+            std::path::PathBuf::from("test"),
+            vec![SolidityErrorCode::SpdxLicenseNotProvided],
+        )];
+    });
+
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
 
 "#]]);
 });
@@ -1771,7 +2053,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -1785,7 +2067,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133243 |             395 |        |        |        |         |
+|                                   133219 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -1799,7 +2081,7 @@ forgetest!(gas_report_all_contracts, |prj, cmd| {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -1818,7 +2100,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -1834,7 +2116,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133243,
+      "gas": 133219,
       "size": 395
     },
     "functions": {
@@ -1850,7 +2132,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -1876,7 +2158,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -1890,7 +2172,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133243 |             395 |        |        |        |         |
+|                                   133219 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -1904,7 +2186,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -1923,7 +2205,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -1939,7 +2221,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133243,
+      "gas": 133219,
       "size": 395
     },
     "functions": {
@@ -1955,7 +2237,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -1981,7 +2263,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -1995,7 +2277,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133243 |             395 |        |        |        |         |
+|                                   133219 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2009,7 +2291,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2028,7 +2310,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2044,7 +2326,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133243,
+      "gas": 133219,
       "size": 395
     },
     "functions": {
@@ -2060,7 +2342,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2089,7 +2371,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2103,7 +2385,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133243 |             395 |        |        |        |         |
+|                                   133219 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2117,7 +2399,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2136,7 +2418,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2152,7 +2434,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133243,
+      "gas": 133219,
       "size": 395
     },
     "functions": {
@@ -2168,7 +2450,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2201,7 +2483,7 @@ forgetest!(gas_report_some_contracts, |prj, cmd| {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2220,7 +2502,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2248,7 +2530,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2267,7 +2549,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2295,7 +2577,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133243 |             395 |        |        |        |         |
+|                                   133219 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2314,7 +2596,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133243,
+      "gas": 133219,
       "size": 395
     },
     "functions": {
@@ -2350,7 +2632,7 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133243 |             395 |        |        |        |         |
+|                                   133219 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2364,7 +2646,7 @@ forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2383,7 +2665,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133243,
+      "gas": 133219,
       "size": 395
     },
     "functions": {
@@ -2399,7 +2681,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2431,7 +2713,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2445,7 +2727,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133243 |             395 |        |        |        |         |
+|                                   133219 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2464,7 +2746,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2480,7 +2762,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133243,
+      "gas": 133219,
       "size": 395
     },
     "functions": {
@@ -2520,7 +2802,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2534,7 +2816,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=================================================================================================+
 | Deployment Cost                          | Deployment Size |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
-|                                   133243 |             395 |        |        |        |         |
+|                                   133219 |             395 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
 |                                          |                 |        |        |        |         |
 |------------------------------------------+-----------------+--------+--------+--------+---------|
@@ -2548,7 +2830,7 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 +=============================================================================================+
 | Deployment Cost                        | Deployment Size |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
-|                                 133027 |             394 |       |        |       |         |
+|                                 133015 |             394 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
 |                                        |                 |       |        |       |         |
 |----------------------------------------+-----------------+-------+--------+-------+---------|
@@ -2577,7 +2859,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
   {
     "contract": "src/Contracts.sol:ContractOne",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2593,7 +2875,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
   {
     "contract": "src/Contracts.sol:ContractThree",
     "deployment": {
-      "gas": 133243,
+      "gas": 133219,
       "size": 395
     },
     "functions": {
@@ -2609,7 +2891,7 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
   {
     "contract": "src/Contracts.sol:ContractTwo",
     "deployment": {
-      "gas": 133027,
+      "gas": 133015,
       "size": 394
     },
     "functions": {
@@ -2826,7 +3108,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                     | Deployment Size |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-|                                              153531 |             494 |      |        |      |         |
+|                                              153519 |             494 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 |                                                     |                 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
@@ -2872,7 +3154,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:ProxiedContract",
     "deployment": {
-      "gas": 153531,
+      "gas": 153519,
       "size": 494
     },
     "functions": {
@@ -2948,7 +3230,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 +=====================================================================================================================+
 | Deployment Cost                                                | Deployment Size |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
-|                                                         132459 |             396 |       |        |       |         |
+|                                                         132471 |             396 |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                                |                 |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
@@ -3273,6 +3555,19 @@ object "Counter_21" {
         if callvalue() { revert_error_ca66f745a3ce8ff40e2ccaf1ad45db7774001b90d25810abd9040049be7bf4bb() }
 ...
 "#]]);
+
+    // `--json` wraps the IR source as a JSON string (one quoted line)
+    let json_out = cmd
+        .forge_fuse()
+        .args(["inspect", TEMPLATE_CONTRACT, "ir", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let json_out = json_out.trim();
+    assert!(json_out.starts_with('"'), "expected quoted JSON string, got {json_out:?}");
+    assert!(json_out.ends_with('"'), "expected quoted JSON string, got {json_out:?}");
+    let _: String =
+        serde_json::from_str(json_out).expect("ir --json stdout should be a valid JSON string");
 });
 
 // checks forge bind works correctly on the default project
@@ -3280,10 +3575,15 @@ forgetest_init!(can_bind, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
 
-    cmd.arg("bind").assert_success().stdout_eq(str![[r#"
+    cmd.arg("bind")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for [..] contracts
 Bindings have been generated to [..]
 
@@ -3595,6 +3895,29 @@ forgetest!(inspect_custom_counter_abi, |prj, cmd| {
 "#]]);
 });
 
+forgetest!(inspect_abi_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
+
+    let artifact_path = prj.paths().artifacts.join("Counter.sol/Counter.json");
+
+    cmd.args(["inspect", "Counter", "abi", "--json"]).assert_success();
+    assert!(!artifact_path.exists());
+
+    cmd.forge_fuse().arg("build").assert_success();
+    let built = std::fs::read(&artifact_path).unwrap();
+    let artifact: serde_json::Value =
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
+    let bytecode = artifact["bytecode"]["object"]
+        .as_str()
+        .expect("build artifact should include creation bytecode");
+    assert!(bytecode.starts_with("0x"));
+    assert!(bytecode.len() > 2);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "abi", "--json"]).assert_success();
+    let inspected = std::fs::read(&artifact_path).unwrap();
+    assert_eq!(built, inspected);
+});
+
 forgetest!(inspect_custom_counter_events, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
@@ -3627,6 +3950,64 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
 
 
 "#]]);
+});
+
+forgetest!(inspect_anonymous_event_has_no_selector, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    event FakeEvent(uint256 indexed topic0) anonymous;
+    event NormalEvent(uint256 indexed value);
+
+    function setNumber(uint256 newNumber) public {
+        emit FakeEvent(newNumber);
+        emit NormalEvent(newNumber);
+    }
+}
+    "#,
+    );
+
+    // `abi`: anonymous event must render with an empty selector and an `anonymous` marker.
+    cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
+
+╭----------+-------------------------------+--------------------------------------------------------------------╮
+| Type     | Signature                     | Selector                                                           |
++===============================================================================================================+
+| event    | FakeEvent(uint256) anonymous  |                                                                    |
+|----------+-------------------------------+--------------------------------------------------------------------|
+| event    | NormalEvent(uint256)          | 0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1 |
+|----------+-------------------------------+--------------------------------------------------------------------|
+| function | setNumber(uint256) nonpayable | 0x3fb5c1cb                                                         |
+╰----------+-------------------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+
+    // `events`: anonymous event must render with an empty topic.
+    cmd.forge_fuse().args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------+--------------------------------------------------------------------╮
+| Event                | Topic                                                              |
++===========================================================================================+
+| FakeEvent(uint256)   |                                                                    |
+|----------------------+--------------------------------------------------------------------|
+| NormalEvent(uint256) | 0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1 |
+╰----------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+
+    // `events --json`: anonymous event must serialize as `null`, not a fake hash.
+    cmd.forge_fuse().args(["inspect", "Counter", "events", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "FakeEvent(uint256)": null,
+  "NormalEvent(uint256)": "0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1"
+}
+
+"#]],
+    );
 });
 
 forgetest!(inspect_path_only_identifier, |prj, cmd| {
@@ -3813,11 +4194,88 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "viaSSACFG": false,
+    "experimental": false,
     "libraries": {}
   }
 }
 
 "#]]);
+});
+
+forgetest!(can_inspect_artifact_json, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    );
+
+    let stdout =
+        cmd.args(["inspect", "Counter", "artifact"]).assert_success().get_output().stdout_lossy();
+    let artifact: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("artifact stdout should be valid JSON");
+
+    let abi = artifact["abi"].as_array().expect("artifact should include an ABI array");
+    assert!(abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("increment")
+    }));
+
+    let bytecode =
+        artifact["bytecode"]["object"].as_str().expect("artifact should include creation bytecode");
+    assert!(bytecode.starts_with("0x"));
+
+    let deployed_bytecode = artifact["deployedBytecode"]["object"]
+        .as_str()
+        .expect("artifact should include deployed bytecode");
+    assert!(deployed_bytecode.starts_with("0x"));
+});
+
+forgetest!(can_inspect_artifact_json_with_custom_out_and_duplicate_contract_names, |prj, cmd| {
+    prj.update_config(|config| config.out = "custom-out".into());
+
+    prj.add_source(
+        "Source.sol",
+        r#"
+contract Source {
+    function foo() public {}
+}
+    "#,
+    );
+    prj.add_source(
+        "another/Source.sol",
+        r#"
+contract Source {
+    function bar() public {}
+}
+    "#,
+    );
+
+    let stdout = cmd
+        .args(["inspect", "src/another/Source.sol:Source", "output"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let artifact: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("artifact stdout should be valid JSON");
+
+    let abi = artifact["abi"].as_array().expect("artifact should include an ABI array");
+    assert!(abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("bar")
+    }));
+    assert!(!abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("foo")
+    }));
+    assert!(prj.root().join("custom-out/Source.sol/Source.json").exists());
 });
 
 forgetest_init!(can_inspect_libraries, |prj, cmd| {
@@ -3848,12 +4306,27 @@ forgetest_init!(can_inspect_libraries, |prj, cmd| {
     "#,
     );
 
-    cmd.args(["inspect", "Source", "libraries"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["inspect", "Source", "libraries"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+src/Lib.sol:Lib
+src/Source.sol:Lib2
+
+"#]])
+        .stderr_eq(str![[r#"
 Dynamically linked libraries:
-  src/Lib.sol:Lib
-  src/Source.sol:Lib2
 
 "#]]);
+
+    cmd.forge_fuse().args(["inspect", "Source", "libraries", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  "src/Lib.sol:Lib",
+  "src/Source.sol:Lib2"
+]
+
+"#]],
+    );
 });
 
 // checks that `clean` also works with the "out" value set in Config
@@ -3864,16 +4337,22 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
         config.fuzz.runs = 1;
     });
 
-    cmd.args(["test", "--match-test", "test_Increment", "--gas-report"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "test",
+        "--match-test",
+        "test_Increment",
+        "--gas-report",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 ...
 ╭----------------------------------+-----------------+-------+--------+-------+---------╮
 | src/Counter.sol:Counter Contract |                 |       |        |       |         |
 +=======================================================================================+
 | Deployment Cost                  | Deployment Size |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
-|                           156813 |             509 |       |        |       |         |
+|                           156801 |             509 |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
 |                                  |                 |       |        |       |         |
 |----------------------------------+-----------------+-------+--------+-------+---------|
@@ -3897,7 +4376,7 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | Function Name                           | Min             | Avg    | Median | Max    | # Calls |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
-| setUp                                   |          218902 | 218902 | 218902 | 218902 |       1 |
+| setUp                                   |          218890 | 218890 | 218890 | 218890 |       1 |
 |-----------------------------------------+-----------------+--------+--------+--------+---------|
 | test_Increment                          |           51847 |  51847 |  51847 |  51847 |       1 |
 ╰-----------------------------------------+-----------------+--------+--------+--------+---------╯
@@ -3908,14 +4387,21 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["test", "--match-test", "test_Increment", "--gas-report", "--md"])
+        .args([
+            "test",
+            "--match-test",
+            "test_Increment",
+            "--gas-report",
+            "--md",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
 | src/Counter.sol:Counter Contract |                 |       |        |       |         |
 |----------------------------------|-----------------|-------|--------|-------|---------|
 | Deployment Cost                  | Deployment Size |       |        |       |         |
-|                           156813 |             509 |       |        |       |         |
+|                           156801 |             509 |       |        |       |         |
 |                                  |                 |       |        |       |         |
 | Function Name                    | Min             | Avg   | Median | Max   | # Calls |
 | increment                        |           43482 | 43482 |  43482 | 43482 |       1 |
@@ -3928,7 +4414,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 |                                 1544498 |            7573 |        |        |        |         |
 |                                         |                 |        |        |        |         |
 | Function Name                           | Min             | Avg    | Median | Max    | # Calls |
-| setUp                                   |          218902 | 218902 | 218902 | 218902 |       1 |
+| setUp                                   |          218890 | 218890 | 218890 | 218890 |       1 |
 | test_Increment                          |           51847 |  51847 |  51847 |  51847 |       1 |
 
 
@@ -3937,7 +4423,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["test", "--mt", "test_Increment", "--gas-report", "--json"])
+        .args([
+            "test",
+            "--mt",
+            "test_Increment",
+            "--gas-report",
+            "--json",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(
             str![[r#"
@@ -3945,7 +4438,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "src/Counter.sol:Counter",
     "deployment": {
-      "gas": 156813,
+      "gas": 156801,
       "size": 509
     },
     "functions": {
@@ -3981,10 +4474,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     "functions": {
       "setUp()": {
         "calls": 1,
-        "min": 218902,
-        "mean": 218902,
-        "median": 218902,
-        "max": 218902
+        "min": 218890,
+        "mean": 218890,
+        "median": 218890,
+        "max": 218890
       },
       "test_Increment()": {
         "calls": 1,
@@ -4063,23 +4556,37 @@ forgetest_init!(can_bind_enum_modules, |prj, cmd| {
     }"#,
     );
 
-    cmd.args(["bind", "--select", "^Enum$"]).assert_success().stdout_eq(str![[
-        r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.args(["bind", "--select", "^Enum$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for 1 contracts
-Bindings have been generated to [..]"#
-    ]]);
+Bindings have been generated to [..]
+
+"#]]);
 });
 
 // forge bind e2e
 forgetest_init!(can_bind_e2e, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["bind"]).assert_success().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.args(["bind"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for 2 contracts
-Bindings have been generated to [..]"#]]);
+Bindings have been generated to [..]
+
+"#]]);
 
     let bindings_path = prj.root().join("out/bindings");
 
@@ -4091,4 +4598,59 @@ Bindings have been generated to [..]"#]]);
         .expect("Failed to run cargo build");
 
     assert!(out.status.success(), "Cargo build should succeed");
+});
+
+// `forge flatten -o <path>` writes the file and emits its status string to stderr,
+// keeping stdout empty so agents can pipe the command without diagnostics.
+forgetest!(flatten_output_writes_status_to_stderr, |prj, cmd| {
+    prj.add_source(
+        "Counter",
+        r#"contract Counter { uint256 public n; function inc() external { n += 1; } }"#,
+    );
+
+    let out = prj.root().join("flat.sol");
+    cmd.args(["flatten", "src/Counter.sol", "-o"])
+        .arg(&out)
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Flattened file written at [..]flat.sol
+
+"#]]);
+
+    assert!(out.exists(), "flattened file should have been written");
+});
+
+// `forge generate test` writes the scaffolded file and emits its status string to stderr,
+// keeping stdout empty so agents can pipe the command without diagnostics.
+forgetest!(generate_test_writes_status_to_stderr, |prj, cmd| {
+    cmd.args(["generate", "test", "--contract-name", "Counter"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Warning: `forge generate` is deprecated and will be removed in a future version
+Generated test file: test/Counter.t.sol
+
+"#]]);
+
+    assert!(prj.root().join("test/Counter.t.sol").exists(), "scaffolded test file should exist");
+});
+
+// `forge init` writes its status prose to stderr and keeps stdout empty so agents
+// can pipe the command without diagnostics. Uses `--offline` + `--no-git` to skip
+// network and git side-effects that would otherwise add prose to stdout.
+forgetest!(init_status_on_stderr, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init", "--offline", "--no-git"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+    Initialized forge project
+
+"#]]);
+
+    assert!(prj.root().join("foundry.toml").exists());
 });

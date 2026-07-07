@@ -53,7 +53,9 @@ use std::{
 mod macros;
 
 pub mod utils;
-pub use foundry_evm_hardforks::{FoundryHardfork, FromEvmVersion, evm_spec_id};
+pub use foundry_evm_hardforks::{
+    ExecutionSpec, FoundryHardfork, FromEvmVersion, evm_spec_id, evm_spec_id_from_str,
+};
 pub use utils::*;
 
 mod endpoints;
@@ -106,10 +108,22 @@ pub use providers::Remappings;
 use providers::*;
 
 mod fuzz;
-pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
+pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::InvariantConfig;
+pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantWorkers};
+
+mod symbolic;
+pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
+
+mod coverage;
+pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
+
+mod fee;
+pub use fee::Eip1559FeeEstimatePreset;
+
+pub mod mutation;
+pub use mutation::{MutationConfig, MutatorType};
 
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};
@@ -316,6 +330,8 @@ pub struct Config {
     pub etherscan: EtherscanConfigs,
     /// List of solidity error codes to always silence in the compiler output.
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// List of (path prefix, solidity error codes) to silence in the compiler output.
+    pub ignored_error_codes_from: Vec<(PathBuf, Vec<SolidityErrorCode>)>,
     /// List of file paths to ignore.
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
@@ -347,6 +363,8 @@ pub struct Config {
     pub coverage_pattern_inverse: Option<RegexWrapper>,
     /// Path where last test run failures are recorded.
     pub test_failures_file: PathBuf,
+    /// Path where mutation tests are cached, to resume running them
+    pub mutation_dir: PathBuf,
     /// Max concurrent threads to use.
     pub threads: Option<usize>,
     /// Whether to show test execution progress.
@@ -355,6 +373,12 @@ pub struct Config {
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
     pub invariant: InvariantConfig,
+    /// Configuration for symbolic testing
+    pub symbolic: SymbolicConfig,
+    /// Configuration for `forge coverage`
+    pub coverage: CoverageConfig,
+    /// Configuration for mutation testing
+    pub mutation: MutationConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Whether to show `console.log` outputs in realtime during script/test execution
@@ -363,6 +387,11 @@ pub struct Config {
     pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
+    /// Controls how EIP-1559 fees are estimated for `forge script` broadcasts
+    /// (`low` / `market` / `aggressive`). Defaults to `market`, which preserves
+    /// the historical behavior (`base_fee * 2 + 20th-percentile priority fee`).
+    #[serde(default)]
+    pub eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     /// Sets a timeout in seconds for vm.prompt cheatcodes
     pub prompt_timeout: u64,
     /// The address which will be executing all tests
@@ -449,6 +478,15 @@ pub struct Config {
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
     pub via_ir: bool,
+    /// Whether to turn on SSA CFG-based code generation via the IR.
+    /// This is an experimental feature (as of 0.8.35) that requires `experimental` to be enabled.
+    /// Enabling this option will also enable `via_ir` if it is not already enabled.
+    pub via_ssa_cfg: bool,
+    /// Whether to enable Solidity's experimental mode.
+    ///
+    /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
+    /// experimental features.
+    pub experimental: bool,
     /// Whether to include the AST as JSON in the compiler output.
     pub ast: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
@@ -706,6 +744,8 @@ impl Config {
         "doc",
         "fuzz",
         "invariant",
+        "coverage",
+        "mutation",
         "labels",
         "dependencies",
         "soldeer",
@@ -794,10 +834,19 @@ impl Config {
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
-        let mut config =
-            self.to_figment(FigmentProviders::None).merge(provider).extract::<Self>()?;
+        let provider = Figment::from(provider).select(self.profile.clone());
+        let invariant_corpus_random_sequence_weight_configured =
+            self.invariant.corpus_random_sequence_weight_configured
+                || provider.contains("invariant.corpus_random_sequence_weight")
+                || provider
+                    .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+                    .unwrap_or(false);
+        let figment = self.to_figment(FigmentProviders::None).merge(provider);
+        let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
+        config.invariant.corpus_random_sequence_weight_configured =
+            invariant_corpus_random_sequence_weight_configured;
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -823,7 +872,14 @@ impl Config {
         figment: Figment,
         strict_profile: bool,
     ) -> Result<Self, ExtractConfigError> {
+        let invariant_corpus_random_sequence_weight_configured = figment
+            .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+            .unwrap_or_else(|_| {
+                figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
+            });
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
+        config.invariant.corpus_random_sequence_weight_configured =
+            invariant_corpus_random_sequence_weight_configured;
         let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
@@ -845,12 +901,15 @@ impl Config {
         // Check if the selected profile exists.
         if config.profiles.contains(&selected_profile) {
             config.profile = selected_profile;
-        } else if strict_profile {
-            return Err(ExtractConfigError::new(Error::from(format!(
-                "selected profile `{selected_profile}` does not exist"
-            ))));
         } else {
-            // Fall back to default profile for nested lib configs.
+            // Fall back to the default profile. In strict mode (top-level loads), emit a warning
+            // so users are informed when an unknown profile (e.g. via `FOUNDRY_PROFILE`) is
+            // selected; the silent fallback is reserved for nested lib configs.
+            if strict_profile {
+                config
+                    .warnings
+                    .push(Warning::UnknownProfile { profile: selected_profile.to_string() });
+            }
             config.profile = Self::DEFAULT_PROFILE;
         }
 
@@ -957,8 +1016,20 @@ impl Config {
             figment = figment.merge(remappings);
         }
 
+        let invariant_corpus_random_sequence_weight_configured = self
+            .invariant
+            .corpus_random_sequence_weight_configured
+            || figment
+                .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+                .unwrap_or_else(|_| {
+                    figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
+                });
+
         // normalize defaults
         figment = self.normalize_defaults(figment);
+        if invariant_corpus_random_sequence_weight_configured {
+            figment = figment.merge(("invariant.corpus_random_sequence_weight_configured", true));
+        }
 
         Figment::from(self).merge(figment).select(profile)
     }
@@ -1235,6 +1306,10 @@ impl Config {
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
         let paths = self.project_paths();
+
+        // Strip "./" prefix for consistent path matching
+        let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
+
         let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
@@ -1242,15 +1317,10 @@ impl Config {
             .settings(settings)
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
-            .ignore_paths(
-                self.ignored_file_paths
-                    .iter()
-                    .map(|path| {
-                        // Strip "./" prefix for consistent path matching
-                        path.strip_prefix("./").unwrap_or(path).to_path_buf()
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            .ignore_error_codes_from(self.ignored_error_codes_from.iter().map(|(path, codes)| {
+                (parse_path(path), codes.iter().copied().map(Into::into).collect())
+            }))
+            .ignore_paths(self.ignored_file_paths.iter().map(parse_path).collect())
             .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
@@ -1323,6 +1393,9 @@ impl Config {
             ));
         }
 
+        // Remove mutation test cache directory
+        let _ = fs::remove_dir_all(project.root().join(&self.mutation_dir));
+
         // Remove fuzz and invariant cache directories.
         let mut remove_test_dir = |test_dir: &Option<PathBuf>| {
             if let Some(test_dir) = test_dir {
@@ -1339,6 +1412,7 @@ impl Config {
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.fuzz.corpus.corpus_dir);
+        remove_test_dir(&self.fuzz.corpus.frontier_dir);
         remove_test_dir(&self.invariant.corpus.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
@@ -1817,7 +1891,11 @@ impl Config {
                 debug_info: Vec::new(),
             }),
             model_checker,
-            via_ir: Some(self.via_ir),
+            // via_ssa_cfg implies via_ir only when via_ir is omitted, so we need to set both flags
+            // to true if via_ssa_cfg is enabled.
+            via_ir: Some(self.via_ir || self.via_ssa_cfg),
+            via_ssa_cfg: Some(self.via_ssa_cfg),
+            experimental: Some(self.experimental),
             // Not used.
             stop_after: None,
             // Set in project paths.
@@ -1841,9 +1919,14 @@ impl Config {
     /// Returns the configured [VyperSettings] that includes:
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
+        // Let `opt_level` override `optimize` so child profiles can switch away from an
+        // inherited optimization mode without sending both mutually exclusive settings to Vyper.
+        let optimize = if self.vyper.opt_level.is_some() { None } else { self.vyper.optimize };
+
         Ok(VyperSettings {
             evm_version: Some(self.evm_version),
-            optimize: self.vyper.optimize,
+            optimize,
+            opt_level: self.vyper.opt_level,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
             // those for now. It should be enough to run tests and deploy contracts.
@@ -1854,6 +1937,10 @@ impl Config {
             ]),
             search_paths: None,
             experimental_codegen: self.vyper.experimental_codegen,
+            debug: self.vyper.debug,
+            enable_decimals: self.vyper.enable_decimals,
+            venom_experimental: self.vyper.venom_experimental,
+            venom: self.vyper.venom.clone(),
         })
     }
 
@@ -2494,6 +2581,10 @@ impl FigmentProviders {
     }
 }
 
+fn figment_value_is_configured(figment: &Figment, key: &str) -> bool {
+    figment.find_metadata(key).is_some_and(|metadata| metadata.name.as_ref() != "Foundry Config")
+}
+
 /// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -2609,8 +2700,12 @@ impl Provider for Config {
     #[track_caller]
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
+        let root = Value::serialize(self.root.clone())?;
+        if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
+            entry.insert("root".to_string(), root.clone());
+        }
         if let Some(entry) = data.get_mut(&self.profile) {
-            entry.insert("root".to_string(), Value::serialize(self.root.clone())?);
+            entry.insert("root".to_string(), root);
         }
         Ok(data)
     }
@@ -2626,7 +2721,7 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             profiles: vec![Self::DEFAULT_PROFILE],
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
-            isolate: cfg!(feature = "isolate-by-default"),
+            isolate: true,
             root: root_default(),
             extends: None,
             src: "src".into(),
@@ -2635,7 +2730,7 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
-            dynamic_test_linking: false,
+            dynamic_test_linking: true,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
@@ -2669,11 +2764,16 @@ impl Default for Config {
             path_pattern_inverse: None,
             coverage_pattern_inverse: None,
             test_failures_file: "cache/test-failures".into(),
+            mutation_dir: "cache/mutation".into(),
             threads: None,
             show_progress: false,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
+            symbolic: SymbolicConfig::default(),
+            coverage: CoverageConfig::default(),
+            mutation: MutationConfig::default(),
             always_use_create_2_factory: false,
+            eip1559_fee_estimate: Eip1559FeeEstimatePreset::default(),
             ffi: false,
             live_logs: false,
             allow_internal_expect_revert: false,
@@ -2716,10 +2816,13 @@ impl Default for Config {
                 SolidityErrorCode::TransferDeprecated,
                 SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated,
             ],
+            ignored_error_codes_from: vec![],
             ignored_file_paths: vec![],
             deny: DenyLevel::Never,
             deny_warnings: false,
             via_ir: false,
+            via_ssa_cfg: false,
+            experimental: false,
             ast: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
@@ -2859,19 +2962,35 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let mut value = toml::Value::try_from(self)?;
+        let mut profile_body = toml::Value::try_from(self)?;
         if let Some(ref network) = self.network
-            && let toml::Value::Table(ref mut table) = value
+            && let toml::Value::Table(ref mut table) = profile_body
         {
-            table.insert(network.clone(), toml::Value::Boolean(true));
+            table.insert("network".to_string(), toml::Value::String(network.clone()));
         }
-        let s = toml::to_string_pretty(&value)?;
+
+        let mut profile_section = toml::value::Table::new();
+        profile_section.insert(self.profile.to_string(), profile_body);
+
+        let mut document = toml::value::Table::new();
+        document.insert("profile".to_string(), toml::Value::Table(profile_section));
+
+        if self.network.as_deref() == Some("tempo") {
+            let mut endpoints = toml::value::Table::new();
+            endpoints.insert(
+                "tempo".to_string(),
+                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+            );
+            endpoints.insert(
+                "moderato".to_string(),
+                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+            );
+            document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
+        }
+
+        let body = toml::to_string_pretty(&toml::Value::Table(document))?;
         Ok(format!(
-            "\
-[profile.{}]
-{s}
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
-            self.profile
+            "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
     }
 }
@@ -2920,18 +3039,23 @@ mod tests {
     use endpoints::{RpcAuth, RpcEndpointConfig};
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{
-        ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
+        ModelCheckerEngine, YulDetails,
+        vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
-    use foundry_evm_hardforks::TempoHardfork;
+    use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{fs::File, io::Write};
+    use std::{fs::File, io::Write, num::NonZeroUsize};
     use tempfile::tempdir;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
     fn clear_warning(config: &mut Config) {
         config.warnings = vec![];
+    }
+
+    fn mark_serialized_invariant_corpus_weight(config: &mut Config) {
+        config.invariant.corpus_random_sequence_weight_configured = true;
     }
 
     #[test]
@@ -4140,6 +4264,7 @@ mod tests {
                 [invariant]
                 runs = 256
                 depth = 500
+                workers = 1
                 fail_on_revert = false
                 call_override = false
                 shrink_run_limit = 5000
@@ -4664,7 +4789,9 @@ mod tests {
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
             let mut other = Config::load().unwrap();
             clear_warning(&mut other);
-            assert_eq!(default, other);
+            let mut serialized_default = default;
+            mark_serialized_invariant_corpus_weight(&mut serialized_default);
+            assert_eq!(serialized_default, other);
 
             Ok(())
         });
@@ -4733,6 +4860,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
+            mark_serialized_invariant_corpus_weight(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -4783,6 +4911,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
+            mark_serialized_invariant_corpus_weight(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -4948,11 +5077,17 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [invariant]
                 runs = 512
                 depth = 10
-            ",
+                min_depth = 2
+                depth_mode = "random"
+                workers = 4
+                corpus_random_sequence_weight = 30
+                payable_value_weight = 12
+                mutation_weight_cmp = 7
+            "#,
             )?;
 
             let loaded = Config::load().unwrap().sanitized();
@@ -4961,10 +5096,83 @@ mod tests {
                 InvariantConfig {
                     runs: 512,
                     depth: 10,
+                    min_depth: 2,
+                    depth_mode: InvariantDepthMode::Random,
+                    workers: InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap()),
+                    corpus: FuzzCorpusConfig {
+                        corpus_random_sequence_weight: 30,
+                        payable_value_weight: 12,
+                        mutation_weights: FuzzCorpusMutationWeights {
+                            mutation_weight_cmp: 7,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    corpus_random_sequence_weight_configured: true,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
             );
+            assert!(loaded.invariant.corpus_random_sequence_weight_configured);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_invariant_corpus_random_sequence_weight_provenance() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                depth = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(!loaded.invariant.corpus_random_sequence_weight_configured);
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                corpus_random_sequence_weight = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(loaded.invariant.corpus_random_sequence_weight_configured);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fuzz_corpus_random_sequence_weight_fallback_does_not_mark_invariant_configured() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                corpus_random_sequence_weight = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(!loaded.invariant.corpus_random_sequence_weight_configured);
 
             Ok(())
         });
@@ -4986,12 +5194,50 @@ mod tests {
 
             jail.set_env("FOUNDRY_FMT_LINE_LENGTH", "95");
             jail.set_env("FOUNDRY_FUZZ_DICTIONARY_WEIGHT", "99");
+            jail.set_env("FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_VALUES", "max");
             jail.set_env("FOUNDRY_INVARIANT_DEPTH", "5");
+            jail.set_env("FOUNDRY_INVARIANT_MIN_DEPTH", "2");
+            jail.set_env("FOUNDRY_INVARIANT_DEPTH_MODE", "random");
+            jail.set_env("FOUNDRY_INVARIANT_WORKERS", "3");
+            jail.set_env("FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", "30");
+            jail.set_env("FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", "12");
+            jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
             assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
+            assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, usize::MAX);
             assert_eq!(config.invariant.depth, 5);
+            assert_eq!(config.invariant.min_depth, 2);
+            assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
+            assert_eq!(
+                config.invariant.workers,
+                InvariantWorkers::Fixed(NonZeroUsize::new(3).unwrap())
+            );
+            assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 30);
+            assert!(config.invariant.corpus_random_sequence_weight_configured);
+            assert_eq!(config.invariant.corpus.payable_value_weight, 12);
+            assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_invariant_workers_env_accepts_auto() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [invariant]
+                workers = 3
+            ",
+            )?;
+
+            jail.set_env("FOUNDRY_INVARIANT_WORKERS", "auto");
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.invariant.workers, InvariantWorkers::Auto);
 
             Ok(())
         });
@@ -5057,6 +5303,59 @@ mod tests {
         };
 
         assert_eq!(config.evm_spec_id::<TempoHardfork>(), TempoHardfork::T3);
+    }
+
+    #[test]
+    fn solc_settings_include_experimental_setting() {
+        let config = Config { experimental: true, ..Config::default() };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.experimental, Some(true));
+        assert!(settings.cli_settings.extra_args.is_empty());
+
+        let config = Config {
+            experimental: false,
+            extra_args: vec!["--experimental".to_string()],
+            ..Config::default()
+        };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.experimental, Some(false));
+        assert_eq!(settings.cli_settings.extra_args, vec!["--experimental".to_string()]);
+    }
+
+    #[test]
+    fn solc_settings_include_via_ssa_cfg_setting() {
+        let config = Config { via_ssa_cfg: true, ..Config::default() };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.via_ssa_cfg, Some(true));
+        assert!(settings.cli_settings.extra_args.is_empty());
+
+        let config = Config {
+            via_ssa_cfg: false,
+            extra_args: vec!["--via-ssa-cfg".to_string()],
+            ..Config::default()
+        };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.via_ssa_cfg, Some(false));
+        assert_eq!(settings.cli_settings.extra_args, vec!["--via-ssa-cfg".to_string()]);
+    }
+
+    #[test]
+    fn tempo_network_defaults_to_latest_tempo_hardfork() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "tempo"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.networks.is_tempo());
+            assert_eq!(config.evm_spec_id::<TempoHardfork>(), latest_active_tempo_hardfork());
+
+            Ok(())
+        });
     }
 
     #[test]
@@ -5400,9 +5699,26 @@ mod tests {
                 "foundry.toml",
                 r#"
                 [vyper]
-                optimize = "codesize"
+                optimize = "O1"
                 path = "/path/to/vyper"
                 experimental_codegen = true
+                venom_experimental = false
+                debug = true
+                enable_decimals = true
+
+                [vyper.venom]
+                disable_inlining = true
+                disable_cse = true
+                disable_sccp = false
+                disable_load_elimination = true
+                disable_dead_store_elimination = false
+                disable_algebraic_optimization = true
+                disable_branch_optimization = false
+                disable_assert_elimination = true
+                disable_mem2var = false
+                disable_simplify_cfg = true
+                disable_remove_unused_variables = false
+                inline_threshold = 15
             "#,
             )?;
 
@@ -5410,14 +5726,84 @@ mod tests {
             assert_eq!(
                 config.vyper,
                 VyperConfig {
-                    optimize: Some(VyperOptimizationMode::Codesize),
+                    optimize: Some(VyperOptimizationMode::O1),
+                    opt_level: None,
                     path: Some("/path/to/vyper".into()),
                     experimental_codegen: Some(true),
+                    venom_experimental: Some(false),
+                    debug: Some(true),
+                    enable_decimals: Some(true),
+                    venom: Some(VyperVenomSettings {
+                        disable_inlining: Some(true),
+                        disable_cse: Some(true),
+                        disable_sccp: Some(false),
+                        disable_load_elimination: Some(true),
+                        disable_dead_store_elimination: Some(false),
+                        disable_algebraic_optimization: Some(true),
+                        disable_branch_optimization: Some(false),
+                        disable_assert_elimination: Some(true),
+                        disable_mem2var: Some(false),
+                        disable_simplify_cfg: Some(true),
+                        disable_remove_unused_variables: Some(false),
+                        inline_threshold: Some(15),
+                    }),
                 }
             );
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_vyper_settings_include_extended_config() {
+        let config = Config {
+            vyper: VyperConfig {
+                opt_level: Some(VyperOptimizationLevel::O3),
+                experimental_codegen: Some(true),
+                venom_experimental: Some(false),
+                debug: Some(true),
+                enable_decimals: Some(true),
+                venom: Some(VyperVenomSettings {
+                    disable_cse: Some(true),
+                    inline_threshold: Some(15),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Config::default().normalized_optimizer_settings()
+        };
+
+        let settings = config.vyper_settings().unwrap();
+        assert_eq!(settings.optimize, None);
+        assert_eq!(settings.opt_level, Some(VyperOptimizationLevel::O3));
+        assert_eq!(settings.experimental_codegen, Some(true));
+        assert_eq!(settings.venom_experimental, Some(false));
+        assert_eq!(settings.debug, Some(true));
+        assert_eq!(settings.enable_decimals, Some(true));
+        assert_eq!(
+            settings.venom,
+            Some(VyperVenomSettings {
+                disable_cse: Some(true),
+                inline_threshold: Some(15),
+                ..Default::default()
+            })
+        );
+    }
+
+    #[test]
+    fn vyper_opt_level_overrides_optimize() {
+        let config = Config {
+            vyper: VyperConfig {
+                optimize: Some(VyperOptimizationMode::Gas),
+                opt_level: Some(VyperOptimizationLevel::O3),
+                ..Default::default()
+            },
+            ..Config::default().normalized_optimizer_settings()
+        };
+
+        let settings = config.vyper_settings().unwrap();
+        assert_eq!(settings.optimize, None);
+        assert_eq!(settings.opt_level, Some(VyperOptimizationLevel::O3));
     }
 
     #[test]
@@ -6677,6 +7063,55 @@ mod tests {
     }
 
     #[test]
+    fn no_unknown_key_warning_for_network_field() {
+        // Regression test: `network` is a flattened `Option` field of `NetworkConfigs`. It must
+        // not trigger an unknown-key warning, regardless of whether it is set.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "tempo"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings.iter().any(
+                    |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "network")
+                ),
+                "did not expect UnknownKey warning for `network`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn no_unknown_key_warning_for_legacy_tempo_alias() {
+        // Regression test: the legacy `tempo = true` alias must keep working without warnings.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
+                "did not expect UnknownKey warning for `tempo`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn fails_on_ambiguous_version_in_compilation_restrictions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -6760,6 +7195,9 @@ mod tests {
                 runs = 256
                 unknown_invariant_key = "should_warn"
 
+                [mutation]
+                unknown_mutation_key = "should_warn"
+
                 [vyper]
                 unknown_vyper_key = "should_warn"
 
@@ -6787,6 +7225,9 @@ mod tests {
                 [profile.default.invariant]
                 runs = 512
                 unknown_nested_invariant_key = "should_warn"
+
+                [profile.default.mutation]
+                unknown_nested_mutation_key = "should_warn"
 
                 [profile.default.vyper]
                 unknown_nested_vyper_key = "should_warn"
@@ -6826,6 +7267,7 @@ mod tests {
                 ("unknown_doc_key", "doc"),
                 ("unknown_fuzz_key", "fuzz"),
                 ("unknown_invariant_key", "invariant"),
+                ("unknown_mutation_key", "mutation"),
                 ("unknown_vyper_key", "vyper"),
                 ("unknown_bind_json_key", "bind_json"),
             ];
@@ -6851,6 +7293,7 @@ mod tests {
                 ("unknown_nested_doc_key", "doc"),
                 ("unknown_nested_fuzz_key", "fuzz"),
                 ("unknown_nested_invariant_key", "invariant"),
+                ("unknown_nested_mutation_key", "mutation"),
                 ("unknown_nested_vyper_key", "vyper"),
                 ("unknown_nested_bind_json_key", "bind_json"),
             ];
@@ -6899,11 +7342,11 @@ mod tests {
                 })
                 .collect();
 
-            // 1 profile key + 7 standalone + 7 nested + 2 array = 17 total
+            // 1 profile key + 8 standalone + 8 nested + 2 array = 19 total
             assert_eq!(
                 unknown_key_warnings.len(),
-                17,
-                "Expected 17 unknown key warnings (1 profile + 7 standalone + 7 nested + 2 array), got {}: {:?}",
+                19,
+                "Expected 19 unknown key warnings (1 profile + 8 standalone + 8 nested + 2 array), got {}: {:?}",
                 unknown_key_warnings.len(),
                 unknown_key_warnings
             );
@@ -7022,9 +7465,9 @@ mod tests {
         });
     }
 
-    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should fail
+    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should warn and fall back to default.
     #[test]
-    fn fails_on_unknown_profile() {
+    fn warns_on_unknown_profile() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
@@ -7035,11 +7478,15 @@ mod tests {
             )?;
 
             jail.set_env("FOUNDRY_PROFILE", "nonexistent");
-            let err = Config::load().expect_err("expected unknown profile to fail");
-            let err_msg = err.to_string();
+            let cfg = Config::load().expect("expected unknown profile to fall back to default");
+            assert_eq!(cfg.profile, Config::DEFAULT_PROFILE);
             assert!(
-                err_msg.contains("selected profile `nonexistent` does not exist"),
-                "Expected error about nonexistent profile, got: {err_msg}"
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownProfile { profile } if profile == "nonexistent"
+                )),
+                "Expected UnknownProfile warning, got: {:?}",
+                cfg.warnings
             );
 
             Ok(())
@@ -7057,9 +7504,16 @@ mod tests {
                 src = "src"
 
                 [vyper]
-                optimize = "gas"
+                optimize = "O1"
                 path = "/usr/bin/vyper"
                 experimental_codegen = true
+                venom_experimental = false
+                debug = true
+                enable_decimals = true
+
+                [vyper.venom]
+                disable_cse = true
+                inline_threshold = 15
                 "#,
             )?;
 
@@ -7096,9 +7550,12 @@ mod tests {
                 src = "src"
 
                 [profile.default.vyper]
-                optimize = "codesize"
+                opt_level = "s"
                 path = "/opt/vyper/bin/vyper"
                 experimental_codegen = false
+                debug = true
+                enable_decimals = true
+                venom = { disable_sccp = true, disable_mem2var = false }
                 "#,
             )?;
 
@@ -7134,13 +7591,13 @@ mod tests {
                 r#"
                 [profile.default]
                 src = "src"
-                vyper = { optimize = "gas" }
+                vyper = { optimize = "gas", debug = true }
 
                 [profile.default-venom]
-                vyper = { experimental_codegen = true }
+                vyper = { opt_level = "O2", experimental_codegen = true, venom = { disable_cse = true } }
 
                 [profile.ci-venom]
-                vyper = { experimental_codegen = true }
+                vyper = { venom_experimental = true, enable_decimals = true }
                 "#,
             )?;
 
@@ -7364,6 +7821,98 @@ mod tests {
             assert_eq!(config.invariant.runs, 375);
             assert_eq!(config.invariant.depth, 500);
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn coverage_section_in_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.coverage]
+                report = ["summary", "lcov"]
+                lcov_version = "2.2.0"
+                ir_minimum = true
+                report_file = "out/lcov.info"
+                include_libs = true
+                exclude_tests = true
+                skip_files = ["test/**", "src/mocks/**"]
+                "#,
+            )?;
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(
+                config.coverage.report,
+                vec![CoverageReportKind::Summary, CoverageReportKind::Lcov]
+            );
+            assert_eq!(config.coverage.lcov_version, semver::Version::new(2, 2, 0));
+            assert!(config.coverage.ir_minimum);
+            assert_eq!(
+                config.coverage.report_file.as_deref(),
+                Some(std::path::Path::new("out/lcov.info"))
+            );
+            assert!(config.coverage.include_libs);
+            assert!(config.coverage.exclude_tests);
+            assert_eq!(
+                config.coverage.skip_files,
+                vec!["test/**".to_string(), "src/mocks/**".to_string()]
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn coverage_standalone_section_falls_back_to_default_profile() {
+        figment::Jail::expect_with(|jail| {
+            // Standalone `[coverage]` should populate the active profile,
+            // matching how `[fuzz]` / `[invariant]` work.
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [coverage]
+                skip_files = ["script/**"]
+                exclude_tests = true
+                "#,
+            )?;
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(config.coverage.skip_files, vec!["script/**".to_string()]);
+            assert!(config.coverage.exclude_tests);
+            // Untouched fields keep their defaults.
+            assert_eq!(config.coverage.report, vec![CoverageReportKind::Summary]);
+            assert_eq!(config.coverage.lcov_version, semver::Version::new(1, 0, 0));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn coverage_per_profile_overrides_default() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.coverage]
+                skip_files = ["script/**"]
+
+                [profile.ci.coverage]
+                skip_files = ["test/**", "lib/**"]
+                exclude_tests = true
+                "#,
+            )?;
+
+            // Default profile sees the default-profile coverage block.
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(config.coverage.skip_files, vec!["script/**".to_string()]);
+            assert!(!config.coverage.exclude_tests);
+
+            // CI profile sees its own override.
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(
+                config.coverage.skip_files,
+                vec!["test/**".to_string(), "lib/**".to_string()]
+            );
+            assert!(config.coverage.exclude_tests);
             Ok(())
         });
     }

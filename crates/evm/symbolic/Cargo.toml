@@ -1,0 +1,42 @@
+[package]
+name = "foundry-evm-symbolic"
+description = "Foundry symbolic EVM executor"
+readme = "README.md"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+foundry-common.workspace = true
+foundry-config.workspace = true
+foundry-cheatcodes-spec.workspace = true
+foundry-evm.workspace = true
+
+alloy-dyn-abi.workspace = true
+alloy-json-abi.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-sol-types.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+
+base64.workspace = true
+hashbrown.workspace = true
+inturn.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shlex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+wait-timeout.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-evm/optimism"]

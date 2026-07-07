@@ -3,7 +3,7 @@ use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
@@ -16,11 +16,14 @@ use foundry_cli::{
     utils::{self, parse_function_args},
 };
 use foundry_common::{
-    FoundryTransactionBuilder, TransactionReceiptWithRevertReason, fmt::*,
-    get_pretty_receipt_w_reason_attr, shell,
+    FoundryTransactionBuilder, TransactionReceiptWithRevertReason,
+    fmt::*,
+    get_pretty_receipt_w_reason_attr,
+    provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+    shell,
 };
-use foundry_config::{Chain, Config};
-use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
+use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
+use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
@@ -225,15 +228,16 @@ where
     }
 
     /// Sends a transaction and waits for receipt synchronously
-    pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<String> {
+    pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<(B256, String)> {
         let mut receipt = TransactionReceiptWithRevertReason::<N> {
             receipt: self.provider.send_transaction_sync(tx).await?,
             revert_reason: None,
         };
+        let tx_hash = receipt.receipt.transaction_hash();
         // Allow to fail silently
         let _ = receipt.update_revert_reason(&self.provider).await;
 
-        self.format_receipt(receipt, None)
+        self.format_receipt(receipt, None).map(|formatted| (tx_hash, formatted))
     }
 
     /// Sends a transaction to the specified address
@@ -391,6 +395,10 @@ pub struct CastTxBuilder<N: Network, P, S> {
     /// Whether to fill gas, fees and nonce. Set to `false` for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
     fill: bool,
+    /// Whether the filled transaction will be submitted through a browser wallet.
+    browser: bool,
+    /// The preset used when estimating EIP-1559 fees.
+    eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -403,6 +411,12 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
     /// Returns the resolved chain for this builder.
     pub const fn chain(&self) -> Chain {
         self.chain
+    }
+
+    /// Marks this transaction as destined for browser wallet submission.
+    pub const fn with_browser_wallet(mut self) -> Self {
+        self.browser = true;
+        self
     }
 }
 
@@ -432,6 +446,8 @@ where
             blob: tx_opts.blob,
             eip4844: tx_opts.eip4844,
             fill: true,
+            browser: false,
+            eip1559_fee_estimate: config.eip1559_fee_estimate,
             chain,
             etherscan_api_key,
             etherscan_api_url,
@@ -451,6 +467,8 @@ where
             blob: self.blob,
             eip4844: self.eip4844,
             fill: self.fill,
+            browser: self.browser,
+            eip1559_fee_estimate: self.eip1559_fee_estimate,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             etherscan_api_url: self.etherscan_api_url,
@@ -514,6 +532,8 @@ where
             blob: self.blob,
             eip4844: self.eip4844,
             fill: self.fill,
+            browser: self.browser,
+            eip1559_fee_estimate: self.eip1559_fee_estimate,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             etherscan_api_url: self.etherscan_api_url,
@@ -535,13 +555,29 @@ where
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         let fill = self.fill;
-        self._build(sender, fill).await
+        self._build(sender, fill, None).await
+    }
+
+    /// Builds a transaction that will be signed by a Tempo access key.
+    ///
+    /// The access-key id is set before gas estimation. If the access key needs on-chain
+    /// provisioning, its authorization is embedded before access-list/gas estimation and before
+    /// any sponsor digest can be computed.
+    pub async fn build_with_access_key(
+        mut self,
+        sender: impl Into<SenderKind<'_>>,
+        access_key: &TempoAccessKeyConfig,
+    ) -> Result<(N::TransactionRequest, Option<Function>)> {
+        self.tx.set_key_id(access_key.key_address);
+        let fill = self.fill;
+        self._build(sender, fill, Some(access_key)).await
     }
 
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
+        access_key: Option<&TempoAccessKeyConfig>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         // prepare
         let sender = sender.into();
@@ -555,23 +591,38 @@ where
         // resolve
         let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
         self.resolve_auth(&sender, tx_nonce).await?;
-        self.resolve_access_list().await?;
-
-        // fill
+        if let Some(access_key) = access_key {
+            self.tx
+                .prepare_access_key_authorization(
+                    &self.provider,
+                    access_key.wallet_address,
+                    access_key.key_address,
+                    access_key.key_authorization.as_ref(),
+                )
+                .await?;
+        }
         if fill {
             self.fill_fees().await?;
+        }
+        self.resolve_access_list().await?;
+        if fill {
+            self.fill_gas_limit().await?;
         }
 
         Ok((self.tx, self.state.func))
     }
 
-    /// Sets the core transaction fields from the builder state: kind, input, from, and chain id.
+    /// Sets the core transaction fields from the builder state: kind, input, optional from, and
+    /// chain id.
     fn prepare(&mut self, sender: &SenderKind<'_>) {
         self.tx.set_kind(self.state.kind);
         // We set both fields to the same value because some nodes only accept the legacy
         // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
         self.tx.set_input_kind(self.state.input.clone(), TransactionInputKind::Both);
-        self.tx.set_from(sender.address());
+        let sender = sender.address();
+        if !sender.is_zero() {
+            self.tx.set_from(sender);
+        }
         self.tx.set_chain_id(self.chain.id());
     }
 
@@ -655,32 +706,26 @@ where
         Ok(())
     }
 
-    /// Fills gas price, EIP-1559 fees, blob fees, and gas limit from the provider.
+    /// Fills gas price, EIP-1559 fees, and blob fees from the provider.
     ///
     /// Only fills values that haven't been explicitly set by the user.
     async fn fill_fees(&mut self) -> Result<()> {
-        if self.legacy && self.tx.gas_price().is_none() {
-            self.tx.set_gas_price(self.provider.get_gas_price().await?);
-        }
-
         if self.blob && self.tx.max_fee_per_blob_gas().is_none() {
             self.tx.set_max_fee_per_blob_gas(self.provider.get_blob_base_fee().await?)
         }
 
-        if !self.legacy
-            && (self.tx.max_fee_per_gas().is_none() || self.tx.max_priority_fee_per_gas().is_none())
-        {
-            let estimate = self.provider.estimate_eip1559_fees().await?;
+        fill_transaction_gas_fees(
+            &self.provider,
+            &mut self.tx,
+            self.legacy,
+            self.browser,
+            self.eip1559_fee_estimate,
+        )
+        .await
+    }
 
-            if self.tx.max_fee_per_gas().is_none() {
-                self.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-            }
-
-            if self.tx.max_priority_fee_per_gas().is_none() {
-                self.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-            }
-        }
-
+    /// Fills gas limit from the provider.
+    async fn fill_gas_limit(&mut self) -> Result<()> {
         if self.tx.gas_limit().is_none() {
             self.estimate_gas().await?;
         }
@@ -735,6 +780,58 @@ where
         self.fill = false;
         self
     }
+}
+
+/// Fills gas price or EIP-1559 fee fields from the provider and validates the final pair.
+pub(crate) async fn fill_transaction_gas_fees<N: Network, P: Provider<N>>(
+    provider: &P,
+    tx: &mut N::TransactionRequest,
+    legacy: bool,
+    browser: bool,
+    eip1559_fee_estimate: Eip1559FeeEstimatePreset,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if legacy {
+        if tx.gas_price().is_none() {
+            tx.set_gas_price(provider.get_gas_price().await?);
+        }
+        return Ok(());
+    }
+
+    if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
+        let estimate = estimate_eip1559_fees(provider, eip1559_fee_estimate).await?;
+
+        // Only honor the browser-suggested tip when the user has not pinned a
+        // priority fee; `resolve_broadcast_eip1559_fees` ignores a lower tip.
+        let browser_suggested_tip = if browser && tx.max_priority_fee_per_gas().is_none() {
+            provider.get_max_priority_fee_per_gas().await.ok()
+        } else {
+            None
+        };
+
+        // User `--gas-price`/`--priority-gas-price` overrides are already applied
+        // to `tx`; pass `None` so they are not double-applied here.
+        let estimate = resolve_broadcast_eip1559_fees(estimate, None, None, browser_suggested_tip)?;
+
+        if tx.max_fee_per_gas().is_none() {
+            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+        }
+
+        if tx.max_priority_fee_per_gas().is_none() {
+            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+        }
+    }
+
+    if let (Some(max_fee), Some(priority)) = (tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()) {
+        eyre::ensure!(
+            priority <= max_fee,
+            "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
+        );
+    }
+
+    Ok(())
 }
 
 /// Helper function that tries to decode custom error name and inputs from error payload data.

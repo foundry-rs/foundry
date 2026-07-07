@@ -16,6 +16,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
+use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
@@ -26,6 +27,7 @@ use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, state::StateOverride,
 };
+use alloy_transport::TransportErrorKind;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
@@ -39,7 +41,9 @@ use foundry_common::{
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
-use futures::{FutureExt, StreamExt, future::Either};
+use foundry_primitives::FoundryTxEnvelope;
+use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus as _;
 
 use rayon::prelude::*;
@@ -60,12 +64,14 @@ pub use foundry_evm::*;
 pub mod args;
 pub mod cmd;
 pub mod opts;
+pub mod tempo;
 
 pub mod base;
 pub mod call_spec;
 pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
+pub mod rpc_trace;
 pub mod tx;
 
 use rlp_converter::Item;
@@ -194,7 +200,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         } else if shell::is_json() {
             let tokens = decoded
                 .into_iter()
-                .map(|value| serialize_value_as_json(value, None))
+                .map(|value| serialize_value_as_json(value, None, true))
                 .collect::<eyre::Result<Vec<_>>>()?;
             serde_json::to_string_pretty(&tokens).unwrap()
         } else {
@@ -246,7 +252,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", &al.address.to_checksum(None)));
+                s.push(format!("- address: {}", al.address.to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
@@ -649,98 +655,145 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Ok(res)
     }
 
-    fn extract_block_range(filter: &Filter) -> (Option<u64>, Option<u64>) {
+    /// Resolves the filter's block range to concrete block numbers.
+    ///
+    /// Returns `None` when the filter does not target a block-number range (e.g. it filters by
+    /// block hash), in which case chunking is not possible. Tags such as `latest` and `earliest`
+    /// are resolved against the provider so that the common case (`--to-block` defaulting to
+    /// `latest`) can still be chunked.
+    async fn resolve_block_range(&self, filter: &Filter) -> Result<Option<(u64, u64)>> {
         let FilterBlockOption::Range { from_block, to_block } = &filter.block_option else {
-            return (None, None);
+            return Ok(None);
         };
 
-        (from_block.and_then(|b| b.as_number()), to_block.and_then(|b| b.as_number()))
+        let from_tag = from_block.unwrap_or(BlockNumberOrTag::Earliest);
+        let to_tag = to_block.unwrap_or(BlockNumberOrTag::Latest);
+
+        // `pending` is not a concrete canonical range boundary; don't chunk it, so the single
+        // request preserves the provider's native `pending` semantics.
+        if from_tag.is_pending() || to_tag.is_pending() {
+            return Ok(None);
+        }
+
+        let from = self.resolve_block_tag(from_tag).await?;
+        // Resolve identical tags only once so a moving head (e.g. `latest`..`latest`) can't yield
+        // an inconsistent range.
+        let to = if from_tag == to_tag { from } else { self.resolve_block_tag(to_tag).await? };
+        Ok(Some((from, to)))
     }
 
-    /// Retrieves logs with automatic chunking fallback.
-    ///
-    /// First tries to fetch logs for the entire range. If that fails,
-    /// falls back to concurrent chunked requests with rate limiting.
+    /// Resolves a [`BlockNumberOrTag`] to a concrete block number, querying the provider for tags.
+    async fn resolve_block_tag(&self, tag: BlockNumberOrTag) -> Result<u64> {
+        match tag {
+            BlockNumberOrTag::Number(number) => Ok(number),
+            BlockNumberOrTag::Earliest => Ok(0),
+            tag => {
+                let block = self
+                    .provider
+                    .get_block(BlockId::Number(tag))
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("could not resolve block tag `{tag}`"))?;
+                Ok(block.header().number())
+            }
+        }
+    }
+
+    /// Retrieves logs, splitting the request into fixed-size block chunks when needed.
     async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
     {
-        // Try the full range first
-        if let Ok(logs) = self.provider.get_logs(filter).await {
-            return Ok(logs);
+        // Only chunk a finite block-number range larger than one chunk; `chunk_size == 0`
+        // disables chunking and falls back to a single request.
+        let Some((from, to)) = self.resolve_block_range(filter).await? else {
+            return self.provider.get_logs(filter).await.map_err(Into::into);
+        };
+        // Inverted range yields no logs; warn instead of returning empty silently.
+        if from > to {
+            sh_warn!(
+                "requested block range is inverted (from-block {from} > to-block {to}); no logs to return"
+            )?;
+            return Ok(vec![]);
+        }
+        if chunk_size == 0 || to - from < chunk_size {
+            return self.provider.get_logs(filter).await.map_err(Into::into);
         }
 
-        // Fallback: use concurrent chunked approach
-        self.get_logs_chunked_concurrent(filter, chunk_size).await
+        self.get_logs_chunked_concurrent(filter, from, to, chunk_size).await
     }
 
-    /// Retrieves logs using concurrent chunked requests with rate limiting.
-    ///
-    /// Divides the block range into chunks and processes them with a maximum of
-    /// 5 concurrent requests. Falls back to single-block queries if chunks fail.
+    /// Retrieves logs for the inclusive `[from, to]` range using concurrent chunked requests.
     async fn get_logs_chunked_concurrent(
         &self,
         filter: &Filter,
+        from: u64,
+        to: u64,
         chunk_size: u64,
     ) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
     {
-        let (from_block, to_block) = Self::extract_block_range(filter);
-        let (Some(from), Some(to)) = (from_block, to_block) else {
-            return self.provider.get_logs(filter).await.map_err(Into::into);
-        };
-
-        if from >= to {
-            return Ok(vec![]);
+        let mut chunk_ranges: Vec<(u64, u64)> = Vec::new();
+        let mut start = from;
+        loop {
+            let end = start.saturating_add(chunk_size - 1).min(to);
+            chunk_ranges.push((start, end));
+            if end >= to {
+                break;
+            }
+            start = end + 1;
         }
 
-        // Create chunk ranges using iterator
-        let chunk_ranges: Vec<(u64, u64)> = (from..to)
-            .step_by(chunk_size as usize)
-            .map(|chunk_start| (chunk_start, (chunk_start + chunk_size).min(to)))
-            .collect();
-
-        // Process chunks with controlled concurrency using buffered stream
-        let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(chunk_ranges)
-            .map(|(start_block, chunk_end)| {
-                let chunk_filter = filter.clone().from_block(start_block).to_block(chunk_end - 1);
-                let provider = self.provider.clone();
-
-                async move {
-                    // Try direct chunk request with simplified fallback
-                    match provider.get_logs(&chunk_filter).await {
-                        Ok(logs) => (start_block, logs),
-                        Err(_) => {
-                            // Simple fallback: try individual blocks in this chunk
-                            let mut fallback_logs = Vec::new();
-                            for single_block in start_block..chunk_end {
-                                let single_filter = chunk_filter
-                                    .clone()
-                                    .from_block(single_block)
-                                    .to_block(single_block);
-                                if let Ok(logs) = provider.get_logs(&single_filter).await {
-                                    fallback_logs.extend(logs);
-                                }
-                            }
-                            (start_block, fallback_logs)
-                        }
+        // `buffered` preserves input order, so results stay ordered by block. `try_collect` stops
+        // early and surfaces the error if any chunk ultimately fails.
+        let chunks: Vec<Vec<Log>> =
+            futures::stream::iter(chunk_ranges)
+                .map(|(start_block, end_block)| {
+                    let filter = filter.clone();
+                    let provider = self.provider.clone();
+                    async move {
+                        Self::get_logs_bisecting(&provider, &filter, start_block, end_block).await
                     }
+                })
+                .buffered(5)
+                .try_collect()
+                .await?;
+
+        Ok(chunks.into_iter().flatten().collect())
+    }
+
+    /// Fetches logs for the inclusive `[from, to]` range, recursively bisecting on failure.
+    fn get_logs_bisecting<'a>(
+        provider: &'a P,
+        filter: &'a Filter,
+        from: u64,
+        to: u64,
+    ) -> futures::future::BoxFuture<'a, Result<Vec<Log>>>
+    where
+        P: Clone + Unpin,
+    {
+        Box::pin(async move {
+            let range_filter = filter.clone().from_block(from).to_block(to);
+            match provider.get_logs(&range_filter).await {
+                Ok(logs) => Ok(logs),
+                Err(e) => {
+                    // Only bisect range-limit errors with room left to split; surface anything
+                    // else immediately.
+                    if from >= to || !is_range_limit_error(&e) {
+                        return Err(e.into());
+                    }
+
+                    // Bisect sequentially: this path is only reached after a provider failure, so
+                    // fanning out concurrently here would risk amplifying rate-limit errors and
+                    // would defeat the top-level concurrency cap.
+                    let mid = from + (to - from) / 2;
+                    let mut left = Self::get_logs_bisecting(provider, filter, from, mid).await?;
+                    let right = Self::get_logs_bisecting(provider, filter, mid + 1, to).await?;
+                    left.extend(right);
+                    Ok(left)
                 }
-            })
-            .buffered(5) // Limit to 5 concurrent requests to avoid rate limits
-            .collect()
-            .await;
-
-        // Sort once at the end by block number and flatten
-        all_results.sort_by_key(|(block_num, _)| *block_num);
-
-        let mut all_logs = Vec::new();
-        for (_, logs) in all_results {
-            all_logs.extend(logs);
-        }
-
-        Ok(all_logs)
+            }
+        })
     }
 
     /// Converts a block identifier into a block number.
@@ -883,6 +936,38 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
 
         Ok(())
     }
+}
+
+/// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
+/// range can fix. Network, auth, rate-limit, and malformed-response errors return `false`.
+fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
+    // Only HTTP 413 (payload too large) is fixable by a smaller range; other transport errors
+    // (network, auth 401/403, rate-limit 429) are not.
+    if let RpcError::Transport(kind) = err {
+        return kind.as_http_error().is_some_and(|http| http.status == 413);
+    }
+
+    // Range/result-size limits are reported as JSON-RPC server error responses; every other
+    // variant falls through to `false`.
+    let RpcError::ErrorResp(payload) = err else { return false };
+    let message = payload.message.to_ascii_lowercase();
+
+    // Phrases providers use for range/result-size limits, kept specific so rate-limit/quota
+    // wording (e.g. "no more than 10 requests per second") doesn't match.
+    const RANGE_LIMIT_HINTS: &[&str] = &[
+        "block range",
+        "blocks range",
+        "range is too",
+        "range too",
+        "returned more than",
+        "response size",
+        "result set",
+        "too many results",
+        "too many blocks",
+        "maximum block range",
+        "max block range",
+    ];
+    RANGE_LIMIT_HINTS.iter().any(|hint| message.contains(hint))
 }
 
 impl<P: Provider<N>, N: Network> Cast<P, N>
@@ -1088,11 +1173,13 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
+    /// let tx =
+    ///     cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub async fn transaction(
         &self,
         tx_hash: Option<String>,
@@ -1101,6 +1188,7 @@ where
         field: Option<String>,
         raw: bool,
         to_request: bool,
+        lane: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
             let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
@@ -1129,9 +1217,26 @@ where
         Ok(if raw {
             let encoded = tx.as_ref().encoded_2718();
             format!("0x{}", hex::encode(encoded))
+        } else if lane {
+            let encoded = tx.as_ref().encoded_2718();
+            let mut data = encoded.as_slice();
+            let tx = FoundryTxEnvelope::decode_2718(&mut data)
+                .wrap_err("failed to decode transaction for lane classification")?;
+            crate::args::format_lane_classification(&tx.classify_t5_payment_lane())?
         } else if let Some(ref field) = field {
-            get_pretty_tx_attr::<N>(&tx, field.as_str())
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?
+            if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
+                value
+            } else {
+                let tx_json = serde_json::to_value(&tx)?;
+                let value = tx_json
+                    .get(field)
+                    .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?;
+
+                match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                }
+            }
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
@@ -2220,7 +2325,7 @@ impl SimpleCast {
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, flattened)?;
-            sh_println!("Flattened file written at {}", path.display())?
+            sh_status!("Flattened file written at {}", path.display())?
         } else {
             sh_println!("{flattened}")?
         }
@@ -2402,6 +2507,130 @@ fn explorer_client(
     builder.build().map_err(Into::into)
 }
 
+/// Tests for the `eth_getLogs` chunking/bisection helpers, kept in a separate module so they can
+/// use the provider-based [`Cast`] (the `tests` module aliases `Cast` to `SimpleCast`).
+#[cfg(test)]
+mod logs_bisecting {
+    use super::Cast;
+    use alloy_json_rpc::{RequestPacket, ResponsePacket, SerializedRequest};
+    use alloy_network::AnyNetwork;
+    use alloy_provider::ProviderBuilder;
+    use alloy_rpc_client::RpcClient;
+    use alloy_rpc_types::{Filter, Log};
+    use alloy_transport::{
+        TransportError, TransportFut,
+        mock::{Asserter, MockTransport},
+    };
+    use std::{
+        sync::{Arc, Mutex},
+        task::{Context, Poll},
+    };
+    use tower::Service;
+
+    fn log_at(block: u64) -> Log {
+        Log { block_number: Some(block), ..Default::default() }
+    }
+
+    /// Mock transport that records the `eth_getLogs` `[fromBlock, toBlock]` ranges it is asked for
+    /// while delegating the actual responses to a FIFO [`Asserter`].
+    #[derive(Clone)]
+    struct RecordingTransport {
+        inner: MockTransport,
+        ranges: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl RecordingTransport {
+        fn new(asserter: Asserter) -> Self {
+            Self { inner: MockTransport::new(asserter), ranges: Arc::new(Mutex::new(Vec::new())) }
+        }
+
+        fn record(&self, req: &SerializedRequest) {
+            if req.method() != "eth_getLogs" {
+                return;
+            }
+            let Some(params) = req.params() else { return };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(params.get()) else { return };
+            let Some(filter) = value.get(0) else { return };
+            let field =
+                |name| filter.get(name).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            self.ranges.lock().unwrap().push((field("fromBlock"), field("toBlock")));
+        }
+    }
+
+    impl Service<RequestPacket> for RecordingTransport {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            match &req {
+                RequestPacket::Single(req) => self.record(req),
+                RequestPacket::Batch(reqs) => reqs.iter().for_each(|req| self.record(req)),
+            }
+            self.inner.call(req)
+        }
+    }
+
+    // A range-limit failure splits depth-first into [0,1]/[2,3] and aggregates in range order.
+    #[tokio::test]
+    async fn bisects_failed_range_and_aggregates_in_order() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("query returned more than 10000 results");
+        asserter.push_success(&vec![log_at(0)]);
+        asserter.push_success(&vec![log_at(2)]);
+
+        let transport = RecordingTransport::new(asserter);
+        let ranges = transport.ranges.clone();
+        let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+            .connect_client(RpcClient::new(transport, true));
+
+        let logs = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap();
+        let blocks: Vec<_> = logs.iter().map(|l| l.block_number).collect();
+        assert_eq!(blocks, vec![Some(0), Some(2)]);
+
+        // The original range fails, then bisection requests exactly the two halves in order.
+        let ranges = ranges.lock().unwrap();
+        assert_eq!(
+            *ranges,
+            vec![
+                ("0x0".to_string(), "0x3".to_string()),
+                ("0x0".to_string(), "0x1".to_string()),
+                ("0x2".to_string(), "0x3".to_string()),
+            ]
+        );
+    }
+
+    // A single-block failure can't be split, so the error is surfaced.
+    #[tokio::test]
+    async fn surfaces_single_block_failure() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("query returned more than 10000 results");
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let err = Cast::get_logs_bisecting(&provider, &Filter::new(), 5, 5).await.unwrap_err();
+        assert!(err.to_string().contains("more than 10000 results"), "got: {err}");
+    }
+
+    // A non-range error fails after one request instead of bisecting.
+    #[tokio::test]
+    async fn does_not_bisect_non_range_errors() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("unauthorized: invalid api key");
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let err = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap_err();
+        assert!(err.to_string().contains("unauthorized"), "got: {err}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
@@ -2527,7 +2756,7 @@ mod tests {
         let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
         let sig = "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
         let decoded = Cast::calldata_decode(sig, calldata, true).unwrap();
-        let json_value = serialize_value_as_json(DynSolValue::Array(decoded), None).unwrap();
+        let json_value = serialize_value_as_json(DynSolValue::Array(decoded), None, true).unwrap();
         let expected = serde_json::json!([
             [
                 [

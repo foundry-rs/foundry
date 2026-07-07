@@ -10,24 +10,30 @@ use alloy_signer::{Signature, Signer};
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, parse_etherscan_license_type};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
-    utils::{LoadConfig, find_contract_artifacts, read_constructor_args_file},
+    utils::{
+        LoadConfig, ResolvedLane, find_contract_artifacts, maybe_print_resolved_lane,
+        read_constructor_args_file, resolve_lane,
+    },
 };
 use foundry_common::{
     FoundryTransactionBuilder,
     compile::{self},
     fmt::parse_tokens,
-    provider::ProviderBuilder,
+    provider::{
+        ProviderBuilder,
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+    },
     shell,
-    tempo::TEMPO_BROWSER_GAS_BUFFER,
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
 };
 use foundry_config::{
-    Config,
+    Config, Eip1559FeeEstimatePreset,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -39,7 +45,7 @@ use foundry_wallets::{
 };
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
-use tempo_alloy::{TempoNetwork, contracts::precompiles::DEFAULT_FEE_TOKEN};
+use tempo_alloy::TempoNetwork;
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -85,6 +91,20 @@ pub struct CreateArgs {
     /// the browser.
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
+
+    /// The Etherscan license type code or SPDX identifier to include with the verification
+    /// request.
+    ///
+    /// Accepts either an Etherscan numeric license code or a common SPDX identifier such as `MIT`.
+    /// This is only used for Etherscan-style verifiers when `--verify` is enabled.
+    #[arg(
+        long,
+        requires = "verify",
+        value_name = "LICENSE",
+        help_heading = "Verifier options",
+        value_parser = parse_etherscan_license_type,
+    )]
+    license_type: Option<String>,
 
     /// Timeout to use for broadcasting transactions.
     #[arg(long, env = "ETH_TIMEOUT")]
@@ -145,6 +165,7 @@ impl CreateArgs {
         N::ReceiptResponse: serde::Serialize,
     {
         let mut config = self.load_config()?;
+        let resolve_unknown_fee_token_symbol = !config.eth_rpc_curl;
 
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
@@ -193,6 +214,12 @@ impl CreateArgs {
                 constructor_args.as_deref().unwrap_or(&self.constructor_args),
             )?
         } else {
+            if !self.constructor_args.is_empty() || self.constructor_args_path.is_some() {
+                sh_warn!(
+                    "`{}` has no constructor; ignoring provided constructor arguments",
+                    self.contract.name
+                )?;
+            }
             vec![]
         };
 
@@ -202,6 +229,12 @@ impl CreateArgs {
         if let Some(ref ak) = access_key {
             self.tx.tempo.key_id = Some(ak.key_address);
         }
+
+        // Resolve `--tempo.lane <name>` against the lanes file (default
+        // `<root>/tempo.lanes.toml`) and populate `self.tx.tempo.nonce_key` from the lane.
+        // Must happen before `self.deploy(...)` so `TempoOpts::apply` picks up the nonce_key.
+        let resolved_lane = resolve_lane(&mut self.tx.tempo, &config.root)?;
+        let expires_at = self.tx.tempo.resolve_expires();
 
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
@@ -223,6 +256,10 @@ impl CreateArgs {
                 dry_run,
                 None,
                 Some(browser),
+                resolved_lane,
+                expires_at,
+                resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else if self.unlocked {
@@ -239,6 +276,10 @@ impl CreateArgs {
                 dry_run,
                 None,
                 None,
+                resolved_lane,
+                expires_at,
+                resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else if let Some(ak) = access_key {
@@ -259,6 +300,10 @@ impl CreateArgs {
                 dry_run,
                 Some((signer, ak)),
                 None,
+                resolved_lane,
+                expires_at,
+                resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else {
@@ -282,6 +327,10 @@ impl CreateArgs {
                 dry_run,
                 None,
                 None,
+                resolved_lane,
+                expires_at,
+                resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         }
@@ -327,7 +376,8 @@ impl CreateArgs {
             libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
-            via_ir: self.build.via_ir,
+            via_ir: self.build.compiler.via_ir,
+            license_type: self.license_type.clone(),
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -339,12 +389,23 @@ impl CreateArgs {
         // Check config for Etherscan API Keys to avoid preflight check failing if no
         // ETHERSCAN_API_KEY value set.
         let config = verify.load_config()?;
-        verify.etherscan.key =
-            config.get_etherscan_config_with_chain(self.chain_id())?.map(|c| c.key);
+        verify.etherscan.key = config
+            .get_etherscan_config_with_chain(self.chain_id())?
+            .map(|c| c.key)
+            .or_else(|| config.etherscan_api_key.clone());
 
         let context = verify.resolve_context().await?;
 
-        verify.verification_provider()?.preflight_verify_check(verify, context).await?;
+        verify.verification_provider()?.preflight_verify_check(verify.clone(), context).await?;
+
+        let api_key = verify.verifier.resolve_api_key(verify.etherscan.key.as_deref());
+        let chain = verify.etherscan.chain.context("chain ID not resolved")?;
+        verify
+            .verifier
+            .check_credentials(api_key, chain, &config)
+            .await
+            .wrap_err("Verification preflight check failed")?;
+
         Ok(())
     }
 
@@ -362,6 +423,10 @@ impl CreateArgs {
         dry_run: bool,
         tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
         browser_signer: Option<BrowserSigner<N>>,
+        resolved_lane: Option<ResolvedLane>,
+        expires_at: Option<u64>,
+        resolve_unknown_fee_token_symbol: bool,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -396,32 +461,79 @@ impl CreateArgs {
             deployer.tx.set_create();
         }
 
-        // If Tempo chain fee token must be set
-        if chain.is_tempo() {
-            if let Some(fee_token) = self.tx.tempo.fee_token {
-                deployer.tx.set_fee_token(fee_token);
-            } else {
-                deployer.tx.set_fee_token(DEFAULT_FEE_TOKEN);
-            }
-        }
-
         // Apply user-provided gas, fee, nonce, and Tempo options.
         self.tx.apply::<N>(&mut deployer.tx, is_legacy);
 
-        // For keychain mode, set key_id and nonce_key before gas estimation.
         // Convert the CREATE into an AA-compatible call entry since Tempo AA
         // transactions use a `calls` list instead of `to`+`input`.
+        if chain.is_tempo() {
+            deployer.tx.convert_create_to_call();
+        }
+
+        // For keychain mode, set key_id and nonce_key before gas estimation.
         if let Some((_, ref ak)) = tempo_keychain {
             deployer.tx.set_key_id(ak.key_address);
             if deployer.tx.nonce_key().is_none() {
                 deployer.tx.set_nonce_key(U256::ZERO);
             }
-            deployer.tx.convert_create_to_call();
         }
 
         // Fetch defaults from provider for values not specified by user.
         if self.tx.nonce.is_none() && !self.tx.tempo.expiring_nonce {
             deployer.tx.set_nonce(provider.get_transaction_count(deployer_address).await?);
+        }
+
+        maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
+
+        if let Some((_, ref ak)) = tempo_keychain {
+            deployer
+                .tx
+                .prepare_access_key_authorization(
+                    provider.as_ref(),
+                    ak.wallet_address,
+                    ak.key_address,
+                    ak.key_authorization.as_ref(),
+                )
+                .await?;
+        }
+
+        if is_legacy {
+            if self.tx.gas_price.is_none() {
+                deployer.tx.set_gas_price(provider.get_gas_price().await?);
+            }
+        } else {
+            if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
+                let estimate = estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+
+                // Only honor the browser-suggested tip when the user has not pinned
+                // a priority fee; `resolve_broadcast_eip1559_fees` ignores a lower tip.
+                let browser_suggested_tip =
+                    if browser_signer.is_some() && self.tx.priority_gas_price.is_none() {
+                        provider.get_max_priority_fee_per_gas().await.ok()
+                    } else {
+                        None
+                    };
+
+                // User `--gas-price`/`--priority-gas-price` overrides are applied
+                // below only for unset fields; pass `None` to avoid double-applying.
+                let estimate =
+                    resolve_broadcast_eip1559_fees(estimate, None, None, browser_suggested_tip)?;
+
+                if self.tx.priority_gas_price.is_none() {
+                    deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+                }
+                if self.tx.gas_price.is_none() {
+                    deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+                }
+            }
+            if let (Some(max_fee), Some(priority)) =
+                (deployer.tx.max_fee_per_gas(), deployer.tx.max_priority_fee_per_gas())
+            {
+                eyre::ensure!(
+                    priority <= max_fee,
+                    "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
+                );
+            }
         }
 
         // set access list if specified
@@ -444,20 +556,6 @@ impl CreateArgs {
             }
 
             deployer.tx.set_gas_limit(estimated);
-        }
-
-        if is_legacy {
-            if self.tx.gas_price.is_none() {
-                deployer.tx.set_gas_price(provider.get_gas_price().await?);
-            }
-        } else if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
-            let estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
-            if self.tx.priority_gas_price.is_none() {
-                deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-            }
-            if self.tx.gas_price.is_none() {
-                deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-            }
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid
@@ -498,6 +596,32 @@ impl CreateArgs {
             }
 
             return Ok(());
+        }
+
+        if let Some(ts) = expires_at {
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
+        }
+
+        let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    resolve_unknown_fee_token_symbol.then_some(&provider),
+                    Some(chain),
+                    &mut deployer.tx,
+                )
+                .await?;
+            sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
+        } else {
+            let fee_token = resolve_and_set_fee_token(
+                resolve_unknown_fee_token_symbol.then_some(&provider),
+                Some(chain),
+                &mut deployer.tx,
+                Some(deployer_address),
+            )
+            .await?;
+            maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token)
+                .await?;
         }
 
         // Deploy the actual contract
@@ -574,7 +698,7 @@ impl CreateArgs {
             return Ok(());
         }
 
-        sh_println!("Starting contract verification...")?;
+        sh_status!("Starting contract verification...")?;
 
         let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
             optimizer.then(|| self.build.compiler.optimizer_runs.unwrap_or(200))
@@ -601,7 +725,8 @@ impl CreateArgs {
             libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier,
-            via_ir: self.build.via_ir,
+            via_ir: self.build.compiler.via_ir,
+            license_type: self.license_type,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -609,7 +734,16 @@ impl CreateArgs {
             language: None,
             creation_transaction_hash: Some(tx_hash),
         };
-        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
+        // Load the full config (including foundry.toml) so the key used for resolution matches
+        // what `verify.run()` will actually use, preventing a "Waiting for sourcify..." message
+        // when the run will actually use Etherscan (or vice versa for unknown chains).
+        let verify_config = verify.load_config()?;
+        let effective_key = verify_config
+            .get_etherscan_config_with_chain(Some(chain))?
+            .map(|c| c.key)
+            .or_else(|| verify_config.etherscan_api_key.clone());
+        let resolved_verifier = verify.verifier.resolve(effective_key.as_deref(), Some(chain));
+        sh_status!("Waiting for {resolved_verifier} to detect contract deployment...")?;
         verify.run().await
     }
 
@@ -815,10 +949,39 @@ mod tests {
             "10",
             "--delay",
             "30",
+            "--license-type",
+            "13",
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
     }
+
+    #[test]
+    fn can_parse_create_license_type_spdx() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "MIT",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn errors_on_invalid_create_license_type() {
+        let err = CreateArgs::try_parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "definitely-not-a-license",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("unsupported Etherscan license type"));
+    }
+
     #[test]
     fn can_parse_chain_id() {
         let args: CreateArgs = CreateArgs::parse_from([

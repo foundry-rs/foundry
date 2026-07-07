@@ -1,0 +1,295 @@
+---
+# yamllint disable rule:line-length
+name: bench (dispatch)
+
+permissions: {}
+
+'on':
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: bench-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Gate on association here so unauthorized commenters never start a run.
+    if: >-
+      github.event.issue.pull_request &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      (
+        github.event.comment.body == 'derek bench' ||
+        startsWith(github.event.comment.body, 'derek bench ') ||
+        github.event.comment.body == 'decofe bench' ||
+        startsWith(github.event.comment.body, 'decofe bench ') ||
+        github.event.comment.body == '@decofe bench' ||
+        startsWith(github.event.comment.body, '@decofe bench ')
+      )
+    runs-on: ubuntu-latest
+    # Scopes the EVENTS_* mTLS secrets; shared across all `bench` subcommands.
+    environment: bench
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Validate request
+        id: request
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const usage = [
+              '**Usage:** `derek bench <subcommand> [args]` (also `decofe bench ...`).\n',
+              '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization]`',
+            ].join('');
+            const actor = context.payload.comment.user.login;
+            const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            const association = context.payload.comment.author_association;
+
+            const failWithComment = async (message) => {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `cc @${actor}\n\n${message}\n\n${usage}`,
+              });
+              core.setFailed(message);
+            };
+
+            // Defense-in-depth; the job-level `if` already gates on this.
+            if (!trustedAssociations.has(association)) {
+              core.setFailed('Unauthorized association.');
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const repoFullName = `${context.repo.owner}/${context.repo.repo}`;
+            if (pr.head.repo.full_name !== repoFullName) {
+              await failWithComment('bench only runs for branches in `foundry-rs/foundry`, not external forks.');
+              return;
+            }
+
+            // `derek bench <subcommand> [args]`
+            const body = context.payload.comment.body.trim();
+            const prefix = /^(?:(?:@?decofe|derek)\s+)bench\b/i;
+            const afterBench = body.replace(prefix, '').trim();
+            const subMatch = afterBench.match(/^([A-Za-z][A-Za-z-]*)\b/);
+            const subcommand = subMatch ? subMatch[1].toLowerCase() : '';
+            const rawArgs = (subMatch ? afterBench.slice(subMatch[0].length) : afterBench).trim();
+
+            // Only `invariant` is live; build/all are reserved.
+            const supported = new Set(['invariant']);
+            const planned = new Set(['build', 'all']);
+            if (!subcommand) {
+              await failWithComment('Missing bench subcommand.');
+              return;
+            }
+            if (planned.has(subcommand)) {
+              await failWithComment(`\`bench ${subcommand}\` is not available yet.`);
+              return;
+            }
+            if (!supported.has(subcommand)) {
+              await failWithComment(`Unknown bench subcommand \`${subcommand}\`.`);
+              return;
+            }
+
+            // Generic arg tokenizer (shared by all subcommands).
+            const parts = [];
+            const argRegex = /(\S+?="[^"]*"|\S+?='[^']*'|\S+?=\S+|\S+)/g;
+            let match;
+            while ((match = argRegex.exec(rawArgs)) !== null) parts.push(match[1]);
+
+            const parseArgs = (defaults, stringArgs, intArgs, enumArgs) => {
+              const unknown = [];
+              const invalid = [];
+              for (const part of parts) {
+                const eq = part.indexOf('=');
+                if (eq === -1) {
+                  unknown.push(part);
+                  continue;
+                }
+                const key = part.slice(0, eq);
+                let value = part.slice(eq + 1);
+                if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+                  value = value.slice(1, -1);
+                }
+                if (stringArgs.has(key)) {
+                  defaults[key] = value;
+                } else if (intArgs.has(key)) {
+                  if (value !== '' && !/^[1-9]\d*$/.test(value)) {
+                    invalid.push(`\`${key}=${value}\` (must be a positive integer)`);
+                  } else {
+                    defaults[key] = value;
+                  }
+                } else if (enumArgs[key]) {
+                  if (!enumArgs[key].has(value)) {
+                    invalid.push(`\`${key}=${value}\` (must be one of: ${Array.from(enumArgs[key]).join(', ')})`);
+                  } else {
+                    defaults[key] = value;
+                  }
+                } else {
+                  unknown.push(key);
+                }
+              }
+              return { unknown, invalid };
+            };
+
+            let payload;
+            let summary;
+
+            if (subcommand === 'invariant') {
+              const opts = {
+                'compare-ref': 'master',
+                timeout: '3600',
+                workers: '',
+                'benchmark-type': 'property',
+              };
+              const { unknown, invalid } = parseArgs(
+                opts,
+                new Set(['compare-ref']),
+                new Set(['timeout', 'workers']),
+                { 'benchmark-type': new Set(['property', 'optimization']) },
+              );
+
+              const safeRef = /^[A-Za-z0-9._/-]{1,128}$/;
+              if (!safeRef.test(opts['compare-ref'])) {
+                invalid.push("`compare-ref` may only contain letters, numbers, '.', '_', '-', and '/'");
+              }
+              const timeout = Number(opts.timeout);
+              if (!Number.isInteger(timeout) || timeout < 60 || timeout > 14400) {
+                invalid.push('`timeout` must be between 60 and 14400 seconds');
+              }
+              if (opts.workers) {
+                const workers = Number(opts.workers);
+                if (!Number.isInteger(workers) || workers < 1 || workers > 256) {
+                  invalid.push('`workers` must be between 1 and 256');
+                }
+              }
+
+              const errors = [];
+              if (unknown.length) errors.push(`Unknown argument(s): \`${unknown.join('`, `')}\``);
+              if (invalid.length) errors.push(`Invalid value(s): ${invalid.join(', ')}`);
+              if (errors.length) {
+                await failWithComment(`Invalid \`bench invariant\` command\n\n${errors.join('\n')}`);
+                return;
+              }
+
+              // PR identity + safe knobs only; the rest comes from server defaults.
+              payload = {
+                repository: repoFullName,
+                // Wire event matches the existing sensor/template; command is renamed.
+                event: 'scfuzzbench',
+                data: {
+                  pr_number: String(context.issue.number),
+                  head_repo: pr.head.repo.full_name,
+                  actor,
+                  foundry_git_ref: pr.head.sha,
+                  foundry_label: `pr-${context.issue.number}`,
+                  compare_foundry_git_ref: opts['compare-ref'],
+                  compare_foundry_label: opts['compare-ref'].replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 64),
+                  benchmark_type: opts['benchmark-type'],
+                  timeout_seconds: opts.timeout,
+                  workers: opts.workers,
+                },
+              };
+
+              summary = [
+                `subcommand: \`invariant\``,
+                `PR SHA: \`${pr.head.sha.slice(0, 12)}\``,
+                `compare-ref: \`${opts['compare-ref']}\``,
+                `timeout: \`${opts.timeout}s\``,
+                opts.workers ? `workers: \`${opts.workers}\`` : 'workers: `default`',
+                `benchmark-type: \`${opts['benchmark-type']}\``,
+              ].join(', ');
+            }
+
+            core.setOutput('actor', actor);
+            core.setOutput('subcommand', subcommand);
+            core.setOutput('summary', summary);
+            core.setOutput('payload-b64', Buffer.from(JSON.stringify(payload), 'utf8').toString('base64'));
+
+      - name: Acknowledge request
+        id: ack
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          ACTOR: ${{ steps.request.outputs.actor }}
+          SUBCOMMAND: ${{ steps.request.outputs.subcommand }}
+          SUMMARY: ${{ steps.request.outputs.summary }}
+        with:
+          script: |
+            try {
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'eyes',
+              });
+            } catch (error) {
+              core.warning(`Could not add acknowledgement reaction: ${error.message}`);
+            }
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: comment } = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `cc @${process.env.ACTOR}\n\nbench (${process.env.SUBCOMMAND}) event queued. [View publisher run](${runUrl})\n\n**Config:** ${process.env.SUMMARY}`,
+            });
+            core.setOutput('comment-id', String(comment.id));
+
+      - name: Publish event
+        id: publish
+        continue-on-error: true
+        env:
+          PAYLOAD_B64: ${{ steps.request.outputs.payload-b64 }}
+          EVENTS_KEY: ${{ secrets.EVENTS_KEY }}
+          EVENTS_CERT: ${{ secrets.EVENTS_CERT }}
+          EVENTS_URL: ${{ secrets.EVENTS_URL }}
+          EVENTS_AUTH: ${{ secrets.EVENTS_AUTH }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          printf '%s' "$EVENTS_KEY" > "${RUNNER_TEMP}/key"
+          printf '%s' "$EVENTS_CERT" > "${RUNNER_TEMP}/cert"
+          printf '%s' "$PAYLOAD_B64" \
+            | base64 --decode \
+            > "${RUNNER_TEMP}/bench-event.json"
+
+          curl --fail-with-body --silent --show-error --globoff \
+            --connect-timeout 10 --max-time 30 \
+            -X POST "$EVENTS_URL" \
+            -H "Content-Type: application/json" \
+            -H "$EVENTS_AUTH" \
+            --key "${RUNNER_TEMP}/key" \
+            --cert "${RUNNER_TEMP}/cert" \
+            -d @"${RUNNER_TEMP}/bench-event.json"
+
+      - name: Update queued comment
+        if: ${{ always() && steps.ack.outputs.comment-id != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          ACTOR: ${{ steps.request.outputs.actor }}
+          SUBCOMMAND: ${{ steps.request.outputs.subcommand }}
+          COMMENT_ID: ${{ steps.ack.outputs.comment-id }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+          SUMMARY: ${{ steps.request.outputs.summary }}
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const success = process.env.PUBLISH_OUTCOME === 'success';
+            const body = success
+              ? `cc @${process.env.ACTOR}\n\nbench (${process.env.SUBCOMMAND}) event published. Results will be reported separately. [View publisher run](${runUrl})\n\n**Config:** ${process.env.SUMMARY}`
+              : `cc @${process.env.ACTOR}\n\nbench (${process.env.SUBCOMMAND}) event failed to publish. [View publisher run](${runUrl})\n\n**Config:** ${process.env.SUMMARY}`;
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: Number(process.env.COMMENT_ID),
+              body,
+            });
+            if (!success) core.setFailed('Failed to publish bench event');

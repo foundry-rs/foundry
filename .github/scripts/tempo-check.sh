@@ -6,11 +6,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Non-verification tempo checks: local tests, fork tests, cast commands, DEX operations
 
-# Hardfork version, defaults to T3 (latest features)
-HARDFORK="${TEMPO_HARDFORK:-T3}"
+# Hardfork version, defaults to T7.
+HARDFORK="${TEMPO_HARDFORK:-T7}"
+HARDFORK_UPPER=$(echo "$HARDFORK" | tr '[:lower:]' '[:upper:]')
 
 # Fee token address, defaults to native fee token
 FEE_TOKEN="${TEMPO_FEE_TOKEN:-0x20c0000000000000000000000000000000000000}"
+
+# T6 receive-policy precompile.
+RECEIVE_POLICY_GUARD="0xB10C000000000000000000000000000000000000"
 
 # Build fee token args if not using native token (array for safe expansion)
 FEE_TOKEN_ARG=()
@@ -48,6 +52,12 @@ fund_and_wait() {
   done
 }
 
+wallet_json_field() {
+  local wallet_json="$1"
+  local field="$2"
+  jq -r --arg field "$field" '(.data // .)[0][$field]' <<<"$wallet_json"
+}
+
 echo -e "\n=== INIT TEMPO PROJECT ==="
 tmp_dir=$(mktemp -d)
 cd "$tmp_dir"
@@ -76,8 +86,8 @@ forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "
 
 echo -e "\n=== CREATE AND FUND ADDRESS ==="
 wallet_json="$(cast wallet new --json)"
-ADDR="$(jq -r '.[0].address' <<<"$wallet_json")"
-PK="$(jq -r '.[0].private_key' <<<"$wallet_json")"
+ADDR="$(wallet_json_field "$wallet_json" address)"
+PK="$(wallet_json_field "$wallet_json" private_key)"
 printf "address: %s\nprivate_key: %s\n" "$ADDR" "$PK"
 fund_and_wait "$ADDR"
 
@@ -158,8 +168,8 @@ cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x8
 echo -e "\n=== SETUP ACCESS KEY ==="
 # Create an access key for testing
 access_wallet_json="$(cast wallet new --json)"
-ACCESS_KEY="$(jq -r '.[0].private_key' <<<"$access_wallet_json")"
-ACCESS_KEY_ADDR="$(jq -r '.[0].address' <<<"$access_wallet_json")"
+ACCESS_KEY="$(wallet_json_field "$access_wallet_json" private_key)"
+ACCESS_KEY_ADDR="$(wallet_json_field "$access_wallet_json" address)"
 printf "Access key address: %s\n" "$ACCESS_KEY_ADDR"
 
 # Authorize the access key on-chain first (required for gas estimation)
@@ -198,8 +208,8 @@ cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x8
 
 echo -e "\n=== CAST KEYCHAIN: AUTHORIZE ==="
 kc_wallet_json="$(cast wallet new --json)"
-KC_KEY_PK="$(jq -r '.[0].private_key' <<<"$kc_wallet_json")"
-KC_KEY_ADDR="$(jq -r '.[0].address' <<<"$kc_wallet_json")"
+KC_KEY_PK="$(wallet_json_field "$kc_wallet_json" private_key)"
+KC_KEY_ADDR="$(wallet_json_field "$kc_wallet_json" address)"
 printf "Keychain key address: %s\n" "$KC_KEY_ADDR"
 
 cast keychain auth "$KC_KEY_ADDR" secp256k1 1893456000 \
@@ -212,11 +222,11 @@ echo "$KC_INFO" | grep -q "secp256k1"
 
 echo -e "\n=== CAST KEYCHAIN: KEY-INFO --json ==="
 KC_INFO_JSON=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL" --json)
-echo "$KC_INFO_JSON" | jq -e '.signatureType == "secp256k1"'
+echo "$KC_INFO_JSON" | jq -e '.data.signatureType == "secp256k1"'
 
 echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH LIMIT ==="
 kc_limited_json="$(cast wallet new --json)"
-KC_LIMITED_ADDR="$(jq -r '.[0].address' <<<"$kc_limited_json")"
+KC_LIMITED_ADDR="$(wallet_json_field "$kc_limited_json" address)"
 cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
   --limit "$FEE_TOKEN:1000000000" \
   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
@@ -268,12 +278,136 @@ if cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
 fi
 echo "OK: duplicate authorize correctly rejected"
 
+if [[ "$HARDFORK_UPPER" == "T6" ]]; then
+  echo -e "\n=== CAST KEYCHAIN: T6 AUTHORIZE ADMIN ==="
+  kc_admin_json="$(cast wallet new --json)"
+  KC_ADMIN_ADDR="$(wallet_json_field "$kc_admin_json" address)"
+  cast keychain auth "$KC_ADMIN_ADDR" --admin \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  echo -e "\n=== CAST KEYCHAIN: T6 IS-ADMIN ==="
+  KC_ADMIN_JSON=$(cast keychain is-admin "$ADDR" "$KC_ADMIN_ADDR" --rpc-url "$ETH_RPC_URL" --json)
+  echo "$KC_ADMIN_JSON" | jq
+  echo "$KC_ADMIN_JSON" | jq -e '.is_admin == true'
+
+  echo -e "\n=== CAST KEYCHAIN: T6 ADMIN REJECTS LIMITS ==="
+  kc_admin_reject_json="$(cast wallet new --json)"
+  KC_ADMIN_REJECT_ADDR="$(wallet_json_field "$kc_admin_reject_json" address)"
+  if cast keychain auth "$KC_ADMIN_REJECT_ADDR" --admin --enforce-limits \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} 2>&1; then
+    echo "ERROR: admin authorize with spending limits should have been rejected"
+    exit 1
+  fi
+  echo "OK: admin authorize with spending limits correctly rejected"
+
+  echo -e "\n=== CAST RECEIVE-POLICY: T6 SET REJECT-ALL POLICY ==="
+  rp_receiver_json="$(cast wallet new --json)"
+  RP_RECEIVER_ADDR="$(wallet_json_field "$rp_receiver_json" address)"
+  RP_RECEIVER_PK="$(wallet_json_field "$rp_receiver_json" private_key)"
+  rp_recovery_json="$(cast wallet new --json)"
+  RP_RECOVERY_ADDR="$(wallet_json_field "$rp_recovery_json" address)"
+  RP_RECOVERY_PK="$(wallet_json_field "$rp_recovery_json" private_key)"
+  rp_claim_json="$(cast wallet new --json)"
+  RP_CLAIM_ADDR="$(wallet_json_field "$rp_claim_json" address)"
+  printf "Receive-policy receiver: %s\nrecovery: %s\nclaim target: %s\n" \
+    "$RP_RECEIVER_ADDR" "$RP_RECOVERY_ADDR" "$RP_CLAIM_ADDR"
+
+  fund_and_wait "$RP_RECEIVER_ADDR"
+  fund_and_wait "$RP_RECOVERY_ADDR"
+
+  cast receive-policy set 0 1 \
+    --recovery-authority "$RP_RECOVERY_ADDR" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$RP_RECEIVER_PK" \
+    ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  RP_POLICY_JSON=$(cast --json receive-policy get "$RP_RECEIVER_ADDR" --rpc-url "$ETH_RPC_URL")
+  echo "$RP_POLICY_JSON" | jq
+  echo "$RP_POLICY_JSON" | jq -e '
+    .success == true and
+    .data.has_receive_policy == true and
+    .data.sender_policy_id == 0 and
+    .data.token_filter_id == 1 and
+    .data.recovery_mode == "authority"
+  '
+
+  echo -e "\n=== CAST RECEIVE-POLICY: T6 VALIDATE HELD TRANSFER ==="
+  RP_VALIDATE_JSON=$(cast --json receive-policy validate "$FEE_TOKEN" "$ADDR" "$RP_RECEIVER_ADDR" --rpc-url "$ETH_RPC_URL")
+  echo "$RP_VALIDATE_JSON" | jq
+  echo "$RP_VALIDATE_JSON" | jq -e '
+    .success == true and
+    .data.authorized == false and
+    .data.blocked_reason == "receive_policy" and
+    .data.delivery_state == "held"
+  '
+
+  echo -e "\n=== CAST RECEIVE-POLICY: T6 BLOCKED TRANSFER RECEIPT ==="
+  RP_AMOUNT=77000
+  RP_TRANSFER_JSON=$(cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" "$RP_RECEIVER_ADDR" "$RP_AMOUNT" --rpc-url "$ETH_RPC_URL" --private-key "$PK" --json)
+  echo "$RP_TRANSFER_JSON" | jq
+  RECEIVE_POLICY_GUARD_LOWER=$(echo "$RECEIVE_POLICY_GUARD" | tr '[:upper:]' '[:lower:]')
+  RP_BLOCKED_DATA=$(echo "$RP_TRANSFER_JSON" | jq -r --arg guard "$RECEIVE_POLICY_GUARD_LOWER" '
+    [.logs[]? | select((.address | ascii_downcase) == $guard) | .data][0] // empty
+  ')
+  if [[ -z "$RP_BLOCKED_DATA" ]]; then
+    echo "ERROR: TransferBlocked log not found in transfer receipt"
+    exit 1
+  fi
+  mapfile -t RP_BLOCKED_FIELDS < <(cast abi-decode 'f()(uint256,uint8,bytes)' "$RP_BLOCKED_DATA")
+  # `cast abi-decode` pretty-prints large integers as "77000 [7.7e4]"; compare the raw numeric token.
+  RP_BLOCKED_AMOUNT="${RP_BLOCKED_FIELDS[0]%% *}"
+  RP_RECEIPT_VERSION="${RP_BLOCKED_FIELDS[1]}"
+  RP_RECEIPT="${RP_BLOCKED_FIELDS[2]}"
+  [[ "$RP_BLOCKED_AMOUNT" == "$RP_AMOUNT" ]] || { echo "ERROR: blocked amount mismatch: $RP_BLOCKED_AMOUNT"; exit 1; }
+  [[ "$RP_RECEIPT_VERSION" == "1" ]] || { echo "ERROR: expected receipt version 1, got $RP_RECEIPT_VERSION"; exit 1; }
+
+  RP_RECEIPT_JSON=$(cast --json receive-policy receipt decode "$RP_RECEIPT")
+  echo "$RP_RECEIPT_JSON" | jq
+  echo "$RP_RECEIPT_JSON" | jq -e \
+    --arg receipt "$RP_RECEIPT" \
+    --arg token "$FEE_TOKEN" \
+    --arg recovery "$RP_RECOVERY_ADDR" \
+    --arg originator "$ADDR" \
+    --arg recipient "$RP_RECEIVER_ADDR" '
+      .success == true and
+      (.data.receipt | ascii_downcase) == ($receipt | ascii_downcase) and
+      (.data.token | ascii_downcase) == ($token | ascii_downcase) and
+      (.data.recovery_authority | ascii_downcase) == ($recovery | ascii_downcase) and
+      (.data.originator | ascii_downcase) == ($originator | ascii_downcase) and
+      (.data.recipient | ascii_downcase) == ($recipient | ascii_downcase) and
+      .data.blocked_reason == "receive_policy" and
+      .data.kind == "transfer"
+    '
+
+  RP_BALANCE_JSON=$(cast --json receive-policy receipt balance "$RP_RECEIPT" --rpc-url "$ETH_RPC_URL")
+  echo "$RP_BALANCE_JSON" | jq
+  echo "$RP_BALANCE_JSON" | jq -e --arg amount "$RP_AMOUNT" '
+    .success == true and
+    .data.held_balance == $amount and
+    .data.delivery_state == "held"
+  '
+
+  echo -e "\n=== CAST RECEIVE-POLICY: T6 CLAIM BLOCKED RECEIPT ==="
+  cast receive-policy claim "$RP_CLAIM_ADDR" "$RP_RECEIPT" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$RP_RECOVERY_PK" \
+    ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  RP_CLAIMED_BALANCE_JSON=$(cast --json receive-policy receipt balance "$RP_RECEIPT" --rpc-url "$ETH_RPC_URL")
+  echo "$RP_CLAIMED_BALANCE_JSON" | jq
+  echo "$RP_CLAIMED_BALANCE_JSON" | jq -e '
+    .success == true and
+    .data.held_balance == "0" and
+    .data.delivery_state == "not_held"
+  '
+else
+  echo -e "\n=== SKIPPING T6 receive-policy/admin-key tests (HARDFORK=$HARDFORK) ==="
+fi
+
 # --- T3-only scope / call-restriction tests ---
 if [[ "$HARDFORK" == "T3" ]]; then
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope (ADDRESS ONLY, UNRESTRICTED) ==="
   kc_scoped_json="$(cast wallet new --json)"
-  KC_SCOPED_PK="$(jq -r '.[0].private_key' <<<"$kc_scoped_json")"
-  KC_SCOPED_ADDR="$(jq -r '.[0].address' <<<"$kc_scoped_json")"
+  KC_SCOPED_PK="$(wallet_json_field "$kc_scoped_json" private_key)"
+  KC_SCOPED_ADDR="$(wallet_json_field "$kc_scoped_json" address)"
   cast keychain auth "$KC_SCOPED_ADDR" secp256k1 1893456000 \
     --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
     --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
@@ -296,8 +430,8 @@ if [[ "$HARDFORK" == "T3" ]]; then
 
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope + SELECTORS ==="
   kc_sel_json="$(cast wallet new --json)"
-  KC_SEL_PK="$(jq -r '.[0].private_key' <<<"$kc_sel_json")"
-  KC_SEL_ADDR="$(jq -r '.[0].address' <<<"$kc_sel_json")"
+  KC_SEL_PK="$(wallet_json_field "$kc_sel_json" private_key)"
+  KC_SEL_ADDR="$(wallet_json_field "$kc_sel_json" address)"
   cast keychain auth "$KC_SEL_ADDR" secp256k1 1893456000 \
     --scope "$FEE_TOKEN:transfer,approve" \
     --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
@@ -313,7 +447,7 @@ if [[ "$HARDFORK" == "T3" ]]; then
 
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scopes JSON ==="
   kc_json_json="$(cast wallet new --json)"
-  KC_JSON_ADDR="$(jq -r '.[0].address' <<<"$kc_json_json")"
+  KC_JSON_ADDR="$(wallet_json_field "$kc_json_json" address)"
   cast keychain auth "$KC_JSON_ADDR" secp256k1 1893456000 \
     --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[\"transfer\"]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
     --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
@@ -321,7 +455,7 @@ if [[ "$HARDFORK" == "T3" ]]; then
 
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH MULTIPLE LIMITS ==="
   kc_multi_json="$(cast wallet new --json)"
-  KC_MULTI_ADDR="$(jq -r '.[0].address' <<<"$kc_multi_json")"
+  KC_MULTI_ADDR="$(wallet_json_field "$kc_multi_json" address)"
   cast keychain auth "$KC_MULTI_ADDR" secp256k1 1893456000 \
     --limit "$FEE_TOKEN:1000000" \
     --limit "0x20C0000000000000000000000000000000000001:2000000" \
@@ -336,8 +470,8 @@ if [[ "$HARDFORK" == "T3" ]]; then
 
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RAW HEX SELECTOR ==="
   kc_hex_json="$(cast wallet new --json)"
-  KC_HEX_PK="$(jq -r '.[0].private_key' <<<"$kc_hex_json")"
-  KC_HEX_ADDR="$(jq -r '.[0].address' <<<"$kc_hex_json")"
+  KC_HEX_PK="$(wallet_json_field "$kc_hex_json" private_key)"
+  KC_HEX_ADDR="$(wallet_json_field "$kc_hex_json" address)"
   # increment() selector = 0xd09de08a
   cast keychain auth "$KC_HEX_ADDR" secp256k1 1893456000 \
     --scope "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xd09de08a" \
@@ -354,8 +488,8 @@ if [[ "$HARDFORK" == "T3" ]]; then
   echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
   # Create a new unrestricted key, then add scope restrictions via set-scope
   kc_ss_json="$(cast wallet new --json)"
-  KC_SS_PK="$(jq -r '.[0].private_key' <<<"$kc_ss_json")"
-  KC_SS_ADDR="$(jq -r '.[0].address' <<<"$kc_ss_json")"
+  KC_SS_PK="$(wallet_json_field "$kc_ss_json" private_key)"
+  KC_SS_ADDR="$(wallet_json_field "$kc_ss_json" address)"
   cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
     --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
@@ -403,8 +537,8 @@ if [[ "$HARDFORK" == "T3" ]]; then
 
   echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RECIPIENT RESTRICTION ==="
   kc_recip_json="$(cast wallet new --json)"
-  KC_RECIP_PK="$(jq -r '.[0].private_key' <<<"$kc_recip_json")"
-  KC_RECIP_ADDR="$(jq -r '.[0].address' <<<"$kc_recip_json")"
+  KC_RECIP_PK="$(wallet_json_field "$kc_recip_json" private_key)"
+  KC_RECIP_ADDR="$(wallet_json_field "$kc_recip_json" address)"
   # Only allow transfer to a specific recipient
   ALLOWED_RECIPIENT="0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F"
   cast keychain auth "$KC_RECIP_ADDR" secp256k1 1893456000 \
@@ -422,7 +556,7 @@ if [[ "$HARDFORK" == "T3" ]]; then
 
   echo -e "\n=== CAST KEYCHAIN: --scopes JSON WITH RECIPIENTS ==="
   kc_jsonr_json="$(cast wallet new --json)"
-  KC_JSONR_ADDR="$(jq -r '.[0].address' <<<"$kc_jsonr_json")"
+  KC_JSONR_ADDR="$(wallet_json_field "$kc_jsonr_json" address)"
   cast keychain auth "$KC_JSONR_ADDR" secp256k1 1893456000 \
     --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[{\"selector\":\"transfer\",\"recipients\":[\"$ALLOWED_RECIPIENT\"]}]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
     --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
@@ -434,8 +568,8 @@ fi # end T3-only scope tests
 echo -e "\n=== SETUP SPONSOR ==="
 # Create a sponsor wallet for testing sponsored (gasless) transactions
 sponsor_wallet_json="$(cast wallet new --json)"
-SPONSOR_PK="$(jq -r '.[0].private_key' <<<"$sponsor_wallet_json")"
-SPONSOR_ADDR="$(jq -r '.[0].address' <<<"$sponsor_wallet_json")"
+SPONSOR_PK="$(wallet_json_field "$sponsor_wallet_json" private_key)"
+SPONSOR_ADDR="$(wallet_json_field "$sponsor_wallet_json" address)"
 printf "Sponsor address: %s\n" "$SPONSOR_ADDR"
 
 # Fund the sponsor address (sponsor pays gas)
@@ -445,7 +579,7 @@ echo -e "\n=== CAST SEND WITH SPONSOR (--tempo.sponsor-signature) ==="
 # Test sponsored transactions using pre-signed signature.
 # Step 1: Get the fee_payer_signature_hash using --tempo.print-sponsor-hash
 # Step 2: Sign it with the sponsor's private key
-# Step 3: Send with --tempo.sponsor-signature
+# Step 3: Send with --tempo.sponsor and --tempo.sponsor-signature
 
 # Step 1: Get the hash that the sponsor needs to sign
 FEE_PAYER_HASH=$(cast mktx ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
@@ -460,7 +594,7 @@ printf "Sponsor signature: %s\n" "$SPONSOR_SIG"
 # Step 3: Send the sponsored transaction with the signature
 RECEIPT=$(cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$PK" \
-  --tempo.sponsor-signature "$SPONSOR_SIG" --json)
+  --tempo.sponsor "$SPONSOR_ADDR" --tempo.sponsor-signature "$SPONSOR_SIG" --json)
 
 # Verify the fee_payer in the receipt matches the sponsor address
 RECEIPT_FEE_PAYER=$(echo "$RECEIPT" | jq -r '.feePayer // .fee_payer // empty')
@@ -802,8 +936,8 @@ echo -e "\n=== ANVIL FORK TESTS ==="
 # Use a fresh wallet for fork tests to avoid fee token exhaustion from prior devnet tests
 echo -e "\n=== ANVIL FORK: CREATE AND FUND FRESH WALLET ==="
 fork_wallet_json="$(cast wallet new --json)"
-FORK_ADDR="$(jq -r '.[0].address' <<<"$fork_wallet_json")"
-FORK_PK="$(jq -r '.[0].private_key' <<<"$fork_wallet_json")"
+FORK_ADDR="$(wallet_json_field "$fork_wallet_json" address)"
+FORK_PK="$(wallet_json_field "$fork_wallet_json" private_key)"
 printf "Fork test address: %s\n" "$FORK_ADDR"
 fund_and_wait "$FORK_ADDR"
 

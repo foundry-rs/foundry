@@ -1,25 +1,57 @@
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, ruint::aliases::U256};
-use alloy_signer::Signature;
+use alloy_primitives::{Address, B256, ruint::aliases::U256};
+use alloy_signer::{Signature, Signer};
 use clap::Parser;
-use foundry_common::FoundryTransactionBuilder;
-use std::{num::NonZeroU64, str::FromStr};
+use eyre::Result;
+use foundry_common::{
+    FoundryTransactionBuilder,
+    tempo::{TempoSponsor, resolve_tempo_sponsor_signer},
+};
+use std::{
+    num::NonZeroU64,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::utils::parse_fee_token_address;
+
+mod session;
+pub use session::TEMPO_SESSION_ID_ENV;
 
 /// CLI options for Tempo transactions.
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Tempo")]
 pub struct TempoOpts {
-    /// Fee token address for Tempo transactions.
+    /// Use a live Tempo wallet session for signing.
+    ///
+    /// When set, Foundry resolves the session from `$TEMPO_HOME/wallet/sessions.toml` and signs
+    /// Tempo transactions with the session's temporary access key on behalf of its root account.
+    #[arg(long = "tempo.session", id = "tempo_session", value_name = "SESSION_ID")]
+    pub session: Option<B256>,
+
+    /// Fee token address, numeric TIP-20 token id, or known symbol for Tempo transactions.
     ///
     /// When set, builds a Tempo (type 0x76) transaction that pays gas fees
-    /// in the specified token.
+    /// in the specified token. Known symbols are PathUSD, AlphaUSD, BetaUSD, and ThetaUSD.
     ///
     /// If this is not set, the fee token is chosen according to network rules. See the Tempo docs
     /// for more information.
     #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
     pub fee_token: Option<Address>,
+
+    /// Opt into TIP-1009 expiring-nonce mode with a validity window.
+    ///
+    /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
+    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
+    /// seconds.
+    ///
+    /// Maximum value is 30 seconds. The transaction must be mined before the deadline or it
+    /// becomes permanently invalid, giving safe retry semantics: retries produce a fresh tx hash
+    /// and the old tx can never land late.
+    #[arg(long = "tempo.expires", value_name = "SECONDS", value_parser = parse_expires_seconds)]
+    pub expires: Option<u64>,
 
     /// Nonce key for Tempo parallelizable nonces.
     ///
@@ -28,21 +60,86 @@ pub struct TempoOpts {
     /// to be executed in parallel. If not set, the protocol nonce key (0) will be used.
     ///
     /// For more information see <https://docs.tempo.xyz/protocol/transactions/spec-tempo-transaction#parallelizable-nonces>.
-    #[arg(long = "tempo.nonce-key", value_name = "NONCE_KEY")]
+    #[arg(long = "tempo.nonce-key", value_name = "NONCE_KEY", conflicts_with = "lane")]
     pub nonce_key: Option<U256>,
+
+    /// Named nonce lane for Tempo parallelizable nonces.
+    ///
+    /// Resolves a friendly lane name (e.g. `deploy`, `payments`) to a `nonce_key` via a
+    /// shared lanes file (default: `tempo.lanes.toml` at the project root). The lanes file
+    /// is a TOML map of `name = <U256>` entries, e.g.:
+    ///
+    /// ```toml
+    /// deploy   = 1
+    /// ops      = 2
+    /// payments = 3
+    /// ```
+    ///
+    /// Mutually exclusive with `--tempo.nonce-key`.
+    #[arg(long = "tempo.lane", value_name = "NAME")]
+    pub lane: Option<String>,
+
+    /// Path to the Tempo lanes file used by `--tempo.lane`.
+    ///
+    /// Defaults to `tempo.lanes.toml` at the project root.
+    #[arg(long = "tempo.lanes-file", value_name = "PATH")]
+    pub lanes_file: Option<PathBuf>,
+
+    /// Sponsor (fee payer) address for Tempo sponsored transactions.
+    #[arg(long = "tempo.sponsor", value_name = "ADDRESS")]
+    pub sponsor: Option<Address>,
+
+    /// Sign Tempo sponsor digests in-band with the given signer URI.
+    ///
+    /// Supported forms include `env://VAR`, `keystore://PATH`, `account://NAME`,
+    /// `ledger://`, `trezor://`, `aws://`, `gcp://`, `turnkey://`, and
+    /// `private-key://KEY`.
+    #[arg(
+        long = "tempo.sponsor-signer",
+        value_name = "SIGNER",
+        requires = "sponsor",
+        conflicts_with = "sponsor_sig"
+    )]
+    pub sponsor_signer: Option<String>,
 
     /// Sponsor (fee payer) signature for Tempo sponsored transactions.
     ///
     /// The sponsor signs the `fee_payer_signature_hash` to commit to paying gas fees
     /// on behalf of the sender. Provide as a hex-encoded signature.
-    #[arg(long = "tempo.sponsor-signature", value_parser = parse_signature)]
-    pub sponsor_signature: Option<Signature>,
+    #[arg(
+        long = "tempo.sponsor-sig",
+        alias = "tempo.sponsor-signature",
+        value_parser = parse_signature,
+        requires = "sponsor",
+        conflicts_with = "sponsor_signer"
+    )]
+    pub sponsor_sig: Option<Signature>,
+
+    /// Remote sponsor (fee payer) service URL.
+    ///
+    /// When set, the user-signed transaction is forwarded to this URL via
+    /// `eth_signRawTransaction`. The service adds its fee payer signature and returns
+    /// the fully-sponsored transaction, which is then submitted via the regular RPC.
+    /// No local sponsor key is required.
+    ///
+    /// Example: `cast send 0x... --sponsor-url https://sponsor.tempo.xyz/tp_abc123`
+    #[arg(
+        long = "sponsor-url",
+        alias = "tempo.sponsor-url",
+        value_name = "URL",
+        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig", "print_sponsor_hash"],
+        env = "TEMPO_SPONSOR_URL"
+    )]
+    pub sponsor_url: Option<String>,
 
     /// Print the sponsor signature hash and exit.
     ///
     /// Computes the `fee_payer_signature_hash` for the transaction so that a sponsor
     /// knows what hash to sign. The transaction is not sent.
-    #[arg(long = "tempo.print-sponsor-hash")]
+    #[arg(
+        long = "tempo.print-sponsor-hash",
+        conflicts_with_all = &["sponsor_signer", "sponsor_sig", "sponsor_url"]
+    )]
     pub print_sponsor_hash: bool,
 
     /// Access key ID for Tempo Keychain signature transactions.
@@ -56,14 +153,14 @@ pub struct TempoOpts {
     ///
     /// Sets nonce to 0 and nonce_key to U256::MAX, enabling time-bounded transaction
     /// validity via `--tempo.valid-before` and `--tempo.valid-after`.
-    #[arg(long = "tempo.expiring-nonce", requires = "valid_before")]
+    #[arg(long = "tempo.expiring-nonce", requires = "valid_before", conflicts_with = "expires")]
     pub expiring_nonce: bool,
 
     /// Upper bound timestamp for Tempo expiring nonce transactions.
     ///
     /// The transaction is only valid before this unix timestamp.
     /// Requires `--tempo.expiring-nonce`.
-    #[arg(long = "tempo.valid-before")]
+    #[arg(long = "tempo.valid-before", conflicts_with = "expires")]
     pub valid_before: Option<u64>,
 
     /// Lower bound timestamp for Tempo expiring nonce transactions.
@@ -78,13 +175,72 @@ impl TempoOpts {
     /// Returns `true` if any Tempo-specific option is set.
     pub const fn is_tempo(&self) -> bool {
         self.fee_token.is_some()
+            || self.expires.is_some()
             || self.nonce_key.is_some()
-            || self.sponsor_signature.is_some()
+            || self.lane.is_some()
+            || self.sponsor.is_some()
+            || self.sponsor_signer.is_some()
+            || self.sponsor_sig.is_some()
+            || self.sponsor_url.is_some()
             || self.print_sponsor_hash
             || self.key_id.is_some()
             || self.expiring_nonce
             || self.valid_before.is_some()
             || self.valid_after.is_some()
+    }
+
+    /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
+    pub fn expires_at(&self) -> Option<u64> {
+        let secs = self.expires?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
+        Some(now.as_secs() + secs)
+    }
+
+    /// Resolves `--tempo.expires` into concrete expiring-nonce fields.
+    ///
+    /// This computes the relative deadline once so later calls to [`Self::apply`] reuse the same
+    /// `valid_before` timestamp instead of deriving a fresh one.
+    pub fn resolve_expires(&mut self) -> Option<u64> {
+        let ts = self.expires_at()?;
+        self.expiring_nonce = true;
+        self.valid_before = Some(ts);
+        self.expires = None;
+        Some(ts)
+    }
+
+    /// Returns `true` if a sponsor signature should be attached before submission.
+    pub const fn has_sponsor_submission(&self) -> bool {
+        self.sponsor.is_some() || self.sponsor_signer.is_some() || self.sponsor_sig.is_some()
+    }
+
+    /// Resolves sponsor CLI options into a reusable sponsor config for transaction submission.
+    pub async fn sponsor_config(&self) -> Result<Option<TempoSponsor>> {
+        let Some(sponsor) = self.sponsor else {
+            return Ok(None);
+        };
+
+        let signer = if let Some(spec) = &self.sponsor_signer {
+            Some(Arc::new(Box::pin(resolve_tempo_sponsor_signer(spec)).await?))
+        } else {
+            None
+        };
+
+        if let Some(signer) = &signer {
+            let signer_address = signer.address();
+            if signer_address != sponsor {
+                eyre::bail!(
+                    "Tempo sponsor signer address {signer_address} does not match --tempo.sponsor {sponsor}"
+                );
+            }
+        }
+
+        if signer.is_none() && self.sponsor_sig.is_none() {
+            eyre::bail!(
+                "--tempo.sponsor requires either --tempo.sponsor-signer or --tempo.sponsor-sig"
+            );
+        }
+
+        Ok(Some(TempoSponsor::new(sponsor, signer, self.sponsor_sig)))
     }
 
     /// Applies Tempo-specific options to a transaction request.
@@ -94,8 +250,9 @@ impl TempoOpts {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX
-        if self.expiring_nonce {
+        // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX.
+        // --tempo.expires is a convenience alias that also sets valid_before = now + duration.
+        if self.expiring_nonce || self.expires.is_some() {
             tx.set_nonce(0);
             tx.set_nonce_key(U256::MAX);
         } else {
@@ -111,7 +268,10 @@ impl TempoOpts {
             tx.set_fee_token(fee_token);
         }
 
-        if let Some(valid_before) = self.valid_before
+        // --tempo.expires sets valid_before relative to now; --tempo.valid-before takes a raw
+        // unix timestamp. The two flags are mutually exclusive (enforced by clap).
+        let effective_valid_before = self.expires_at().or(self.valid_before);
+        if let Some(valid_before) = effective_valid_before
             && let Some(v) = NonZeroU64::new(valid_before)
         {
             tx.set_valid_before(v);
@@ -131,7 +291,8 @@ impl TempoOpts {
         // gas estimation so that `--tempo.print-sponsor-hash` and
         // `--tempo.sponsor-signature` produce identical gas estimates. Callers
         // should call `set_fee_payer_signature` on the built tx request.
-        if (self.sponsor_signature.is_some() || self.print_sponsor_hash) && tx.nonce_key().is_none()
+        if (self.has_sponsor_submission() || self.sponsor_url.is_some() || self.print_sponsor_hash)
+            && tx.nonce_key().is_none()
         {
             tx.set_nonce_key(U256::ZERO);
         }
@@ -142,13 +303,86 @@ fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
 }
 
+/// Parses a seconds value for `--tempo.expires`, capped at the protocol maximum of 30 seconds.
+fn parse_expires_seconds(s: &str) -> Result<u64, String> {
+    let secs: u64 = s
+        .parse()
+        .map_err(|_| format!("invalid value '{s}': expected an integer number of seconds"))?;
+    if secs > 30 {
+        return Err(format!("expires must be at most 30 seconds (got {secs})"));
+    }
+    Ok(secs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::address;
+    use foundry_common::tempo::{BETA_USD_ADDRESS, PATH_USD_ADDRESS};
 
     #[test]
-    fn parse_fee_token_id() {
+    fn parses_lane_arg() {
+        let opts = TempoOpts::try_parse_from(["", "--tempo.lane", "deploy"]).unwrap();
+        assert_eq!(opts.lane.as_deref(), Some("deploy"));
+        assert!(opts.nonce_key.is_none());
+    }
+
+    #[test]
+    fn lane_conflicts_with_nonce_key() {
+        let err =
+            TempoOpts::try_parse_from(["", "--tempo.lane", "deploy", "--tempo.nonce-key", "1"])
+                .unwrap_err();
+        assert!(
+            err.to_string().contains("cannot be used with"),
+            "expected clap conflict error, got: {err}",
+        );
+    }
+
+    #[test]
+    fn parse_expires_flag() {
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "30"]).unwrap();
+        assert_eq!(opts.expires, Some(30));
+
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
+        assert_eq!(opts.expires, Some(10));
+
+        // exceeds 30s maximum
+        assert!(TempoOpts::try_parse_from(["", "--tempo.expires", "31"]).is_err());
+
+        // conflicts with --tempo.expiring-nonce
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--tempo.expires",
+                "30",
+                "--tempo.expiring-nonce",
+                "--tempo.valid-before",
+                "999"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn resolve_expires_materializes_valid_before() {
+        let before =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let mut opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
+
+        let resolved = opts.resolve_expires().unwrap();
+        let after =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+
+        assert!(resolved >= before + 10);
+        assert!(resolved <= after + 10);
+        assert!(opts.expiring_nonce);
+        assert_eq!(opts.valid_before, Some(resolved));
+        assert_eq!(opts.expires, None);
+        assert_eq!(opts.expires_at(), None);
+    }
+
+    #[test]
+    fn parse_fee_token_address_id_and_symbol() {
         let opts = TempoOpts::try_parse_from([
             "",
             "--tempo.fee-token",
@@ -162,6 +396,122 @@ mod tests {
         assert_eq!(
             opts_with_id.fee_token,
             Some(address!("0x20C0000000000000000000000000000000000001")),
+        );
+
+        let opts_with_symbol =
+            TempoOpts::try_parse_from(["", "--tempo.fee-token", "PathUSD"]).unwrap();
+        assert_eq!(opts_with_symbol.fee_token, Some(PATH_USD_ADDRESS));
+
+        let opts_with_mixed_case_symbol =
+            TempoOpts::try_parse_from(["", "--tempo.fee-token", "bEtAuSd"]).unwrap();
+        assert_eq!(opts_with_mixed_case_symbol.fee_token, Some(BETA_USD_ADDRESS));
+
+        let err = TempoOpts::try_parse_from(["", "--tempo.fee-token", "unknownusd"]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("expected address, numeric TIP-20 token id"));
+        assert!(msg.contains("PathUSD, AlphaUSD, BetaUSD, ThetaUSD"));
+    }
+
+    #[test]
+    fn parse_sponsor_signer() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+            "--tempo.sponsor-signer",
+            "env://TEMPO_SPONSOR_PK",
+        ])
+        .unwrap();
+
+        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
+        assert!(opts.sponsor_sig.is_none());
+        assert!(opts.is_tempo());
+        assert!(opts.has_sponsor_submission());
+    }
+
+    #[test]
+    fn sponsor_signer_requires_sponsor() {
+        assert!(
+            TempoOpts::try_parse_from(["", "--tempo.sponsor-signer", "env://SPONSOR"]).is_err()
+        );
+    }
+
+    #[test]
+    fn parse_sponsor_signature_alias() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+            "--tempo.sponsor-signature",
+            "0x0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b",
+        ])
+        .unwrap();
+
+        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert!(opts.sponsor_sig.is_some());
+    }
+
+    #[test]
+    fn print_sponsor_hash_allows_sponsor_address() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.print-sponsor-hash",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+        ])
+        .unwrap();
+
+        assert!(opts.print_sponsor_hash);
+        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+    }
+
+    #[test]
+    fn print_sponsor_hash_conflicts_with_sponsor_signature() {
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--tempo.print-sponsor-hash",
+                "--tempo.sponsor",
+                "0x1111111111111111111111111111111111111111",
+                "--tempo.sponsor-signature",
+                "0x0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_sponsor_url() {
+        let opts =
+            TempoOpts::try_parse_from(["", "--sponsor-url", "https://sponsor.tempo.xyz/tp_abc123"])
+                .unwrap();
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz/tp_abc123"));
+        assert!(opts.is_tempo());
+    }
+
+    #[test]
+    fn sponsor_url_alias() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor-url",
+            "https://sponsor.tempo.xyz/tp_abc123",
+        ])
+        .unwrap();
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz/tp_abc123"));
+    }
+
+    #[test]
+    fn sponsor_url_conflicts_with_sponsor() {
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--sponsor-url",
+                "https://sponsor.tempo.xyz",
+                "--tempo.sponsor",
+                "0x1111111111111111111111111111111111111111",
+            ])
+            .is_err()
         );
     }
 }

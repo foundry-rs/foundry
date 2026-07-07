@@ -98,7 +98,8 @@ impl VerifyBundle {
     pub fn set_chain(&mut self, config: &Config, chain: Chain) {
         // If dealing with multiple chains, we need to be able to change in between the config
         // chain_id.
-        self.etherscan.key = config.get_etherscan_api_key(Some(chain));
+        self.etherscan.key =
+            config.get_etherscan_api_key(Some(chain)).or_else(|| config.etherscan_api_key.clone());
         self.etherscan.chain = Some(chain);
     }
 
@@ -129,7 +130,7 @@ impl VerifyBundle {
                     path: Some(artifact.source.to_string_lossy().to_string()),
                     name: artifact
                         .name
-                        .strip_suffix(&format!(".{}", &artifact.profile))
+                        .strip_suffix(&format!(".{}", artifact.profile))
                         .unwrap_or_else(|| &artifact.name)
                         .to_string(),
                 };
@@ -163,6 +164,7 @@ impl VerifyBundle {
                     root: None,
                     verifier: self.verifier.clone(),
                     via_ir: self.via_ir,
+                    license_type: None,
                     evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
@@ -189,7 +191,8 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
     verify.set_chain(config, sequence.chain.into());
 
-    if verify.etherscan.has_key() || verify.verifier.verifier != VerificationProviderType::Etherscan
+    if verify.etherscan.has_key()
+        || verify.verifier.effective_type() != VerificationProviderType::Etherscan
     {
         trace!(target: "script", "prepare future verifications");
 

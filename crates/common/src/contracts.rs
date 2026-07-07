@@ -383,16 +383,14 @@ impl ContractsByArtifact {
         &self,
         id: &str,
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
-        let contracts = self
-            .iter()
-            .filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id)
-            .collect::<Vec<_>>();
-
-        if contracts.len() > 1 {
+        let mut iter =
+            self.iter().filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id);
+        let first = iter.next();
+        if first.is_some() && iter.next().is_some() {
             eyre::bail!("{id} has more than one implementation.");
         }
 
-        Ok(contracts.first().copied())
+        Ok(first)
     }
 
     /// Finds abi by name or source path
@@ -411,7 +409,7 @@ impl ContractsByArtifact {
         let mut funcs = BTreeMap::new();
         let mut events = BTreeMap::new();
         let mut errors_abi = JsonAbi::new();
-        for (_name, contract) in self.iter() {
+        for contract in self.values() {
             for func in contract.abi.functions() {
                 funcs.insert(func.selector(), func.clone());
             }
@@ -593,8 +591,17 @@ pub fn find_matching_contract_artifact(
     target_name: Option<&str>,
 ) -> eyre::Result<ConfigurableContractArtifact> {
     if let Some(name) = target_name {
-        output
-            .remove(target_path, name)
+        if let Some(artifact) = output.remove(target_path, name) {
+            return Ok(artifact);
+        }
+
+        let target_path = canonicalized(target_path);
+        let matching_source = output.artifact_ids().find_map(|(id, _artifact)| {
+            (id.name == name && canonicalized(&id.source) == target_path).then(|| id.source.clone())
+        });
+
+        matching_source
+            .and_then(|source| output.remove(&source, name))
             .ok_or_eyre(format!("Could not find artifact `{name}` in the compiled artifacts"))
     } else {
         let possible_targets = output

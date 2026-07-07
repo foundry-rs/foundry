@@ -146,7 +146,7 @@ impl GasReport {
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         if shell::is_json() {
-            writeln!(f, "{}", &self.format_json_output())?;
+            writeln!(f, "{}", self.format_json_output())?;
         } else {
             for (name, contract) in &self.contracts {
                 if contract.functions.is_empty() {

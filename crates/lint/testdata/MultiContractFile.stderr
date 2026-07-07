@@ -4,7 +4,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ contract A {}
    │          ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/MultiContractFile.sol:LL:CC
@@ -12,7 +12,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ contract B {}
    │          ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/MultiContractFile.sol:LL:CC
@@ -20,7 +20,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ contract C {}
    │          ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/MultiContractFile.sol:LL:CC
@@ -28,7 +28,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface I {}
    │           ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/MultiContractFile.sol:LL:CC
@@ -36,5 +36,5 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ library L {}
    │         ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 

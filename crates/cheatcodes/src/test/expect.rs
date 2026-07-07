@@ -7,9 +7,10 @@ use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_dyn_abi::{DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{
-    Address, Bytes, LogData as RawLog, U256, hex,
+    Address, Bytes, LogData as RawLog, U256, hex, keccak256,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
+use alloy_sol_types::{SolCall, SolValue};
 use foundry_common::{abi::get_indexed_event, fmt::format_token};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_traces::DecodedCallLog;
@@ -19,6 +20,8 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
     },
 };
+use tempo_contracts::precompiles::ISignatureVerifier;
+use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
 
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
@@ -115,8 +118,53 @@ pub struct ExpectedEmit {
     pub found: bool,
     /// Number of times the log is expected to be emitted
     pub count: u64,
-    /// Stores mismatch details if a log didn't match
-    pub mismatch_error: Option<String>,
+    /// Stores mismatch details if a log didn't match.
+    pub mismatch_error: Option<EmitMismatch>,
+}
+
+#[derive(Clone, Debug)]
+pub enum EmitMismatch {
+    Log { actual: RawLog },
+    Emitter { expected: Address, actual: Address },
+}
+
+impl EmitMismatch {
+    pub fn to_error_msg<FEN: FoundryEvmNetwork>(
+        &self,
+        state: &Cheatcodes<FEN>,
+        checks: [bool; 5],
+        expected: Option<&RawLog>,
+        anonymous: bool,
+    ) -> String {
+        match self {
+            Self::Log { actual } => {
+                let Some(expected) = expected else {
+                    return "log != expected log".to_string();
+                };
+                let (expected_decoded, actual_decoded) = if anonymous {
+                    (None, None)
+                } else {
+                    state
+                        .signatures_identifier()
+                        .map(|identifier| {
+                            (decode_event(identifier, expected), decode_event(identifier, actual))
+                        })
+                        .unwrap_or_default()
+                };
+                get_emit_mismatch_message(
+                    checks,
+                    expected,
+                    actual,
+                    anonymous,
+                    expected_decoded.as_ref(),
+                    actual_decoded.as_ref(),
+                )
+            }
+            Self::Emitter { expected, actual } => {
+                format!("log emitter mismatch: expected={expected:#x}, got={actual:#x}")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -402,6 +450,82 @@ impl Cheatcode for expectCreate2Call {
         let Self { bytecode, deployer } = self;
         expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create2)
     }
+}
+
+impl Cheatcode for expectTip20LogoURIUpdatedCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { token, updater, newLogoURI } = self;
+        expect_logo_uri_updated(ccx, token, updater, newLogoURI)
+    }
+}
+
+impl Cheatcode for expectKeychainVerifiedCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { account, digest, signature } = self;
+        expect_keychain_verified(state, *account, *digest, signature.clone(), false)
+    }
+}
+
+impl Cheatcode for expectKeychainAdminVerifiedCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { account, digest, signature } = self;
+        expect_keychain_verified(state, *account, *digest, signature.clone(), true)
+    }
+}
+
+impl Cheatcode for expectLogoURIUpdatedCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { token, updater, newLogoURI } = self;
+        expect_logo_uri_updated(ccx, token, updater, newLogoURI)
+    }
+}
+
+fn expect_keychain_verified<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    account: Address,
+    digest: alloy_primitives::B256,
+    signature: Bytes,
+    admin: bool,
+) -> Result {
+    let calldata = if admin {
+        ISignatureVerifier::verifyKeychainAdminCall { account, hash: digest, signature }
+            .abi_encode()
+    } else {
+        ISignatureVerifier::verifyKeychainCall { account, hash: digest, signature }.abi_encode()
+    };
+    expect_call(
+        state,
+        &SIGNATURE_VERIFIER_ADDRESS,
+        &Bytes::from(calldata),
+        None,
+        None,
+        None,
+        1,
+        ExpectedCallType::NonCount,
+    )
+}
+
+fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    token: &Address,
+    updater: &Address,
+    new_logo_uri: &str,
+) -> Result {
+    let expected_emit = ExpectedEmit {
+        depth: ccx.ecx.journal().depth(),
+        log: Some(RawLog::new_unchecked(
+            vec![keccak256("LogoURIUpdated(address,string)"), updater.into_word()],
+            new_logo_uri.abi_encode().into(),
+        )),
+        checks: [true, true, false, false, true],
+        address: Some(*token),
+        anonymous: false,
+        found: false,
+        count: 1,
+        mismatch_error: None,
+    };
+    ccx.state.expected_emits.push_back((expected_emit, Default::default()));
+    Ok(Default::default())
 }
 
 impl Cheatcode for expectRevert_0Call {
@@ -790,7 +914,7 @@ pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
             && let Some(expected_log) = &expected_emit.log
             && checks_topics_and_data(expected_emit.checks, expected_log, log)
             // Check revert address 
-            && (expected_emit.address.is_none() || expected_emit.address == Some(log.address))
+            && (expected_emit.address.is_none_or(|address| address == log.address))
         {
             if let Some(interpreter) = &mut interpreter {
                 // This event was emitted but we expected it NOT to be (count=0)
@@ -876,38 +1000,17 @@ pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
 
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
-            // Store detailed mismatch information
-
-            // Try to decode the events if we have a signature identifier
-            let (expected_decoded, actual_decoded) = if let Some(signatures_identifier) =
-                state.signatures_identifier()
-                && !event_to_fill_or_check.anonymous
-            {
-                (
-                    decode_event(signatures_identifier, expected),
-                    decode_event(signatures_identifier, log),
-                )
-            } else {
-                (None, None)
-            };
-            event_to_fill_or_check.mismatch_error = Some(get_emit_mismatch_message(
-                event_to_fill_or_check.checks,
-                expected,
-                log,
-                event_to_fill_or_check.anonymous,
-                expected_decoded.as_ref(),
-                actual_decoded.as_ref(),
-            ));
+            event_to_fill_or_check.mismatch_error =
+                Some(EmitMismatch::Log { actual: log.data.clone() });
             return false;
         }
 
         // Maybe match source address.
-        if event_to_fill_or_check.address.is_some_and(|addr| addr != log.address) {
-            event_to_fill_or_check.mismatch_error = Some(format!(
-                "log emitter mismatch: expected={:#x}, got={:#x}",
-                event_to_fill_or_check.address.unwrap(),
-                log.address
-            ));
+        if let Some(expected) = event_to_fill_or_check.address
+            && expected != log.address
+        {
+            event_to_fill_or_check.mismatch_error =
+                Some(EmitMismatch::Emitter { expected, actual: log.address });
             return false;
         }
 
@@ -1076,7 +1179,9 @@ fn decode_event(
     }
     let t0 = topics[0]; // event sig
     // Try to identify the event
-    let event = foundry_common::block_on(identifier.identify_event(t0))?;
+    let event = foundry_common::block_on(
+        identifier.identify_event_with_indexed_count(t0, topics.len().saturating_sub(1)),
+    )?;
 
     // Check if event already has indexed information from signatures
     let has_indexed_info = event.inputs.iter().any(|p| p.indexed);
@@ -1132,6 +1237,17 @@ pub(crate) fn get_emit_mismatch_message(
 
     // 1. Different number of topics
     if actual.topics().len() != expected.topics().len() {
+        let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
+        let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
+        let expected_topics = checked_topic_count(expected, is_anonymous);
+        let actual_topics = checked_topic_count(actual, is_anonymous);
+
+        if expected_name == actual_name {
+            return format!(
+                "{actual_name} indexed topic count mismatch: expected {expected_topics}, got {actual_topics}"
+            );
+        }
+
         return name_mismatched_logs(expected_decoded, actual_decoded);
     }
 
@@ -1272,6 +1388,10 @@ fn name_mismatched_logs(
     let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
     let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
     format!("{actual_name} != expected {expected_name}")
+}
+
+fn checked_topic_count(log: &RawLog, is_anonymous: bool) -> usize {
+    if is_anonymous { log.topics().len() } else { log.topics().len().saturating_sub(1) }
 }
 
 fn expect_safe_memory<FEN: FoundryEvmNetwork>(

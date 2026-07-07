@@ -1,5 +1,4 @@
-use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{hex, keccak256};
+use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
@@ -14,7 +13,7 @@ use foundry_compilers::{
         StorageLayout,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection, OutputSelection,
         },
     },
     solc::SolcLanguage,
@@ -55,6 +54,9 @@ impl InspectArgs {
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
+        let user_extra_output = !build.compiler.extra_output.is_empty()
+            || !build.compiler.extra_output_files.is_empty();
+
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
         if !field.can_skip_field() && !cos.iter().any(|selected| field == *selected) {
@@ -78,7 +80,15 @@ impl InspectArgs {
         };
 
         // Build the project
-        let project = modified_build_args.project()?;
+        let mut project = modified_build_args.project()?;
+        if !user_extra_output
+            && !project.build_info
+            && let Some(selection) = field.inspect_output_selection()
+        {
+            project.no_artifacts = true;
+            project
+                .update_output_selection(|output_selection| *output_selection = selection.clone());
+        }
         let target_path = find_target_path(&project, &contract)?;
         if field == ContractArtifactField::Linearization && !is_solidity_source(&target_path) {
             eyre::bail!(
@@ -93,6 +103,9 @@ impl InspectArgs {
 
         // Match on ContractArtifactFields and pretty-print
         match field {
+            ContractArtifactField::Artifact => {
+                print_json(&artifact)?;
+            }
             ContractArtifactField::Abi => {
                 let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
                 print_abi(abi, wrap)?;
@@ -167,10 +180,10 @@ impl InspectArgs {
                 if shell::is_json() {
                     return print_json(&all_libs);
                 }
-                sh_println!(
-                    "Dynamically linked libraries:\n{}",
-                    all_libs.iter().map(|v| format!("  {v}")).collect::<Vec<String>>().join("\n")
-                )?;
+                sh_status!("Dynamically linked libraries:")?;
+                for lib in &all_libs {
+                    sh_println!("{lib}")?;
+                }
             }
             ContractArtifactField::Linearization => {
                 print_linearization(
@@ -202,10 +215,15 @@ fn parse_events(abi: &JsonAbi) -> Map<String, Value> {
     let mut out = serde_json::Map::new();
     for ev in abi.events.values().flatten() {
         let types = parse_event_params(&ev.inputs);
-        let topic = hex::encode(keccak256(ev.signature()));
-        out.insert(format!("{}({})", ev.name, types), format!("0x{topic}").into());
+        let topic = event_topic(ev).map_or(Value::Null, Into::into);
+        out.insert(format!("{}({})", ev.name, types), topic);
     }
     out
+}
+
+/// Returns topic0 for non-anonymous events. Anonymous events have no signature topic.
+fn event_topic(ev: &Event) -> Option<String> {
+    (!ev.anonymous).then(|| ev.selector().to_string())
 }
 
 fn parse_event_params(ev_params: &[EventParam]) -> String {
@@ -233,8 +251,13 @@ fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
             // Print events
             for ev in abi.events.values().flatten() {
                 let types = parse_event_params(&ev.inputs);
-                let selector = ev.selector().to_string();
-                table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
+                let signature = if ev.anonymous {
+                    format!("{}({}) anonymous", ev.name, types)
+                } else {
+                    format!("{}({})", ev.name, types)
+                };
+                let selector = event_topic(ev).unwrap_or_default();
+                table.add_row(["event", &signature, &selector]);
             }
 
             // Print errors
@@ -391,7 +414,7 @@ fn print_errors_events(map: &Map<String, Value>, is_err: bool, should_wrap: bool
         headers,
         |table| {
             for (method, selector) in map {
-                table.add_row([method, selector.as_str().unwrap()]);
+                table.add_row([method.as_str(), selector.as_str().unwrap_or("")]);
             }
         },
         should_wrap,
@@ -526,6 +549,7 @@ fn print_linearization(
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ContractArtifactField {
+    Artifact,
     Abi,
     Bytecode,
     DeployedBytecode,
@@ -605,6 +629,8 @@ macro_rules! impl_value_enum {
 
 impl_value_enum! {
     enum ContractArtifactField {
+        Artifact          => "artifact" | "artifactJson" | "artifact-json" | "artifact_json"
+                             | "output",
         Abi               => "abi",
         Bytecode          => "bytecode" | "bytes" | "b",
         DeployedBytecode  => "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode"
@@ -642,6 +668,7 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
     fn try_from(field: ContractArtifactField) -> Result<Self, Self::Error> {
         type Caf = ContractArtifactField;
         match field {
+            Caf::Artifact => Err(eyre!("Artifact is not supported for ContractOutputSelection")),
             Caf::Abi => Ok(Self::Abi),
             Caf::Bytecode => {
                 Ok(Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)))
@@ -708,12 +735,28 @@ impl ContractArtifactField {
     pub const fn can_skip_field(&self) -> bool {
         matches!(
             self,
-            Self::Bytecode
+            Self::Artifact
+                | Self::Bytecode
                 | Self::DeployedBytecode
                 | Self::StandardJson
                 | Self::Libraries
                 | Self::Linearization
         )
+    }
+
+    fn inspect_output_selection(&self) -> Option<OutputSelection> {
+        match self {
+            Self::Artifact
+            | Self::Bytecode
+            | Self::DeployedBytecode
+            | Self::StandardJson
+            | Self::Libraries
+            | Self::Linearization => None,
+            _ => {
+                let selection: ContractOutputSelection = (*self).try_into().ok()?;
+                Some(OutputSelection::common_output_selection([selection.to_string()]))
+            }
+        }
     }
 }
 
@@ -723,7 +766,17 @@ fn print_json(obj: &impl serde::Serialize) -> Result<()> {
 }
 
 fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> {
-    sh_println!("{}", get_json_str(obj, key)?)?;
+    let value = serde_json::to_value(obj)?;
+    let value = key.and_then(|k| value.get(k)).unwrap_or(&value);
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string_pretty(value)?)?;
+    } else {
+        let s = match value.as_str() {
+            Some(s) => s.to_string(),
+            None => format!("{value:#}"),
+        };
+        sh_println!("{s}")?;
+    }
     Ok(())
 }
 
@@ -735,28 +788,19 @@ fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     static YUL_COMMENTS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*?\*/)").unwrap());
 
-    if strip_comments {
-        sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
+    let out = if strip_comments {
+        YUL_COMMENTS.replace_all(yul, "").into_owned()
     } else {
-        sh_println!("{yul}")?;
+        yul.to_string()
+    };
+
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string(&out)?)?;
+    } else {
+        sh_println!("{out}")?;
     }
 
     Ok(())
-}
-
-fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String> {
-    let value = serde_json::to_value(obj)?;
-    let value = if let Some(key) = key
-        && let Some(value) = value.get(key)
-    {
-        value
-    } else {
-        &value
-    };
-    Ok(match value.as_str() {
-        Some(s) => s.to_string(),
-        None => format!("{value:#}"),
-    })
 }
 
 fn is_solidity_source(path: &Path) -> bool {
@@ -777,7 +821,15 @@ mod tests {
     #[test]
     fn contract_output_selection() {
         for &field in ContractArtifactField::ALL {
-            if field == ContractArtifactField::StandardJson {
+            if field == ContractArtifactField::Artifact {
+                let selection: Result<ContractOutputSelection, _> = field.try_into();
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("Artifact is not supported for ContractOutputSelection")
+                );
+            } else if field == ContractArtifactField::StandardJson {
                 let selection: Result<ContractOutputSelection, _> = field.try_into();
                 assert!(
                     selection

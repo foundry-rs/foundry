@@ -11,9 +11,9 @@ use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
+
+    setup()?;
 
     let args = Forge::parse();
     args.global.init()?;
@@ -33,7 +33,7 @@ pub fn setup() -> Result<()> {
 pub fn run_command(args: Forge) -> Result<()> {
     // Set the execution context based on the subcommand.
     let context = match &args.cmd {
-        ForgeSubcommand::Test(_) => ForgeContext::Test,
+        ForgeSubcommand::Test(_) | ForgeSubcommand::Fuzz(_) => ForgeContext::Test,
         ForgeSubcommand::Coverage(_) => ForgeContext::Coverage,
         ForgeSubcommand::Snapshot(_) => ForgeContext::Snapshot,
         ForgeSubcommand::Script(cmd) => {
@@ -62,7 +62,13 @@ pub fn run_command(args: Forge) -> Result<()> {
                 outcome.ensure_ok(silent)
             }
         }
-        ForgeSubcommand::Script(cmd) => global.block_on(cmd.run_script()),
+        ForgeSubcommand::Fuzz(cmd) => {
+            cmd.reject_unsupported_flags()?;
+            let silent = cmd.is_junit() || shell::is_json();
+            let outcome = global.block_on(cmd.run())?;
+            outcome.ensure_ok(silent)
+        }
+        ForgeSubcommand::Script(cmd) => block_on_command(global, || cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => {
             if cmd.is_watch() {
                 global.block_on(watch::watch_coverage(cmd))
@@ -127,8 +133,7 @@ pub fn run_command(args: Forge) -> Result<()> {
             if cmd.is_watch() {
                 global.block_on(watch::watch_doc(cmd))
             } else {
-                global.block_on(cmd.run())?;
-                Ok(())
+                global.block_on(cmd.run())
             }
         }
         ForgeSubcommand::Selectors { command } => global.block_on(command.run()),
@@ -141,4 +146,14 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => cmd.run(),
     }
+}
+
+fn block_on_command<Fut>(
+    global: &foundry_cli::opts::GlobalArgs,
+    make_future: impl FnOnce() -> Fut,
+) -> Fut::Output
+where
+    Fut: std::future::Future,
+{
+    global.block_on(make_future())
 }

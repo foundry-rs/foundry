@@ -13,10 +13,10 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,
-    sync::LazyLock,
+    sync::{LazyLock, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tracing_subscriber::prelude::*;
+use tracing_subscriber::{EnvFilter, prelude::*, reload};
 
 mod cmd;
 pub use cmd::*;
@@ -52,6 +52,10 @@ pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> =
 pub static SUBMODULE_STATUS_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$").unwrap());
 
+/// Handle to reload the tracing `EnvFilter` at runtime.
+static FILTER_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
+    OnceLock::new();
+
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
     /// Returns true if the [`Path`] ends with `.t.sol`
@@ -82,17 +86,36 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
     }
 }
 
-/// Initializes a tracing Subscriber for logging
+/// Initializes a tracing Subscriber for logging.
+///
+/// The `EnvFilter` is wrapped in a [`reload::Layer`] so it can be reconfigured at runtime via
+/// [`update_tracing_filter`].
 pub fn subscriber() {
-    let registry = tracing_subscriber::Registry::default().with(env_filter());
+    let (filter_layer, reload_handle) = reload::Layer::new(env_filter());
+    let registry = tracing_subscriber::Registry::default().with(filter_layer);
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
-    registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)).init()
+    registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)).init();
+    let _ = FILTER_RELOAD_HANDLE.set(reload_handle);
 }
 
-fn env_filter() -> tracing_subscriber::EnvFilter {
+/// Replaces the active tracing `EnvFilter` at runtime.
+///
+/// `directives` is parsed as an [`EnvFilter`] (e.g. `"info"`, `"debug,hyper=off"`).
+/// This is a no-op if [`subscriber`] has not been called yet.
+pub fn update_tracing_filter(directives: &str) {
+    let Some(handle) = FILTER_RELOAD_HANDLE.get() else {
+        return;
+    };
+    let Ok(new_filter) = directives.parse::<EnvFilter>() else {
+        return;
+    };
+    let _ = handle.reload(new_filter);
+}
+
+fn env_filter() -> EnvFilter {
     const DEFAULT_DIRECTIVES: &[&str] = &include!("./default_directives.txt");
-    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    let mut filter = EnvFilter::from_default_env();
     for &directive in DEFAULT_DIRECTIVES {
         filter = filter.add_directive(directive.parse().unwrap());
     }
@@ -230,7 +253,7 @@ pub async fn fetch_abi_from_etherscan(
     let client = config
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
-        .into_client()?;
+        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
     let source = client.contract_source_code(address).await?;
     source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
@@ -706,19 +729,54 @@ ignore them in the `.gitignore` file."
             .map(|url| Some(url.trim().to_string()))
     }
 
-    pub fn cmd(self) -> Command {
+    /// Returns the fetch URL of the given remote, or `None` if it doesn't exist.
+    pub fn remote_url(self, name: &str) -> Option<String> {
+        self.cmd().args(["remote", "get-url", name]).get_stdout_lossy().ok()
+    }
+
+    /// Sets the branch for a submodule.
+    pub fn set_submodule_branch(self, rel_path: &Path, branch: &str) -> Result<()> {
+        self.cmd().args(["submodule", "set-branch", "-b", branch]).arg(rel_path).exec().map(drop)
+    }
+
+    /// Returns remote branch names as a newline-separated string.
+    pub fn remote_branches(self) -> Result<String> {
+        self.cmd().args(["branch", "-r"]).get_stdout_lossy()
+    }
+
+    /// Fetches a branch from origin and checks out a local tracking branch at the given path.
+    pub fn fetch_and_checkout_branch(self, at: &Path, branch: &str) -> Result<()> {
+        self.cmd_at(at).args(["fetch", "origin", branch]).exec().map_err(|e| {
+            eyre::eyre!(
+                "Could not fetch latest changes for branch {branch} in submodule at {}: {e}",
+                at.display()
+            )
+        })?;
+        self.cmd_at(at)
+            .args(["checkout", "-B", branch, &format!("origin/{branch}")])
+            .exec()
+            .map_err(|e| {
+                eyre::eyre!(
+                    "Could not checkout and track origin/{branch} for submodule at {}: {e}",
+                    at.display()
+                )
+            })?;
+        Ok(())
+    }
+
+    fn cmd(self) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(self.root);
         cmd
     }
 
-    pub fn cmd_at(self, path: &Path) -> Command {
+    fn cmd_at(self, path: &Path) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(path);
         cmd
     }
 
-    pub fn cmd_no_root() -> Command {
+    fn cmd_no_root() -> Command {
         let mut cmd = Command::new("git");
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd

@@ -36,7 +36,8 @@ alloy-primitives = { workspace = true, features = [
 alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
-alloy-op-evm.workspace = true
+alloy-eips.workspace = true
+alloy-op-evm = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
 alloy-rlp.workspace = true
@@ -54,11 +55,13 @@ revm = { workspace = true, features = [
     "blst",
 ] }
 revm-inspectors.workspace = true
-op-alloy-consensus = { workspace = true, features = ["k256"] }
-op-alloy-network.workspace = true
-op-revm.workspace = true
+op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
+op-alloy-network = { workspace = true, optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
+op-revm = { workspace = true, optional = true }
 tempo-revm.workspace = true
 tempo-alloy.workspace = true
+tempo-hardfork.workspace = true
 tempo-contracts.workspace = true
 tempo-evm.workspace = true
 tempo-precompiles.workspace = true
@@ -77,7 +80,21 @@ url.workspace = true
 
 [dev-dependencies]
 alloy-serde.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
+tempo-primitives.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "dep:op-alloy-consensus",
+    "dep:op-alloy-network",
+    "dep:op-alloy-rpc-types",
+    "dep:alloy-op-evm",
+    "dep:op-revm",
+    "foundry-common/optimism",
+    "foundry-evm-hardforks/optimism",
+    "foundry-evm-networks/optimism",
+]

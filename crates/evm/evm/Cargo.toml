@@ -27,6 +27,8 @@ foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-eips.workspace = true
+alloy-evm.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = [
     "serde",
@@ -34,7 +36,7 @@ alloy-primitives = { workspace = true, features = [
     "arbitrary",
     "rlp",
 ] }
-alloy-rpc-types.workspace = true
+alloy-rpc-types = { workspace = true, features = ["trace"] }
 alloy-sol-types.workspace = true
 revm = { workspace = true, default-features = false, features = [
     "std",
@@ -53,6 +55,7 @@ tempo-primitives.workspace = true
 eyre.workspace = true
 parking_lot.workspace = true
 proptest.workspace = true
+rand.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 indicatif.workspace = true
@@ -61,3 +64,16 @@ serde.workspace = true
 uuid.workspace = true
 rayon.workspace = true
 tokio.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-evm-core/optimism",
+    "foundry-evm-hardforks/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-cheatcodes/optimism",
+    "foundry-evm-coverage/optimism",
+    "foundry-evm-fuzz/optimism",
+    "foundry-evm-traces/optimism",
+]

@@ -5,7 +5,7 @@ use crate::{
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
@@ -216,7 +216,9 @@ impl Cheatcode for rpc_0Call {
         let Self { method, params } = self;
         let url =
             ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        rpc_call(&url, method, params)
+        let result = rpc_call(&url, method, params)?;
+        invalidate_active_fork_cache(ccx, method, params);
+        Ok(result)
     }
 }
 
@@ -225,6 +227,25 @@ impl Cheatcode for rpc_1Call {
         let Self { urlOrAlias, method, params } = self;
         let url = state.config.rpc_endpoint(urlOrAlias)?.url()?;
         rpc_call(&url, method, params)
+    }
+}
+
+impl Cheatcode for rpcJson_0Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { method, params } = self;
+        let url =
+            ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let result = rpc_json_call(&url, method, params)?;
+        invalidate_active_fork_cache(ccx, method, params);
+        Ok(result)
+    }
+}
+
+impl Cheatcode for rpcJson_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { urlOrAlias, method, params } = self;
+        let url = state.config.rpc_endpoint(urlOrAlias)?.url()?;
+        rpc_json_call(&url, method, params)
     }
 }
 
@@ -417,11 +438,7 @@ fn persist_caller<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.
 fn rpc_call(url: &str, method: &str, params: &str) -> Result {
-    let provider = ProviderBuilder::<AnyNetwork>::new(url).build()?;
-    let params_json: serde_json::Value = serde_json::from_str(params)?;
-    let result =
-        foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
-            .map_err(|err| fmt_err!("{method:?}: {err}"))?;
+    let result = rpc_result(url, method, params)?;
     let result_as_tokens = convert_to_bytes(
         &json_value_to_token(&result, None)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?,
@@ -432,6 +449,65 @@ fn rpc_call(url: &str, method: &str, params: &str) -> Result {
         _ => result_as_tokens.abi_encode(),
     };
     Ok(DynSolValue::Bytes(payload).abi_encode())
+}
+
+/// Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.
+fn rpc_json_call(url: &str, method: &str, params: &str) -> Result {
+    let result = rpc_result(url, method, params)?;
+    Ok(serde_json::to_string(&result)?.abi_encode())
+}
+
+/// Invalidates the fork DB cache after a `vm.rpc` call on the active fork that mutates the node
+/// directly (bypassing the cache), so later DB reads (e.g. the broadcast simulation runner)
+/// re-fetch the new value. Only well-known Anvil/Hardhat account/storage setters are handled;
+/// chain-advancing methods (e.g. `eth_sendTransaction`) need re-forking, not eviction.
+fn invalidate_active_fork_cache<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    method: &str,
+    params: &str,
+) {
+    const ACCOUNT_SETTERS: &[&str] = &[
+        "anvil_setBalance",
+        "hardhat_setBalance",
+        "tenderly_setBalance",
+        "anvil_addBalance",
+        "hardhat_addBalance",
+        "tenderly_addBalance",
+        "anvil_setNonce",
+        "hardhat_setNonce",
+        "evm_setAccountNonce",
+        "anvil_setCode",
+        "hardhat_setCode",
+    ];
+    let is_storage_setter = matches!(method, "anvil_setStorageAt" | "hardhat_setStorageAt");
+    if !is_storage_setter && !ACCOUNT_SETTERS.contains(&method) {
+        return;
+    }
+
+    let Ok(params) = serde_json::from_str::<serde_json::Value>(params) else { return };
+    let Some(address) =
+        params.get(0).and_then(|v| v.as_str()).and_then(|s| s.parse::<Address>().ok())
+    else {
+        return;
+    };
+
+    if is_storage_setter {
+        let Some(slot) =
+            params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok())
+        else {
+            return;
+        };
+        ccx.ecx.db_mut().invalidate_fork_cache_storage(address, slot);
+    } else {
+        ccx.ecx.db_mut().invalidate_fork_cache_account(address);
+    }
+}
+
+fn rpc_result(url: &str, method: &str, params: &str) -> Result<serde_json::Value> {
+    let provider = ProviderBuilder::<AnyNetwork>::new(url).build()?;
+    let params_json: serde_json::Value = serde_json::from_str(params)?;
+    foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
+        .map_err(|err| fmt_err!("{method:?}: {err}"))
 }
 
 /// Convert fixed bytes and address values to bytes in order to prevent encoding issues.

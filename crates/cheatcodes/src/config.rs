@@ -22,6 +22,8 @@ pub struct CheatsConfig {
     pub ffi: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
+    /// Rewrite plain CREATE to CREATE2 for `forge script --batch`.
+    pub batch_rewrite_creates: bool,
     /// Sets a timeout for vm.prompt cheatcodes
     pub prompt_timeout: Duration,
     /// RPC storage caching settings determines what chains and endpoints to cache
@@ -40,6 +42,8 @@ pub struct CheatsConfig {
     pub root: PathBuf,
     /// Absolute Path to broadcast dir i.e project_root/broadcast
     pub broadcast: PathBuf,
+    /// Whether isolated test execution is enabled.
+    pub isolate: bool,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
@@ -68,6 +72,7 @@ impl CheatsConfig {
         available_artifacts: Option<ContractsByArtifact>,
         running_artifact: Option<ArtifactId>,
         fee_token: Option<Address>,
+        batch_rewrite_creates: bool,
     ) -> Self {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
@@ -79,6 +84,7 @@ impl CheatsConfig {
         Self {
             ffi: evm_opts.ffi,
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
+            batch_rewrite_creates,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
             rpc_storage_caching: config.rpc_storage_caching.clone(),
             no_storage_caching: config.no_storage_caching,
@@ -88,6 +94,7 @@ impl CheatsConfig {
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
             root: config.root.clone(),
             broadcast: config.root.clone().join(&config.broadcast),
+            isolate: config.isolate,
             evm_opts,
             labels: config.labels.clone(),
             available_artifacts,
@@ -107,6 +114,7 @@ impl CheatsConfig {
             self.available_artifacts.clone(),
             self.running_artifact.clone(),
             self.fee_token,
+            self.batch_rewrite_creates,
         )
     }
 
@@ -115,7 +123,7 @@ impl CheatsConfig {
     /// Canonicalization fails for non-existing paths, in which case we just normalize the path.
     pub fn normalized_path(&self, path: impl AsRef<Path>) -> PathBuf {
         let path = self.root.join(path);
-        canonicalize(&path).unwrap_or_else(|_| normalize_path(&path))
+        canonicalize(&path).unwrap_or_else(|_| canonicalize_existing_ancestor(&path))
     }
 
     /// Returns true if the given path is allowed, if any path `allowed_paths` is an ancestor of the
@@ -219,6 +227,7 @@ impl Default for CheatsConfig {
         Self {
             ffi: false,
             always_use_create_2_factory: false,
+            batch_rewrite_creates: false,
             prompt_timeout: Duration::from_secs(120),
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
@@ -228,6 +237,7 @@ impl Default for CheatsConfig {
             root: Default::default(),
             bind_json_path: PathBuf::default().join("utils").join("jsonBindings.sol"),
             broadcast: Default::default(),
+            isolate: Config::default().isolate,
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),
@@ -240,25 +250,47 @@ impl Default for CheatsConfig {
     }
 }
 
+fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
+    let normalized = normalize_path(path);
+    let mut missing = Vec::new();
+    let mut ancestor = normalized.as_path();
+    while !ancestor.exists() {
+        let Some(name) = ancestor.file_name() else { return normalized };
+        missing.push(name.to_owned());
+        let Some(parent) = ancestor.parent() else { return normalized };
+        ancestor = parent;
+    }
+
+    let mut path = canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+    for component in missing.iter().rev() {
+        path.push(component);
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use foundry_config::fs_permissions::PathPermission;
+    use tempfile::TempDir;
 
-    fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
+    fn config(root: &Path, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
             None,
             None,
             None,
+            false,
         )
     }
 
     #[test]
     fn test_allowed_paths() {
-        let root = "/my/project/root/";
-        let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("my/project/root");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = config(&root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Read).is_ok());
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Write).is_ok());
@@ -269,17 +301,28 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_rewrite_creates_flag_plumbing() {
+        assert!(!CheatsConfig::default().batch_rewrite_creates);
+
+        let on = CheatsConfig::new(&Config::default(), Default::default(), None, None, None, true);
+        assert!(on.batch_rewrite_creates);
+
+        let cloned = on.clone_with(&Config::default(), Default::default());
+        assert!(cloned.batch_rewrite_creates);
+    }
+
+    #[test]
     fn test_is_foundry_toml() {
-        let root = "/my/project/root/";
+        let root = Path::new("/my/project/root/");
         let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
-        let f = format!("{root}foundry.toml");
+        let f = root.join("foundry.toml");
         assert!(config.is_foundry_toml(f));
 
-        let f = format!("{root}Foundry.toml");
+        let f = root.join("Foundry.toml");
         assert!(config.is_foundry_toml(f));
 
-        let f = format!("{root}lib/other/foundry.toml");
+        let f = root.join("lib/other/foundry.toml");
         assert!(!config.is_foundry_toml(f));
     }
 }
