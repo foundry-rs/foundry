@@ -2,7 +2,7 @@
 
 use crate::abi::Greeter;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{B256, Bytes, U256, Uint, address, b256, utils::Unit};
+use alloy_primitives::{B256, Bytes, U256, Uint, address, b256, bytes, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockId, TransactionRequest,
@@ -312,6 +312,52 @@ async fn test_fork_load_state() {
     assert_eq!(nonce_bob + 1, latest_nonce_bob);
 
     assert_eq!(balance_alice + value, latest_balance_alice);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/10501>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_load_state_keeps_number_opcode_in_sync() {
+    let target = address!("0000000000000000000000000000000000010501");
+    let bob = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
+            .with_fork_block_number(Some(21070682u64)),
+    )
+    .await;
+
+    // Runtime code: NUMBER, PUSH0, SSTORE, STOP.
+    api.anvil_set_code(target, bytes!("435f5500")).await.unwrap();
+    api.mine_one().await;
+
+    let serialized_state = api.serialized_state(false).await.unwrap();
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
+            .with_fork_block_number(Some(21070686u64))
+            .with_init_state(Some(serialized_state)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    let current_block = api.block_number().unwrap().to::<u64>();
+    assert_eq!(current_block, 21070686u64);
+
+    let tx = TransactionRequest::default().with_to(target).with_from(bob);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let mined_block = receipt.block_number.unwrap();
+
+    let stored = provider.get_storage_at(target, U256::ZERO).await.unwrap();
+    assert_eq!(stored, U256::from(mined_block));
+    assert_eq!(stored, U256::from(current_block + 1));
 }
 
 // <https://github.com/foundry-rs/foundry/issues/9539>

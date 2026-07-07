@@ -69,6 +69,7 @@ tempo-alloy.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
 dunce.workspace = true
+flate2.workspace = true
 globset = "0.4"
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
@@ -93,6 +94,8 @@ path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 
+axum.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
 opener = "0.8"
 
 # soldeer
@@ -104,7 +107,6 @@ tempfile.workspace = true
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
-axum.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 
@@ -125,7 +127,6 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
-isolate-by-default = ["foundry-config/isolate-by-default"]
 optimism = [
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",

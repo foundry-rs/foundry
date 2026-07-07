@@ -42,5 +42,19 @@ contract ForStatement {
                 i5++;
             }
         }
+
+        for (;;) {
+            doIt();
+        }
+        for (;;) {
+            doIt();
+            doIt();
+        }
+
+        while (c) {
+            for (;;) {
+                x();
+            }
+        }
     }
 }
