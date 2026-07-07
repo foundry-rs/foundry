@@ -460,21 +460,31 @@ impl CoverageReporter for DebugReporter {
                 continue;
             }
 
-            sh_println!("Anchors for {contract_id}:")?;
             let anchors = cta
                 .iter()
                 .map(|anchor| (false, anchor))
-                .chain(rta.iter().map(|anchor| (true, anchor)));
-            for (is_runtime, anchor) in anchors {
-                let kind = if is_runtime { " runtime" } else { "creation" };
-                sh_println!(
-                    "- {kind} {anchor}: {}",
-                    report
+                .chain(rta.iter().map(|anchor| (true, anchor)))
+                .filter_map(|(is_runtime, anchor)| {
+                    let item = report
                         .analyses
                         .get(&contract_id.version)
-                        .and_then(|items| items.get(anchor.item_id))
-                        .map_or_else(|| "None".to_owned(), |item| item.to_string())
-                )?;
+                        .and_then(|items| items.get(anchor.item_id))?;
+                    // Source filters retain analyses to keep anchor item IDs stable, so debug
+                    // output must apply the same reportable-source filter as other reporters.
+                    report
+                        .source_paths
+                        .contains_key(&(contract_id.version.clone(), item.loc.source_id))
+                        .then_some((is_runtime, anchor, item))
+                })
+                .collect::<Vec<_>>();
+            if anchors.is_empty() {
+                continue;
+            }
+
+            sh_println!("Anchors for {contract_id}:")?;
+            for (is_runtime, anchor, item) in anchors {
+                let kind = if is_runtime { " runtime" } else { "creation" };
+                sh_println!("- {kind} {anchor}: {item}")?;
             }
             sh_println!()?;
         }
