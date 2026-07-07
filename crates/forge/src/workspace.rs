@@ -33,6 +33,26 @@ pub fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).map(|p| p.to_path_buf()).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn resolve_against_root(root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() { normalize_path(path) } else { normalize_path(&root.join(path)) }
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
+}
+
 /// Build a config for a copied temp workspace from an already materialized config.
 ///
 /// This preserves CLI/env overrides and runtime normalization while rebasing
@@ -86,8 +106,24 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
         temp_config.fuzz.failure_persist_dir =
             Some(rebase_project_path(&config.root, temp_path, path));
     }
+    if let Some(path) = &config.fuzz.corpus.corpus_dir {
+        temp_config.fuzz.corpus.corpus_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+    if let Some(path) = &config.fuzz.corpus.frontier_dir {
+        temp_config.fuzz.corpus.frontier_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
     if let Some(path) = &config.invariant.failure_persist_dir {
         temp_config.invariant.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+    if let Some(path) = &config.invariant.corpus.corpus_dir {
+        temp_config.invariant.corpus.corpus_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+    if let Some(path) = &config.invariant.corpus.frontier_dir {
+        temp_config.invariant.corpus.frontier_dir =
             Some(rebase_project_path(&config.root, temp_path, path));
     }
     for permission in &mut temp_config.fs_permissions.permissions {
@@ -108,8 +144,9 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
 }
 
 fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
-    let rel = relative_to_root(root, path);
-    if rel.is_absolute() { path.to_path_buf() } else { temp_path.join(rel) }
+    let resolved = resolve_against_root(root, path);
+    let rel = relative_to_root(root, &resolved);
+    if rel.is_absolute() { resolved } else { temp_path.join(rel) }
 }
 
 fn normalize_existing_ancestor(path: &Path) -> PathBuf {
@@ -230,6 +267,31 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         }
     }
 
+    copy_project_local_optional_path(
+        &config.root,
+        temp_dir,
+        &config.fuzz.corpus.corpus_dir,
+        &handled_extra_roots,
+    )?;
+    copy_project_local_optional_path(
+        &config.root,
+        temp_dir,
+        &config.fuzz.corpus.frontier_dir,
+        &handled_extra_roots,
+    )?;
+    copy_project_local_optional_path(
+        &config.root,
+        temp_dir,
+        &config.invariant.corpus.corpus_dir,
+        &handled_extra_roots,
+    )?;
+    copy_project_local_optional_path(
+        &config.root,
+        temp_dir,
+        &config.invariant.corpus.frontier_dir,
+        &handled_extra_roots,
+    )?;
+
     // Copy `script/` too when present and distinct from src/test. Many real
     // projects keep helper contracts, deployment scripts, or fixtures under
     // `script/` and reference them from tests via relative imports. Without
@@ -336,8 +398,11 @@ fn copy_extra_project_path(
     handled_roots: &[PathBuf],
     label: &str,
 ) -> Result<()> {
-    let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
+    if rel.is_absolute() {
+        return Ok(());
+    }
     ensure_safe_relative_path(&rel, label, path)?;
     ensure_within_root(root, &resolved, label, path)?;
 
@@ -367,7 +432,7 @@ fn copy_project_local_permission_path(
     path: &Path,
     handled_roots: &[PathBuf],
 ) -> Result<()> {
-    let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
     if rel.is_absolute() || rel.as_os_str().is_empty() {
         return Ok(());
@@ -381,7 +446,7 @@ fn create_project_local_permission_dir(
     path: &Path,
     handled_roots: &[PathBuf],
 ) -> Result<()> {
-    let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
     if rel.is_absolute() || rel.as_os_str().is_empty() {
         return Ok(());
@@ -413,6 +478,36 @@ fn create_project_local_permission_dir(
     }
 
     Ok(())
+}
+
+fn copy_project_local_optional_path(
+    root: &Path,
+    temp_dir: &Path,
+    path: &Option<PathBuf>,
+    handled_roots: &[PathBuf],
+) -> Result<()> {
+    let Some(path) = path else { return Ok(()) };
+    let resolved = resolve_against_root(root, path);
+    let rel = relative_to_root(root, &resolved);
+    if rel.is_absolute() || rel.as_os_str().is_empty() || !resolved.exists() {
+        return Ok(());
+    }
+    if is_covered_by_handled_root(&rel, handled_roots) {
+        return Ok(());
+    }
+    ensure_safe_relative_path(&rel, "corpus/frontier", path)?;
+    ensure_within_root(root, &resolved, "corpus/frontier", path)?;
+
+    let target = temp_dir.join(rel);
+    if resolved.is_dir() {
+        copy_project_dir_recursive(root, &resolved, &target)
+    } else {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&resolved, target)?;
+        Ok(())
+    }
 }
 
 /// Create a symlink to a directory (cross-platform).
@@ -618,8 +713,8 @@ mod tests {
             test_failures_file: root.join("custom-cache/test-failures"),
             build_info_path: Some(root.join("custom-build-info")),
             libs: vec![root.join("vendor"), external.join("lib")],
-            include_paths: vec![root.join("shared")],
-            allow_paths: vec![root.join("fixtures"), external.join("fixtures")],
+            include_paths: vec![root.join("shared"), PathBuf::from("../external/include")],
+            allow_paths: vec![root.join("fixtures"), PathBuf::from("../external/fixtures")],
             ignored_error_codes_from: vec![
                 (
                     root.join("contracts"),
@@ -644,8 +739,24 @@ mod tests {
             ],
             fs_permissions: foundry_config::FsPermissions::new([
                 PathPermission::read(root.join("fixtures")),
-                PathPermission::read(external.join("fixtures")),
+                PathPermission::read("../external/fixtures"),
             ]),
+            fuzz: foundry_config::FuzzConfig {
+                corpus: foundry_config::FuzzCorpusConfig {
+                    corpus_dir: Some(root.join("fuzz-corpus")),
+                    frontier_dir: Some(root.join("fuzz-frontier")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            invariant: foundry_config::InvariantConfig {
+                corpus: foundry_config::FuzzCorpusConfig {
+                    corpus_dir: Some(PathBuf::from("invariant-corpus")),
+                    frontier_dir: Some(PathBuf::from("invariant-frontier")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             model_checker: Some(ModelCheckerSettings {
                 contracts,
                 engine: None,
@@ -675,7 +786,10 @@ mod tests {
         assert_eq!(temp_config.test_failures_file, workspace.join("custom-cache/test-failures"));
         assert_eq!(temp_config.build_info_path, Some(workspace.join("custom-build-info")));
         assert_eq!(temp_config.libs, vec![workspace.join("vendor"), external.join("lib")]);
-        assert_eq!(temp_config.include_paths, vec![workspace.join("shared")]);
+        assert_eq!(
+            temp_config.include_paths,
+            vec![workspace.join("shared"), external.join("include")]
+        );
         assert_eq!(
             temp_config.allow_paths,
             vec![workspace.join("fixtures"), external.join("fixtures")]
@@ -711,10 +825,110 @@ mod tests {
             temp_config.fs_permissions.permissions[1].path,
             normalize_existing_ancestor(&external.join("fixtures"))
         );
+        assert_eq!(temp_config.fuzz.corpus.corpus_dir, Some(workspace.join("fuzz-corpus")));
+        assert_eq!(temp_config.fuzz.corpus.frontier_dir, Some(workspace.join("fuzz-frontier")));
+        assert_eq!(
+            temp_config.invariant.corpus.corpus_dir,
+            Some(workspace.join("invariant-corpus"))
+        );
+        assert_eq!(
+            temp_config.invariant.corpus.frontier_dir,
+            Some(workspace.join("invariant-frontier"))
+        );
 
         let contracts = temp_config.model_checker.unwrap().contracts;
         assert!(contracts.contains_key(&workspace.join("src/Target.sol").display().to_string()));
         assert!(contracts.contains_key(&external.join("External.sol").display().to_string()));
+    }
+
+    #[test]
+    fn test_copy_project_preserves_external_read_only_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        let external = temp.path().join("shared-solidity");
+        create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
+        create_test_dir_structure(&external, &["Shared.sol"]);
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            include_paths: vec![PathBuf::from("../shared-solidity")],
+            allow_paths: vec![PathBuf::from("../shared-solidity")],
+            remappings: vec![Remapping::from_str("shared/=../shared-solidity/").unwrap().into()],
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+        let temp_config = rebase_config_paths(&config, &workspace);
+        let remappings =
+            temp_config.remappings.into_iter().map(Remapping::from).collect::<Vec<_>>();
+
+        assert!(workspace.join("src/Target.sol").exists());
+        assert!(!workspace.join("shared-solidity/Shared.sol").exists());
+        assert_eq!(temp_config.include_paths, vec![external.clone()]);
+        assert_eq!(temp_config.allow_paths, vec![external.clone()]);
+        assert_eq!(remappings[0].path, format!("{}/", external.display()));
+    }
+
+    #[test]
+    fn test_copy_project_copies_project_local_corpus_and_frontier_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        create_test_dir_structure(
+            &root,
+            &[
+                "src/Target.sol",
+                "test/Target.t.sol",
+                "fuzz-corpus/seed.json",
+                "fuzz-frontier/frontier.json",
+                "invariant-corpus/seed.json",
+                "invariant-frontier/frontier.json",
+            ],
+        );
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            fuzz: foundry_config::FuzzConfig {
+                corpus: foundry_config::FuzzCorpusConfig {
+                    corpus_dir: Some(PathBuf::from("fuzz-corpus")),
+                    frontier_dir: Some(PathBuf::from("fuzz-frontier")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            invariant: foundry_config::InvariantConfig {
+                corpus: foundry_config::FuzzCorpusConfig {
+                    corpus_dir: Some(PathBuf::from("invariant-corpus")),
+                    frontier_dir: Some(PathBuf::from("invariant-frontier")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+        let temp_config = rebase_config_paths(&config, &workspace);
+
+        assert!(workspace.join("fuzz-corpus/seed.json").exists());
+        assert!(workspace.join("fuzz-frontier/frontier.json").exists());
+        assert!(workspace.join("invariant-corpus/seed.json").exists());
+        assert!(workspace.join("invariant-frontier/frontier.json").exists());
+        assert_eq!(temp_config.fuzz.corpus.corpus_dir, Some(workspace.join("fuzz-corpus")));
+        assert_eq!(temp_config.fuzz.corpus.frontier_dir, Some(workspace.join("fuzz-frontier")));
+        assert_eq!(
+            temp_config.invariant.corpus.corpus_dir,
+            Some(workspace.join("invariant-corpus"))
+        );
+        assert_eq!(
+            temp_config.invariant.corpus.frontier_dir,
+            Some(workspace.join("invariant-frontier"))
+        );
     }
 
     #[test]
@@ -973,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn test_copy_project_rejects_external_include_paths() {
+    fn test_copy_project_preserves_absolute_external_include_paths() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
         let outside = temp.path().join("outside");
@@ -986,16 +1200,15 @@ mod tests {
             src: root.join("src"),
             test: root.join("test"),
             script: root.join("script"),
-            include_paths: vec![outside],
+            include_paths: vec![outside.clone()],
             ..Default::default()
         };
 
-        let err = copy_project(&config, &out).unwrap_err();
+        copy_project(&config, &out).unwrap();
+        let temp_config = rebase_config_paths(&config, &out);
 
-        assert!(
-            err.to_string().contains("requires include/allow directory under project root"),
-            "unexpected error: {err}"
-        );
+        assert_eq!(temp_config.include_paths, vec![outside]);
+        assert!(!out.join("outside/Shared.sol").exists());
     }
 
     #[test]
