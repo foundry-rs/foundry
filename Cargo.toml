@@ -539,10 +539,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-## Temporary pins on foundry-rs/foundry-core until foundry-compilers / foundry-block-explorers are
-## released. Both crates point at the same rev so there's a single foundry-compilers in the graph.
+## foundry-core
 foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "ce11bfee31e04a5d70ec6af900c63043f686bc10" }
 foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "ce11bfee31e04a5d70ec6af900c63043f686bc10" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "ce11bfee31e04a5d70ec6af900c63043f686bc10" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
@@ -600,9 +600,6 @@ op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = 
 op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
-
-## foundry-fork-db
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "ce11bfee31e04a5d70ec6af900c63043f686bc10" }
 
 ## commonware — match the rev patched by the current Tempo workspace
 commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
