@@ -6,7 +6,9 @@ pragma solidity ^0.8.18;
 // whole unit can usually be inlined into its caller. References are resolved through the type
 // checker, calls and values alike. Out of scope: functions whose name starts with `_` (hook
 // convention), `virtual` functions and overrides (they exist for dynamic dispatch), functions
-// referenced zero times (dead code is another concern) or more than once.
+// referenced zero times (dead code is another concern) or more than once, and functions bound
+// as user-defined operators (their operator uses are not name references, and the binding
+// requires a named function).
 
 library MathLib {
     function onceQualified(uint256 v) internal pure returns (uint256) { //~NOTE: this internal function is used only once
@@ -91,5 +93,31 @@ function freeOnce(uint256 v) pure returns (uint256) { //~NOTE: this internal fun
 contract UsesFree {
     function go(uint256 v) internal pure returns (uint256) {
         return freeOnce(v);
+    }
+}
+
+// Functions bound as user-defined operators are out of scope: their operator uses are not
+// name references, so their count would lie, and the binding requires a named function, so
+// inlining is not an option. Both stay clean, with the operator as the only use or next to
+// one direct call.
+type Unit is uint256;
+
+function operatorAdd(Unit a, Unit b) pure returns (Unit) {
+    return Unit.wrap(Unit.unwrap(a) + Unit.unwrap(b));
+}
+
+function operatorSub(Unit a, Unit b) pure returns (Unit) {
+    return Unit.wrap(Unit.unwrap(a) - Unit.unwrap(b));
+}
+
+using {operatorAdd as +, operatorSub as -} for Unit global;
+
+contract UsesOperators {
+    function viaOperatorOnly(Unit a, Unit b) internal pure returns (Unit) {
+        return a + b;
+    }
+
+    function viaOperatorAndCall(Unit a, Unit b) internal pure returns (Unit) {
+        return operatorSub(a - b, b);
     }
 }

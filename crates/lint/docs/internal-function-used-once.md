@@ -9,7 +9,7 @@ Flags internal functions referenced exactly once in the whole compilation unit.
 
 Reports an ordinary internal function, free functions included, that exactly one expression in the unit references, call or value alike. References are resolved through the type checker, so overload selection, the qualified and `using for` forms and import aliases attribute each reference to the right declaration; references are counted across dependencies too, while only functions declared in the project's own sources report.
 
-Out of scope: functions whose name starts with `_` (the hook convention, OpenZeppelin style), `virtual` functions and overrides (they exist for dynamic dispatch, so inlining them is not an option), and functions referenced zero times, which are dead code rather than an inlining candidate. Aderyn's detector of the same name counts identifier references and does not exempt virtual functions or overrides.
+Out of scope: functions whose name starts with `_` (the hook convention, OpenZeppelin style), `virtual` functions and overrides (they exist for dynamic dispatch, so inlining them is not an option), functions referenced zero times, which are dead code rather than an inlining candidate, and functions bound as user-defined operators through `using {f as +} for T`: operator uses are not name references, so their count would lie, and the binding requires a named function, so inlining is not an option either. Aderyn's detector of the same name counts identifier references and does not exempt virtual functions or overrides.
 
 ## Why is this bad?
 

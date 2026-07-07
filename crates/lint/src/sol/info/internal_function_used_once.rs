@@ -11,7 +11,10 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::{collections::HashMap, ops::ControlFlow};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     INTERNAL_FUNCTION_USED_ONCE,
@@ -48,10 +51,17 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
         }
 
         let counts = count_function_references(gcx);
+        let operator_bound = operator_bound_functions(hir);
 
         for function_id in hir.function_ids() {
             let function = hir.function(function_id);
             let Some(&src_idx) = input_source_idx.get(&function.source) else { continue };
+            // A function bound as a user-defined operator is out of scope: its operator uses
+            // are not `Ident`/`Member` references, so its count would lie, and inlining it is
+            // not an option anyway, the `using {f as +}` binding requires a named function.
+            if operator_bound.contains(&function_id) {
+                continue;
+            }
             // Only ordinary internal functions with a body qualify. A name starting with `_`
             // follows the hook convention (OpenZeppelin style) and stays out, and so do
             // `virtual` functions and overrides: they exist for dynamic dispatch, so inlining
@@ -74,6 +84,27 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
             }
         }
     }
+}
+
+/// Collects every function the unit binds as a user-defined operator, through a
+/// `using {f as +} for T` entry of a file-level or contract-level directive. The HIR
+/// already resolved those entries to function ids.
+fn operator_bound_functions(hir: &hir::Hir<'_>) -> HashSet<hir::FunctionId> {
+    let mut bound = HashSet::new();
+    // File-level directives, then contract-level ones: an operator entry can sit in either.
+    let source_usings = hir.source_ids().flat_map(|id| hir.source(id).usings.iter());
+    let contract_usings = hir.contract_ids().flat_map(|id| hir.contract(id).usings.iter());
+    for directive in source_usings.chain(contract_usings) {
+        for entry in directive.entries {
+            // Only braced function entries can carry an operator binding.
+            if entry.operator.is_some()
+                && let hir::UsingEntryKind::Functions(ids) = entry.kind
+            {
+                bound.extend(ids.iter().copied());
+            }
+        }
+    }
+    bound
 }
 
 /// Counts, for every function of the unit, the expressions that resolve to it, calls and
