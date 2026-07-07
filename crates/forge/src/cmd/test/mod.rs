@@ -456,47 +456,6 @@ pub struct CampaignArgs {
     pub frontier_limit: Option<usize>,
 }
 
-impl CampaignArgs {
-    pub(crate) const fn supplied_engine_flags(&self) -> SuppliedEngineFlags {
-        SuppliedEngineFlags {
-            frontier_dir: self.frontier_dir.is_some(),
-            frontier_limit: self.frontier_limit.is_some(),
-            depth: self.depth.is_some(),
-            min_depth: self.min_depth.is_some(),
-            depth_mode: self.depth_mode.is_some(),
-            workers: self.workers.is_some(),
-            ..SuppliedEngineFlags::empty()
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SuppliedEngineFlags {
-    pub(crate) frontier_dir: bool,
-    pub(crate) frontier_limit: bool,
-    pub(crate) fuzz_run: bool,
-    pub(crate) fuzz_input_file: bool,
-    pub(crate) depth: bool,
-    pub(crate) min_depth: bool,
-    pub(crate) depth_mode: bool,
-    pub(crate) workers: bool,
-}
-
-impl SuppliedEngineFlags {
-    pub(crate) const fn empty() -> Self {
-        Self {
-            frontier_dir: false,
-            frontier_limit: false,
-            fuzz_run: false,
-            fuzz_input_file: false,
-            depth: false,
-            min_depth: false,
-            depth_mode: false,
-            workers: false,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 struct MatchedEngineCounts {
     fuzz: usize,
@@ -526,10 +485,6 @@ pub struct TestArgs {
     /// Internal override used by `forge fuzz run --timeout` for invariant campaigns.
     #[arg(skip)]
     pub(crate) invariant_timeout_override: Option<u32>,
-
-    /// Internal warning metadata used by `forge fuzz run`.
-    #[arg(skip)]
-    pub(crate) warn_unsupported_engine_flags: Option<SuppliedEngineFlags>,
 
     // Include global options for users of this struct.
     #[command(flatten)]
@@ -1173,29 +1128,31 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         multi_network: &MultiNetworkConfig,
     ) -> Result<()> {
-        let Some(flags) = self.warn_unsupported_engine_flags else { return Ok(()) };
+        if !self.fuzz_only {
+            return Ok(());
+        }
         let counts = matched_engine_counts(output, config, inline_config, filter, multi_network);
         if counts.fuzz == 0 && counts.invariant == 0 {
             return Ok(());
         }
 
         if counts.fuzz == 0 && counts.invariant > 0 {
-            if flags.frontier_dir {
+            if self.fuzz_frontier_dir.is_some() {
                 sh_warn!(
                     "`--frontier-dir` only applies to fuzz tests; no matched fuzz tests were found."
                 )?;
             }
-            if flags.frontier_limit {
+            if self.fuzz_frontier_limit.is_some() {
                 sh_warn!(
                     "`--frontier-limit` only applies to fuzz tests; no matched fuzz tests were found."
                 )?;
             }
-            if flags.fuzz_run {
+            if self.fuzz_run.is_some() {
                 sh_warn!(
                     "`--fuzz-run` only applies to fuzz tests; no matched fuzz tests were found."
                 )?;
             }
-            if flags.fuzz_input_file {
+            if self.fuzz_input_file.is_some() {
                 sh_warn!(
                     "`--fuzz-input-file` only applies to fuzz tests; no matched fuzz tests were found."
                 )?;
@@ -1203,22 +1160,22 @@ impl TestArgs {
         }
 
         if counts.invariant == 0 && counts.fuzz > 0 {
-            if flags.depth {
+            if self.invariant_depth.is_some() {
                 sh_warn!(
                     "`--depth` only applies to invariant tests; no matched invariant tests were found."
                 )?;
             }
-            if flags.min_depth {
+            if self.invariant_min_depth.is_some() {
                 sh_warn!(
                     "`--min-depth` only applies to invariant tests; no matched invariant tests were found."
                 )?;
             }
-            if flags.depth_mode {
+            if self.invariant_depth_mode.is_some() {
                 sh_warn!(
                     "`--depth-mode` only applies to invariant tests; no matched invariant tests were found."
                 )?;
             }
-            if flags.workers {
+            if self.invariant_workers.is_some() {
                 sh_warn!(
                     "`--workers` only applies to invariant tests; no matched invariant tests were found."
                 )?;
@@ -1230,13 +1187,8 @@ impl TestArgs {
 
     /// Builds the delegated `forge test` invocation for `forge fuzz run`.
     pub(crate) fn from_fuzz_run(args: FuzzRunArgs) -> Self {
-        let mut supplied = args.campaign.supplied_engine_flags();
-        supplied.fuzz_run = args.fuzz_run.is_some();
-        supplied.fuzz_input_file = args.fuzz_input_file.is_some();
-
         let mut test = Self {
             fuzz_only: true,
-            warn_unsupported_engine_flags: Some(supplied),
             global: args.global,
             path: args.path,
             gas_report: args.gas_report,
@@ -1488,8 +1440,7 @@ impl TestArgs {
         Arc<InlineConfig>,
         Option<SymbolicArtifactReplayConfig>,
     )> {
-        let should_default_fuzz_run_workers_to_auto =
-            self.warn_unsupported_engine_flags.is_some() && self.invariant_workers.is_none();
+        let should_default_fuzz_run_workers_to_auto = self.fuzz_only && self.invariant_workers.is_none();
 
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
