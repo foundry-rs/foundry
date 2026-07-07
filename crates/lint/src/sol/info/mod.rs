@@ -57,6 +57,9 @@ use unused_error::UNUSED_ERROR;
 mod function_init_state;
 use function_init_state::FUNCTION_INIT_STATE;
 
+mod modifier_used_only_once;
+use modifier_used_only_once::MODIFIER_USED_ONLY_ONCE;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -78,4 +81,5 @@ register_lints!(
     (EventFields, early, (EVENT_FIELDS)),
     (UnusedError, project, (UNUSED_ERROR)),
     (FunctionInitState, late, (FUNCTION_INIT_STATE)),
+    (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE)),
 );

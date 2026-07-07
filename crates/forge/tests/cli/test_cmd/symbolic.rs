@@ -1,6 +1,9 @@
 use alloy_primitives::{U256, hex, keccak256};
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, str, util::OutputExt};
+use foundry_test_utils::{
+    forgetest_init, str,
+    util::{OutputExt, SOLC_VERSION},
+};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
@@ -280,6 +283,226 @@ contract SymbolicSingleCallArtifactEnv is Test {
         .stdout_lossy();
 
     assert!(stdout.contains("artifact env replayed"), "{stdout}");
+});
+
+forgetest_init!(symbolic_emits_stateless_solidity_regression, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_stateless_solidity_regression because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionSingle.t.sol",
+        r#"
+contract SymbolicRegressionSingle {
+    function checkBoom(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--emit-regression", "--match-test", "checkBoom"])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj
+        .root()
+        .join("test/regressions/SymbolicRegressionSingle_checkBoom_SymbolicRegression.t.sol");
+    assert!(regression.exists(), "missing regression {}", regression.display());
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_checkBoom_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_checkBoom_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+});
+
+forgetest_init!(symbolic_emits_regression_for_contract_with_receive, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_regression_for_contract_with_receive because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionReceive.t.sol",
+        r#"
+contract SymbolicRegressionReceive {
+    receive() external payable {}
+
+    function checkReceiveRegression(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkReceiveRegression"])
+        .assert_failure();
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionReceive_checkReceiveRegression_SymbolicRegression.t.sol",
+    );
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    assert!(generated.contains("pragma solidity >=0.8.0;"), "{generated}");
+    assert!(!generated.contains("receive() external payable"), "{generated}");
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_checkReceiveRegression_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_checkReceiveRegression_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+});
+
+forgetest_init!(symbolic_emit_regression_rerun_reuses_existing_file, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_rerun_reuses_existing_file because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionRerun.t.sol",
+        r#"
+contract SymbolicRegressionRerun {
+    function checkRerun(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkRerun"])
+        .assert_failure();
+
+    let regression = prj
+        .root()
+        .join("test/regressions/SymbolicRegressionRerun_checkRerun_SymbolicRegression.t.sol");
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--emit-regression", "--match-test", "checkRerun"])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(!stderr.contains("already exists"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(&regression)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display())),
+        generated
+    );
+
+    let nested = prj.root().join(
+        "test/regressions/SymbolicRegressionRerun_checkRerun_SymbolicRegression_checkRerun_SymbolicRegression.t.sol",
+    );
+    assert!(!nested.exists(), "unexpected nested regression {}", nested.display());
+});
+
+forgetest_init!(symbolic_emits_regression_under_custom_test_dir, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_regression_under_custom_test_dir because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| config.test = "tests".into());
+    let tests_dir = prj.root().join("tests");
+    std::fs::create_dir_all(&tests_dir).unwrap();
+    std::fs::write(
+        tests_dir.join("SymbolicRegressionCustomDir.t.sol"),
+        format!(
+            r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ={SOLC_VERSION};
+
+contract SymbolicRegressionCustomDir {{
+    function checkCustomDir(uint256 x) public pure {{
+        assert(x != 42);
+    }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkCustomDir"])
+        .assert_failure();
+
+    let regression = prj.root().join(
+        "tests/regressions/SymbolicRegressionCustomDir_checkCustomDir_SymbolicRegression.t.sol",
+    );
+    assert!(regression.exists(), "missing regression {}", regression.display());
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_checkCustomDir_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_checkCustomDir_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+});
+
+forgetest_init!(symbolic_json_reports_solidity_regression, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_reports_solidity_regression because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionJson.t.sol",
+        r#"
+contract SymbolicRegressionJson {
+    function checkJsonRegression(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--json",
+            "--match-test",
+            "checkJsonRegression",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkJsonRegression(uint256)");
+    let regressions = result["symbolic_regressions"].as_array().expect("symbolic regressions");
+    assert_eq!(regressions.len(), 1);
+    assert!(regressions[0]["artifact"].is_string());
+    let path = regressions[0]["path"].as_str().expect("regression path");
+    assert!(path.ends_with(
+        "test/regressions/SymbolicRegressionJson_checkJsonRegression_SymbolicRegression.t.sol"
+    ));
+    assert!(std::path::Path::new(path).exists());
 });
 
 forgetest_init!(symbolic_passes_scalar_test, |prj, cmd| {
@@ -1518,6 +1741,544 @@ invariant_counterNeverEleven()
 args=[7]
 "#]],
     );
+});
+
+forgetest_init!(symbolic_emits_stateful_solidity_regression, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_stateful_solidity_regression because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionSequence.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionSequenceTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicRegressionSequence is Test {
+    SymbolicRegressionSequenceTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionSequenceTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_counterNeverEleven",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionSequence_invariant_counterNeverEleven_SymbolicRegression.t.sol",
+    );
+    assert!(regression.exists(), "missing regression {}", regression.display());
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_invariant_counterNeverEleven_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_invariant_counterNeverEleven_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+});
+
+forgetest_init!(symbolic_emits_stateful_regression_with_after_invariant, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_stateful_regression_with_after_invariant because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionAfterInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionAfterInvariantTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 1;
+        }
+    }
+}
+
+contract SymbolicRegressionAfterInvariant is Test {
+    SymbolicRegressionAfterInvariantTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionAfterInvariantTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public pure {}
+
+    function afterInvariant() public view {
+        require(target.value() != 1, "afterInvariant failure");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_ok",
+            "--symbolic-invariant-depth",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression.t.sol",
+    );
+    assert!(regression.exists(), "missing regression {}", regression.display());
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    assert!(generated.contains(r#"hex"93969ddf""#), "{generated}");
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_invariant_ok_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_invariant_ok_symbolic()"), "{stdout}");
+    assert!(stdout.contains("afterInvariant failure"), "{stdout}");
+});
+
+forgetest_init!(symbolic_emits_handler_assertion_regression, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_handler_assertion_regression because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicRegressionHandler.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionHandlerTarget {
+    uint256 sink;
+
+    function boom(uint256 x) external {
+        sink = x;
+        if (x == 7) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicRegressionHandler is Test {
+    SymbolicRegressionHandlerTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionHandlerTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_ok",
+            "--symbolic-invariant-depth",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(stdout.contains("Assertion Tests: 1 assertion bug(s) found"), "{stdout}");
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj
+        .root()
+        .join("test/regressions/SymbolicRegressionHandler_invariant_ok_SymbolicRegression.t.sol");
+    assert!(regression.exists(), "missing regression {}", regression.display());
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    assert!(generated.contains("true);"), "{generated}");
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_invariant_ok_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_invariant_ok_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+});
+
+forgetest_init!(symbolic_emits_multiple_handler_assertion_regressions, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_multiple_handler_assertion_regressions because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicRegressionMultipleHandlers.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionMultipleHandlersFirst {
+    uint256 sink;
+
+    function boomFirst(uint256 x) external {
+        sink = x;
+        if (x == 7) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicRegressionMultipleHandlersSecond {
+    uint256 sink;
+
+    function boomSecond(uint256 x) external {
+        sink = x;
+        if (x == 11) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicRegressionMultipleHandlers is Test {
+    SymbolicRegressionMultipleHandlersFirst first;
+    SymbolicRegressionMultipleHandlersSecond second;
+
+    function setUp() public {
+        first = new SymbolicRegressionMultipleHandlersFirst();
+        second = new SymbolicRegressionMultipleHandlersSecond();
+        targetContract(address(first));
+        targetContract(address(second));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_ok",
+            "--symbolic-invariant-depth",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(stdout.contains("Assertion Tests: 2 assertion bug(s) found"), "{stdout}");
+    assert_eq!(stderr.matches("Regression test:").count(), 2, "{stderr}");
+
+    let regressions_dir = prj.root().join("test/regressions");
+    let regressions = std::fs::read_dir(&regressions_dir)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regressions_dir.display()))
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "sol"))
+        .collect::<Vec<_>>();
+    assert_eq!(regressions.len(), 2, "{regressions:?}");
+    assert!(
+        regressions.iter().any(|path| path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("_handler_")),
+        "{regressions:?}"
+    );
+});
+
+forgetest_init!(symbolic_emit_regression_stale_file_preserves_json_output, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_stale_file_preserves_json_output because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionStaleJson.t.sol",
+        r#"
+contract SymbolicRegressionStaleJson {
+    function checkStaleJson(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkStaleJson"])
+        .assert_failure();
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionStaleJson_checkStaleJson_SymbolicRegression.t.sol",
+    );
+    let mut generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    generated = generated.replacen("UNLICENSED", "MIT", 1);
+    std::fs::write(&regression, generated)
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", regression.display()));
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--json",
+            "--match-test",
+            "checkStaleJson",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout.clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("already exists; skipping"), "{stderr}");
+
+    let result = json_test_result(&stdout, "checkStaleJson(uint256)");
+    assert!(result.get("symbolic_regressions").is_none(), "{result}");
+});
+
+forgetest_init!(symbolic_regression_contract_runs_only_generated_tests, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_regression_contract_runs_only_generated_tests because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionCollection.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionCollectionTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicRegressionCollection is Test {
+    SymbolicRegressionCollectionTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionCollectionTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--emit-regression",
+        "--match-test",
+        "invariant_counterNeverEleven",
+        "--symbolic-invariant-depth",
+        "1",
+    ])
+    .assert_failure();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicRegressionCollection_invariant_counterNeverEleven_SymbolicRegression",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("Ran 1 test"), "{stdout}");
+    assert!(stdout.contains("test_regression_invariant_counterNeverEleven_symbolic()"), "{stdout}");
+    assert!(!stdout.contains(" invariant_counterNeverEleven()"), "{stdout}");
+});
+
+forgetest_init!(symbolic_regression_suffix_user_contract_runs_tests, |prj, cmd| {
+    prj.add_test(
+        "RealSymbolicRegression.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Real_SymbolicRegression is Test {
+    function test_fails() public pure {
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--match-contract", "Real_SymbolicRegression"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_fails()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+});
+
+forgetest_init!(symbolic_emit_regression_rejects_explicit_output_collision, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_rejects_explicit_output_collision because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionCollisionFile.t.sol",
+        r#"
+contract SymbolicRegressionCollisionFileFirst {
+    function checkFirst(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+
+contract SymbolicRegressionCollisionFileSecond {
+    function checkSecond(uint256 x) public pure {
+        assert(x != 11);
+    }
+}
+"#,
+    );
+
+    let collision_path = prj.root().join("test/onlyone.sol");
+    let stderr = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--regression-out",
+            "test/onlyone.sol",
+            "--regression-overwrite",
+            "--match-test",
+            "check(First|Second)",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("multiple symbolic regressions resolve to"), "{stderr}");
+    assert!(stderr.contains("checkFirst(uint256)"), "{stderr}");
+    assert!(stderr.contains("checkSecond(uint256)"), "{stderr}");
+    assert!(!collision_path.exists(), "unexpected collision file {}", collision_path.display());
+});
+
+forgetest_init!(symbolic_emit_regression_rejects_default_path_collision, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_rejects_default_path_collision because z3 is not available"
+        );
+        return;
+    }
+
+    let test_dir = prj.root().join("test");
+    std::fs::create_dir_all(test_dir.join("a")).unwrap();
+    std::fs::create_dir_all(test_dir.join("b")).unwrap();
+    std::fs::write(
+        test_dir.join("a/SameName.t.sol"),
+        r#"
+contract SameName {
+    function checkSame(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        test_dir.join("b/SameName.t.sol"),
+        r#"
+contract SameName {
+    function checkSame(uint256 x) public pure {
+        assert(x != 11);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let collision_path =
+        prj.root().join("test/regressions/SameName_checkSame_SymbolicRegression.t.sol");
+    let stderr = cmd
+        .args(["test", "--symbolic", "--emit-regression", "--match-test", "checkSame"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("multiple symbolic regressions resolve to"), "{stderr}");
+    assert!(stderr.contains("test/a/SameName.t.sol:SameName::checkSame(uint256)"), "{stderr}");
+    assert!(stderr.contains("test/b/SameName.t.sol:SameName::checkSame(uint256)"), "{stderr}");
+    assert!(!collision_path.exists(), "unexpected collision file {}", collision_path.display());
 });
 
 forgetest_init!(symbolic_json_reports_minimized_sequence_counterexample, |prj, cmd| {

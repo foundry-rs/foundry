@@ -455,7 +455,7 @@ futures = { version = "0.3", default-features = false }
 hashbrown = "0.16.1"
 hyper = "1.8"
 indicatif = "0.18"
-inturn = "0.1.2"
+inturn = "0.2.0"
 itertools = "0.15"
 jsonpath_lib = "0.3"
 k256 = "0.13"
@@ -511,20 +511,20 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "6540a5ac3c6f3848684eb
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false, features = [
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false, features = [
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5", default-features = false, features = [
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6", default-features = false, features = [
     "serde",
 ] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -615,9 +615,9 @@ commonware-storage = { git = "https://github.com/commonwarexyz/monorepo", rev = 
 commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", rev = "2a7dd423f0a241276a5a38db8cc3d05f11de0c03" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "e5c794e53c529ad15287f688cf8328ee985ccef5" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2223fb5eb646ff8927eb04cca3c0c76a2c0fe8e6" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }

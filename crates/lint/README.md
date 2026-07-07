@@ -70,6 +70,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
   - `unused-error`: Custom error declarations that are never referenced should be removed.
   - `function-init-state`: State variable initializers run before the constructor; depending on a non-pure function or another state variable there observes partial state.
+  - `modifier-used-only-once`: Modifiers invoked by exactly one function can usually be inlined as checks in that function.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.

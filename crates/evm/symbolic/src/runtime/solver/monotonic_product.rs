@@ -48,7 +48,23 @@ fn collect_order_facts<'a>(
                 positive.insert(left);
             }
         }
-        SymBoolExprKind::Const(_) | SymBoolExprKind::Not(_) | SymBoolExprKind::Cmp(_, _, _) => {}
+        SymBoolExprKind::Not(value) => {
+            if let Some(expr) = nonzero_expr(value) {
+                positive.insert(expr);
+            }
+        }
+        SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) => {}
+    }
+}
+
+fn nonzero_expr(expr: &SymBoolExpr) -> Option<&SymExpr> {
+    let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = expr.kind() else { return None };
+    if left.as_const().is_some_and(|value| value.is_zero()) {
+        Some(right)
+    } else if right.as_const().is_some_and(|value| value.is_zero()) {
+        Some(left)
+    } else {
+        None
     }
 }
 
