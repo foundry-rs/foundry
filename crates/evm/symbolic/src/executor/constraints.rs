@@ -1,41 +1,37 @@
 use super::*;
 
 impl SymbolicExecutor {
-    /// Runs the `handle_assume` symbolic executor helper.
     pub(super) fn handle_assume(
         &mut self,
         state: &mut PathState,
         condition_offset: usize,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
-        let cond = state.memory.load_word(condition_offset)?;
-        self.assume_condition(state, cond.nonzero_bool())
+        let cond = state.memory.load_word(&mut self.cx, condition_offset)?;
+        let cond = cond.nonzero_bool(&mut self.cx);
+        self.assume_condition(state, cond)
     }
 
-    /// Runs the `handle_skip` symbolic executor helper.
     pub(super) fn handle_skip(
         &mut self,
         state: &mut PathState,
         condition_offset: usize,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
-        let cond = state.memory.load_word(condition_offset)?;
-        self.assume_condition(state, cond.nonzero_bool().not())
+        let cond = state.memory.load_word(&mut self.cx, condition_offset)?;
+        let cond = cond.nonzero_bool(&mut self.cx).not(&mut self.cx);
+        self.assume_condition(state, cond)
     }
 
-    /// Implements the `assume_condition` symbolic executor helper.
     pub(super) fn assume_condition(
         &mut self,
         state: &mut PathState,
-        condition: BoolExpr,
+        condition: SymBoolExpr,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
-        match condition {
-            BoolExpr::Const(true) => Ok(CheatcodeOutcome::Continue(Vec::new())),
-            BoolExpr::Const(false) => Ok(CheatcodeOutcome::AssumeRejected),
-            condition => {
-                if bool_contains_gasleft(&condition) {
-                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-                }
+        match condition.as_const() {
+            Some(true) => Ok(CheatcodeOutcome::Continue(Vec::new())),
+            Some(false) => Ok(CheatcodeOutcome::AssumeRejected),
+            None => {
                 state.constraints.push(condition);
-                if self.solver.is_sat(&state.constraints)? {
+                if self.solver.is_sat(&mut self.cx, &state.constraints)? {
                     Ok(CheatcodeOutcome::Continue(Vec::new()))
                 } else {
                     Ok(CheatcodeOutcome::AssumeRejected)
@@ -44,21 +40,21 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `solver_upper_bound_usize` symbolic executor helper.
     pub(super) fn solver_upper_bound_usize(
         &mut self,
         state: &PathState,
-        word: &SymWord,
+        expr: &SymExpr,
         max: usize,
         reason: &'static str,
     ) -> Result<usize, SymbolicError> {
-        if word.contains_gasleft() {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
-        let expr = word.clone().into_expr();
         let mut above_max = state.constraints.clone();
-        above_max.push(BoolExpr::cmp(BoolExprOp::Ugt, expr.clone(), Expr::Const(U256::from(max))));
-        if self.solver.is_sat(&above_max)? {
+        above_max.push(SymBoolExpr::cmp_word_const(
+            &mut self.cx,
+            SymCmpOp::Ugt,
+            expr,
+            U256::from(max),
+        ));
+        if self.solver.is_sat(&mut self.cx, &above_max)? {
             return Err(SymbolicError::Unsupported(reason));
         }
 
@@ -67,12 +63,13 @@ impl SymbolicExecutor {
         while low < high {
             let mid = low + (high - low) / 2;
             let mut above_mid = state.constraints.clone();
-            above_mid.push(BoolExpr::cmp(
-                BoolExprOp::Ugt,
-                expr.clone(),
-                Expr::Const(U256::from(mid)),
+            above_mid.push(SymBoolExpr::cmp_word_const(
+                &mut self.cx,
+                SymCmpOp::Ugt,
+                expr,
+                U256::from(mid),
             ));
-            if self.solver.is_sat(&above_mid)? {
+            if self.solver.is_sat(&mut self.cx, &above_mid)? {
                 low = mid + 1;
             } else {
                 high = mid;
@@ -81,24 +78,20 @@ impl SymbolicExecutor {
         Ok(low)
     }
 
-    /// Implements the `assume_word_at_least` symbolic executor helper.
-    pub(super) fn assume_word_at_least(
+    pub(super) fn assume_expr_at_least(
         &mut self,
         state: &mut PathState,
-        word: &SymWord,
+        expr: &SymExpr,
         min: usize,
     ) -> Result<bool, SymbolicError> {
-        if word.contains_gasleft() {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
         let condition =
-            BoolExpr::cmp(BoolExprOp::Uge, word.clone().into_expr(), Expr::Const(U256::from(min)));
-        match condition {
-            BoolExpr::Const(value) => Ok(value),
-            condition => {
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Uge, expr, U256::from(min));
+        match condition.as_const() {
+            Some(value) => Ok(value),
+            None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
-                if self.solver.is_sat(&constraints)? {
+                if self.solver.is_sat(&mut self.cx, &constraints)? {
                     state.constraints = constraints;
                     Ok(true)
                 } else {
@@ -116,121 +109,127 @@ impl SymbolicExecutor {
         if bits <= U256::from(256) { Ok(()) } else { Err(SymbolicError::Unsupported(context)) }
     }
 
-    /// Runs the `handle_bound_uint` symbolic executor helper.
     pub(super) fn handle_bound_uint(
         &mut self,
         state: &mut PathState,
         args_offset: usize,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
-        let value = read_abi_word_arg(&state.memory, args_offset, 0)?;
-        let min = read_abi_word_arg(&state.memory, args_offset, 1)?;
-        let max = read_abi_word_arg(&state.memory, args_offset, 2)?;
+        let value = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+        let min = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+        let max = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 2)?;
 
-        if let (SymWord::Concrete(value), SymWord::Concrete(min), SymWord::Concrete(max)) =
-            (&value, &min, &max)
+        if let (Some(value), Some(min), Some(max)) =
+            (value.as_const(), min.as_const(), max.as_const())
         {
             if min >= max || value < min || value > max {
                 return Ok(CheatcodeOutcome::Failure);
             }
-            let bounded = if value == min { *max } else { *min };
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(bounded)]));
+            let bounded = if value == min { max } else { min };
+            return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(&mut self.cx, bounded)]));
         }
 
-        if let (SymWord::Concrete(min), SymWord::Concrete(max)) = (&min, &max)
+        if let (Some(min), Some(max)) = (min.as_const(), max.as_const())
             && min >= max
         {
             return Ok(CheatcodeOutcome::Failure);
         }
-        let (SymWord::Concrete(min_value), SymWord::Concrete(max_value)) = (&min, &max) else {
+        let (Some(min_word), Some(max_word)) = (min.as_const(), max.as_const()) else {
             return Err(SymbolicError::Unsupported("symbolic vm.bound range"));
         };
 
-        let value_expr = value.into_expr();
-        let in_range = BoolExpr::and(vec![
-            BoolExpr::cmp(BoolExprOp::Uge, value_expr.clone(), Expr::Const(*min_value)),
-            BoolExpr::cmp(BoolExprOp::Ule, value_expr.clone(), Expr::Const(*max_value)),
-        ]);
+        let value_expr = value;
+        let min_value = SymExpr::constant(&mut self.cx, min_word);
+        let max_value = SymExpr::constant(&mut self.cx, max_word);
+        let min_condition =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Uge, value_expr.clone(), min_value);
+        let max_condition =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, value_expr.clone(), max_value);
+        let in_range = SymBoolExpr::and(&mut self.cx, vec![min_condition, max_condition]);
         let (_in_range_constraints, in_range_sat) =
             self.constraints_with_condition(state, in_range.clone())?;
         if !in_range_sat {
             return Ok(CheatcodeOutcome::Failure);
         }
+        let out_of_range = in_range.not(&mut self.cx);
         let (_out_of_range_constraints, out_of_range_sat) =
-            self.constraints_with_condition(state, in_range.not())?;
+            self.constraints_with_condition(state, out_of_range)?;
         if out_of_range_sat {
             return Ok(CheatcodeOutcome::Failure);
         }
 
-        let bounded = state.fresh_word("vmBoundUint");
-        state.constraints.push(BoolExpr::cmp(
-            BoolExprOp::Uge,
-            bounded.clone().into_expr(),
-            Expr::Const(*min_value),
-        ));
-        state.constraints.push(BoolExpr::cmp(
-            BoolExprOp::Ule,
-            bounded.clone().into_expr(),
-            Expr::Const(*max_value),
-        ));
-        state.constraints.push(BoolExpr::eq(bounded.clone().into_expr(), value_expr).not());
+        let bounded = state.fresh_word(&mut self.cx, "vmBoundUint");
+        let min_condition =
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Uge, &bounded, min_word);
+        let max_condition =
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Ule, &bounded, max_word);
+        state.constraints.push(min_condition);
+        state.constraints.push(max_condition);
+        let same_value = SymBoolExpr::eq(&mut self.cx, bounded.clone(), value_expr);
+        state.constraints.push(same_value.not(&mut self.cx));
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }
 
-    /// Runs the `handle_bound_int` symbolic executor helper.
     pub(super) fn handle_bound_int(
         &mut self,
         state: &mut PathState,
         args_offset: usize,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
-        let value = read_abi_word_arg(&state.memory, args_offset, 0)?;
-        let min = read_abi_word_arg(&state.memory, args_offset, 1)?;
-        let max = read_abi_word_arg(&state.memory, args_offset, 2)?;
+        let value = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
+        let min = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 1)?;
+        let max = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 2)?;
 
-        if let (SymWord::Concrete(value), SymWord::Concrete(min), SymWord::Concrete(max)) =
-            (&value, &min, &max)
+        if let (Some(value), Some(min), Some(max)) =
+            (value.as_const(), min.as_const(), max.as_const())
         {
-            if !slt(*min, *max) || slt(*value, *min) || slt(*max, *value) {
+            if !slt(min, max) || slt(value, min) || slt(max, value) {
                 return Ok(CheatcodeOutcome::Failure);
             }
-            let bounded = if value == min { *max } else { *min };
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(bounded)]));
+            let bounded = if value == min { max } else { min };
+            return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(&mut self.cx, bounded)]));
         }
 
-        if let (SymWord::Concrete(min), SymWord::Concrete(max)) = (&min, &max)
-            && !slt(*min, *max)
+        if let (Some(min), Some(max)) = (min.as_const(), max.as_const())
+            && !slt(min, max)
         {
             return Ok(CheatcodeOutcome::Failure);
         }
-        let (SymWord::Concrete(min_value), SymWord::Concrete(max_value)) = (&min, &max) else {
+        let (Some(min_word), Some(max_word)) = (min.as_const(), max.as_const()) else {
             return Err(SymbolicError::Unsupported("symbolic vm.bound range"));
         };
 
-        let value_expr = value.into_expr();
-        let in_range = BoolExpr::and(vec![
-            BoolExpr::cmp(BoolExprOp::Slt, value_expr.clone(), Expr::Const(*min_value)).not(),
-            BoolExpr::cmp(BoolExprOp::Sgt, value_expr.clone(), Expr::Const(*max_value)).not(),
-        ]);
+        let value_expr = value;
+        let min_value = SymExpr::constant(&mut self.cx, min_word);
+        let max_value = SymExpr::constant(&mut self.cx, max_word);
+        let below_min =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Slt, value_expr.clone(), min_value);
+        let above_max =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Sgt, value_expr.clone(), max_value);
+        let below_min = below_min.not(&mut self.cx);
+        let above_max = above_max.not(&mut self.cx);
+        let in_range = SymBoolExpr::and(&mut self.cx, vec![below_min, above_max]);
         let (_in_range_constraints, in_range_sat) =
             self.constraints_with_condition(state, in_range.clone())?;
         if !in_range_sat {
             return Ok(CheatcodeOutcome::Failure);
         }
+        let out_of_range = in_range.not(&mut self.cx);
         let (_out_of_range_constraints, out_of_range_sat) =
-            self.constraints_with_condition(state, in_range.not())?;
+            self.constraints_with_condition(state, out_of_range)?;
         if out_of_range_sat {
             return Ok(CheatcodeOutcome::Failure);
         }
 
-        let bounded = state.fresh_word("vmBoundInt");
-        state.constraints.push(
-            BoolExpr::cmp(BoolExprOp::Slt, bounded.clone().into_expr(), Expr::Const(*min_value))
-                .not(),
-        );
-        state.constraints.push(
-            BoolExpr::cmp(BoolExprOp::Sgt, bounded.clone().into_expr(), Expr::Const(*max_value))
-                .not(),
-        );
-        state.constraints.push(BoolExpr::eq(bounded.clone().into_expr(), value_expr).not());
+        let bounded = state.fresh_word(&mut self.cx, "vmBoundInt");
+        let below_min =
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Slt, &bounded, min_word);
+        let above_max =
+            SymBoolExpr::cmp_word_const(&mut self.cx, SymCmpOp::Sgt, &bounded, max_word);
+        let below_min = below_min.not(&mut self.cx);
+        let above_max = above_max.not(&mut self.cx);
+        state.constraints.push(below_min);
+        state.constraints.push(above_max);
+        let same_value = SymBoolExpr::eq(&mut self.cx, bounded.clone(), value_expr);
+        state.constraints.push(same_value.not(&mut self.cx));
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }
 }

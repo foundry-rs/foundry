@@ -28,7 +28,7 @@ contract ContractWithLints {
     function unoptimizedHashGas(uint256 a, uint256 b) public view {
         keccak256(abi.encodePacked(a, b));
     }
-    function FUNCTION_MIXED_CASE_INFO() public {}
+    function FUNCTION_MIXED_CASE_INFO() public { VARIABLE_MIXED_CASE_INFO = 1; }
 }
 "#;
 
@@ -40,7 +40,7 @@ pragma solidity ^0.8.0;
 import { ContractWithLints } from "./ContractWithLints.sol";
 
 contract OtherContractWithLints {
-    function functionMIXEDCaseInfo() public {}
+    function functionMIXEDCaseInfo() public { uint256 x = 1; }
 }
 "#;
 
@@ -56,6 +56,24 @@ import "./ContractWithLints.sol";
 
 contract Dummy {
     bool foo;
+}
+"#;
+
+const DEFAULT_INFO_LINTS_IMPORT: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract UnusedSymbol {}
+"#;
+
+const DEFAULT_INFO_LINTS: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+
+contract DefaultInfoLints {
+    function BAD_CASE() public { uint256 x = 1; }
 }
 "#;
 
@@ -230,7 +248,7 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
-9 │     function functionMIXEDCaseInfo() public {}
+9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
@@ -248,8 +266,33 @@ note[mixed-case-function]: function names should use mixedCase
             ..Default::default()
         };
     });
-    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
 nothing to lint
+
+"#]]);
+});
+
+forgetest!(default_lint_severity_includes_info, |prj, cmd| {
+    prj.add_source("DefaultInfoLintsImport", DEFAULT_INFO_LINTS_IMPORT);
+    prj.add_source("DefaultInfoLints", DEFAULT_INFO_LINTS);
+
+    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+note[mixed-case-function]: function names should use mixedCase
+  [FILE]:8:14
+  │
+8 │     function BAD_CASE() public { uint256 x = 1; }
+  │              ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[unused-import]: unused imports should be removed
+  [FILE]:5:10
+  │
+5 │ import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+  │          ━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/unused-import
+
 
 "#]]);
 });
@@ -613,7 +656,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
-9 │     function functionMIXEDCaseInfo() public {}
+9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function

@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, Bytes, address, hex};
+use alloy_primitives::{Address, Bytes, U256, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
@@ -4011,4 +4011,61 @@ forgetest_async!(script_check_contract_sizes_honors_config_limit, |prj, cmd| {
     cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stderr_eq(str![[r#""#]]);
+});
+
+// Regression test for https://github.com/foundry-rs/foundry/issues/15207: the broadcast simulation
+// must observe an `anvil_setBalance` done via `vm.rpc` earlier in the same script.
+forgetest_async!(can_broadcast_with_vm_rpc_set_balance_on_fork, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    // Default genesis balance is 100 ETH; fund above the broadcast amount so the send only succeeds
+    // if the simulation observes the mutation.
+    prj.add_script(
+        "FundViaRpc.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract FundViaRpc is Script {
+    address constant SENDER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+    address constant RECIPIENT = 0x000000000000000000000000000000000000dEaD;
+
+    function run() external {
+        uint256 fundedAmount = 1000 ether;
+        uint256 sendAmount = 500 ether;
+
+        vm.deal(SENDER, fundedAmount);
+
+        // Fund the account on the forked node directly, bypassing the fork cache.
+        vm.rpc(
+            "anvil_setBalance",
+            string.concat("[\"", vm.toString(SENDER), "\", \"", vm.toString(fundedAmount), "\"]")
+        );
+
+        vm.startBroadcast(SENDER);
+        (bool ok,) = RECIPIENT.call{value: sendAmount}("");
+        require(ok, "send failed");
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .args([
+            "FundViaRpc",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--sender",
+            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+            "--broadcast",
+            "--unlocked",
+        ])
+        .assert_success();
+
+    // The broadcast transaction must actually have landed on-chain.
+    let recipient = address!("0x000000000000000000000000000000000000dEaD");
+    let balance = api.balance(recipient, None).await.unwrap();
+    assert_eq!(balance, U256::from(500) * U256::from(10).pow(U256::from(18)));
 });

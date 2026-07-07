@@ -6,6 +6,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_eips::{
+    eip2718::Decodable2718,
     eip7840::BlobParams,
     eip7910::{EthConfig, SystemContract},
 };
@@ -13,7 +14,7 @@ use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, Transac
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    AccountInfo, BlockId, BlockNumberOrTag,
+    AccountInfo, BlockId, BlockNumberOrTag, Index,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
@@ -24,7 +25,7 @@ use anvil::{EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory, eth::Et
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_primitives::FoundryNetwork;
+use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
 use revm::precompile::PrecompileStatus;
@@ -101,6 +102,97 @@ async fn test_fork_gas_limit_disabled_from_config() {
         .from(handle.dev_wallets().next().unwrap().address());
     let tx = WithOtherFields::new(tx);
     let _ = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+}
+
+// `debug_getRawReceipts` must serve pre-fork blocks from the upstream provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_get_raw_receipts() {
+    let (_api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // A pre-fork block known to contain transactions.
+    let block_number = BLOCK_NUMBER - 1;
+    let rpc_receipts =
+        provider.get_block_receipts(BlockId::number(block_number)).await.unwrap().unwrap();
+    assert!(!rpc_receipts.is_empty());
+
+    let block = provider.get_block(BlockId::number(block_number)).await.unwrap().unwrap();
+    let raw_by_number: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawReceipts", (BlockId::number(block_number),))
+        .await
+        .unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawReceipts", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), rpc_receipts.len());
+
+    // Each entry decodes back into a receipt envelope matching the RPC receipt.
+    for (raw, rpc) in raw_by_number.iter().zip(rpc_receipts.iter()) {
+        let decoded = FoundryReceiptEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
+        assert_eq!(decoded.status(), rpc.status());
+    }
+}
+
+// `debug_accountInfoAt` must delegate pre-fork blocks to the upstream and resolve block tags
+// against the fork's frozen head, not the upstream's advancing head.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_account_info_at() {
+    // Use a local anvil node as the upstream so we can advance it deterministically.
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+
+    let account = origin_handle.dev_wallets().next().unwrap().address();
+    let to = Address::random();
+    let amount = U256::from(1_000u64);
+
+    // Mine one block on the upstream containing a single transfer to `to`.
+    let tx = TransactionRequest::default().from(account).to(to).value(amount);
+    let tx = WithOtherFields::new(tx);
+    let receipt = origin_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let fork_block = receipt.block_number.unwrap();
+
+    // Fork from the upstream at its current head.
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let fork_provider = fork_handle.http_provider();
+
+    // Pre-fork block delegated by number and by hash returns the fork-point balance.
+    let by_number: Option<AccountInfo> = fork_provider
+        .raw_request(
+            "debug_accountInfoAt".into(),
+            (BlockId::number(fork_block), Index::from(0), to),
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_number.unwrap().balance, amount);
+
+    // Query via the `latest` tag: on the frozen fork this must resolve to `fork_block`.
+    let by_tag: Option<AccountInfo> = fork_provider
+        .raw_request("debug_accountInfoAt".into(), (BlockId::latest(), Index::from(0), to))
+        .await
+        .unwrap();
+    assert_eq!(by_tag.unwrap().balance, amount);
+
+    // Advance the upstream with more transfers to `to` so its `latest` head drifts ahead.
+    for _ in 0..3 {
+        let tx = TransactionRequest::default().from(account).to(to).value(amount);
+        let tx = WithOtherFields::new(tx);
+        origin_provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    }
+    assert!(origin_api.block_number().unwrap() > U256::from(fork_block));
+
+    // The fork never advanced, so `latest` must still resolve to `fork_block` and return the
+    // fork-point balance rather than drifting with the upstream head.
+    let by_tag_after: Option<AccountInfo> = fork_provider
+        .raw_request("debug_accountInfoAt".into(), (BlockId::latest(), Index::from(0), to))
+        .await
+        .unwrap();
+    assert_eq!(by_tag_after.unwrap().balance, amount);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -809,6 +901,16 @@ async fn test_fork_base_fee() {
     let tx = TransactionRequest::default().from(from).to(addr).value(val);
     let tx = WithOtherFields::new(tx);
     let _res = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_pre_london_base_fee_is_null() {
+    let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(12_000_000u64))).await;
+
+    let provider = handle.http_provider();
+
+    let base_fee: Option<U256> = provider.client().request("eth_baseFee", ()).await.unwrap();
+    assert_eq!(base_fee, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
