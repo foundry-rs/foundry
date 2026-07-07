@@ -5206,6 +5206,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-compiler",
+ "tempfile",
  "tempo-contracts",
  "tempo-hardfork",
  "tempo-precompiles",

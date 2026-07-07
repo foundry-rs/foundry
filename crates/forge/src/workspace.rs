@@ -703,8 +703,14 @@ mod tests {
         assert_eq!(remappings[0].path, format!("{}/", workspace.join("src").display()));
         assert_eq!(remappings[1].path, format!("{}/", external.join("src").display()));
 
-        assert_eq!(temp_config.fs_permissions.permissions[0].path, workspace.join("fixtures"));
-        assert_eq!(temp_config.fs_permissions.permissions[1].path, external.join("fixtures"));
+        assert_eq!(
+            temp_config.fs_permissions.permissions[0].path,
+            normalize_existing_ancestor(&workspace.join("fixtures"))
+        );
+        assert_eq!(
+            temp_config.fs_permissions.permissions[1].path,
+            normalize_existing_ancestor(&external.join("fixtures"))
+        );
 
         let contracts = temp_config.model_checker.unwrap().contracts;
         assert!(contracts.contains_key(&workspace.join("src/Target.sol").display().to_string()));

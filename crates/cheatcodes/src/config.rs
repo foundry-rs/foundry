@@ -272,8 +272,9 @@ fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use foundry_config::fs_permissions::PathPermission;
+    use tempfile::TempDir;
 
-    fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
+    fn config(root: &Path, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
@@ -286,8 +287,10 @@ mod tests {
 
     #[test]
     fn test_allowed_paths() {
-        let root = "/my/project/root/";
-        let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("my/project/root");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = config(&root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Read).is_ok());
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Write).is_ok());
@@ -310,16 +313,16 @@ mod tests {
 
     #[test]
     fn test_is_foundry_toml() {
-        let root = "/my/project/root/";
+        let root = Path::new("/my/project/root/");
         let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
-        let f = format!("{root}foundry.toml");
+        let f = root.join("foundry.toml");
         assert!(config.is_foundry_toml(f));
 
-        let f = format!("{root}Foundry.toml");
+        let f = root.join("Foundry.toml");
         assert!(config.is_foundry_toml(f));
 
-        let f = format!("{root}lib/other/foundry.toml");
+        let f = root.join("lib/other/foundry.toml");
         assert!(!config.is_foundry_toml(f));
     }
 }
