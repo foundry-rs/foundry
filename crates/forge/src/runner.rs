@@ -5346,7 +5346,7 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
         let Some(persisted) = persisted_call_sequence(&path, current_settings) else {
             continue;
         };
-        let mut call_sequence = persisted.call_sequence;
+        let InvariantPersistedFailure { mut call_sequence, storage, .. } = persisted;
         if call_sequence.is_empty() {
             let _ = std::fs::remove_file(&path);
             continue;
@@ -5363,8 +5363,13 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
         let expected_site = (expected_target, Selector::from(expected_selector_bytes));
         let sequence: Vec<usize> =
             (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect();
+        let mut replay_executor = executor.clone();
+        if let Err(err) = apply_symbolic_storage_assignments(&mut replay_executor, &storage) {
+            error!(%err, "Failed to apply symbolic storage for handler-side assertion replay");
+            continue;
+        }
         let outcome = replay_handler_failure_sequence(
-            executor.clone(),
+            replay_executor,
             &txes,
             &sequence,
             ctx.invariant_config.has_delay(),

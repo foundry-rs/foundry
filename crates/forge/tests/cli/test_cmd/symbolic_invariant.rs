@@ -251,22 +251,38 @@ forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 
+interface ArbitraryStorageVm {
+    function setArbitraryStorage(address target) external;
+}
+
+contract HandlerStore {
+    uint256 public value;
+}
+
 contract SymbolicInvariantHandlerFailureTarget {
+    HandlerStore store;
     uint256 sink;
+
+    constructor(HandlerStore store_) {
+        store = store_;
+    }
 
     function boom(uint8 x) external {
         sink = x;
-        if (x == 7) {
+        if (x == 7 && store.value() == 42) {
             assert(false);
         }
     }
 }
 
 contract SymbolicInvariantHandlerFailure is Test {
+    HandlerStore store;
     SymbolicInvariantHandlerFailureTarget target;
 
     function setUp() public {
-        target = new SymbolicInvariantHandlerFailureTarget();
+        store = new HandlerStore();
+        target = new SymbolicInvariantHandlerFailureTarget(store);
+        ArbitraryStorageVm(address(vm)).setArbitraryStorage(address(store));
         bytes4[] memory selectors = new bytes4[](1);
         selectors[0] = target.boom.selector;
         targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
@@ -324,6 +340,28 @@ contract SymbolicInvariantHandlerFailure is Test {
             .ends_with("SymbolicInvariantHandlerFailureTarget::boom"),
         "{artifact}"
     );
+    assert_eq!(artifact["storage"].as_array().expect("storage assignments").len(), 1);
+    assert_eq!(artifact["storage"][0]["value"], "0x2a");
+
+    let rerun_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--rerun"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let rerun_result = json_test_result(&rerun_output, "invariant_ok()");
+    assert!(
+        rerun_result
+            .get("invariant_failures")
+            .and_then(|value| value.as_array())
+            .is_none_or(Vec::is_empty),
+        "{rerun_result}"
+    );
+    let rerun_handler_failures =
+        rerun_result["invariant_handler_failures"].as_array().expect("rerun handler failures");
+    assert_eq!(rerun_handler_failures.len(), 1);
+    assert_eq!(rerun_handler_failures[0]["kind"], "handler");
 
     let replay_output = cmd
         .forge_fuse()
