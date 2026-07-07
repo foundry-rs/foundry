@@ -599,6 +599,11 @@ impl<N: Network> Backend<N> {
         TempoHardfork::from(self.hardfork())
     }
 
+    /// Returns the active Monad hardfork.
+    pub fn monad_hardfork(&self) -> MonadHardfork {
+        MonadHardfork::from(self.hardfork())
+    }
+
     /// Returns whether a Tempo hardfork is active on this backend.
     pub fn is_tempo_hardfork_active(&self, hardfork: TempoHardfork) -> bool {
         self.is_tempo() && self.tempo_hardfork() >= hardfork
@@ -615,8 +620,10 @@ impl<N: Network> Backend<N> {
         }
 
         // Extend with configured network precompiles.
-        precompiles_map
-            .extend(self.networks.precompiles(self.is_tempo().then(|| self.tempo_hardfork())));
+        precompiles_map.extend(self.networks.precompiles(
+            self.is_tempo().then(|| self.tempo_hardfork()),
+            self.is_monad().then(|| self.monad_hardfork()),
+        ));
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {

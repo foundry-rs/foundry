@@ -16,8 +16,11 @@ use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::{Address, ChainId, map::AddressHashMap};
 use clap::Parser;
-use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
-use monad_revm::{MONAD_MAX_CODE_SIZE, MONAD_MAX_INITCODE_SIZE};
+use foundry_evm_hardforks::{FoundryHardfork, MonadHardfork, TempoHardfork};
+use monad_revm::{
+    MONAD_MAX_CODE_SIZE, MONAD_MAX_INITCODE_SIZE, reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+    staking::STAKING_ADDRESS,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
@@ -46,6 +49,12 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("TIP20ChannelReserve", TIP20_CHANNEL_RESERVE_ADDRESS),
     ("ReceivePolicyGuard", RECEIVE_POLICY_GUARD_ADDRESS),
 ];
+
+const MONAD_PRECOMPILE_LABELS: &[(&str, Address)] =
+    &[("Staking", STAKING_ADDRESS), ("ReserveBalance", RESERVE_BALANCE_ADDRESS)];
+
+const MONAD_PRECOMPILES: &[(&str, Address)] =
+    &[("MonadStaking", STAKING_ADDRESS), ("MonadReserveBalance", RESERVE_BALANCE_ADDRESS)];
 
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
@@ -82,6 +91,12 @@ pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterat
         .iter()
         .copied()
         .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
+}
+
+/// Returns whether a well-known Monad precompile address is active at `hardfork`.
+pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
+    address == STAKING_ADDRESS
+        || (address == RESERVE_BALANCE_ADDRESS && MonadHardfork::MonadNine.is_enabled_in(hardfork))
 }
 
 #[derive(
@@ -371,6 +386,7 @@ impl NetworkConfigs {
     pub fn precompiles_label(
         self,
         tempo_hardfork: Option<TempoHardfork>,
+        monad_hardfork: Option<MonadHardfork>,
     ) -> AddressHashMap<String> {
         let mut labels = AddressHashMap::default();
         if self.celo {
@@ -389,11 +405,28 @@ impl NetworkConfigs {
                     .map(|(label, address)| (address, label.to_string())),
             );
         }
+        if self.is_monad() {
+            labels.extend(
+                MONAD_PRECOMPILE_LABELS
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        monad_hardfork.is_none_or(|hardfork| {
+                            is_monad_precompile_active_at(*address, hardfork)
+                        })
+                    })
+                    .map(|(label, address)| (address, label.to_string())),
+            );
+        }
         labels
     }
 
     /// Returns precompiles for configured networks.
-    pub fn precompiles(self, tempo_hardfork: Option<TempoHardfork>) -> BTreeMap<String, Address> {
+    pub fn precompiles(
+        self,
+        tempo_hardfork: Option<TempoHardfork>,
+        monad_hardfork: Option<MonadHardfork>,
+    ) -> BTreeMap<String, Address> {
         let mut precompiles = BTreeMap::new();
         if self.celo {
             precompiles
@@ -407,6 +440,19 @@ impl NetworkConfigs {
                     .filter(|(_, address)| {
                         tempo_hardfork.is_none_or(|hardfork| {
                             is_tempo_precompile_active_at(*address, hardfork)
+                        })
+                    })
+                    .map(|(label, address)| (label.to_string(), address)),
+            );
+        }
+        if self.is_monad() {
+            precompiles.extend(
+                MONAD_PRECOMPILES
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        monad_hardfork.is_none_or(|hardfork| {
+                            is_monad_precompile_active_at(*address, hardfork)
                         })
                     })
                     .map(|(label, address)| (label.to_string(), address)),
@@ -446,8 +492,8 @@ mod tests {
         let via_old = NetworkConfigs { tempo: true, ..Default::default() };
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
-        assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
-        assert_eq!(via_new.precompiles_label(None), via_old.precompiles_label(None));
+        assert_eq!(via_new.precompiles(None, None), via_old.precompiles(None, None));
+        assert_eq!(via_new.precompiles_label(None, None), via_old.precompiles_label(None, None));
     }
 
     #[test]
@@ -455,33 +501,64 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
 
         assert_eq!(
-            cfg.precompiles(None).get("TIP20ChannelReserve"),
+            cfg.precompiles(None, None).get("TIP20ChannelReserve"),
             Some(&TIP20_CHANNEL_RESERVE_ADDRESS)
         );
-        assert!(!cfg.precompiles(Some(TempoHardfork::T4)).contains_key("TIP20ChannelReserve"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T4)).contains_key("ReceivePolicyGuard"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T2)).contains_key("AddressRegistry"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T2)).contains_key("SignatureVerifier"));
+        assert!(
+            !cfg.precompiles(Some(TempoHardfork::T4), None).contains_key("TIP20ChannelReserve")
+        );
+        assert!(!cfg.precompiles(Some(TempoHardfork::T4), None).contains_key("ReceivePolicyGuard"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2), None).contains_key("AddressRegistry"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2), None).contains_key("SignatureVerifier"));
         assert_eq!(
-            cfg.precompiles(Some(TempoHardfork::T3)).get("AddressRegistry"),
+            cfg.precompiles(Some(TempoHardfork::T3), None).get("AddressRegistry"),
             Some(&ADDRESS_REGISTRY_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles(Some(TempoHardfork::T3)).get("SignatureVerifier"),
+            cfg.precompiles(Some(TempoHardfork::T3), None).get("SignatureVerifier"),
             Some(&SIGNATURE_VERIFIER_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles_label(Some(TempoHardfork::T5)).get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            cfg.precompiles_label(Some(TempoHardfork::T5), None)
+                .get(&TIP20_CHANNEL_RESERVE_ADDRESS),
             Some(&"TIP20ChannelReserve".to_string())
         );
-        assert!(cfg.precompiles_label(None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(cfg.precompiles_label(None, None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(
-            !cfg.precompiles_label(Some(TempoHardfork::T5))
+            !cfg.precompiles_label(Some(TempoHardfork::T5), None)
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
         assert!(
-            cfg.precompiles_label(Some(TempoHardfork::T6))
+            cfg.precompiles_label(Some(TempoHardfork::T6), None)
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
+        );
+    }
+
+    #[test]
+    fn canonical_monad_network_reports_hardfork_gated_precompiles() {
+        let cfg = NetworkConfigs { network: Some(NetworkVariant::Monad), ..Default::default() };
+
+        assert_eq!(
+            cfg.precompiles(None, Some(MonadHardfork::MonadEight)).get("MonadStaking"),
+            Some(&STAKING_ADDRESS)
+        );
+        assert!(
+            !cfg.precompiles(None, Some(MonadHardfork::MonadEight))
+                .contains_key("MonadReserveBalance")
+        );
+        assert_eq!(
+            cfg.precompiles(None, Some(MonadHardfork::MonadNine)).get("MonadReserveBalance"),
+            Some(&RESERVE_BALANCE_ADDRESS)
+        );
+        assert_eq!(
+            cfg.precompiles_label(None, Some(MonadHardfork::MonadNine))
+                .get(&RESERVE_BALANCE_ADDRESS),
+            Some(&"ReserveBalance".to_string())
+        );
+        assert!(cfg.precompiles_label(None, None).contains_key(&RESERVE_BALANCE_ADDRESS));
+        assert!(
+            !cfg.precompiles_label(None, Some(MonadHardfork::MonadEight))
+                .contains_key(&RESERVE_BALANCE_ADDRESS)
         );
     }
 

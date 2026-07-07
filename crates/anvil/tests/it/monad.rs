@@ -7,6 +7,7 @@ use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::MonadHardfork;
 
+const STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
 const RESERVE_BALANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001001");
 const DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
 const EIP170_CODE_SIZE_LIMIT: usize = 0x6000;
@@ -26,6 +27,27 @@ async fn monad_nine_exposes_reserve_balance_precompile_for_calls() {
     let result = provider.call(tx.into()).await.unwrap();
 
     assert_eq!(result, Bytes::from(vec![0; 32]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_nine_config_reports_monad_precompiles() {
+    let (api, _handle) = spawn(monad_nine_config()).await;
+    let config = api.config().unwrap();
+
+    assert_eq!(config.current.precompiles.get("MonadStaking"), Some(&STAKING_ADDRESS));
+    assert_eq!(
+        config.current.precompiles.get("MonadReserveBalance"),
+        Some(&RESERVE_BALANCE_ADDRESS)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_eight_config_filters_reserve_balance_precompile() {
+    let (api, _handle) = spawn(monad_eight_config()).await;
+    let config = api.config().unwrap();
+
+    assert_eq!(config.current.precompiles.get("MonadStaking"), Some(&STAKING_ADDRESS));
+    assert!(!config.current.precompiles.contains_key("MonadReserveBalance"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
