@@ -2,39 +2,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-import {SafeTransferLib as STL, ITokenAux} from "./auxiliary/SolmateSafeTransferLib.sol";
+import {IToken, SafeTransferLib} from "./auxiliary/solmate/SolmateMocks.sol";
+import {SafeTransferLib as STL, ITokenAux} from "./auxiliary/solmate/SolmateSafeTransferLib.sol";
+import {SafeTransferLib as SoladySTL} from "./auxiliary/solady/SafeTransferLib.sol";
 
 // Tests for `solmate-safe-transfer-lib`: the released solmate v6 `SafeTransferLib` treats a
 // call that returns no data as a success without checking that the token has code, so a token
 // operation against a token-less address is a silent no-op. A reference is flagged when it
 // resolves to `safeTransfer` / `safeTransferFrom` / `safeApprove` declared in a library named
-// exactly `SafeTransferLib`, whatever the call form. `safeTransferETH` involves no token code
-// and stays clean, as do same-name functions declared in other libraries.
-
-interface IToken {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function approve(address spender, uint256 amount) external returns (bool);
-}
-
-// Minimal mirror of solmate's SafeTransferLib: the token operations next to the ETH one.
-library SafeTransferLib {
-    function safeTransferETH(address to, uint256 amount) internal {
-        payable(to).transfer(amount);
-    }
-
-    function safeTransfer(IToken token, address to, uint256 amount) internal {
-        token.transfer(to, amount);
-    }
-
-    function safeTransferFrom(IToken token, address from, address to, uint256 amount) internal {
-        token.transferFrom(from, to, amount);
-    }
-
-    function safeApprove(IToken token, address spender, uint256 amount) internal {
-        token.approve(spender, amount);
-    }
-}
+// exactly `SafeTransferLib` whose source comes from a solmate package path, whatever the call
+// form. `safeTransferETH` involves no token code and stays clean, as do same-name functions
+// declared in other libraries and same-name libraries from other packages (Solady).
+// Note: this file's own path names solmate, so the canonical mirror and the out-of-package
+// probes live in auxiliary files whose paths decide their provenance.
 
 // Same function names in another library (Uniswap's TransferHelper style): out of scope.
 library TransferHelper {
@@ -142,5 +122,17 @@ contract NotALibrary {
 
     function viaContract(IToken token, address to, uint256 amount) internal {
         safeTransfer(token, to, amount);
+    }
+}
+
+// Solady's SafeTransferLib shares the library and function names but checks token code, and
+// its path does not name solmate: the provenance check keeps it out of scope.
+contract UsesSolady {
+    using SoladySTL for IToken;
+
+    IToken internal token;
+
+    function viaSolady(address to, uint256 amount) internal {
+        token.safeTransfer(to, amount);
     }
 }

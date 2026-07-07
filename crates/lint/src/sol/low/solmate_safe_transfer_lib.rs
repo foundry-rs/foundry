@@ -3,10 +3,13 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::sema::{
-    Gcx,
-    hir::{self, Expr, ExprKind, FunctionId, Hir, Visit},
-    ty::TyKind,
+use solar::{
+    interface::source_map::FileName,
+    sema::{
+        Gcx,
+        hir::{self, Expr, ExprKind, FunctionId, Hir, Visit},
+        ty::TyKind,
+    },
 };
 use std::{convert::Infallible, ops::ControlFlow};
 
@@ -75,18 +78,33 @@ impl TokenOpFinder<'_, '_, '_, '_> {
         }
     }
 
-    /// Whether `function_id` is one of the token operations of a library named exactly
-    /// `SafeTransferLib` (solmate's, or a vendored copy published under the same name).
+    /// Whether `function_id` is one of the token operations of solmate's `SafeTransferLib`.
     /// `safeTransferETH` stays out: sending ETH involves no token code, so the missing-code
     /// concern does not apply to it. A same-name function of another library (Uniswap's
-    /// `TransferHelper` style) stays out through the resolution.
+    /// `TransferHelper` style) stays out through the resolution, and so does a same-name
+    /// library from another package (Solady's `SafeTransferLib` checks token code on the
+    /// empty-return path), which fails the provenance check.
     fn is_unchecked_token_op(&self, function_id: FunctionId) -> bool {
         let function = self.hir.function(function_id);
         let Some(name) = function.name else { return false };
         let Some(contract_id) = function.contract else { return false };
+        // The name alone does not prove the declaration is solmate's: the declaring source
+        // must come from a solmate package path (`lib/solmate`, `solmate/...`).
+        if !self.is_solmate_source(function.source) {
+            return false;
+        }
         let contract = self.hir.contract(contract_id);
         matches!(name.as_str(), "safeTransfer" | "safeTransferFrom" | "safeApprove")
             && contract.kind.is_library()
             && contract.name.as_str() == "SafeTransferLib"
+    }
+
+    /// Whether a source file belongs to a solmate package, judged by its path. A vendored
+    /// copy under a path that does not name solmate is not recognized.
+    fn is_solmate_source(&self, source_id: hir::SourceId) -> bool {
+        match &self.hir.source(source_id).file.name {
+            FileName::Real(path) => path.to_string_lossy().to_lowercase().contains("solmate"),
+            _ => false,
+        }
     }
 }
