@@ -28,7 +28,7 @@ jobs:
       contents: read
     steps:
       # Checkout the repository
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
@@ -50,8 +50,15 @@ jobs:
           MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
           MPP_DEPOSIT: "1000000"
           TEMPO_AUTO_FUND: "1"
+          # Use a fresh, faucet-funded wallet each run.
+          TEMPO_ROTATE_WALLET: "1"
         run: |
-          if [ -n "${TEMPO_PRIVATE_KEY:-}" ]; then
+          if [ -z "${MPP_API_KEY:-}" ]; then
+            echo "::warning::MPP_API_KEY secret not set, skipping MPP e2e"
+            exit 0
+          elif [ "${TEMPO_ROTATE_WALLET:-0}" = "1" ]; then
+            echo "::notice::Rotating to a fresh ephemeral wallet for MPP e2e"
+          elif [ -n "${TEMPO_PRIVATE_KEY:-}" ]; then
             echo "::notice::Using TEMPO_PRIVATE_KEY for MPP e2e"
           elif [ -n "${TEMPO_KEYS_TOML_B64:-}" ]; then
             mkdir -p ~/.tempo/wallet

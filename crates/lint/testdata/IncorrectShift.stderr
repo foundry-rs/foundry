@@ -22,3 +22,19 @@ LL │             result := sar(add(result, 1), 8)
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+
+note[inline-assembly]: inline assembly used; review for memory safety and side effects
+   ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
+   │
+LL │         assembly {
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/inline-assembly
+

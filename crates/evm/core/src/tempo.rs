@@ -7,12 +7,12 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use revm::state::Bytecode;
-use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
     contracts::ARACHNID_CREATE2_FACTORY_BYTECODE, precompiles::VALIDATOR_CONFIG_ADDRESS,
 };
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
