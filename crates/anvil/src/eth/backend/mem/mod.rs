@@ -2218,6 +2218,20 @@ impl<N: Network> Backend<N> {
         // Fork mode syncs in setup_fork_db_config() instead.
         if fork.read().is_none() {
             env.write().block_env.number = U256::from(genesis.number);
+
+            // The genesis block keeps its base fee, but the next block must already follow Tempo's
+            // rules (e.g. T7 clamps the seed down to the cap). Fork mode seeds this from the fork
+            // block instead.
+            if fees.tempo_hardfork().is_some() {
+                let env = env.read();
+                let next_base_fee = fees.get_next_block_base_fee_per_gas(
+                    0,
+                    env.block_env.gas_limit,
+                    env.block_env.basefee,
+                );
+                drop(env);
+                fees.set_base_fee(next_base_fee);
+            }
         }
 
         let start_timestamp = if let Some(fork) = fork.read().as_ref() {
@@ -2490,18 +2504,24 @@ impl<N: Network> Backend<N> {
         let genesis_timestamp = self.genesis.timestamp;
         let genesis_number = self.genesis.number;
 
+        // Tempo chains seed the hardfork's own fixed base fee on reset; other chains keep the
+        // pre-reset base fee for the genesis block, as before. Computed up front so the env,
+        // storage, and fee manager all agree.
+        let reset_base_fee = self.fees.tempo_hardfork().map(crate::config::tempo_default_base_fee);
+        let genesis_base_fee = reset_base_fee.unwrap_or_else(|| self.fees.base_fee());
+
         // Reset environment to genesis state
         {
             let mut env = self.evm_env.write();
             env.block_env.number = U256::from(genesis_number);
             env.block_env.timestamp = U256::from(genesis_timestamp);
             // Reset other block env fields to their defaults
-            env.block_env.basefee = self.fees.base_fee();
+            env.block_env.basefee = genesis_base_fee;
             env.block_env.prevrandao = Some(B256::ZERO);
         }
 
         // Clear all storage and reinitialize with genesis
-        let base_fee = self.fees.is_eip1559().then(|| self.fees.base_fee());
+        let base_fee = self.fees.is_eip1559().then_some(genesis_base_fee);
         *self.blockchain.storage.write() = BlockchainStorage::new(
             &self.evm_env.read(),
             base_fee,
@@ -2516,9 +2536,21 @@ impl<N: Network> Backend<N> {
         // Reset time manager
         self.time.reset(genesis_timestamp);
 
-        // Reset fees to initial state
+        // Seed the next block's base fee. On Tempo the genesis keeps its fixed default while the
+        // next block already follows the hardfork's rule (e.g. T7 clamps to the cap); other chains
+        // use Anvil's Ethereum default.
         if self.fees.is_eip1559() {
-            self.fees.set_base_fee(crate::eth::fees::INITIAL_BASE_FEE);
+            let next_base_fee = match reset_base_fee {
+                Some(genesis_base_fee) => {
+                    // Seed the fixed genesis fee first so the next-block computation is not
+                    // affected by any manually zeroed base fee, then advance one block per Tempo.
+                    self.fees.set_base_fee(genesis_base_fee);
+                    let gas_limit = self.evm_env.read().block_env.gas_limit;
+                    self.fees.get_next_block_base_fee_per_gas(0, gas_limit, genesis_base_fee)
+                }
+                None => crate::eth::fees::INITIAL_BASE_FEE,
+            };
+            self.fees.set_base_fee(next_base_fee);
         }
 
         self.fees.set_gas_price(crate::eth::fees::INITIAL_GAS_PRICE);
@@ -4920,11 +4952,13 @@ impl Backend<FoundryNetwork> {
                 // update block env
                 block_env.number += U256::from(1);
                 block_env.timestamp += U256::from(12);
-                block_env.basefee = simulated_block
-                    .inner
-                    .header
-                    .next_block_base_fee(self.fees.base_fee_params())
-                    .unwrap_or_default();
+                // Route through the fee manager so Tempo chains use their own base fee rules.
+                let header = &simulated_block.inner.header;
+                block_env.basefee = self.fees.get_next_block_base_fee_per_gas(
+                    header.gas_used(),
+                    header.gas_limit(),
+                    header.base_fee_per_gas().unwrap_or_default(),
+                );
 
                 block_res.push(simulated_block);
             }

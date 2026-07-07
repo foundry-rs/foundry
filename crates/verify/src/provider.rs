@@ -5,13 +5,11 @@ use crate::{
 };
 use alloy_json_abi::JsonAbi;
 use async_trait::async_trait;
-use eyre::{Context, OptionExt, Result};
-use foundry_common::compile::ProjectCompiler;
+use eyre::{Context, Result};
+use foundry_common::compile::compile_target_abi;
 use foundry_compilers::{
     Project,
-    artifacts::{
-        Source, StandardJsonCompilerInput, output_selection::OutputSelection, vyper::VyperInput,
-    },
+    artifacts::{Source, StandardJsonCompilerInput, vyper::VyperInput},
     compilers::solc::SolcCompiler,
     multi::MultiCompilerSettings,
     solc::{Solc, SolcLanguage},
@@ -87,20 +85,7 @@ impl VerificationContext {
     /// Compiles target contract requesting only ABI and returns it.
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
         let mut project = self.project.clone();
-        project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection(["abi".to_string()]);
-        });
-
-        let output = ProjectCompiler::new()
-            .quiet(true)
-            .files([self.target_path.clone()])
-            .compile(&project)?;
-
-        let artifact = output
-            .find(&self.target_path, &self.target_name)
-            .ok_or_eyre("failed to find target artifact when compiling for abi")?;
-
-        artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
+        compile_target_abi(&mut project, &self.target_path, &self.target_name)
     }
 }
 

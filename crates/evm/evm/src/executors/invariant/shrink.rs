@@ -529,6 +529,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     }
 
     let accumulate_warp_roll = config.has_delay();
+    let mut sequence = Vec::with_capacity(calls.len());
     let mut last_result = None;
     let mut last_result_matches_shrinker = true;
     let shrinker = run_shrink_loop(
@@ -541,10 +542,12 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
         // do not roll back the removal.
         ShrinkErrorPolicy::KeepRemoved,
         |shrinker| {
+            sequence.clear();
+            sequence.extend(shrinker.current());
             let result = match check_sequence(
                 executor.clone(),
                 calls,
-                shrinker.current().collect(),
+                &sequence,
                 target_address,
                 calldata.clone(),
                 CheckSequenceOptions {
@@ -578,7 +581,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
         match check_sequence(
             executor.clone(),
             &shrunk,
-            (0..shrunk.len()).collect(),
+            &(0..shrunk.len()).collect::<Vec<_>>(),
             target_address,
             calldata,
             CheckSequenceOptions {
@@ -676,7 +679,7 @@ where
 pub fn check_sequence<FEN: FoundryEvmNetwork>(
     mut executor: Executor<FEN>,
     calls: &[BasicTxDetails],
-    sequence: Vec<usize>,
+    sequence: &[usize],
     test_address: Address,
     calldata: Bytes,
     options: CheckSequenceOptions<'_>,
@@ -686,7 +689,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     let early = replay_sequence(
         &mut executor,
         calls,
-        &sequence,
+        sequence,
         options.accumulate_warp_roll,
         |idx, call_result| {
             calls_executed += 1;
@@ -889,7 +892,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     let calldata: Bytes = target_invariant.selector().to_vec().into();
 
     // Special case: check if target value is achieved with 0 calls.
-    if check_sequence_value(executor.clone(), calls, vec![], target_address, calldata.clone())?
+    if check_sequence_value(executor.clone(), calls, &[], target_address, calldata.clone())?
         == Some(target_value)
     {
         return Ok(vec![]);
@@ -900,6 +903,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
     let initial = SequenceShrink::new(calls.len());
     progress.update(calls, &initial, true);
+    let mut sequence = Vec::with_capacity(calls.len());
 
     let shrinker = shrink_sequence_by_removing(
         calls.len(),
@@ -908,10 +912,12 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
         || progress.inc(),
         |shrinker| {
             progress.update(calls, shrinker, true);
+            sequence.clear();
+            sequence.extend(shrinker.current());
             match check_sequence_value(
                 executor.clone(),
                 calls,
-                shrinker.current().collect(),
+                &sequence,
                 target_address,
                 calldata.clone(),
             ) {
@@ -938,7 +944,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
 pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
     mut executor: Executor<FEN>,
     calls: &[BasicTxDetails],
-    sequence: Vec<usize>,
+    sequence: &[usize],
     accumulate_warp_roll: bool,
     rd: Option<&RevertDecoder>,
 ) -> eyre::Result<HandlerReplayOutcome> {
@@ -953,7 +959,7 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
     let outcome = replay_sequence(
         &mut executor,
         calls,
-        &sequence,
+        sequence,
         accumulate_warp_roll,
         |idx, call_result| {
             let asserted = did_fail_on_assert(&call_result, &call_result.state_changeset);
@@ -1010,6 +1016,7 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         return Ok(vec![]);
     }
     let accumulate_warp_roll = config.has_delay();
+    let mut sequence = Vec::with_capacity(calls.len());
     let shrinker = run_shrink_loop(
         config,
         calls,
@@ -1018,10 +1025,12 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         early_exit,
         ShrinkErrorPolicy::RestoreRemoved,
         |shrinker| {
+            sequence.clear();
+            sequence.extend(shrinker.current());
             handler_sequence_still_triggers_bug(
                 executor.clone(),
                 calls,
-                shrinker.current().collect(),
+                &sequence,
                 accumulate_warp_roll,
                 expected_fingerprint,
             )
@@ -1031,10 +1040,12 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
 
     // Verify shrunk repro; fall back to original on any failure.
+    sequence.clear();
+    sequence.extend(shrinker.current());
     let verified = handler_sequence_still_triggers_bug(
         executor.clone(),
         calls,
-        shrinker.current().collect(),
+        &sequence,
         accumulate_warp_roll,
         expected_fingerprint,
     )
@@ -1046,7 +1057,7 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
 fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
     executor: Executor<FEN>,
     calls: &[BasicTxDetails],
-    sequence: Vec<usize>,
+    sequence: &[usize],
     accumulate_warp_roll: bool,
     expected_fingerprint: B256,
 ) -> eyre::Result<bool> {
@@ -1063,7 +1074,7 @@ fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
 pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     mut executor: Executor<FEN>,
     calls: &[BasicTxDetails],
-    sequence: Vec<usize>,
+    sequence: &[usize],
     test_address: Address,
     calldata: Bytes,
 ) -> eyre::Result<Option<I256>> {

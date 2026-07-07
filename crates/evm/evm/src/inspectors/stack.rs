@@ -764,14 +764,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer, &mut self.revert_diag],
             |inspector| {
-                let previous_outcome = outcome.clone();
+                let previous_output = outcome.output().clone();
                 inspector.call_end(ecx, inputs, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != previous_outcome.output());
+                        && outcome.output() != &previous_output);
                 different.then_some(())
             },
         );
@@ -793,14 +793,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let previous_outcome = outcome.clone();
+                let previous_output = outcome.output().clone();
                 inspector.create_end(ecx, call, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != previous_outcome.output());
+                        && outcome.output() != &previous_output);
                 different.then_some(())
             },
         );
