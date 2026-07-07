@@ -3974,7 +3974,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     assert_eq!(persisted_failure.fuzz.seed, Some(U256::from(1)));
     assert_eq!(persisted_failure.fuzz.worker, Some(0));
     let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
-    let fuzz_worker = persisted_failure.fuzz.worker.unwrap().to_string();
 
     cmd.forge_fuse()
         .args([
@@ -3983,8 +3982,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
             "1",
             "--fuzz-run",
             &fuzz_run,
-            "--fuzz-worker",
-            &fuzz_worker,
             "--mt",
             "testFuzz_randomUint_shouldFail",
             "-j1",
@@ -4039,7 +4036,6 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
         serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
     let fuzz_seed = format!("{:#x}", persisted_failure.fuzz.seed.unwrap());
     let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
-    let fuzz_worker = persisted_failure.fuzz.worker.unwrap().to_string();
 
     let assert = cmd
         .forge_fuse()
@@ -4049,8 +4045,6 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
             &fuzz_seed,
             "--fuzz-run",
             &fuzz_run,
-            "--fuzz-worker",
-            &fuzz_worker,
             "--mt",
             "testFuzz_randomUint_shouldFail",
             "-j1",

@@ -3875,10 +3875,9 @@ mod tests {
 
     #[test]
     fn fuzz_run() {
-        let args: TestArgs =
-            TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10"]);
         assert_eq!(args.fuzz_run, Some(10));
-        assert_eq!(args.fuzz_worker, Some(2));
+        assert_eq!(args.fuzz_worker, None);
     }
 
     #[test]
