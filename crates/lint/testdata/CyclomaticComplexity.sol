@@ -182,12 +182,13 @@ contract ComplexityDerived is ComplexityBase {
     }
 }
 
-// Yul helper functions declared inside `assembly {}` are independent HIR functions but not
-// Solidity declarations: the helper itself is never reported, whatever its complexity.
+// Yul helper functions declared inside `assembly {}` are functions of their own, matching
+// Slither: a complex helper reports on its name, and its decisions do not count toward the
+// enclosing function, which stays clean here.
 contract ComplexityYulHelper {
     function throughHelper(uint256 x) internal pure returns (uint256 r) {
         assembly {
-            function helper(v) -> o {
+            function helper(v) -> o { //~NOTE: this function has a cyclomatic complexity above 11
                 if gt(v, 0) { o := add(o, 1) }
                 if gt(v, 1) { o := add(o, 1) }
                 if gt(v, 2) { o := add(o, 1) }

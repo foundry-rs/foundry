@@ -29,10 +29,10 @@ impl<'hir> LateLintPass<'hir> for CyclomaticComplexity {
         func: &'hir hir::Function<'hir>,
     ) {
         let _ = gcx;
-        // Slither's detector iterates only declared and top-level functions: modifier
-        // definitions are never reported, and Yul helpers declared inside `assembly {}`
-        // blocks are independent HIR functions but not Solidity declarations.
-        if matches!(func.kind, hir::FunctionKind::Modifier) || func.is_yul {
+        // Modifier definitions are never reported, matching Slither which iterates only
+        // declared and top-level functions. Yul helpers declared inside `assembly {}` DO
+        // report: Slither scores them as functions of their own.
+        if matches!(func.kind, hir::FunctionKind::Modifier) {
             return;
         }
         if func.body.is_some() {
@@ -42,7 +42,14 @@ impl<'hir> LateLintPass<'hir> for CyclomaticComplexity {
             let _ = counter.visit_function(func);
             // For a structured program the complexity is one plus the decision points.
             if counter.decisions + 1 > MAX_COMPLEXITY {
-                ctx.emit(&CYCLOMATIC_COMPLEXITY, func.keyword_span());
+                // A Yul helper's span starts at its name rather than a `function` keyword,
+                // so the name is the anchor there.
+                let span = if func.is_yul {
+                    func.name.map_or(func.span, |name| name.span)
+                } else {
+                    func.keyword_span()
+                };
+                ctx.emit(&CYCLOMATIC_COMPLEXITY, span);
             }
         }
     }
