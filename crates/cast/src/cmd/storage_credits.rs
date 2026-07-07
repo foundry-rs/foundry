@@ -140,7 +140,7 @@ async fn mode(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
 
     let credits = IStorageCredits::new(STORAGE_CREDITS_ADDRESS, &provider);
     let mode = credits.modeOf(account).call().await?;
-    let payload = json!({ "account": format!("{account}"), "mode": mode_label(mode) });
+    let payload = json!({ "account": format!("{account}"), "mode": mode.as_str() });
     print_payload(payload, |payload| {
         sh_println!(
             "Account: {}\nMode:    {}",
@@ -243,14 +243,5 @@ impl CreditMode {
             Self::Preserve => IStorageCredits::Mode::Preserve,
             Self::Direct => IStorageCredits::Mode::Direct,
         }
-    }
-}
-
-const fn mode_label(mode: IStorageCredits::Mode) -> &'static str {
-    match mode {
-        IStorageCredits::Mode::Refund => "refund",
-        IStorageCredits::Mode::Preserve => "preserve",
-        IStorageCredits::Mode::Direct => "direct",
-        _ => "unknown",
     }
 }
