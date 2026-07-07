@@ -82,3 +82,51 @@ contract UsesDirectives {
         return point.norm() + point.onPoint() + d.tag() + small.double() + bytes(s.shout()).length;
     }
 }
+
+// A library function whose bound first parameter lives in calldata attaches too: storage does
+// not convert to calldata, so the calldata location is probed on its own.
+library BytesSliceLib {
+    function slice1(bytes calldata b) internal pure returns (bytes calldata) {
+        return b[1:];
+    }
+}
+
+library StringTailLib {
+    function tail(string calldata s) internal pure returns (string calldata) {
+        return s[1:];
+    }
+}
+
+using BytesSliceLib for bytes;
+using StringTailLib for string;
+
+contract UsesCalldataAttachments {
+    function firstByteDropped(bytes calldata b) external pure returns (bytes calldata) {
+        return b.slice1();
+    }
+
+    function firstCharDropped(string calldata s) external pure returns (string calldata) {
+        return s.tail();
+    }
+}
+
+// The library form skips private functions, but a braced directive is allowed to attach one
+// inside its own library. That attached private member must not make the dead library-form
+// directive look useful: `using PrivateLib for Holder` attaches nothing of its own.
+struct Holder {
+    uint256 x;
+}
+
+library PrivateLib {
+    using {PrivateLib.grab} for Holder;
+    using PrivateLib for Holder; //~NOTE: `using ... for` names a library
+
+    function grab(Holder memory h) private pure returns (uint256) {
+        return h.x;
+    }
+
+    function use() internal pure returns (uint256) {
+        Holder memory h = Holder(1);
+        return h.grab();
+    }
+}

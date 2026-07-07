@@ -14,3 +14,11 @@ LL │     using StringLib for uint256;
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-using-for
 
+note[incorrect-using-for]: `using ... for` names a library with no function applicable to the type, so the directive attaches nothing
+   ╭▸ ROOT/testdata/IncorrectUsingFor.sol:LL:CC
+   │
+LL │     using PrivateLib for Holder;
+   │           ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-using-for
+

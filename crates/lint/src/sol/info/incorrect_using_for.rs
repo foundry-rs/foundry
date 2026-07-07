@@ -61,9 +61,15 @@ impl IncorrectUsingFor {
         // `using L for *` attaches every function of the library: nothing to validate.
         let Some(hir_ty) = &directive.ty else { return };
         // `members_of` expects reference types wrapped in their data location. Storage
-        // converts implicitly to memory, so the storage form covers library functions
-        // taking either location.
-        let ty = gcx.type_of_hir_ty(hir_ty).with_loc_if_ref(gcx, DataLocation::Storage);
+        // converts implicitly to memory but not to calldata, so a library function whose
+        // bound first parameter is `calldata` only shows up under the calldata form: each
+        // location is probed and the directive only flags when none of them attaches.
+        let base_ty = gcx.type_of_hir_ty(hir_ty);
+        let tys = [
+            base_ty.with_loc_if_ref(gcx, DataLocation::Storage),
+            base_ty.with_loc_if_ref(gcx, DataLocation::Memory),
+            base_ty.with_loc_if_ref(gcx, DataLocation::Calldata),
+        ];
         for entry in directive.entries {
             // The braced form `using {f} for T` is already type-checked: the compiler rejects
             // a function that cannot attach to `T`.
@@ -72,14 +78,21 @@ impl IncorrectUsingFor {
             // comes from the named library. Whether the bound value converts to the first
             // parameter is the type checker's business: `members_of` already reflects it.
             let mut attaches = false;
-            for member in gcx.members_of(ty, directive.source, directive.contract) {
-                // A member counts when it is an attached function declared in the library.
-                if member.attached
-                    && let TyKind::Fn(function_ty) = member.ty.kind
-                    && let Some(function_id) = function_ty.function_id
-                    && hir.function(function_id).contract == Some(library_id)
-                {
-                    attaches = true;
+            // Each data location the bound value may live in is probed separately.
+            for ty in tys {
+                for member in gcx.members_of(ty, directive.source, directive.contract) {
+                    // A member counts when it is an attached function declared in the library,
+                    // excluding private ones: the library form skips private functions, so a
+                    // private member attached by a braced directive in scope does not make
+                    // this entry live.
+                    if member.attached
+                        && let TyKind::Fn(function_ty) = member.ty.kind
+                        && let Some(function_id) = function_ty.function_id
+                        && hir.function(function_id).contract == Some(library_id)
+                        && hir.function(function_id).visibility != hir::Visibility::Private
+                    {
+                        attaches = true;
+                    }
                 }
             }
             // No function of the library accepts the type: the directive is a no-op.

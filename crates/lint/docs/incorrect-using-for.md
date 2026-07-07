@@ -7,7 +7,7 @@ Flags `using L for T` directives whose library has no function applicable to the
 
 ## What it does
 
-Reports a `using ... for` directive, file-level or contract-level, when no function of the named library accepts the target type as its bound first parameter. Attachment follows the type checker, implicit conversions included: a `uint8` binds to a `uint256` parameter, a derived contract to a base parameter, and a storage reference to a memory one. `using L for *` and the braced form `using {f} for T` are out of scope, the latter because the compiler already rejects a function that cannot attach. This mirrors Slither's `incorrect-using-for` detector.
+Reports a `using ... for` directive, file-level or contract-level, when no function of the named library accepts the target type as its bound first parameter. Attachment follows the type checker, implicit conversions included: a `uint8` binds to a `uint256` parameter and a derived contract to a base parameter. Reference types are probed under every data location their bound value may live in (`storage`, `memory` and `calldata`), so a library whose only applicable function takes a `calldata` first parameter counts as attaching. Private library functions never count: the library form skips them, even when a braced directive in scope attaches one. `using L for *` and the braced form `using {f} for T` are out of scope, the latter because the compiler already rejects a function that cannot attach. This mirrors Slither's `incorrect-using-for` detector.
 
 ## Why is this bad?
 
