@@ -1,0 +1,48 @@
+warning[non-reentrant-not-first]: `nonReentrant` should be the first modifier
+   ╭▸ ROOT/testdata/NonReentrantNotFirst.sol:LL:CC
+   │
+LL │     function badSingle(uint256 amount) external onlyOwner nonReentrant {
+   │                                                           ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[non-reentrant-not-first]: `nonReentrant` should be the first modifier
+   ╭▸ ROOT/testdata/NonReentrantNotFirst.sol:LL:CC
+   │
+LL │     function badMultiple(uint256 amount) external onlyOwner whenNotPaused nonReentrant {
+   │                                                                           ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[non-reentrant-not-first]: `nonReentrant` should be the first modifier
+   ╭▸ ROOT/testdata/NonReentrantNotFirst.sol:LL:CC
+   │
+LL │     function badDuplicate(uint256 amount) external nonReentrant onlyOwner nonReentrant {
+   │                                                                           ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[non-reentrant-not-first]: `nonReentrant` should be the first modifier
+   ╭▸ ROOT/testdata/NonReentrantNotFirst.sol:LL:CC
+   │
+LL │     receive() external payable onlyOwner nonReentrant {
+   │                                          ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[non-reentrant-not-first]: `nonReentrant` should be the first modifier
+   ╭▸ ROOT/testdata/NonReentrantNotFirst.sol:LL:CC
+   │
+LL │     fallback() external payable onlyOwner nonReentrant {
+   │                                           ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[non-reentrant-not-first]: `nonReentrant` should be the first modifier
+   ╭▸ ROOT/testdata/NonReentrantNotFirst.sol:LL:CC
+   │
+LL │     function badInherited() external onlyOwner nonReentrant {
+   │                                                ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+

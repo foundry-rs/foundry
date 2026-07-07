@@ -9,10 +9,6 @@ static ALLOC: foundry_cli::utils::Allocator = foundry_cli::utils::new_allocator(
 
 fn main() {
     if let Err(err) = run() {
-        if foundry_cli::is_machine() {
-            foundry_cli::machine::report_machine_error(&err);
-            std::process::exit(foundry_cli::ExitCode::GenericError.to_i32());
-        }
         if foundry_common::shell::is_json() {
             // Collect the full error chain into structured error entries.
             let errors = err

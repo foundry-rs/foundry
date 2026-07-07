@@ -27,7 +27,7 @@ use revm::{
     bytecode::Bytecode,
     context::{Block, BlockEnv, CfgEnv, ContextTr, JournalInner, Transaction},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
-    database::{CacheDB, DatabaseRef, EmptyDB},
+    database::{AccountState, CacheDB, DatabaseRef, EmptyDB},
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
@@ -308,6 +308,14 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
+
+    /// Drops cached account info for `address` on the active fork so the next read re-fetches it
+    /// from the node (used after out-of-band mutations like `anvil_setBalance` via `vm.rpc`).
+    fn invalidate_fork_cache_account(&mut self, address: Address);
+
+    /// Like [`invalidate_fork_cache_account`](Self::invalidate_fork_cache_account), but for a
+    /// single storage slot.
+    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256);
 
     /// Revokes persistent status from the given account.
     fn remove_persistent_account(&mut self, account: &Address) -> bool;
@@ -1541,6 +1549,35 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn add_persistent_account(&mut self, account: Address) -> bool {
         trace!(?account, "add persistent account");
         self.inner.persistent_accounts.insert(account)
+    }
+
+    fn invalidate_fork_cache_account(&mut self, address: Address) {
+        let Some(fork_db) = self.active_fork_db_mut() else { return };
+        trace!(?address, "invalidate fork cache account");
+        fork_db.db.data().accounts.write().remove(&address);
+        // Keep the local entry if it holds in-script modifications (e.g. `vm.deal`).
+        if fork_db
+            .cache
+            .accounts
+            .get(&address)
+            .is_some_and(|account| account.account_state == AccountState::None)
+        {
+            fork_db.cache.accounts.remove(&address);
+        }
+    }
+
+    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256) {
+        let Some(fork_db) = self.active_fork_db_mut() else { return };
+        trace!(?address, ?slot, "invalidate fork cache storage");
+        if let Some(storage) = fork_db.db.data().storage.write().get_mut(&address) {
+            storage.remove(&slot);
+        }
+        // Keep the local slot if the account holds in-script modifications.
+        if let Some(account) = fork_db.cache.accounts.get_mut(&address)
+            && account.account_state == AccountState::None
+        {
+            account.storage.remove(&slot);
+        }
     }
 
     fn remove_persistent_account(&mut self, account: &Address) -> bool {

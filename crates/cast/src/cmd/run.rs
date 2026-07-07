@@ -5,14 +5,14 @@ use crate::{
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, TransactionResponse};
+use alloy_network::{BlockResponse, Network, TransactionResponse};
 use alloy_primitives::{
-    Address, Bytes, U256,
+    Address, B256, Bytes, U256,
     map::{AddressHashMap, AddressSet},
 };
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    BlockTransactions,
+    BlockId, BlockTransactions,
     trace::geth::{GethDebugTracingOptions, PreStateConfig},
 };
 use clap::Parser;
@@ -42,10 +42,10 @@ use foundry_evm::{
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode, Traces},
+    traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use futures::TryFutureExt;
-use revm::{DatabaseRef, context::Block};
+use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -213,8 +213,10 @@ impl RunArgs {
         evm_env.cfg_env.limit_contract_code_size = None;
         evm_env.block_env.set_number(U256::from(tx_block_number));
 
+        let mut parent_beacon_block_root = None;
         if let Some(block) = &block {
             evm_env.block_env = block_env_from_header(block.header());
+            parent_beacon_block_root = block.header().parent_beacon_block_root();
 
             // Resolve the correct spec for the block using the same approach as reth: walk
             // known chain activation conditions to find the latest active fork. Falls back
@@ -240,7 +242,8 @@ impl RunArgs {
             );
         }
 
-        let trace_mode = TraceMode::Call
+        let trace_requirements = TraceRequirements::none()
+            .with_calls(true)
             .with_debug(self.debug)
             .with_decode_internal(if self.decode_internal {
                 InternalTraceMode::Full
@@ -252,13 +255,21 @@ impl RunArgs {
             (evm_env.clone(), tx_env),
             fork,
             evm_version,
-            trace_mode,
+            trace_requirements,
             networks,
             create2_deployer,
             None,
         )?;
 
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
+
+        let spec_id = (*evm_env.cfg_env.spec()).into();
+
+        if let Some(parent_beacon_block_root) =
+            parent_beacon_block_root_for_spec(spec_id, parent_beacon_block_root)?
+        {
+            executor.apply_beacon_root(parent_beacon_block_root)?;
+        }
 
         // Set the state to the moment right before the transaction.
         //
@@ -399,6 +410,21 @@ impl RunArgs {
     }
 }
 
+fn parent_beacon_block_root_for_spec(
+    spec_id: SpecId,
+    parent_beacon_block_root: Option<B256>,
+) -> Result<Option<B256>> {
+    if !spec_id.is_enabled_in(SpecId::CANCUN) {
+        return Ok(None);
+    }
+
+    parent_beacon_block_root.map(Some).ok_or_else(|| {
+        eyre::eyre!(
+            "MissingParentBeaconBlockRoot: missing parent beacon block root for Cancun block"
+        )
+    })
+}
+
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     result: &TraceResult,
@@ -419,6 +445,33 @@ pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
             }
             Some((addr, code))
         }));
+    }
+    Ok(contracts_bytecode)
+}
+
+/// Fetches the runtime bytecode of the addresses seen in `result` over RPC.
+///
+/// The RPC trace path (`cast call --debug-trace-call`) has no local executor to read code
+/// from, so the bytecode needed to match local artifacts is fetched from the node with
+/// `eth_getCode`. Addresses whose code cannot be fetched are skipped with a warning.
+pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
+    provider: &P,
+    result: &TraceResult,
+    block: BlockId,
+) -> Result<AddressHashMap<Bytes>> {
+    let mut contracts_bytecode = AddressHashMap::default();
+    if let Some(ref traces) = result.traces {
+        for addr in gather_trace_addresses(traces) {
+            match provider.get_code_at(addr).block_id(block).await {
+                Ok(code) if !code.is_empty() => {
+                    contracts_bytecode.insert(addr, code);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    let _ = sh_warn!("Failed to fetch code for {addr}: {err}");
+                }
+            }
+        }
     }
     Ok(contracts_bytecode)
 }
@@ -455,5 +508,24 @@ impl figment::Provider for RunArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), map)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_beacon_block_root_is_required_for_cancun() {
+        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None).unwrap_err();
+        assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
+
+        let root = B256::repeat_byte(0x42);
+        assert_eq!(
+            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root)).unwrap(),
+            Some(root),
+        );
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
     }
 }

@@ -31,7 +31,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
@@ -457,16 +457,7 @@ impl NodeArgs {
                 // cleaning up and shutting down
                 // this will make sure that the fork RPC cache is flushed if caching is configured
             }
-            // Triggered by SIGINT / SIGTERM after a clean cache flush. Under
-            // the agent contract this is `Interrupted` (8); legacy human
-            // invocations preserve the historical exit-0 contract for
-            // backward compatibility.
-            let code = if foundry_cli::is_machine() {
-                foundry_cli::ExitCode::Interrupted.to_i32()
-            } else {
-                0
-            };
-            std::process::exit(code);
+            std::process::exit(0);
         });
 
         ctrlc::set_handler(move || {

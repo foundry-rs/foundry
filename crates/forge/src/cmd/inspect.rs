@@ -13,7 +13,7 @@ use foundry_compilers::{
         StorageLayout,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection, OutputSelection,
         },
     },
     solc::SolcLanguage,
@@ -54,6 +54,9 @@ impl InspectArgs {
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
+        let user_extra_output = !build.compiler.extra_output.is_empty()
+            || !build.compiler.extra_output_files.is_empty();
+
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
         if !field.can_skip_field() && !cos.iter().any(|selected| field == *selected) {
@@ -77,7 +80,15 @@ impl InspectArgs {
         };
 
         // Build the project
-        let project = modified_build_args.project()?;
+        let mut project = modified_build_args.project()?;
+        if !user_extra_output
+            && !project.build_info
+            && let Some(selection) = field.inspect_output_selection()
+        {
+            project.no_artifacts = true;
+            project
+                .update_output_selection(|output_selection| *output_selection = selection.clone());
+        }
         let target_path = find_target_path(&project, &contract)?;
         if field == ContractArtifactField::Linearization && !is_solidity_source(&target_path) {
             eyre::bail!(
@@ -92,6 +103,9 @@ impl InspectArgs {
 
         // Match on ContractArtifactFields and pretty-print
         match field {
+            ContractArtifactField::Artifact => {
+                print_json(&artifact)?;
+            }
             ContractArtifactField::Abi => {
                 let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
                 print_abi(abi, wrap)?;
@@ -535,6 +549,7 @@ fn print_linearization(
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ContractArtifactField {
+    Artifact,
     Abi,
     Bytecode,
     DeployedBytecode,
@@ -614,6 +629,8 @@ macro_rules! impl_value_enum {
 
 impl_value_enum! {
     enum ContractArtifactField {
+        Artifact          => "artifact" | "artifactJson" | "artifact-json" | "artifact_json"
+                             | "output",
         Abi               => "abi",
         Bytecode          => "bytecode" | "bytes" | "b",
         DeployedBytecode  => "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode"
@@ -651,6 +668,7 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
     fn try_from(field: ContractArtifactField) -> Result<Self, Self::Error> {
         type Caf = ContractArtifactField;
         match field {
+            Caf::Artifact => Err(eyre!("Artifact is not supported for ContractOutputSelection")),
             Caf::Abi => Ok(Self::Abi),
             Caf::Bytecode => {
                 Ok(Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)))
@@ -717,12 +735,28 @@ impl ContractArtifactField {
     pub const fn can_skip_field(&self) -> bool {
         matches!(
             self,
-            Self::Bytecode
+            Self::Artifact
+                | Self::Bytecode
                 | Self::DeployedBytecode
                 | Self::StandardJson
                 | Self::Libraries
                 | Self::Linearization
         )
+    }
+
+    fn inspect_output_selection(&self) -> Option<OutputSelection> {
+        match self {
+            Self::Artifact
+            | Self::Bytecode
+            | Self::DeployedBytecode
+            | Self::StandardJson
+            | Self::Libraries
+            | Self::Linearization => None,
+            _ => {
+                let selection: ContractOutputSelection = (*self).try_into().ok()?;
+                Some(OutputSelection::common_output_selection([selection.to_string()]))
+            }
+        }
     }
 }
 
@@ -787,7 +821,15 @@ mod tests {
     #[test]
     fn contract_output_selection() {
         for &field in ContractArtifactField::ALL {
-            if field == ContractArtifactField::StandardJson {
+            if field == ContractArtifactField::Artifact {
+                let selection: Result<ContractOutputSelection, _> = field.try_into();
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("Artifact is not supported for ContractOutputSelection")
+                );
+            } else if field == ContractArtifactField::StandardJson {
                 let selection: Result<ContractOutputSelection, _> = field.try_into();
                 assert!(
                     selection

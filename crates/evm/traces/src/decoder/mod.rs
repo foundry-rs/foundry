@@ -7,7 +7,7 @@ use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
-    map::{HashMap, HashSet},
+    map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
 use foundry_common::{
@@ -30,16 +30,18 @@ use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
-    IStablecoinDEX, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry, IValidatorConfig,
+    IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry,
+    IValidatorConfig,
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
     RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
+    STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce,
+    tip20::ITIP20,
 };
 
-mod precompiles;
+pub(crate) mod precompiles;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -220,6 +222,7 @@ impl CallTraceDecoder {
             ITIP403Registry::abi::contract(),
             ITIP20Factory::abi::contract(),
             IStablecoinDEX::abi::contract(),
+            IStorageCredits::abi::contract(),
             INonce::abi::contract(),
             IValidatorConfig::abi::contract(),
             IAccountKeychain::abi::contract(),
@@ -265,6 +268,7 @@ impl CallTraceDecoder {
                 (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
                 (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
                 (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
+                (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
@@ -276,6 +280,9 @@ impl CallTraceDecoder {
                 .chain(Vm::abi::functions().into_values())
                 // Tempo
                 .chain(IFeeManager::abi::functions().into_values())
+                // `IStorageCredits` shares the `balanceOf(address)` selector with `ITIP20`, so it
+                // must be chained first to keep `ITIP20`'s `uint256` return as the global fallback.
+                .chain(IStorageCredits::abi::functions().into_values())
                 .chain(ITIP20::abi::functions().into_values())
                 .chain(ITIP403Registry::abi::functions().into_values())
                 .chain(ITIP20Factory::abi::functions().into_values())
@@ -338,6 +345,17 @@ impl CallTraceDecoder {
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
+    }
+
+    /// Returns labels for precompiles active in this decoder's chain context.
+    pub fn precompile_labels(&self) -> AddressHashMap<String> {
+        self.labels
+            .iter()
+            .filter(|(address, _)| {
+                precompiles::is_known_precompile(**address, self.chain_id, self.tempo_hardfork)
+            })
+            .map(|(address, label)| (*address, label.clone()))
+            .collect()
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -1119,7 +1137,7 @@ fn indexed_inputs(event: &Event) -> usize {
 mod tests {
     use super::*;
     use alloy_primitives::{address, aliases::U96, hex};
-    use alloy_sol_types::{SolCall, SolEvent};
+    use alloy_sol_types::{SolCall, SolError, SolEvent};
 
     #[test]
     fn test_selector_collision_resolution() {
@@ -1823,6 +1841,52 @@ mod tests {
         assert!(params[8].1.starts_with("1000000"));
     }
 
+    #[tokio::test]
+    async fn test_t7_storage_credits_call_and_error_decode() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+
+        // A write call decodes to its signature and the precompile address is labeled.
+        let set_mode = IStorageCredits::setModeCall { newMode: IStorageCredits::Mode::Direct };
+        let trace = CallTrace {
+            address: STORAGE_CREDITS_ADDRESS,
+            data: set_mode.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("StorageCredits"));
+        assert_eq!(decoded.call_data.expect("setMode should decode").signature, "setMode(uint8)");
+
+        // A view call unique to this precompile also decodes.
+        let mode_of = IStorageCredits::modeOfCall { account: Address::repeat_byte(0x11) };
+        let trace = CallTrace {
+            address: STORAGE_CREDITS_ADDRESS,
+            data: mode_of.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.call_data.expect("modeOf should decode").signature, "modeOf(address)");
+
+        // The precompile's custom errors decode by name in reverts.
+        let revert = decoder
+            .revert_decoder
+            .decode(IStorageCredits::InvalidMode {}.abi_encode().as_slice(), None);
+        assert!(revert.contains("InvalidMode"), "{revert}");
+
+        // `balanceOf(address)` collides with `ITIP20`'s selector; the global map must keep
+        // `ITIP20`'s `uint256` return so ordinary token balances above `u64::MAX` still decode.
+        let selector = IStorageCredits::balanceOfCall::SELECTOR;
+        let funcs = decoder.functions.get(&selector).expect("balanceOf selector is registered");
+        assert!(
+            funcs.iter().any(|f| f.outputs.first().is_some_and(|o| o.ty == "uint256")),
+            "global balanceOf must return uint256"
+        );
+    }
+
     // A mock identifier that records which addresses it was asked to identify.
     struct RecordingIdentifier {
         queried: Vec<Address>,
@@ -1912,6 +1976,62 @@ mod tests {
 
         // On a Tempo chain, the Tempo precompile should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_precompile_labels_follow_tempo_hardfork_activation_boundaries() {
+        let labels_for_hardfork = |hardfork| {
+            CallTraceDecoderBuilder::new()
+                .with_tempo_hardfork(Some(hardfork))
+                .build()
+                .precompile_labels()
+        };
+
+        let t4_labels = labels_for_hardfork(TempoHardfork::T4);
+        assert_eq!(t4_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert!(!t4_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(!t4_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!t4_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t5_labels = labels_for_hardfork(TempoHardfork::T5);
+        assert_eq!(t5_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert_eq!(
+            t5_labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert!(!t5_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!t5_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t6_labels = labels_for_hardfork(TempoHardfork::T6);
+        assert_eq!(
+            t6_labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert_eq!(
+            t6_labels.get(&RECEIVE_POLICY_GUARD_ADDRESS),
+            Some(&"ReceivePolicyGuard".to_string())
+        );
+        assert!(!t6_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t7_labels = labels_for_hardfork(TempoHardfork::T7);
+        assert_eq!(
+            t7_labels.get(&RECEIVE_POLICY_GUARD_ADDRESS),
+            Some(&"ReceivePolicyGuard".to_string())
+        );
+        assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+    }
+
+    #[test]
+    fn test_precompile_labels_skip_tempo_precompiles_on_other_chains() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(1))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+
+        let labels = decoder.precompile_labels();
+        assert!(!labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
+        assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!labels.contains_key(&STORAGE_CREDITS_ADDRESS));
     }
 
     #[test]
