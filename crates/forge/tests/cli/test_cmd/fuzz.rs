@@ -322,6 +322,51 @@ forgetest_init!(forge_fuzz_replay_rejects_watch, |_prj, cmd| {
     assert!(stderr.contains("unexpected argument '--watch'"), "{stderr}");
 });
 
+forgetest_init!(forge_fuzz_run_honors_configured_invariant_workers, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 4;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(4).unwrap());
+        config.fuzz.seed = Some(U256::ZERO);
+    });
+    prj.add_test(
+        "ForgeFuzzRunInvariantWorkers.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunInvariantWorkersTarget {
+    uint256 public counter;
+
+    function bump() public {
+        counter++;
+    }
+}
+
+contract ForgeFuzzRunInvariantWorkersTest is Test {
+    ForgeFuzzRunInvariantWorkersTarget target;
+
+    function setUp() public {
+        target = new ForgeFuzzRunInvariantWorkersTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_break() public view {
+        require(target.counter() == 0, "broken");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["fuzz", "run", "--json", "--mt", "invariant_break"]).assert_failure();
+    let json: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let suite = json.as_object().unwrap().values().next().unwrap();
+    let tests = suite["test_results"].as_object().unwrap();
+    let result = tests.values().next().unwrap();
+    let kind = &result["kind"]["Invariant"];
+    assert_eq!(kind["workers"], 4, "{json}");
+});
+
 // `forge fuzz replay` (without `--corpus-dir`) must not start a fresh invariant
 // campaign when there is no persisted failure to replay; it should skip instead.
 forgetest_init!(forge_fuzz_replay_invariant_skips_without_persisted_failure, |prj, cmd| {

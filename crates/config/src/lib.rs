@@ -877,9 +877,13 @@ impl Config {
             .unwrap_or_else(|_| {
                 figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
             });
+        let invariant_workers_configured = figment
+            .extract_inner::<bool>("invariant.workers_configured")
+            .unwrap_or_else(|_| figment_value_is_configured(&figment, "invariant.workers"));
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
+        config.invariant.workers_configured = invariant_workers_configured;
         let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
@@ -1024,11 +1028,18 @@ impl Config {
                 .unwrap_or_else(|_| {
                     figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
                 });
+        let invariant_workers_configured = self.invariant.workers_configured
+            || figment.extract_inner::<bool>("invariant.workers_configured").unwrap_or_else(|_| {
+                figment.extract_inner::<InvariantWorkers>("invariant.workers").is_ok()
+            });
 
         // normalize defaults
         figment = self.normalize_defaults(figment);
         if invariant_corpus_random_sequence_weight_configured {
             figment = figment.merge(("invariant.corpus_random_sequence_weight_configured", true));
+        }
+        if invariant_workers_configured {
+            figment = figment.merge(("invariant.workers_configured", true));
         }
 
         Figment::from(self).merge(figment).select(profile)
@@ -5136,12 +5147,14 @@ mod tests {
                 FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
             );
             assert!(!loaded.invariant.corpus_random_sequence_weight_configured);
+            assert!(!loaded.invariant.workers_configured);
 
             jail.create_file(
                 "foundry.toml",
                 r#"
                 [invariant]
                 corpus_random_sequence_weight = 10
+                workers = 4
             "#,
             )?;
 
@@ -5151,6 +5164,11 @@ mod tests {
                 FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
             );
             assert!(loaded.invariant.corpus_random_sequence_weight_configured);
+            assert_eq!(
+                loaded.invariant.workers,
+                InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap())
+            );
+            assert!(loaded.invariant.workers_configured);
 
             Ok(())
         });

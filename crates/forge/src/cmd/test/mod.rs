@@ -1239,7 +1239,7 @@ impl TestArgs {
             list: args.list,
             fuzz_seed: args.campaign.seed,
             fuzz_runs: args.campaign.runs,
-            invariant_workers: Some(args.campaign.workers.unwrap_or(InvariantWorkers::Auto)),
+            invariant_workers: args.campaign.workers,
             fuzz_run: args.fuzz_run,
             fuzz_timeout: args.campaign.timeout.map(u64::from),
             fuzz_dictionary_weight: args.campaign.dictionary_weight,
@@ -1470,6 +1470,9 @@ impl TestArgs {
         Arc<InlineConfig>,
         Option<SymbolicArtifactReplayConfig>,
     )> {
+        let should_default_fuzz_run_workers_to_auto =
+            self.warn_unsupported_engine_flags.is_some() && self.invariant_workers.is_none();
+
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -1485,6 +1488,9 @@ impl TestArgs {
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
+        }
+        if should_default_fuzz_run_workers_to_auto && !config.invariant.workers_configured {
+            config.invariant.workers = InvariantWorkers::Auto;
         }
 
         // Set up the project.
@@ -3898,14 +3904,12 @@ mod tests {
     }
 
     #[test]
-    fn fuzz_run_adapter_defaults_invariant_workers_to_auto() {
+    fn fuzz_run_adapter_writes_invariant_workers_sparsely() {
         let args = TestArgs::from_fuzz_run(FuzzRunArgs::parse_from(["foundry-cli"]));
         let figment = figment::Figment::from(&args);
 
-        assert_eq!(
-            figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
-            InvariantWorkers::Auto
-        );
+        assert_eq!(args.invariant_workers, None);
+        assert!(figment.extract_inner::<InvariantWorkers>("invariant.workers").is_err());
     }
 
     #[test]
