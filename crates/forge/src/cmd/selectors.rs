@@ -3,15 +3,15 @@ use clap::Parser;
 use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
 use foundry_cli::{
-    opts::{BuildOpts, CompilerOpts, ProjectPathOpts},
-    utils::{FoundryPathExt, cache_local_signatures, cache_signatures_from_abis},
+    opts::{BuildOpts, ProjectPathOpts},
+    utils::{FoundryPathExt, LoadConfig, cache_local_signatures, cache_signatures_from_abis},
 };
 use foundry_common::{
-    compile::{PathOrContractInfo, ProjectCompiler, compile_target},
+    compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
     selectors::{SelectorImportData, import_selectors},
     shell,
 };
-use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
+use foundry_compilers::{Project, info::ContractInfo, multi::MultiCompiler};
 use std::{collections::BTreeMap, fs::canonicalize};
 
 /// CLI arguments for `forge selectors`.
@@ -93,31 +93,13 @@ impl SelectorsSubcommands {
                 }
 
                 sh_status!("Caching selectors for contracts in the project...")?;
-                let build_args = BuildOpts {
-                    project_paths,
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-
-                // compile the project to get the artifacts/abis
-                let project = build_args.project()?;
-                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
+                let mut project = project_from_paths(project_paths)?;
+                let outcome =
+                    compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
                 cache_local_signatures(&outcome)?;
             }
             Self::Upload { contract, all, project_paths } => {
-                let build_args = BuildOpts {
-                    project_paths: project_paths.clone(),
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-
-                let project = build_args.project()?;
+                let mut project = project_from_paths(project_paths)?;
                 let output = if let Some(contract_info) = &contract {
                     let Some(contract_name) = contract_info.name() else {
                         eyre::bail!("No contract name provided.")
@@ -127,9 +109,9 @@ impl SelectorsSubcommands {
                         .path()
                         .map(Ok)
                         .unwrap_or_else(|| project.find_contract_path(contract_name))?;
-                    compile_target(&target_path, &project, false)?
+                    compile_abi_project(&mut project, ProjectCompiler::new().files([target_path]))?
                 } else {
-                    ProjectCompiler::new().compile(&project)?
+                    compile_abi_project(&mut project, ProjectCompiler::new())?
                 };
                 let artifacts = if all {
                     output
@@ -242,18 +224,9 @@ impl SelectorsSubcommands {
             }
             Self::List { contract, project_paths, no_group } => {
                 sh_status!("Listing selectors for contracts in the project...")?;
-                let build_args = BuildOpts {
-                    project_paths,
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-
-                // compile the project to get the artifacts/abis
-                let project = build_args.project()?;
-                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
+                let mut project = project_from_paths(project_paths)?;
+                let outcome =
+                    compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);
                     let artifact = found_artifact
@@ -387,17 +360,9 @@ impl SelectorsSubcommands {
             Self::Find { selector, project_paths } => {
                 sh_status!("Searching for selector {selector:?} in the project...")?;
 
-                let build_args = BuildOpts {
-                    project_paths,
-                    compiler: CompilerOpts {
-                        extra_output: vec![ContractOutputSelection::Abi],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-
-                let project = build_args.project()?;
-                let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
+                let mut project = project_from_paths(project_paths)?;
+                let outcome =
+                    compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
                 let artifacts = outcome
                     .into_artifacts_with_files()
                     .filter(|(file, _, _)| {
@@ -466,4 +431,9 @@ impl SelectorsSubcommands {
         }
         Ok(())
     }
+}
+
+fn project_from_paths(project_paths: ProjectPathOpts) -> Result<Project<MultiCompiler>> {
+    let config = BuildOpts { project_paths, ..Default::default() }.load_config()?;
+    Ok(config.project()?)
 }

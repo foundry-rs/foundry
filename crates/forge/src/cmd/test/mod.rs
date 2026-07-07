@@ -6,11 +6,16 @@ use crate::{
     multi_runner::{
         FuzzMinimizeConfig, FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, MultiNetworkConfig,
         ShowmapConfig, SymbolicArtifactReplayConfig, TestFunctionMatcher,
+        is_generated_symbolic_regression_contract,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
         SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
+    },
+    symbolic_regression::{
+        SymbolicRegressionConfig, attach_symbolic_regressions_to_suites,
+        collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
     },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -29,11 +34,13 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
+    EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
+    compile::{ProjectCompiler, compile_abi_project},
+    fs, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
-    artifacts::{Libraries, output_selection::OutputSelection},
+    artifacts::Libraries,
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -670,6 +677,24 @@ pub struct TestArgs {
     )]
     pub replay_symbolic_artifact: Option<PathBuf>,
 
+    /// Emit Solidity regression tests for confirmed symbolic counterexamples.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_EMIT_REGRESSION")]
+    pub emit_regression: bool,
+
+    /// File or directory for generated symbolic regression tests.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_REGRESSION_OUT",
+        value_name = "PATH",
+        value_hint = ValueHint::AnyPath,
+        requires = "emit_regression"
+    )]
+    pub regression_out: Option<PathBuf>,
+
+    /// Overwrite existing generated symbolic regression tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_REGRESSION_OVERWRITE", requires = "emit_regression")]
+    pub regression_overwrite: bool,
+
     /// Run fuzz tests symbolically and persist non-failing concrete inputs to the fuzz corpus.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SEED_CORPUS")]
     pub symbolic_seed_corpus: bool,
@@ -1100,10 +1125,7 @@ impl TestArgs {
         }
 
         let mut project = config.create_project(true, true)?;
-        project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection(["abi".to_string()]);
-        });
-        let output = project.compile()?;
+        let output = compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
@@ -1179,7 +1201,7 @@ impl TestArgs {
         }
 
         // Set up the project.
-        let project = config.project()?;
+        let mut project = config.project()?;
         let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1210,6 +1232,24 @@ impl TestArgs {
 
         let dynamic_test_linking = config.dynamic_test_linking;
         let quiet = shell::is_json() || self.junit;
+
+        if self.list {
+            let output = compile_abi_project(
+                &mut project,
+                ProjectCompiler::new().dynamic_test_linking(dynamic_test_linking).quiet(quiet),
+            )?;
+            let inline_config = Arc::new(InlineConfig::new_parsed(&output, &config)?);
+            return Ok((
+                project_root,
+                config,
+                evm_opts,
+                output,
+                filter,
+                inline_config,
+                replay_symbolic_artifact,
+            ));
+        }
+
         let compile = |files| {
             ProjectCompiler::new()
                 .dynamic_test_linking(dynamic_test_linking)
@@ -1392,6 +1432,17 @@ impl TestArgs {
                     conflicts.join(", ")
                 );
             }
+        }
+
+        if self.list {
+            return list_from_output(
+                output,
+                &config,
+                &execution.inline_config,
+                filter,
+                self.fuzz_only,
+                execution.replay_symbolic_artifact.as_ref(),
+            );
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -2076,6 +2127,16 @@ impl TestArgs {
         }
     }
 
+    fn symbolic_regression_config(&self, config: &Config) -> Option<SymbolicRegressionConfig> {
+        self.emit_regression.then(|| SymbolicRegressionConfig {
+            out: self
+                .regression_out
+                .clone()
+                .map(|path| if path.is_relative() { config.root.join(path) } else { path }),
+            overwrite: self.regression_overwrite,
+        })
+    }
+
     /// Run all tests that matches the filter predicate from a test runner
     async fn run_tests_inner<FEN: FoundryEvmNetwork>(
         &self,
@@ -2089,6 +2150,7 @@ impl TestArgs {
         if self.list {
             return list(runner, filter);
         }
+        let symbolic_regression = self.symbolic_regression_config(&config);
 
         trace!(target: "forge::test", "running all tests");
 
@@ -2177,13 +2239,33 @@ impl TestArgs {
                     }
                 }
             }
+            if let Some(regression) = &symbolic_regression {
+                let artifacts = collect_symbolic_artifacts_from_suites(results.values());
+                let regressions = emit_symbolic_regressions(
+                    &config,
+                    regression,
+                    &runner.known_contracts,
+                    &artifacts,
+                )?;
+                attach_symbolic_regressions_to_suites(results.values_mut(), &regressions);
+            }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             let kc = runner.known_contracts.clone();
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
-            let results = runner.test_collect(filter)?;
+            let mut results = runner.test_collect(filter)?;
+            if let Some(regression) = &symbolic_regression {
+                let artifacts = collect_symbolic_artifacts_from_suites(results.values());
+                let regressions = emit_symbolic_regressions(
+                    &config,
+                    regression,
+                    &runner.known_contracts,
+                    &artifacts,
+                )?;
+                attach_symbolic_regressions_to_suites(results.values_mut(), &regressions);
+            }
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             let kc = runner.known_contracts.clone();
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
@@ -2545,6 +2627,21 @@ impl TestArgs {
             // Stop processing the remaining suites if any test failed and `fail_fast` is set.
             if self.fail_fast && any_test_failed {
                 break;
+            }
+        }
+        if let Some(regression) = &symbolic_regression {
+            let artifacts = collect_symbolic_artifacts_from_suites(outcome.results.values());
+            let regressions =
+                emit_symbolic_regressions(&config, regression, &known_contracts, &artifacts)?;
+            attach_symbolic_regressions_to_suites(outcome.results.values_mut(), &regressions);
+            if !silent {
+                for regression in regressions {
+                    sh_warn!(
+                        "Regression test: {} (from {})",
+                        regression.path.display(),
+                        regression.artifact.display()
+                    )?;
+                }
             }
         }
         outcome.last_run_decoder = Some(decoder);
@@ -2940,11 +3037,72 @@ fn list<FEN: FoundryEvmNetwork>(
     filter: &ProjectPathsAwareFilter,
 ) -> Result<TestOutcome> {
     let results = runner.list(filter);
+    print_list_results(&results)?;
+    Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+}
 
+fn list_from_output(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    inline_config: &InlineConfig,
+    filter: &ProjectPathsAwareFilter,
+    fuzz_only: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
+) -> Result<TestOutcome> {
+    let matcher = TestFunctionMatcher::new(config, inline_config, symbolic_artifact_replay);
+    let results = output
+        .artifact_ids()
+        .filter_map(|(id, artifact)| {
+            let abi = artifact.abi.as_ref()?;
+            let id = id.with_stripped_file_prefixes(&config.root);
+            let deployable = abi
+                .constructor
+                .as_ref()
+                .map(|constructor| constructor.inputs.is_empty())
+                .unwrap_or(true);
+            if !deployable || !matcher.matches_contract(filter, &id, abi) {
+                return None;
+            }
+            let source = id.source.as_path().display().to_string();
+            let identifier = id.identifier();
+            let name = id.name;
+            let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
+            let tests = abi
+                .functions()
+                .filter(|func| {
+                    let kind = matcher.test_function_kind(
+                        &identifier,
+                        func,
+                        generated_symbolic_regression,
+                    );
+                    (!fuzz_only
+                        || matches!(
+                            kind,
+                            TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                        ))
+                        && filter.matches_test_function_kind_in_contract(&identifier, func, kind)
+                })
+                .map(|func| func.name.clone())
+                .collect::<Vec<_>>();
+            (!tests.is_empty()).then_some((source, name, tests))
+        })
+        .fold(
+            BTreeMap::<String, BTreeMap<String, Vec<String>>>::new(),
+            |mut acc, (source, name, tests)| {
+                acc.entry(source).or_default().insert(name, tests);
+                acc
+            },
+        );
+
+    print_list_results(&results)?;
+    Ok(TestOutcome::empty(None, false))
+}
+
+fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>) -> Result<()> {
     if shell::is_json() {
         sh_println!("{}", serde_json::to_string(&results)?)?;
     } else {
-        for (file, contracts) in &results {
+        for (file, contracts) in results {
             sh_println!("{file}")?;
             for (contract, tests) in contracts {
                 sh_println!("  {contract}")?;
@@ -2952,7 +3110,7 @@ fn list<FEN: FoundryEvmNetwork>(
             }
         }
     }
-    Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+    Ok(())
 }
 
 /// Merges `other` into `base` by extending suite results.

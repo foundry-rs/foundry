@@ -551,41 +551,33 @@ impl SymbolicExecutor {
                         false_state.set_corpus_seed_models(false_seed_models);
                         false_state.pc = fallthrough;
 
-                        let true_feasible = self.take_loop_jump(&mut true_state, fallthrough, dest)
-                            && self.branch_is_sat_or_defer(&true_state.constraints)?;
-                        let false_feasible =
-                            self.branch_is_sat_or_defer(&false_state.constraints)?;
-                        trace!(true_feasible, false_feasible, "JUMPI symbolic branch");
-                        match (true_feasible, false_feasible) {
-                            (true, true) => {
-                                let true_seed_count = true_state.corpus_seed_model_count();
-                                let false_seed_count = false_state.corpus_seed_model_count();
-                                match (
-                                    false_seed_count.cmp(&true_seed_count),
-                                    self.config.exploration_order,
-                                ) {
-                                    (
-                                        std::cmp::Ordering::Greater,
-                                        SymbolicExplorationOrder::Bfs,
-                                    )
-                                    | (std::cmp::Ordering::Less, SymbolicExplorationOrder::Dfs) => {
-                                        worklist.push_back(false_state);
-                                        worklist.push_back(true_state);
-                                    }
-                                    (
-                                        std::cmp::Ordering::Greater,
-                                        SymbolicExplorationOrder::Dfs,
-                                    )
-                                    | (std::cmp::Ordering::Less, SymbolicExplorationOrder::Bfs)
-                                    | (std::cmp::Ordering::Equal, _) => {
-                                        worklist.push_back(true_state);
-                                        worklist.push_back(false_state);
-                                    }
+                        let true_pending = self.take_loop_jump(&mut true_state, fallthrough, dest);
+                        if true_pending {
+                            true_state.defer_feasibility_check();
+                        }
+                        false_state.defer_feasibility_check();
+                        trace!(true_pending, false_pending = true, "JUMPI symbolic branch");
+                        if true_pending {
+                            let true_seed_count = true_state.corpus_seed_model_count();
+                            let false_seed_count = false_state.corpus_seed_model_count();
+                            match (
+                                false_seed_count.cmp(&true_seed_count),
+                                self.config.exploration_order,
+                            ) {
+                                (std::cmp::Ordering::Greater, SymbolicExplorationOrder::Bfs)
+                                | (std::cmp::Ordering::Less, SymbolicExplorationOrder::Dfs) => {
+                                    worklist.push_back(false_state);
+                                    worklist.push_back(true_state);
+                                }
+                                (std::cmp::Ordering::Greater, SymbolicExplorationOrder::Dfs)
+                                | (std::cmp::Ordering::Less, SymbolicExplorationOrder::Bfs)
+                                | (std::cmp::Ordering::Equal, _) => {
+                                    worklist.push_back(true_state);
+                                    worklist.push_back(false_state);
                                 }
                             }
-                            (true, false) => worklist.push_back(true_state),
-                            (false, true) => worklist.push_back(false_state),
-                            (false, false) => {}
+                        } else {
+                            worklist.push_back(false_state);
                         }
                         return Ok(StepOutcome::Forked);
                     }
