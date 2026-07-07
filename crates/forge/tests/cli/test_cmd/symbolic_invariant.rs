@@ -204,6 +204,21 @@ contract SymbolicInvariantSetupStorage is Test {
 "#]],
     );
 
+    let rerun_stdout =
+        cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().get_output().stdout_lossy();
+    assert_relevant_lines(
+        &rerun_stdout,
+        str![[r#"
+[FAIL: hit]
+"#]],
+    );
+    assert_relevant_lines(
+        &rerun_stdout,
+        str![[r#"
+invariant_notHit()
+"#]],
+    );
+
     let artifact_path = artifact_ref["path"].as_str().expect("artifact path").to_string();
     let replay_stdout = cmd
         .forge_fuse()
