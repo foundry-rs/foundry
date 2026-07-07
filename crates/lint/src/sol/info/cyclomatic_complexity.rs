@@ -29,11 +29,17 @@ impl<'hir> LateLintPass<'hir> for CyclomaticComplexity {
         func: &'hir hir::Function<'hir>,
     ) {
         let _ = gcx;
-        if let Some(body) = &func.body {
+        // Slither's detector iterates only declared and top-level functions: modifier
+        // definitions are never reported, and Yul helpers declared inside `assembly {}`
+        // blocks are independent HIR functions but not Solidity declarations.
+        if matches!(func.kind, hir::FunctionKind::Modifier) || func.is_yul {
+            return;
+        }
+        if func.body.is_some() {
+            // Visiting the whole function rather than only the body statements also counts
+            // decision points in modifier-invocation and base-constructor call arguments.
             let mut counter = DecisionCounter { hir, decisions: 0 };
-            for stmt in body.stmts {
-                let _ = counter.visit_stmt(stmt);
-            }
+            let _ = counter.visit_function(func);
             // For a structured program the complexity is one plus the decision points.
             if counter.decisions + 1 > MAX_COMPLEXITY {
                 ctx.emit(&CYCLOMATIC_COMPLEXITY, func.keyword_span());
@@ -70,9 +76,10 @@ impl<'hir> Visit<'hir> for DecisionCounter<'hir> {
             StmtKind::Try(stmt_try) => {
                 self.decisions += stmt_try.clauses.len().saturating_sub(1);
             }
-            // Each case of a Yul switch beyond the first is a branch.
+            // Each non-default case of a Yul switch is a branch; `cases` includes the
+            // `default` clause (`constant == None`), which opens no decision of its own.
             StmtKind::Switch(switch) => {
-                self.decisions += switch.cases.len().saturating_sub(1);
+                self.decisions += switch.cases.iter().filter(|c| c.constant.is_some()).count();
             }
             _ => {}
         }
