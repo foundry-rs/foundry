@@ -7,7 +7,9 @@ mod monotonic_product;
 mod opt;
 
 use hard_arith_fallback::constraints_prefer_hard_arith_fallback_first;
-pub(crate) use hard_arith_fallback::{fallback_single_var_model, hard_arith_fallback_model};
+pub(crate) use hard_arith_fallback::{
+    fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
+};
 #[cfg(test)]
 pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
@@ -387,6 +389,13 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
+        if let Some(model) = fallback_two_var_model(&smt_constraints)
+            && model_satisfies_constraints(&model, constraints)
+        {
+            self.cache_sat_result(cache_key.clone(), true);
+            self.cache_model_result(cache_key, model.clone());
+            return Ok(model);
+        }
         if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints)
             && let Some(model) =
                 validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
@@ -505,6 +514,12 @@ impl SmtLibSubprocessSolver {
             return Ok(false);
         }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
+            && model_satisfies_constraints(&model, constraints)
+        {
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
+        }
+        if let Some(model) = fallback_two_var_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key, true);

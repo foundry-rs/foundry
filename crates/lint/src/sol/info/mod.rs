@@ -54,6 +54,9 @@ use event_fields::EVENT_FIELDS;
 mod unused_error;
 use unused_error::UNUSED_ERROR;
 
+mod modifier_used_only_once;
+use modifier_used_only_once::MODIFIER_USED_ONLY_ONCE;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -74,4 +77,5 @@ register_lints!(
     (MissingInheritance, project, (MISSING_INHERITANCE)),
     (EventFields, early, (EVENT_FIELDS)),
     (UnusedError, project, (UNUSED_ERROR)),
+    (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE)),
 );
