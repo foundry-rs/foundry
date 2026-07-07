@@ -200,36 +200,34 @@ pub struct FuzzRunArgs {
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzReplayArgs {
     #[command(flatten)]
-    test: TestArgs,
-    /// Replay corpus entries from this directory instead of persisted fuzz failures.
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
-    corpus_dir: Option<PathBuf>,
+    run: FuzzRunArgs,
 }
 
 impl FuzzReplayArgs {
-    async fn run(mut self) -> Result<TestOutcome> {
-        self.test.enable_fuzz_only();
-        if self.corpus_dir.is_none() {
-            self.test.enable_fuzz_failure_replay();
-            return self.test.run().await;
+    async fn run(self) -> Result<TestOutcome> {
+        let corpus_dir = self.run.campaign.corpus_dir.clone();
+        let mut test = TestArgs::from_fuzz_run(self.run);
+        if corpus_dir.is_none() {
+            test.enable_fuzz_failure_replay();
+            return test.run().await;
         }
 
         let replay_id =
             SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
-        self.test.set_showmap_override(ShowmapConfig {
+        test.set_showmap_override(ShowmapConfig {
             out_dir: std::env::temp_dir().join(format!("forge-fuzz-replay-{replay_id}")),
             approach: "replay".to_string(),
             trial: "replay".to_string(),
             per_input: false,
             domain: ShowmapDomain::Evm,
-            corpus_dir: self.corpus_dir.clone(),
+            corpus_dir,
             emit_files: false,
         });
-        self.test.run().await
+        test.run().await
     }
 
     const fn is_junit(&self) -> bool {
-        self.test.junit
+        self.run.junit
     }
 }
 

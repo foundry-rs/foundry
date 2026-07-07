@@ -316,6 +316,12 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
     ]]);
 });
 
+forgetest_init!(forge_fuzz_replay_rejects_watch, |_prj, cmd| {
+    let output = cmd.args(["fuzz", "replay", "--watch"]).assert_failure();
+    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("unexpected argument '--watch'"), "{stderr}");
+});
+
 // `forge fuzz replay` (without `--corpus-dir`) must not start a fresh invariant
 // campaign when there is no persisted failure to replay; it should skip instead.
 forgetest_init!(forge_fuzz_replay_invariant_skips_without_persisted_failure, |prj, cmd| {
