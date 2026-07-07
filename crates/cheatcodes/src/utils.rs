@@ -149,11 +149,9 @@ impl Cheatcode for randomBoolCall {
 impl Cheatcode for randomBytesCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { len } = *self;
-        ensure!(
-            len <= U256::from(usize::MAX),
-            format!("bytes length cannot exceed {}", usize::MAX)
-        );
-        let mut bytes = vec![0u8; len.to::<usize>()];
+        let len = usize::try_from(len)
+            .map_err(|_| fmt_err!("bytes length cannot exceed {}", usize::MAX))?;
+        let mut bytes = vec![0u8; len];
         state.rng().fill_bytes(&mut bytes);
         Ok(bytes.abi_encode())
     }
@@ -303,17 +301,17 @@ impl Cheatcode for setSeedCall {
     }
 }
 
-/// Helper to generate a random `uint` value (with given bits or bounded if specified)
-/// from type strategy.
 fn random_uint<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     bits: Option<U256>,
     bounds: Option<(U256, U256)>,
 ) -> Result {
     if let Some(bits) = bits {
-        // Generate random with specified bits.
-        ensure!(bits <= U256::from(256), "number of bits cannot exceed 256");
-        return Ok(DynSolValue::type_strategy(&DynSolType::Uint(bits.to::<usize>()))
+        let bits = usize::try_from(bits)
+            .ok()
+            .filter(|bits| *bits <= 256)
+            .ok_or_else(|| fmt_err!("number of bits cannot exceed 256"))?;
+        return Ok(DynSolValue::type_strategy(&DynSolType::Uint(bits))
             .new_tree(state.test_runner())
             .unwrap()
             .current()
@@ -322,7 +320,6 @@ fn random_uint<FEN: FoundryEvmNetwork>(
 
     if let Some((min, max)) = bounds {
         ensure!(min <= max, "min must be less than or equal to max");
-        // Generate random between range min..=max
         let exclusive_modulo = max - min;
         let mut random_number: U256 = state.rng().random();
         if exclusive_modulo != U256::MAX {
@@ -333,7 +330,6 @@ fn random_uint<FEN: FoundryEvmNetwork>(
         return Ok(random_number.abi_encode());
     }
 
-    // Generate random `uint256` value.
     Ok(DynSolValue::type_strategy(&DynSolType::Uint(256))
         .new_tree(state.test_runner())
         .unwrap()
@@ -341,11 +337,13 @@ fn random_uint<FEN: FoundryEvmNetwork>(
         .abi_encode())
 }
 
-/// Helper to generate a random `int` value (with given bits if specified) from type strategy.
 fn random_int<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>, bits: Option<U256>) -> Result {
-    let no_bits = bits.unwrap_or(U256::from(256));
-    ensure!(no_bits <= U256::from(256), "number of bits cannot exceed 256");
-    Ok(DynSolValue::type_strategy(&DynSolType::Int(no_bits.to::<usize>()))
+    let bits = bits.unwrap_or(U256::from(256));
+    let bits = usize::try_from(bits)
+        .ok()
+        .filter(|bits| *bits <= 256)
+        .ok_or_else(|| fmt_err!("number of bits cannot exceed 256"))?;
+    Ok(DynSolValue::type_strategy(&DynSolType::Int(bits))
         .new_tree(state.test_runner())
         .unwrap()
         .current()

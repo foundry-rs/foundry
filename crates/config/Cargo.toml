@@ -40,6 +40,7 @@ regex.workspace = true
 semver = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 serde.workspace = true
+shlex.workspace = true
 soldeer-core.workspace = true
 thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
@@ -58,6 +59,3 @@ snapbox.workspace = true
 similar-asserts.workspace = true
 figment = { workspace = true, features = ["test"] }
 tempfile.workspace = true
-
-[features]
-isolate-by-default = []

@@ -1,6 +1,6 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
-    corpus::{GlobalCorpusMetrics, WorkerCorpus},
+    corpus::{GlobalCorpusMetrics, ReplayTarget, StatelessReplayTarget, WorkerCorpus},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -21,12 +21,12 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
     FuzzFixtures, FuzzRunMetadata, FuzzTestResult,
-    strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
+    strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state, fuzz_msg_value},
 };
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::{
-    strategy::Strategy,
+    strategy::{Just, Strategy},
     test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -39,7 +39,9 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod frontier;
 mod types;
+use frontier::{FuzzBranchFrontier, FuzzBranchFrontierArtifact, FuzzFrontierRecorder};
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Corpus syncs across workers every `SYNC_INTERVAL` runs.
@@ -84,6 +86,8 @@ struct WorkerState<FEN: FoundryEvmNetwork> {
     last_run_timestamp: u128,
     /// Failed corpus replays
     failed_corpus_replays: usize,
+    /// Branch frontiers captured for symbolic follow-up.
+    frontiers: Vec<FuzzBranchFrontier>,
 }
 
 impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
@@ -104,6 +108,7 @@ impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
             failure_run: None,
             last_run_timestamp: 0,
             failed_corpus_replays: 0,
+            frontiers: Vec::new(),
         }
     }
 }
@@ -261,6 +266,106 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         Ok(self.aggregate_results(workers, func, &shared_state))
     }
 
+    /// Replays the persisted single-call counterexample exactly once.
+    ///
+    /// Unlike [`Self::fuzz`], this never falls through to generated inputs if the persisted
+    /// calldata now succeeds or is rejected by `vm.assume`.
+    pub fn replay_persisted_failure(
+        &mut self,
+        func: &Function,
+        address: Address,
+        rd: &RevertDecoder,
+    ) -> Result<FuzzTestResult> {
+        let Some(failure) = self.persisted_failure.as_ref() else {
+            return Ok(FuzzTestResult {
+                skipped: true,
+                reason: Some("no persisted fuzz failure to replay".to_string()),
+                ..Default::default()
+            });
+        };
+
+        let seed = failure.fuzz.seed.or(self.config.seed);
+        if let Some(cheats) = self.executor_f.inspector_mut().cheatcodes.as_mut()
+            && let Some(seed) = seed
+        {
+            let run = failure.fuzz.run.unwrap_or(1);
+            let worker = failure.fuzz.worker.unwrap_or(0) as usize;
+            cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
+        }
+
+        let calldata = failure.calldata.clone();
+        let mut call =
+            self.executor_f.call_raw(self.sender, address, calldata.clone(), U256::ZERO)?;
+        if call.result.as_ref() == MAGIC_ASSUME {
+            return Ok(FuzzTestResult {
+                skipped: true,
+                reason: Some("persisted fuzz failure rejected by `vm.assume`".to_string()),
+                ..Default::default()
+            });
+        }
+        if call.reverter == Some(CHEATCODE_ADDRESS)
+            && let Some(reason) = SkipReason::decode(&call.result)
+        {
+            return Ok(FuzzTestResult { skipped: true, reason: reason.0, ..Default::default() });
+        }
+
+        let (breakpoints, deprecated_cheatcodes) =
+            call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
+                (cheats.breakpoints.clone(), cheats.deprecated.clone())
+            });
+        let success = if !self.config.fail_on_revert
+            && call
+                .reverter
+                .is_some_and(|reverter| reverter != address && reverter != CHEATCODE_ADDRESS)
+        {
+            true
+        } else {
+            self.executor_f.is_raw_call_mut_success(address, &mut call, false)
+        };
+
+        let mut result = FuzzTestResult {
+            success,
+            labels: call.labels.clone(),
+            traces: call.traces.clone(),
+            debug_bytecodes: call.debug_bytecodes.clone(),
+            breakpoints: Some(breakpoints),
+            deprecated_cheatcodes,
+            ..Default::default()
+        };
+
+        if success {
+            result.first_case = FuzzCase { gas: call.gas_used, stipend: call.stipend };
+            result.gas_by_case.push((call.gas_used, call.stipend));
+            result.line_coverage = call.line_coverage;
+            result.logs = call.logs;
+            result.gas_report_traces.extend(call.traces.into_iter().map(|trace| trace.arena));
+        } else {
+            let reason = if call.reverter == Some(CHEATCODE_ADDRESS) {
+                SkipReason::decode(&call.result)
+                    .map(|reason| reason.to_string())
+                    .or_else(|| rd.maybe_decode(&call.result, call.exit_reason))
+            } else {
+                rd.maybe_decode(&call.result, call.exit_reason)
+            };
+            result.reason = reason;
+            let args = calldata
+                .get(4..)
+                .map_or_else(Vec::new, |data| func.abi_decode_input(data).unwrap_or_default());
+            result.counterexample = Some(CounterExample::Single(
+                BaseCounterExample::from_fuzz_call(calldata, args, call.traces).with_fuzz_metadata(
+                    FuzzRunMetadata::new(
+                        seed,
+                        failure.fuzz.run,
+                        Some(failure.fuzz.worker.unwrap_or(0)),
+                    ),
+                ),
+            ));
+            result.logs = call.logs;
+        }
+
+        Ok(result)
+    }
+
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
@@ -269,12 +374,26 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
+        frontier_recorder: &mut FuzzFrontierRecorder,
+        fuzz_run: Option<&FuzzRunMetadata>,
     ) -> Result<FuzzOutcome<FEN>, TestCaseError> {
         let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
         let cmp_values = call.evm_cmp_values.take().unwrap_or_default();
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+        // `new_coverage` is only meaningful when edge coverage is collected; otherwise
+        // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
+        let frontier_new_coverage =
+            self.config.corpus.collect_edge_coverage().then_some(new_coverage);
+        frontier_recorder.capture_stateless_call(
+            fuzz_run,
+            self.sender,
+            address,
+            &calldata,
+            &cmp_values,
+            frontier_new_coverage,
+        );
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
                 warp: None,
@@ -339,6 +458,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         func: &Function,
         shared_state: &SharedFuzzState,
     ) -> FuzzTestResult {
+        self.write_branch_frontiers(&mut workers, func);
+
         let mut result = FuzzTestResult::default();
         if workers.is_empty() {
             result.success = true;
@@ -436,6 +557,29 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         result
     }
 
+    fn write_branch_frontiers(&self, workers: &mut [WorkerState<FEN>], func: &Function) {
+        let Some(frontier_dir) = &self.config.corpus.frontier_dir else {
+            return;
+        };
+        let limit = self.config.corpus.frontier_limit;
+        if limit == 0 {
+            return;
+        }
+
+        let frontiers = frontier::merge_frontiers(
+            limit,
+            workers.iter_mut().flat_map(|worker| worker.frontiers.drain(..)),
+        );
+        if frontiers.is_empty() {
+            return;
+        }
+
+        let artifact = FuzzBranchFrontierArtifact::new(func, limit, frontiers);
+        if let Err(err) = frontier::write_frontier_artifact(frontier_dir, &artifact) {
+            warn!(%err, path = ?frontier_dir, "failed to write fuzz branch frontier artifact");
+        }
+    }
+
     /// Runs a single fuzz worker
     #[allow(clippy::too_many_arguments)]
     fn run_worker(
@@ -451,28 +595,43 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // Prepare
         let fuzz_state = shared_state.state.fork();
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let strategy = proptest::prop_oneof![
+        let calldata_strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state),
-        ]
-        .prop_map(move |calldata| BasicTxDetails {
-            warp: None,
-            roll: None,
-            sender: Default::default(),
-            call_details: CallDetails { target: Default::default(), calldata, value: None },
-        });
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state, fuzz_fixtures),
+        ];
+        let value_strategy = if func.state_mutability == alloy_json_abi::StateMutability::Payable {
+            fuzz_msg_value(self.config.corpus.payable_value_weight).boxed()
+        } else {
+            Just(None).boxed()
+        };
+        let strategy =
+            (calldata_strategy, value_strategy).prop_map(move |(calldata, value)| BasicTxDetails {
+                warp: None,
+                roll: None,
+                sender: Default::default(),
+                call_details: CallDetails { target: Default::default(), calldata, value },
+            });
 
+        let replay_target = ReplayTarget {
+            stateless: Some(StatelessReplayTarget { function: func, address }),
+            fuzzed_contracts: None,
+            dynamic: None,
+        };
         let mut corpus = WorkerCorpus::new(
             worker_id,
             self.config.corpus.clone(),
             strategy.boxed(),
             // Master worker replays the persisted corpus using the executor
             (worker_id == 0).then_some(&self.executor_f),
-            Some(func),
-            None, // fuzzed_contracts for invariant tests
-            None, // dynamic target ctx (invariant-only)
+            replay_target,
         )?;
         let mut executor = self.executor_f.clone();
+        let frontier_limit = if self.config.corpus.capture_branch_frontiers() {
+            self.config.corpus.frontier_limit
+        } else {
+            0
+        };
+        let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
 
         let mut worker = WorkerState::new(worker_id);
         // We want to collect at least one trace which will be displayed to user.
@@ -549,9 +708,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     corpus.sync(
                         self.num_workers,
                         &executor,
-                        Some(func),
-                        None,
-                        None,
+                        replay_target,
                         &shared_state.global_corpus_metrics,
                     )?;
                     trace!("finished corpus sync in {:?}", timer.elapsed());
@@ -603,7 +760,14 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             };
 
             worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            match self.single_fuzz(&executor, address, input, &mut corpus) {
+            match self.single_fuzz(
+                &executor,
+                address,
+                input,
+                &mut corpus,
+                &mut frontier_recorder,
+                fuzz_run.as_ref(),
+            ) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
                         let total_runs = inc_runs();
@@ -714,6 +878,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         if worker_id == 0 {
             worker.failed_corpus_replays = corpus.failed_replays;
         }
+        worker.frontiers = frontier_recorder.into_frontiers();
 
         // Logs stats
         trace!("worker {worker_id} fuzz stats");

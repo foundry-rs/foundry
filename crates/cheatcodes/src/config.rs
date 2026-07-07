@@ -42,6 +42,8 @@ pub struct CheatsConfig {
     pub root: PathBuf,
     /// Absolute Path to broadcast dir i.e project_root/broadcast
     pub broadcast: PathBuf,
+    /// Whether isolated test execution is enabled.
+    pub isolate: bool,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
@@ -92,6 +94,7 @@ impl CheatsConfig {
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
             root: config.root.clone(),
             broadcast: config.root.clone().join(&config.broadcast),
+            isolate: config.isolate,
             evm_opts,
             labels: config.labels.clone(),
             available_artifacts,
@@ -120,7 +123,7 @@ impl CheatsConfig {
     /// Canonicalization fails for non-existing paths, in which case we just normalize the path.
     pub fn normalized_path(&self, path: impl AsRef<Path>) -> PathBuf {
         let path = self.root.join(path);
-        canonicalize(&path).unwrap_or_else(|_| normalize_path(&path))
+        canonicalize(&path).unwrap_or_else(|_| canonicalize_existing_ancestor(&path))
     }
 
     /// Returns true if the given path is allowed, if any path `allowed_paths` is an ancestor of the
@@ -234,6 +237,7 @@ impl Default for CheatsConfig {
             root: Default::default(),
             bind_json_path: PathBuf::default().join("utils").join("jsonBindings.sol"),
             broadcast: Default::default(),
+            isolate: Config::default().isolate,
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),
@@ -246,12 +250,31 @@ impl Default for CheatsConfig {
     }
 }
 
+fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
+    let normalized = normalize_path(path);
+    let mut missing = Vec::new();
+    let mut ancestor = normalized.as_path();
+    while !ancestor.exists() {
+        let Some(name) = ancestor.file_name() else { return normalized };
+        missing.push(name.to_owned());
+        let Some(parent) = ancestor.parent() else { return normalized };
+        ancestor = parent;
+    }
+
+    let mut path = canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+    for component in missing.iter().rev() {
+        path.push(component);
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use foundry_config::fs_permissions::PathPermission;
+    use tempfile::TempDir;
 
-    fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
+    fn config(root: &Path, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
@@ -264,8 +287,10 @@ mod tests {
 
     #[test]
     fn test_allowed_paths() {
-        let root = "/my/project/root/";
-        let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("my/project/root");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = config(&root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Read).is_ok());
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Write).is_ok());
@@ -288,16 +313,16 @@ mod tests {
 
     #[test]
     fn test_is_foundry_toml() {
-        let root = "/my/project/root/";
+        let root = Path::new("/my/project/root/");
         let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
-        let f = format!("{root}foundry.toml");
+        let f = root.join("foundry.toml");
         assert!(config.is_foundry_toml(f));
 
-        let f = format!("{root}Foundry.toml");
+        let f = root.join("Foundry.toml");
         assert!(config.is_foundry_toml(f));
 
-        let f = format!("{root}lib/other/foundry.toml");
+        let f = root.join("lib/other/foundry.toml");
         assert!(!config.is_foundry_toml(f));
     }
 }

@@ -85,6 +85,90 @@ pub struct LiteralMaps {
     pub bytes: IndexSet<Bytes>,
 }
 
+/// Maps Solidity enum definitions to their variant counts, used to constrain fuzzed enum inputs
+/// to valid values (the ABI encodes enums as `uint8` without carrying the variant count).
+///
+/// Keys are `"<Contract>.<Enum>"` for enums declared inside a contract/library and the bare
+/// `"<Enum>"` for file-level enums, mirroring the qualifier in an ABI `internalType`.
+#[derive(Clone, Debug, Default)]
+pub struct EnumBounds {
+    inner: Arc<HashMap<String, usize>>,
+}
+
+impl EnumBounds {
+    /// Records the variant count of every enum declaration across all parsed sources (libraries
+    /// and dependencies included, as their enums may be used as test parameters). Keys with
+    /// conflicting counts are dropped, leaving ambiguous enums unbounded rather than bounded wrong.
+    pub fn collect(analysis: &Analysis) -> Self {
+        let bounds = analysis.enter(|compiler| {
+            let mut collector = EnumBoundsCollector::default();
+            for source in compiler.sources().iter() {
+                if let Some(ast) = &source.ast {
+                    let _ = collector.visit_source_unit(ast);
+                }
+            }
+            // Keep only unambiguous entries; ambiguous keys (`None`) are discarded.
+            collector
+                .bounds
+                .into_iter()
+                .filter_map(|(key, count)| count.map(|count| (key, count)))
+                .collect()
+        });
+        Self { inner: Arc::new(bounds) }
+    }
+
+    /// Returns the number of variants for an enum identified by an optional contract qualifier and
+    /// name, or `None` if it is unknown.
+    pub fn variant_count(&self, contract: Option<&str>, name: &str) -> Option<usize> {
+        let key = match contract {
+            Some(contract) => format!("{contract}.{name}"),
+            None => name.to_string(),
+        };
+        self.inner.get(&key).copied()
+    }
+}
+
+/// AST visitor that records enum variant counts, tracking the enclosing contract to build
+/// fully-qualified keys.
+#[derive(Default)]
+struct EnumBoundsCollector {
+    /// Name of the contract/library currently being visited, if any.
+    current_contract: Option<String>,
+    /// Collected `enum key -> variant count` entries. A value of `None` marks a key seen with
+    /// conflicting counts (ambiguous), which is later discarded.
+    bounds: HashMap<String, Option<usize>>,
+}
+
+impl<'ast> ast::Visit<'ast> for EnumBoundsCollector {
+    type BreakValue = ();
+
+    fn visit_item_contract(&mut self, contract: &'ast ast::ItemContract<'ast>) -> ControlFlow<()> {
+        let prev = self.current_contract.replace(contract.name.as_str().to_string());
+        let r = self.walk_item_contract(contract);
+        self.current_contract = prev;
+        r
+    }
+
+    fn visit_item_enum(&mut self, enum_: &'ast ast::ItemEnum<'ast>) -> ControlFlow<()> {
+        let name = enum_.name.as_str();
+        let count = enum_.variants.len();
+        let key = match &self.current_contract {
+            Some(contract) => format!("{contract}.{name}"),
+            None => name.to_string(),
+        };
+        self.bounds
+            .entry(key)
+            // Same key seen with a different count is ambiguous; mark it for removal.
+            .and_modify(|existing| {
+                if *existing != Some(count) {
+                    *existing = None;
+                }
+            })
+            .or_insert(Some(count));
+        self.walk_item_enum(enum_)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct LiteralsCollector {
     max_values: usize,
