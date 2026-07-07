@@ -623,6 +623,30 @@ fn normalize_cmp_for_solver(
 #[derive(Default)]
 struct ConstraintContext {
     upper_bounds: HashMap<SymExpr, U256>,
+    lower_bounds: HashMap<SymExpr, U256>,
+}
+
+#[derive(Clone, Copy)]
+struct WordInterval {
+    min: U256,
+    max: U256,
+}
+
+impl WordInterval {
+    fn new(min: U256, max: U256) -> Option<Self> {
+        (min <= max).then_some(Self { min, max })
+    }
+
+    const fn exact(value: U256) -> Self {
+        Self { min: value, max: value }
+    }
+
+    fn with_bounds(self, lower: Option<U256>, upper: Option<U256>) -> Option<Self> {
+        Self::new(
+            self.min.max(lower.unwrap_or(U256::ZERO)),
+            self.max.min(upper.unwrap_or(U256::MAX)),
+        )
+    }
 }
 
 impl ConstraintContext {
@@ -630,6 +654,7 @@ impl ConstraintContext {
         let mut context = Self::default();
         for constraint in constraints {
             context.record_upper_bound_constraint(constraint);
+            context.record_lower_bound_constraint(constraint);
         }
         context
     }
@@ -638,8 +663,15 @@ impl ConstraintContext {
         self.upper_bounds.get(expr).copied()
     }
 
+    fn lower_bound(&self, expr: &SymExpr) -> Option<U256> {
+        self.lower_bounds.get(expr).copied()
+    }
+
     fn normalize_bool(&self, cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolExpr {
         match expr.kind() {
+            SymBoolExprKind::Not(value) if self.unsigned_bool_always_true(value) => {
+                SymBoolExpr::constant(cx, false)
+            }
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
                 if self.masked_word_eq_self(left, right) =>
             {
@@ -708,13 +740,26 @@ impl ConstraintContext {
             .or_insert(bound);
     }
 
+    fn record_lower_bound_constraint(&mut self, constraint: &SymBoolExpr) {
+        if let Some((expr, bound)) = self.lower_bound_constraint(constraint) {
+            self.record_lower_bound(expr.clone(), bound);
+        }
+    }
+
+    fn record_lower_bound(&mut self, expr: SymExpr, bound: U256) {
+        self.lower_bounds
+            .entry(expr)
+            .and_modify(|existing| *existing = (*existing).max(bound))
+            .or_insert(bound);
+    }
+
     fn upper_bound_constraint<'a>(
         &self,
         constraint: &'a SymBoolExpr,
     ) -> Option<(&'a SymExpr, U256)> {
         match constraint.kind() {
             SymBoolExprKind::Cmp(op, left, right) => match *op {
-                SymCmpOp::Eq => right.as_const().map(|value| (left, value)),
+                SymCmpOp::Eq => const_side_bound(left, right),
                 SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
                     (_, Some(bound)) => (!bound.is_zero()).then(|| (left, bound - U256::from(1))),
                     _ => None,
@@ -762,6 +807,109 @@ impl ConstraintContext {
             SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => None,
         }
     }
+
+    fn lower_bound_constraint<'a>(
+        &self,
+        constraint: &'a SymBoolExpr,
+    ) -> Option<(&'a SymExpr, U256)> {
+        match constraint.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => const_side_bound(left, right),
+            SymBoolExprKind::Not(value) => match value.kind() {
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
+                    nonzero_bound(left, right).or_else(|| nonzero_bound(right, left))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn unsigned_bool_always_true(&self, expr: &SymBoolExpr) -> bool {
+        match expr.kind() {
+            SymBoolExprKind::Cmp(op, left, right) => {
+                self.unsigned_cmp_always_true(*op, left, right)
+            }
+            _ => false,
+        }
+    }
+
+    fn unsigned_cmp_always_true(&self, op: SymCmpOp, left: &SymExpr, right: &SymExpr) -> bool {
+        let Some(left) = self.interval(left) else { return false };
+        let Some(right) = self.interval(right) else { return false };
+        match op {
+            SymCmpOp::Ult => left.max < right.min,
+            SymCmpOp::Ule => left.max <= right.min,
+            SymCmpOp::Ugt => left.min > right.max,
+            SymCmpOp::Uge => left.min >= right.max,
+            SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => false,
+        }
+    }
+
+    fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
+        let lower = self.lower_bound(expr);
+        let upper = self.upper_bound(expr);
+        let interval = self.structural_interval(expr).or_else(|| {
+            (lower.is_some() || upper.is_some()).then(|| WordInterval {
+                min: lower.unwrap_or(U256::ZERO),
+                max: upper.unwrap_or(U256::MAX),
+            })
+        })?;
+        interval.with_bounds(lower, upper)
+    }
+
+    fn structural_interval(&self, expr: &SymExpr) -> Option<WordInterval> {
+        match expr.kind() {
+            SymExprKind::Const(value) => Some(WordInterval::exact(*value)),
+            SymExprKind::BinOp(SymBinOp::And, left, right) => {
+                let mask = left.as_const().or_else(|| right.as_const())?;
+                Some(WordInterval { min: U256::ZERO, max: mask })
+            }
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
+                let left = self.interval(left)?;
+                let right = self.interval(right)?;
+                Some(WordInterval {
+                    min: left.min.checked_add(right.min)?,
+                    max: left.max.checked_add(right.max)?,
+                })
+            }
+            SymExprKind::BinOp(SymBinOp::Sub, left, right) => {
+                let left = self.interval(left)?;
+                let right = self.interval(right)?;
+                if left.min < right.max {
+                    return None;
+                }
+                Some(WordInterval {
+                    min: left.min.checked_sub(right.max)?,
+                    max: left.max.checked_sub(right.min)?,
+                })
+            }
+            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                let left = self.interval(left)?;
+                let right = self.interval(right)?;
+                Some(WordInterval {
+                    min: left.min.checked_mul(right.min)?,
+                    max: left.max.checked_mul(right.max)?,
+                })
+            }
+            SymExprKind::Ite(_, left, right) => {
+                let left = self.interval(left)?;
+                let right = self.interval(right)?;
+                Some(WordInterval { min: left.min.min(right.min), max: left.max.max(right.max) })
+            }
+            _ => None,
+        }
+    }
+}
+
+fn const_side_bound<'a>(left: &'a SymExpr, right: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
+    right
+        .as_const()
+        .map(|value| (left, value))
+        .or_else(|| left.as_const().map(|value| (right, value)))
+}
+
+fn nonzero_bound<'a>(expr: &'a SymExpr, value: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
+    value.as_const().is_some_and(|value| value.is_zero()).then(|| (expr, U256::from(1)))
 }
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.

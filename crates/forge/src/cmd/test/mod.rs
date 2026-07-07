@@ -1,6 +1,6 @@
 use super::{install, watch::WatchArgs};
 use crate::{
-    MultiContractRunner, MultiContractRunnerBuilder,
+    MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{
@@ -24,6 +24,7 @@ use crate::{
         identifier::SignaturesIdentifier,
         speedscope,
     },
+    workspace,
 };
 use alloy_primitives::U256;
 use chrono::Utc;
@@ -36,7 +37,7 @@ use foundry_cli::{
 use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project},
-    fs, shell,
+    fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -54,6 +55,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
     },
     filter::GlobMatcher,
+    fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
 #[cfg(feature = "optimism")]
@@ -78,6 +80,7 @@ use std::{
     sync::{Arc, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
+use tempfile::TempDir;
 use yansi::Paint;
 
 mod evm_profile_server;
@@ -941,6 +944,25 @@ pub struct TestArgs {
     /// Override via-ir for mutation testing compile-and-test runs.
     #[arg(long, default_missing_value = "true", num_args = 0..=1, requires = "mutate")]
     pub mutation_via_ir: Option<bool>,
+
+    /// Enable brutalization mode.
+    ///
+    /// Catches latent bugs that normal tests miss because the EVM initializes
+    /// memory to zero and registers to clean values. Applies source-level
+    /// sanitizers before compiling:
+    ///
+    /// - Dirties unused bits in sub-256-bit type casts (address, uint8, bytes4, etc.) to catch
+    ///   assembly code that assumes clean upper bits when using legacy codegen. Via-IR may clean
+    ///   these bits before inline assembly observes them.
+    /// - Fills scratch space (0x00-0x3f) and memory beyond the free memory pointer with junk to
+    ///   catch uninitialized memory reads
+    /// - Misaligns the free memory pointer to catch word-alignment assumptions
+    ///
+    /// If `forge test` passes but `forge test --brutalize` fails, the code has
+    /// a robustness issue that could manifest when called in a different context.
+    // TODO: evaluate if we can relax the conflict with replay_symbolic_artifact
+    #[arg(long, conflicts_with_all = ["mutate", "replay_symbolic_artifact"])]
+    pub brutalize: bool,
 }
 
 impl TestArgs {
@@ -1149,6 +1171,10 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
+        if self.brutalize {
+            return self.compile_and_run_brutalized().await;
+        }
+
         let (
             project_root,
             config,
@@ -1158,6 +1184,71 @@ impl TestArgs {
             inline_config,
             replay_symbolic_artifact,
         ) = self.compile_project().await?;
+        self.run_tests(
+            &project_root,
+            config,
+            evm_opts,
+            &output,
+            &filter,
+            TestExecutionOptions {
+                replay_symbolic_artifact,
+                ..TestExecutionOptions::default_run(inline_config)
+            },
+        )
+        .await
+    }
+
+    /// Compile and run tests with brutalization applied to source files.
+    async fn compile_and_run_brutalized(&mut self) -> Result<TestOutcome> {
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            config = self.load_config()?;
+        }
+
+        let rerun_failures = self.rerun.then(|| last_run_failures(&config));
+        let silent = shell::is_json();
+        let temp_dir = TempDir::with_prefix("forge_brutalize_")?;
+        let temp_path = temp_dir.path();
+
+        if config.via_ir && !silent {
+            sh_warn!(
+                "--brutalize value cast dirty-bits checks are ineffective with via-IR; memory and free-memory-pointer checks still apply"
+            )?;
+        }
+
+        if !silent {
+            sh_status!("Brutalizing source files...")?;
+        }
+
+        workspace::copy_project(&config, temp_path)?;
+        let count = brutalizer::brutalize_project(&config, temp_path)?;
+
+        if !silent {
+            sh_status!("Brutalized {count} source files, compiling from temp workspace...")?;
+        }
+
+        let test_failures_file = config.test_failures_file.clone();
+        let mut config = workspace::rebase_config_paths(&config, temp_path).sanitized();
+        config.test_failures_file = test_failures_file;
+        let project = config.project()?;
+        let project_root = project.paths.root.clone();
+        let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
+        let filter = self.filter_with_rerun_failures(&config, rerun_failures)?;
+
+        let (files, inline_config) =
+            self.get_sources_to_compile(&config, &filter, None, replay_symbolic_artifact.as_ref())?;
+        let output = ProjectCompiler::new()
+            .dynamic_test_linking(config.dynamic_test_linking)
+            .quiet(shell::is_json() || self.junit)
+            .files(files)
+            .compile(&project)?;
+        let inline_config = match inline_config {
+            Some(inline_config) => inline_config,
+            None => Arc::new(InlineConfig::new_parsed(&output, &config)?),
+        };
+
         self.run_tests(
             &project_root,
             config,
@@ -1820,7 +1911,6 @@ impl TestArgs {
             // `vm.writeFile` (broad `fs_permissions`) or arbitrary `ffi` calls.
             // Detect both up front so users aren't surprised by races or
             // corruption of their real dependency tree.
-            use foundry_config::fs_permissions::FsAccessPermission;
             if config_for_mutation.ffi {
                 eyre::bail!(
                     "Mutation testing is unsafe with `ffi = true`: per-mutant workspaces share \
@@ -2685,9 +2775,17 @@ impl TestArgs {
     /// Returns the flattened [`FilterArgs`] arguments merged with [`Config`].
     /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
+        self.filter_with_rerun_failures(config, None)
+    }
+
+    fn filter_with_rerun_failures(
+        &self,
+        config: &Config,
+        loaded_rerun_failures: Option<LastRunFailures>,
+    ) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
         let rerun_failures = if self.rerun {
-            let failures = last_run_failures(config);
+            let failures = loaded_rerun_failures.unwrap_or_else(|| last_run_failures(config));
             filter.test_pattern = failures.test_pattern;
             failures.failures
         } else {
