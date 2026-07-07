@@ -1292,6 +1292,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             &state_changeset,
                             handler_target,
                             handler_selector,
+                            assertion_failure,
                             pre_merge_edges_hash,
                         )
                         .map_err(|e| eyre!(e.to_string()))?;
