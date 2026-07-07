@@ -121,3 +121,40 @@ contract UsesOperators {
         return operatorSub(a - b, b);
     }
 }
+
+// Recursive functions cannot be inlined into a caller: a self-recursive helper stays out
+// whether or not it has an external caller, and mutually recursive helpers whose only
+// references are the cycle itself have no caller to inline into.
+contract Recursion {
+    function selfRecursiveNoCaller(uint256 v) internal pure returns (uint256) {
+        if (v == 0) {
+            return 0;
+        }
+        return selfRecursiveNoCaller(v - 1);
+    }
+
+    function factorial(uint256 v) internal pure returns (uint256) {
+        if (v <= 1) {
+            return 1;
+        }
+        return v * factorial(v - 1);
+    }
+
+    function useFactorial(uint256 v) internal pure returns (uint256) {
+        return factorial(v);
+    }
+
+    function mutualEven(uint256 v) internal pure returns (bool) {
+        if (v == 0) {
+            return true;
+        }
+        return mutualOdd(v - 1);
+    }
+
+    function mutualOdd(uint256 v) internal pure returns (bool) {
+        if (v == 0) {
+            return false;
+        }
+        return mutualEven(v - 1);
+    }
+}
