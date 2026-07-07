@@ -87,28 +87,30 @@ impl<'a> LocalTraceIdentifier<'a> {
             None
         };
 
-        // Check `[len * 0.9, ..., len * 1.1]`.
-        let max_len = (len * 11) / 10;
+        if !creation_code.is_empty() {
+            // Check `[len * 0.9, ..., len * 1.1]`.
+            let max_len = (len * 11) / 10;
 
-        // Start at artifacts with the same code length: `len..len*1.1`.
-        let same_length_idx = self.find_index(len);
-        for idx in same_length_idx..self.ordered_ids.len() {
-            let (id, len) = self.ordered_ids[idx];
-            if len > max_len {
-                break;
+            // Start at artifacts with the same code length: `len..len*1.1`.
+            let same_length_idx = self.find_index(len);
+            for idx in same_length_idx..self.ordered_ids.len() {
+                let (id, len) = self.ordered_ids[idx];
+                if len > max_len {
+                    break;
+                }
+                if let found @ Some(_) = check(id, true, &mut min_score) {
+                    return found;
+                }
             }
-            if let found @ Some(_) = check(id, true, &mut min_score) {
-                return found;
-            }
-        }
 
-        // Iterate over the remaining artifacts with less code length: `len*0.9..len`.
-        let min_len = (len * 9) / 10;
-        let idx = self.find_index(min_len);
-        for i in idx..same_length_idx {
-            let (id, _) = self.ordered_ids[i];
-            if let found @ Some(_) = check(id, true, &mut min_score) {
-                return found;
+            // Iterate over the remaining artifacts with less code length: `len*0.9..len`.
+            let min_len = (len * 9) / 10;
+            let idx = self.find_index(min_len);
+            for i in idx..same_length_idx {
+                let (id, _) = self.ordered_ids[i];
+                if let found @ Some(_) = check(id, true, &mut min_score) {
+                    return found;
+                }
             }
         }
 
