@@ -7,7 +7,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.9.1"
+FOUNDRYUP_INSTALLER_VERSION="1.9.2"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -48,7 +48,7 @@ FOUNDRYUP_RETRY_DELAY=2
 FOUNDRYUP_RETRY_MAX_TIME=60
 FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT=5
 
-BINS=(forge cast anvil chisel)
+BINS=(forge cast anvil chisel solar)
 HASH_NAMES=()
 HASH_VALUES=()
 FOUNDRYUP_NIGHTLY_CANDIDATES=()
@@ -169,7 +169,7 @@ main() {
     # If `--force` is set, skip the SHA verification.
     if [ "$FOUNDRYUP_IGNORE_VERIFICATION" = false ]; then
       # Check if the version is already installed by downloading the attestation file.
-      say "checking if forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version are already installed"
+      say "checking if forge, cast, anvil, chisel, and solar for $FOUNDRYUP_TAG version are already installed"
 
       # Create a temporary directory to store the attestation link and artifact.
       tmp_dir="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
@@ -260,7 +260,7 @@ main() {
     fi
 
     # Download and extract the binaries archive
-    say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
+    say "downloading forge, cast, anvil, chisel, and solar for $FOUNDRYUP_TAG version"
     if [ "$PLATFORM" = "win32" ]; then
       tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
       tmp="$tmp/foundry.zip"

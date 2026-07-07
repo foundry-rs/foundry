@@ -19,3 +19,12 @@ path = "bin/main.rs"
 
 [dependencies]
 solar-cli.workspace = true
+
+[features]
+default = ["jemalloc", "asm-keccak"]
+asm-keccak = ["solar-cli/asm"]
+# Solar CLI's jemalloc feature depends on tikv-jemallocator 0.6, which conflicts with
+# Foundry's workspace-wide tikv-jemallocator 0.7.
+jemalloc = []
+mimalloc = ["solar-cli/mimalloc"]
+tracy-allocator = ["solar-cli/tracy-allocator"]
