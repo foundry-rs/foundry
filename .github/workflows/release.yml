@@ -355,7 +355,7 @@ jobs:
 
       - name: Binaries and archive provenance attestation
         id: attestation
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: |
             ${{ env.anvil_bin_path }}
@@ -365,7 +365,7 @@ jobs:
             ${{ steps.artifacts.outputs.file_name }}
 
       - name: Archive SBOM attestation
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: ${{ steps.artifacts.outputs.file_name }}
           sbom-path: ${{ steps.artifacts.outputs.foundry_sbom }}

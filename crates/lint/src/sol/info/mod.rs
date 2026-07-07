@@ -57,6 +57,9 @@ use unused_error::UNUSED_ERROR;
 mod cyclomatic_complexity;
 use cyclomatic_complexity::CYCLOMATIC_COMPLEXITY;
 
+mod modifier_used_only_once;
+use modifier_used_only_once::MODIFIER_USED_ONLY_ONCE;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -78,4 +81,5 @@ register_lints!(
     (EventFields, early, (EVENT_FIELDS)),
     (UnusedError, project, (UNUSED_ERROR)),
     (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY)),
+    (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE)),
 );

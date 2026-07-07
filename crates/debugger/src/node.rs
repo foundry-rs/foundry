@@ -20,6 +20,9 @@ pub struct DebugNode {
     pub kind: CallKind,
     /// Calldata of the call.
     pub calldata: Bytes,
+    /// Return data produced by the call.
+    #[serde(default)]
+    pub returndata: Bytes,
     /// The gas limit of the call.
     pub gas_limit: u64,
     /// Stable id for the original call trace node within the flattened debugger arena.
@@ -50,6 +53,7 @@ impl DebugNode {
             kind,
             steps,
             calldata,
+            returndata: Bytes::new(),
             gas_limit,
             trace_node_idx: 0,
             step_offset: 0,
@@ -163,6 +167,7 @@ pub fn flatten_call_trace_with_precompiles(
             call.gas_limit,
             call.decoded.clone(),
         );
+        node.returndata = call.output.clone();
         node.trace_node_idx = trace_node_idx_offset.saturating_add(pending.node_idx);
         node.step_offset = pending.step_offset;
 

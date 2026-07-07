@@ -82,9 +82,8 @@ impl SymExpr {
         }
 
         match this.kind() {
-            SymExprKind::BinOp(SymBinOp::And, left, right) => {
-                (right.is_address_mask() && left.address_expr_equivalent(alias))
-                    || (left.is_address_mask() && right.address_expr_equivalent(alias))
+            SymExprKind::BinOp(SymBinOp::And, left, right) if right.is_address_mask() => {
+                left.address_expr_equivalent(alias)
             }
             SymExprKind::BinOp(SymBinOp::Shr, value, shift) if shift.is_shift_96() => {
                 match value.kind() {
@@ -104,9 +103,6 @@ impl SymExpr {
         match self.kind() {
             SymExprKind::BinOp(SymBinOp::And, left, right) if right.is_address_mask() => {
                 left.symbolic_address_canonical()
-            }
-            SymExprKind::BinOp(SymBinOp::And, left, right) if left.is_address_mask() => {
-                right.symbolic_address_canonical()
             }
             SymExprKind::BinOp(SymBinOp::Shr, value, shift) if shift.is_shift_96() => {
                 match value.kind() {
@@ -139,7 +135,7 @@ impl SymExpr {
     }
 }
 
-pub(crate) fn stable_symbol(prefix: &'static str, input: &[u8]) -> Symbol {
+pub(crate) fn stable_symbol(cx: &mut SymCx, prefix: &'static str, input: &[u8]) -> Symbol {
     let digest = keccak256(input);
     let mut symbol = String::with_capacity(prefix.len() + 17);
     symbol.push_str(prefix);
@@ -147,5 +143,5 @@ pub(crate) fn stable_symbol(prefix: &'static str, input: &[u8]) -> Symbol {
     for byte in &digest[..8] {
         let _ = write!(symbol, "{byte:02x}");
     }
-    Symbol::intern(&symbol)
+    cx.intern(&symbol)
 }
