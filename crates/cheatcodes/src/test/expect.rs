@@ -118,8 +118,53 @@ pub struct ExpectedEmit {
     pub found: bool,
     /// Number of times the log is expected to be emitted
     pub count: u64,
-    /// Stores mismatch details if a log didn't match
-    pub mismatch_error: Option<String>,
+    /// Stores mismatch details if a log didn't match.
+    pub mismatch_error: Option<EmitMismatch>,
+}
+
+#[derive(Clone, Debug)]
+pub enum EmitMismatch {
+    Log { actual: RawLog },
+    Emitter { expected: Address, actual: Address },
+}
+
+impl EmitMismatch {
+    pub fn to_error_msg<FEN: FoundryEvmNetwork>(
+        &self,
+        state: &Cheatcodes<FEN>,
+        checks: [bool; 5],
+        expected: Option<&RawLog>,
+        anonymous: bool,
+    ) -> String {
+        match self {
+            Self::Log { actual } => {
+                let Some(expected) = expected else {
+                    return "log != expected log".to_string();
+                };
+                let (expected_decoded, actual_decoded) = if anonymous {
+                    (None, None)
+                } else {
+                    state
+                        .signatures_identifier()
+                        .map(|identifier| {
+                            (decode_event(identifier, expected), decode_event(identifier, actual))
+                        })
+                        .unwrap_or_default()
+                };
+                get_emit_mismatch_message(
+                    checks,
+                    expected,
+                    actual,
+                    anonymous,
+                    expected_decoded.as_ref(),
+                    actual_decoded.as_ref(),
+                )
+            }
+            Self::Emitter { expected, actual } => {
+                format!("log emitter mismatch: expected={expected:#x}, got={actual:#x}")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -955,38 +1000,17 @@ pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
 
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
-            // Store detailed mismatch information
-
-            // Try to decode the events if we have a signature identifier
-            let (expected_decoded, actual_decoded) = if let Some(signatures_identifier) =
-                state.signatures_identifier()
-                && !event_to_fill_or_check.anonymous
-            {
-                (
-                    decode_event(signatures_identifier, expected),
-                    decode_event(signatures_identifier, log),
-                )
-            } else {
-                (None, None)
-            };
-            event_to_fill_or_check.mismatch_error = Some(get_emit_mismatch_message(
-                event_to_fill_or_check.checks,
-                expected,
-                log,
-                event_to_fill_or_check.anonymous,
-                expected_decoded.as_ref(),
-                actual_decoded.as_ref(),
-            ));
+            event_to_fill_or_check.mismatch_error =
+                Some(EmitMismatch::Log { actual: log.data.clone() });
             return false;
         }
 
         // Maybe match source address.
-        if event_to_fill_or_check.address.is_some_and(|addr| addr != log.address) {
-            event_to_fill_or_check.mismatch_error = Some(format!(
-                "log emitter mismatch: expected={:#x}, got={:#x}",
-                event_to_fill_or_check.address.unwrap(),
-                log.address
-            ));
+        if let Some(expected) = event_to_fill_or_check.address
+            && expected != log.address
+        {
+            event_to_fill_or_check.mismatch_error =
+                Some(EmitMismatch::Emitter { expected, actual: log.address });
             return false;
         }
 

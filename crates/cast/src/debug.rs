@@ -31,7 +31,8 @@ pub(crate) async fn handle_traces(
     tempo_hardfork: Option<TempoHardfork>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
-        let _ = sh_println!("Compiling project to generate artifacts");
+        // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
+        let _ = sh_status!("Compiling project to generate artifacts");
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
         let output = compiler.compile(&project)?;

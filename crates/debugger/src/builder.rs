@@ -1,6 +1,8 @@
 //! Debugger builder.
 
-use crate::{Debugger, DebuggerLayout, debugger::DebuggerStats, node::flatten_call_trace};
+use crate::{
+    Debugger, DebuggerLayout, debugger::DebuggerStats, node::flatten_call_trace_with_precompiles,
+};
 use alloy_primitives::{Address, map::AddressHashMap};
 use foundry_common::get_contract_name;
 use foundry_evm_core::Breakpoints;
@@ -19,6 +21,8 @@ pub struct DebuggerBuilder {
     stats: DebuggerStats,
     /// Identified contracts.
     identified_contracts: AddressHashMap<String>,
+    /// Active precompile labels for the current trace context.
+    precompile_labels: AddressHashMap<String>,
     /// Map of source files.
     sources: ContractSources,
     /// Map of the debugger breakpoints.
@@ -67,9 +71,11 @@ impl DebuggerBuilder {
 
     /// Extends the identified contracts from a decoder.
     #[inline]
-    pub fn decoder(self, decoder: &CallTraceDecoder) -> Self {
+    pub fn decoder(mut self, decoder: &CallTraceDecoder) -> Self {
         let c = decoder.contracts.iter().map(|(k, v)| (*k, get_contract_name(v).to_string()));
-        self.identified_contracts(c)
+        self.identified_contracts.extend(c);
+        self.precompile_labels.extend(decoder.precompile_labels());
+        self
     }
 
     /// Extends the identified contracts.
@@ -106,12 +112,19 @@ impl DebuggerBuilder {
     /// Builds the debugger.
     #[inline]
     pub fn build(self) -> Debugger {
-        let Self { mut trace_arenas, stats, identified_contracts, sources, breakpoints, layout } =
-            self;
+        let Self {
+            mut trace_arenas,
+            stats,
+            identified_contracts,
+            precompile_labels,
+            sources,
+            breakpoints,
+            layout,
+        } = self;
         identify_internal_calls(&mut trace_arenas, &identified_contracts, &sources);
         let mut debug_arena = Vec::new();
         for arena in trace_arenas {
-            flatten_call_trace(arena, &mut debug_arena);
+            flatten_call_trace_with_precompiles(arena, &mut debug_arena, &precompile_labels);
         }
         Debugger::new_with_stats(
             debug_arena,

@@ -909,7 +909,10 @@ Ran 1 test for test/Issue12803.t.sol:Issue12803Test
 });
 
 // https://github.com/foundry-rs/foundry/issues/13766
-// vm.expectRevert(bytes("")) should not panic when actual revert has data
+// vm.expectRevert(bytes("")) should not panic when actual revert has data.
+// https://github.com/foundry-rs/foundry/issues/15545
+// An expected reason shorter than 4 bytes (e.g. bytes("C38")) must not panic
+// when it cannot be decoded as an `Error(string)`; it should report a mismatch.
 forgetest_init!(issue_13766, |prj, cmd| {
     prj.add_test(
         "Issue13766.t.sol",
@@ -919,6 +922,7 @@ import {Test} from "forge-std/Test.sol";
 contract Reverter {
     error CustomError();
     function revertWithData() public pure { revert CustomError(); }
+    function revertWithMessage(string memory message) public pure { revert(message); }
 }
 
 contract Issue13766Test is Test {
@@ -927,6 +931,12 @@ contract Issue13766Test is Test {
         vm.expectRevert(bytes(""));
         r.revertWithData();
     }
+
+    function test_expectRevertShortReason() public {
+        Reverter r = new Reverter();
+        vm.expectRevert(bytes("C38"));
+        r.revertWithMessage("some other message");
+    }
 }
 "#,
     );
@@ -934,6 +944,8 @@ contract Issue13766Test is Test {
     cmd.arg("test").assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: Error != expected error: CustomError() != EvmError: Revert] test_expectRevertEmptyBytes() ([GAS])
+...
+[FAIL: Error != expected error: some other message != C38] test_expectRevertShortReason() ([GAS])
 ...
 "#]]);
 });

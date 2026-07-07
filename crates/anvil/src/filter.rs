@@ -5,7 +5,7 @@ use crate::{
     pubsub::filter_logs,
 };
 use alloy_consensus::TxReceipt;
-use alloy_network::Network;
+use alloy_network::{AnyRpcTransaction, Network};
 use alloy_primitives::{TxHash, map::HashMap};
 use alloy_rpc_types::{Filter, FilteredParams, Log};
 use anvil_core::eth::subscription::SubscriptionId;
@@ -20,7 +20,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 /// Type alias for filters identified by their id and their expiration timestamp
 type FilterMap<N> = Arc<Mutex<HashMap<String, (EthFilter<N>, Instant)>>>;
@@ -142,6 +142,7 @@ pub enum EthFilter<N: Network> {
     Logs(Box<LogsFilter<N>>),
     Blocks(NewBlockNotifications),
     PendingTransactions(Receiver<TxHash>),
+    FullPendingTransactions(mpsc::Receiver<AnyRpcTransaction>),
 }
 
 impl<N: Network> std::fmt::Debug for EthFilter<N> {
@@ -150,6 +151,7 @@ impl<N: Network> std::fmt::Debug for EthFilter<N> {
             Self::Logs(_) => f.debug_tuple("Logs").finish(),
             Self::Blocks(_) => f.debug_tuple("Blocks").finish(),
             Self::PendingTransactions(_) => f.debug_tuple("PendingTransactions").finish(),
+            Self::FullPendingTransactions(_) => f.debug_tuple("FullPendingTransactions").finish(),
         }
     }
 }
@@ -175,6 +177,13 @@ where
                 let mut new_txs = Vec::new();
                 while let Poll::Ready(Some(tx_hash)) = tx.poll_next_unpin(cx) {
                     new_txs.push(tx_hash);
+                }
+                Poll::Ready(Some(Ok(new_txs).to_rpc_result()))
+            }
+            Self::FullPendingTransactions(tx) => {
+                let mut new_txs = Vec::new();
+                while let Poll::Ready(Some(tx)) = tx.poll_recv(cx) {
+                    new_txs.push(tx);
                 }
                 Poll::Ready(Some(Ok(new_txs).to_rpc_result()))
             }
