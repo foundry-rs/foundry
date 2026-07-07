@@ -3,12 +3,15 @@
 use crate::{
     TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
+use alloy_json_abi::JsonAbi;
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
-    artifacts::{BytecodeObject, Contract, Source, remappings::Remapping},
+    artifacts::{
+        BytecodeObject, Contract, Source, output_selection::OutputSelection, remappings::Remapping,
+    },
     compilers::{
         Compiler,
         solc::{Solc, SolcCompiler},
@@ -579,6 +582,39 @@ where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
 {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
+}
+
+/// Compiles the project requesting only ABI output.
+pub fn compile_abi_project<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+    compiler: ProjectCompiler,
+) -> Result<ProjectCompileOutput<C>>
+where
+    DynamicTestLinkingPreprocessor: Preprocessor<C>,
+{
+    project.update_output_selection(|selection| {
+        // Request ABI so compilers populate `contracts` without producing bytecode outputs.
+        *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+    });
+    compiler.compile(project)
+}
+
+/// Compiles the target contract requesting only ABI output and returns its ABI.
+pub fn compile_target_abi(
+    project: &mut Project<MultiCompiler>,
+    target_path: &Path,
+    target_name: &str,
+) -> Result<JsonAbi> {
+    let target_path = dunce::canonicalize(target_path)?;
+    let output = compile_abi_project(
+        project,
+        ProjectCompiler::new().quiet(true).files([target_path.clone()]),
+    )?;
+
+    let artifact = output
+        .find(&target_path, target_name)
+        .ok_or_eyre("failed to find target artifact when compiling for abi")?;
+    artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
 }
 
 /// Creates a [Project] from an Etherscan source.
