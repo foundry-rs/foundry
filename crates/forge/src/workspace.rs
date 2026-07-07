@@ -91,9 +91,8 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
             Some(rebase_project_path(&config.root, temp_path, path));
     }
     for permission in &mut temp_config.fs_permissions.permissions {
-        if permission.path.is_absolute() {
-            permission.path = rebase_project_path(&config.root, temp_path, &permission.path);
-        }
+        let path = rebase_project_path(&config.root, temp_path, &permission.path);
+        permission.path = normalize_existing_ancestor(&path);
     }
     if let Some(model_checker) = &mut temp_config.model_checker {
         model_checker.contracts = std::mem::take(&mut model_checker.contracts)
@@ -111,6 +110,30 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
 fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
     let rel = relative_to_root(root, path);
     if rel.is_absolute() { path.to_path_buf() } else { temp_path.join(rel) }
+}
+
+fn normalize_existing_ancestor(path: &Path) -> PathBuf {
+    if path.exists() {
+        return dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    }
+
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    while let Some(parent) = ancestor.parent() {
+        if ancestor.exists() {
+            break;
+        }
+        if let Some(name) = ancestor.file_name() {
+            missing.push(name.to_owned());
+        }
+        ancestor = parent;
+    }
+
+    let mut normalized = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+    for component in missing.iter().rev() {
+        normalized.push(component);
+    }
+    normalized
 }
 
 fn rebase_remapping(
@@ -196,7 +219,8 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
                 &permission.path,
                 &handled_extra_roots,
             )?;
-        } else if permission.is_granted(FsAccessKind::Write) {
+        }
+        if permission.is_granted(FsAccessKind::Write) {
             create_project_local_permission_dir(
                 &config.root,
                 temp_dir,
@@ -263,7 +287,7 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn handled_project_roots(config: &Config) -> Result<Vec<PathBuf>> {
+pub(crate) fn handled_project_roots(config: &Config) -> Result<Vec<PathBuf>> {
     let mut roots = Vec::new();
     push_handled_project_root(&mut roots, &config.root, &config.src, "src")?;
     push_handled_project_root(&mut roots, &config.root, &config.test, "test")?;
@@ -384,10 +408,8 @@ fn create_project_local_permission_dir(
     }
 
     fs::create_dir_all(temp_dir.join(parent))?;
-    if resolved.exists() {
+    if resolved.exists() && resolved.is_file() {
         fs::copy(&resolved, temp_dir.join(rel))?;
-    } else {
-        fs::File::create(temp_dir.join(rel))?;
     }
 
     Ok(())
@@ -695,17 +717,29 @@ mod tests {
         let root = temp.path().join("project");
         let workspace = temp.path().join("workspace");
         fs::create_dir_all(root.join("writes")).unwrap();
+        fs::create_dir_all(workspace.join("writes")).unwrap();
+        fs::create_dir_all(workspace.join("logs/sub")).unwrap();
 
         let config = Config {
             root,
-            fs_permissions: foundry_config::FsPermissions::new([PathPermission::write("./writes")]),
+            fs_permissions: foundry_config::FsPermissions::new([
+                PathPermission::write("./writes"),
+                PathPermission::read_write("./logs/sub/a.txt"),
+            ]),
             ..Default::default()
         };
 
         let temp_config = rebase_config_paths(&config, &workspace).sanitized();
 
         assert_eq!(temp_config.root, workspace);
-        assert_eq!(temp_config.fs_permissions.permissions[0].path, workspace.join("writes"));
+        assert_eq!(
+            temp_config.fs_permissions.permissions[0].path,
+            dunce::canonicalize(workspace.join("writes")).unwrap()
+        );
+        assert_eq!(
+            temp_config.fs_permissions.permissions[1].path,
+            dunce::canonicalize(workspace.join("logs/sub")).unwrap().join("a.txt")
+        );
     }
 
     #[test]

@@ -263,6 +263,34 @@ contract FixtureWriteFileTest is Test {
     cmd.assert_success();
 });
 
+forgetest_init!(brutalize_creates_read_write_permission_file_parents, |prj, cmd| {
+    fs::create_dir_all(prj.root().join("logs/sub")).unwrap();
+    prj.update_config(|config| {
+        config.fs_permissions.add(PathPermission::read_write("./logs/sub/a.txt"))
+    });
+
+    prj.add_test(
+        "FixtureReadWriteFile.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+
+contract FixtureReadWriteFileTest is Test {
+    function test_readWriteFixtureFile() public {
+        assertFalse(vm.exists("./logs/sub/a.txt"));
+        vm.writeFile("./logs/sub/a.txt", "fixture-data");
+        assertEq(vm.readFile("./logs/sub/a.txt"), "fixture-data");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--brutalize", "--mt", "test_readWriteFixtureFile"]);
+    cmd.assert_success();
+});
+
 #[cfg(not(target_os = "windows"))]
 forgetest_init!(brutalize_copies_in_root_symlinked_source_dirs, |prj, cmd| {
     fs::create_dir_all(prj.root().join(".shared/src")).unwrap();
@@ -634,6 +662,26 @@ contract FlatTargetTest {
 "#,
     )
     .unwrap();
+
+    for dep_dir in ["dependencies", "node_modules"] {
+        fs::create_dir_all(prj.root().join(dep_dir)).unwrap();
+        fs::write(
+            prj.root().join(dep_dir).join("DependencyTarget.sol"),
+            r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract DependencyTarget {
+    function readScratch() external pure returns (uint256 result) {
+        assembly {
+            result := mload(0x00)
+        }
+    }
+}
+"#,
+        )
+        .unwrap();
+    }
 
     let stderr = cmd
         .args(["test", "--brutalize", "--mt", "test_readScratch"])

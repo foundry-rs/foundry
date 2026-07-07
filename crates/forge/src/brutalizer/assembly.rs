@@ -16,16 +16,12 @@ pub(super) fn assembly_transforms(func: &ItemFunction<'_>) -> Vec<Transform> {
 
     let insert_pos = body.span.lo().0 + 1;
     let insert_span = Span::new(BytePos(insert_pos), BytePos(insert_pos));
-    vec![
-        Transform::Insert {
-            offset: insert_pos as usize,
-            replacement: generate_memory_brutalization_assembly(insert_span),
-        },
-        Transform::Insert {
-            offset: insert_pos as usize,
-            replacement: generate_fmp_misalignment_assembly(insert_span),
-        },
-    ]
+    let replacement = format!(
+        "{}{}",
+        generate_memory_brutalization_assembly(insert_span),
+        generate_fmp_misalignment_assembly(insert_span)
+    );
+    vec![Transform::Insert { offset: insert_pos as usize, replacement }]
 }
 
 const fn is_eligible_function(visibility: Option<Visibility>, kind: Option<FunctionKind>) -> bool {
@@ -136,6 +132,22 @@ contract T {
 "#;
         let result = brutalize(source);
         assert!(result.contains("mstore(0x40, add(mload(0x40),"));
+    }
+
+    #[test]
+    fn memory_fill_precedes_fmp_misalignment() {
+        let source = r#"
+pragma solidity ^0.8.0;
+contract T {
+    function f() external pure returns (uint256 r) {
+        assembly { r := 42 }
+    }
+}
+"#;
+        let result = brutalize(source);
+        let memory_pos = result.find("let _b_p := mload(0x40)").unwrap();
+        let fmp_pos = result.find("mstore(0x40, add(mload(0x40),").unwrap();
+        assert!(memory_pos < fmp_pos);
     }
 
     #[test]

@@ -57,17 +57,12 @@ pub fn brutalize_project(config: &Config, temp_dir: &Path) -> eyre::Result<usize
         return Ok(0);
     }
 
-    let mut skipped_dirs = Vec::new();
-    for path in config.libs.iter().chain([&config.script]) {
-        if path.exists() && path != &config.src {
-            let rel = path.strip_prefix(&config.root).unwrap_or(path);
-            skipped_dirs.push(temp_dir.join(rel));
-        }
-    }
-    if config.test.exists() && config.test != config.src {
-        let test_rel = config.test.strip_prefix(&config.root).unwrap_or(&config.test);
-        skipped_dirs.push(temp_dir.join(test_rel));
-    }
+    let src_rel = src_rel.to_path_buf();
+    let skipped_dirs = crate::workspace::handled_project_roots(config)?
+        .into_iter()
+        .filter(|rel| !rel.as_os_str().is_empty() && *rel != src_rel)
+        .map(|rel| temp_dir.join(rel))
+        .collect::<Vec<_>>();
 
     brutalize_sol_files_in_dir(&src_dir, &skipped_dirs)
 }
