@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{cache::CacheSubcommands, generate::GenerateSubcommands,install,  watch},
+    cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, install, watch},
     opts::{Forge, ForgeSubcommand},
 };
 use clap::{CommandFactory, Parser};
@@ -62,12 +62,11 @@ pub fn run_command(args: Forge) -> Result<()> {
                 outcome.ensure_ok(silent)
             }
         }
-       // ForgeSubcommand::Script(cmd) => global.block_on(cmd.run_script()),
-       ForgeSubcommand::Script(cmd) => global.block_on(async {
+        ForgeSubcommand::Script(cmd) => global.block_on(async {
             // Install missing dependencies before running the script.
             // Config is reloaded internally by run_script() via preprocess().
             let mut config = cmd.load_config()?;
-            install::install_missing_dependencies(&mut config).await;
+            install::try_install_missing_dependencies(&mut config).await?;
             cmd.run_script().await
         }),
         ForgeSubcommand::Coverage(cmd) => {
@@ -87,7 +86,11 @@ pub fn run_command(args: Forge) -> Result<()> {
         }
         ForgeSubcommand::VerifyContract(args) => global.block_on(async {
             let mut config = args.load_config()?;
-            install::install_missing_dependencies(&mut config).await;
+            install::try_install_missing_dependencies_to_stderr(
+                &mut config,
+                args.show_standard_json_input,
+            )
+            .await?;
             args.run().await
         }),
         ForgeSubcommand::VerifyCheck(args) => global.block_on(args.run()),

@@ -79,7 +79,7 @@ impl InitArgs {
             network,
             empty,
         } = self;
-        let DependencyInstallOpts { shallow, no_git, commit } = install;
+        let DependencyInstallOpts { shallow, no_git, commit, .. } = install;
 
         let tempo = matches!(network, Some(Networks::Tempo));
 
