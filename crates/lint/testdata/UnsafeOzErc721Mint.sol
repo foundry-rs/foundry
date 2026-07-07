@@ -284,3 +284,17 @@ contract CodeGuardedOverrideNft is ERC721 {
         _mint(to, id);
     }
 }
+
+// A `.code` inspection of an address unrelated to the recipient is not a receiver check: a
+// construction guard on `address(this)` leaves the path to the unchecked base wide open for
+// arbitrary recipients, so direct callers of the override still report.
+contract ConstructionGuardedNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(address(this).code.length > 0, "no construction mint");
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}

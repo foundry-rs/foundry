@@ -130,15 +130,25 @@ impl MintCallFinder<'_, '_, '_, '_> {
             return true;
         }
         // A delegating override: any call in its body dispatching to an unsafe `_mint`. An
-        // override that performs the receiver check itself before forwarding (a resolved
-        // `onERC721Received` call or an `address.code` inspection) is a safe wrapper like
-        // the canonical `_safeMint`, so it is not an unsafe target.
+        // override that performs the receiver check on the minted recipient before
+        // forwarding (a resolved `onERC721Received` call or a `.code` inspection, both
+        // mentioning the recipient parameter) is a safe wrapper like the canonical
+        // `_safeMint`, so it is not an unsafe target. A check on an unrelated address,
+        // `address(this).code` construction guards included, does not count.
         if function.override_
             && let Some(body) = &function.body
         {
+            // The minted recipient is the override's first address-typed parameter.
+            let recipient = function.parameters.iter().copied().find(|&vid| {
+                matches!(
+                    self.hir.variable(vid).ty.kind,
+                    hir::TypeKind::Elementary(ElementaryType::Address(_))
+                )
+            });
             let mut scan = BodyScanner {
                 gcx: self.gcx,
                 hir: self.hir,
+                recipient,
                 callees: Vec::new(),
                 has_receiver_check: false,
             };
@@ -169,13 +179,25 @@ fn is_openzeppelin_source(hir: &Hir<'_>, source_id: hir::SourceId) -> bool {
 }
 
 /// Collects the resolved targets of every call in a subtree, and whether the subtree
-/// performs a receiver check: a call resolving to a function named `onERC721Received`, or
-/// a `.code` inspection on an address value.
+/// performs a receiver check on the recipient: a call resolving to a function named
+/// `onERC721Received` whose receiver mentions the recipient parameter, or a `.code`
+/// inspection of an address value mentioning it.
 struct BodyScanner<'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
+    recipient: Option<hir::VariableId>,
     callees: Vec<FunctionId>,
     has_receiver_check: bool,
+}
+
+impl<'hir> BodyScanner<'hir> {
+    /// Whether an expression mentions the recipient parameter anywhere.
+    fn mentions_recipient(&self, expr: &'hir Expr<'hir>) -> bool {
+        let Some(recipient) = self.recipient else { return false };
+        let mut finder = MentionFinder { hir: self.hir, target: recipient, found: false };
+        let _ = finder.visit_expr(expr);
+        finder.found
+    }
 }
 
 impl<'hir> Visit<'hir> for BodyScanner<'hir> {
@@ -188,35 +210,69 @@ impl<'hir> Visit<'hir> for BodyScanner<'hir> {
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             // Each call's dispatch target, as the type checker resolved it. A callee named
-            // `onERC721Received` is the receiver check itself.
+            // `onERC721Received` invoked on something mentioning the recipient is the
+            // receiver check itself.
             ExprKind::Call(callee, _, _) => {
                 if let Some(ty) = self.gcx.type_of_expr(callee.peel_parens().id)
                     && let TyKind::Fn(function_ty) = ty.kind
                     && let Some(function_id) = function_ty.function_id
                 {
                     self.callees.push(function_id);
-                    // The name is judged on the resolved declaration, not the call site.
+                    // The name is judged on the resolved declaration, not the call site,
+                    // and the call receiver must involve the recipient.
                     if self
                         .hir
                         .function(function_id)
                         .name
                         .is_some_and(|name| name.as_str() == "onERC721Received")
+                        && let ExprKind::Member(receiver, _) = &callee.peel_parens().kind
+                        && self.mentions_recipient(receiver)
                     {
                         self.has_receiver_check = true;
                     }
                 }
             }
-            // `to.code.length` style inspections: the `code` member of an address value,
-            // judged on the base's type so a user field named `code` does not count.
+            // `to.code.length` style inspections: the `code` member of an address value
+            // that mentions the recipient, judged on the base's type so a user field named
+            // `code` does not count, and on the mention so `address(this).code` does not
+            // either.
             ExprKind::Member(base, member) => {
                 if member.as_str() == "code"
                     && let Some(ty) = self.gcx.type_of_expr(base.peel_parens().id)
                     && matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
+                    && self.mentions_recipient(base)
                 {
                     self.has_receiver_check = true;
                 }
             }
             _ => {}
+        }
+        self.walk_expr(expr)
+    }
+}
+
+/// Finds a reference to one variable inside an expression.
+struct MentionFinder<'hir> {
+    hir: &'hir Hir<'hir>,
+    target: hir::VariableId,
+    found: bool,
+}
+
+impl<'hir> Visit<'hir> for MentionFinder<'hir> {
+    type BreakValue = Infallible;
+
+    fn hir(&self) -> &'hir Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        // An identifier resolving to the target variable is a mention.
+        if let ExprKind::Ident(resolutions) = &expr.kind
+            && resolutions
+                .iter()
+                .any(|res| matches!(res, hir::Res::Item(hir::ItemId::Variable(vid)) if *vid == self.target))
+        {
+            self.found = true;
         }
         self.walk_expr(expr)
     }

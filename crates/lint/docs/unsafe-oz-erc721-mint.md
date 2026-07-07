@@ -15,7 +15,7 @@ Two exemptions:
 
 - calls to `_safeMint` are the recommended fix and never fire;
 - calls made inside the canonical wrapper, a `_safeMint` declared in `ERC721`/`ERC721Upgradeable` itself, which legitimately calls `_mint` next to its receiver check. A user-defined `_safeMint` override stays analyzed: it can call `_mint` directly without any check;
-- calls made inside a user `_mint` override: the override is the mint primitive itself, `super._mint` there is delegation, and `_safeMint` there would re-enter the override through the virtual dispatch. A delegating override reports at its call sites instead, unless it performs the receiver check itself before forwarding, a resolved `onERC721Received` call or an `address.code` inspection: such a wrapper is safe like the canonical `_safeMint`, and its callers stay clean.
+- calls made inside a user `_mint` override: the override is the mint primitive itself, `super._mint` there is delegation, and `_safeMint` there would re-enter the override through the virtual dispatch. A delegating override reports at its call sites instead, unless it performs the receiver check on the minted recipient before forwarding, a resolved `onERC721Received` call or a `.code` inspection mentioning the recipient parameter: such a wrapper is safe like the canonical `_safeMint`, and its callers stay clean. A check on an unrelated address, `address(this).code` construction guards included, does not count.
 
 ## Why is this bad?
 
