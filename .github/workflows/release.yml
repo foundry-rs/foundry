@@ -345,11 +345,11 @@ jobs:
         shell: bash
         run: |
           sudo apt-get -y install help2man
-          help2man -N $OUT_DIR/forge > forge.1
-          help2man -N $OUT_DIR/cast > cast.1
-          help2man -N $OUT_DIR/anvil > anvil.1
-          help2man -N $OUT_DIR/chisel > chisel.1
-          help2man -N $OUT_DIR/solar > solar.1
+          help2man -N "$OUT_DIR/forge" > forge.1
+          help2man -N "$OUT_DIR/cast" > cast.1
+          help2man -N "$OUT_DIR/anvil" > anvil.1
+          help2man -N "$OUT_DIR/chisel" > chisel.1
+          help2man -N "$OUT_DIR/solar" > solar.1
           gzip forge.1
           gzip cast.1
           gzip anvil.1
