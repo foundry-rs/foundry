@@ -123,6 +123,7 @@ jobs:
           ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
+        shell: bash
         run: |
           args=(-E "$NEXTEST_FILTER")
           if [[ -n "$NEXTEST_PARTITION" ]]; then
