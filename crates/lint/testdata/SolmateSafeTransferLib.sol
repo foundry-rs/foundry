@@ -5,6 +5,7 @@ pragma solidity ^0.8.18;
 import {IToken, SafeTransferLib} from "./auxiliary/solmate/SolmateMocks.sol";
 import {SafeTransferLib as STL, ITokenAux} from "./auxiliary/solmate/SolmateSafeTransferLib.sol";
 import {SafeTransferLib as SoladySTL} from "./auxiliary/solady/SafeTransferLib.sol";
+import {SafeTransferLib as FixedSTL, IToken as ITokenFixed} from "./auxiliary/solmate-fixed/SafeTransferLib.sol";
 
 // Tests for `solmate-safe-transfer-lib`: the released solmate v6 `SafeTransferLib` treats a
 // call that returns no data as a success without checking that the token has code, so a token
@@ -133,6 +134,19 @@ contract UsesSolady {
     IToken internal token;
 
     function viaSolady(address to, uint256 amount) internal {
+        token.safeTransfer(to, amount);
+    }
+}
+
+// A same-name `SafeTransferLib` under a `solmate-fixed/` path: the string "solmate" is a
+// substring of that path but not one of its components, so the provenance check must treat
+// it as unrelated code and keep it out of scope.
+contract UsesFixedSolmate {
+    using FixedSTL for ITokenFixed;
+
+    ITokenFixed internal token;
+
+    function viaFixed(address to, uint256 amount) internal {
         token.safeTransfer(to, amount);
     }
 }

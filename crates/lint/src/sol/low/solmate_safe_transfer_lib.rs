@@ -99,11 +99,15 @@ impl TokenOpFinder<'_, '_, '_, '_> {
             && contract.name.as_str() == "SafeTransferLib"
     }
 
-    /// Whether a source file belongs to a solmate package, judged by its path. A vendored
-    /// copy under a path that does not name solmate is not recognized.
+    /// Whether a source file belongs to the solmate package, judged by a full path component.
+    /// Matching a whole component rather than a substring keeps a vendored or patched copy under
+    /// a misleading path such as `vendor/solmate-fixed/` from being recognized.
     fn is_solmate_source(&self, source_id: hir::SourceId) -> bool {
         match &self.hir.source(source_id).file.name {
-            FileName::Real(path) => path.to_string_lossy().to_lowercase().contains("solmate"),
+            FileName::Real(path) => path.components().any(|component| {
+                matches!(component, std::path::Component::Normal(name)
+                    if name.eq_ignore_ascii_case("solmate"))
+            }),
             _ => false,
         }
     }
