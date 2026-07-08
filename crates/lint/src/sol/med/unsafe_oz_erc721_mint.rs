@@ -169,11 +169,19 @@ impl MintCallFinder<'_, '_, '_, '_> {
     }
 }
 
-/// Whether a source file belongs to an OpenZeppelin package, judged by its path. A
-/// vendored copy under a path that does not name OpenZeppelin is not recognized.
+/// The package-root directory names of the OpenZeppelin distributions: the npm scope and the
+/// git-submodule roots. Provenance is judged against a full path component so a same-name
+/// contract under a merely-substring path such as `src/not-openzeppelin/` is not recognized.
+const OPENZEPPELIN_PACKAGE_ROOTS: [&str; 3] =
+    ["@openzeppelin", "openzeppelin-contracts", "openzeppelin-contracts-upgradeable"];
+
+/// Whether a source file belongs to an OpenZeppelin package, judged by a full path component.
 fn is_openzeppelin_source(hir: &Hir<'_>, source_id: hir::SourceId) -> bool {
     match &hir.source(source_id).file.name {
-        FileName::Real(path) => path.to_string_lossy().to_lowercase().contains("openzeppelin"),
+        FileName::Real(path) => path.components().any(|component| {
+            matches!(component, std::path::Component::Normal(name)
+                if OPENZEPPELIN_PACKAGE_ROOTS.iter().any(|root| name.eq_ignore_ascii_case(root)))
+        }),
         _ => false,
     }
 }

@@ -7,6 +7,7 @@ import {
     ERC721Upgradeable,
     ERC721Consecutive
 } from "./auxiliary/openzeppelin-contracts/Erc721Mocks.sol";
+import {ERC721 as LocalERC721} from "./auxiliary/not-openzeppelin/Erc721Mocks.sol";
 
 // Tests for `unsafe-oz-erc721-mint`: `ERC721._mint` credits a token without checking that the
 // recipient can receive it (no `onERC721Received` call), so minting to a non-receiver contract
@@ -296,5 +297,14 @@ contract ConstructionGuardedNft is ERC721 {
 
     function mint(address to, uint256 id) external {
         _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A contract named exactly `ERC721` but declared under a `not-openzeppelin/` path: its path
+// contains the substring "openzeppelin" but no OpenZeppelin package-root component, so the
+// provenance check keeps its `_mint` out of scope.
+contract UsesLocalErc721 is LocalERC721 {
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
     }
 }
