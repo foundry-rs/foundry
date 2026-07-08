@@ -647,6 +647,41 @@ async fn test_set_next_block_prevrandao_evm() {
     assert_eq!(block.header.mix_hash, Some(prevrandao));
 }
 
+// Tests that a `prevrandao` override set via `anvil_setNextBlockPrevRandao` but not yet mined is
+// dropped by `anvil_reset`, so the pending value cannot leak into a block mined after the reset.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_cleared_on_reset() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    // resetting must drop the pending override before it is consumed by a block
+    api.anvil_reset(None).await.unwrap();
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(block.header.mix_hash, Some(prevrandao));
+}
+
+// Tests that a `prevrandao` override set via `anvil_setNextBlockPrevRandao` but not yet mined is
+// dropped by `evm_revert`, so the pending value cannot leak into a block mined after the revert.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_cleared_on_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    // reverting must drop the pending override before it is consumed by a block
+    api.evm_revert(state_snapshot).await.unwrap();
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(block.header.mix_hash, Some(prevrandao));
+}
+
 // test that after a snapshot revert, the env block is reset
 // to its correct value (block number, etc.)
 #[tokio::test(flavor = "multi_thread")]

@@ -99,6 +99,14 @@ impl CheatsManager {
     pub fn take_next_block_prevrandao(&self) -> Option<B256> {
         self.state.write().next_block_prevrandao.take()
     }
+
+    /// Clears any manually set `prevrandao` value for the next block.
+    ///
+    /// Used on reset/revert so a set-but-unmined override does not leak into a later block,
+    /// mirroring how the next-block timestamp override is cleared by `TimeManager::reset`.
+    pub fn clear_next_block_prevrandao(&self) {
+        self.state.write().next_block_prevrandao.take();
+    }
 }
 
 /// Container type for all the state variables

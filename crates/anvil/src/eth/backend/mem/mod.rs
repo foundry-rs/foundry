@@ -2481,6 +2481,8 @@ impl<N: Network> Backend<N> {
 
                 // reset the time to the timestamp of the forked block
                 self.time.reset(fork_block.header.timestamp());
+                // drop any pending next-block prevrandao override so it does not leak into a block
+                self.cheats.clear_next_block_prevrandao();
 
                 // also reset the total difficulty
                 self.blockchain.storage.write().total_difficulty = fork.total_difficulty();
@@ -2543,6 +2545,8 @@ impl<N: Network> Backend<N> {
 
         // Reset time manager
         self.time.reset(genesis_timestamp);
+        // drop any pending next-block prevrandao override so it does not leak into a block
+        self.cheats.clear_next_block_prevrandao();
 
         // Seed the next block's base fee. On Tempo the genesis keeps its fixed default while the
         // next block already follows the hardfork's rule (e.g. T7 clamps to the cap); other chains
@@ -2622,6 +2626,8 @@ impl<N: Network> Backend<N> {
 
             let reset_time = block.header.timestamp();
             self.time.reset(reset_time);
+            // drop any pending next-block prevrandao override so it does not leak into a block
+            self.cheats.clear_next_block_prevrandao();
 
             let mut env = self.evm_env.write();
             env.block_env = BlockEnv {
@@ -4126,6 +4132,8 @@ where
             env.block_env.prevrandao = common_block.header.mix_hash();
 
             self.time.reset(env.block_env.timestamp.saturating_to());
+            // drop any pending next-block prevrandao override so it does not leak into a block
+            self.cheats.clear_next_block_prevrandao();
         }
 
         {
