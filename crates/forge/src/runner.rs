@@ -1629,7 +1629,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         storage: &[SymbolicStorageAssignment],
         invariant_failure: Option<SymbolicInvariantArtifactFailure>,
     ) -> (Option<SymbolicArtifactRef>, Option<SymbolicCounterexampleMinimization>) {
-        let Some(minimization) = minimization.filter(MinimizedSequence::changed) else {
+        let Some(minimization) = minimization else {
             return (
                 self.persist_invariant_sequence_counterexample_artifact_with_replay_metadata(
                     test_name,
