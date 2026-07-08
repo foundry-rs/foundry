@@ -2703,16 +2703,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result
     }
 
-    fn try_seed_fuzz_corpus_from_frontiers(&self, func: &Function, fuzz_config: &FuzzConfig) {
+    fn try_seed_fuzz_corpus_from_frontiers(
+        &self,
+        func: &Function,
+        fuzz_config: &FuzzConfig,
+    ) -> Option<FuzzTestResult> {
         if !should_symbolically_use_fuzz_frontiers(&self.config, func) {
-            return;
+            return None;
         }
         if fuzz_config.corpus.corpus_dir.is_none() {
             let _ = sh_warn!(
                 "`--symbolic-use-fuzz-frontiers` requires `--fuzz-corpus-dir` or \
                  `fuzz.corpus_dir`; skipping targeted frontier seeding"
             );
-            return;
+            return None;
         }
 
         for frontier in self.import_symbolic_fuzz_frontiers(func, fuzz_config) {
@@ -2755,6 +2759,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             };
 
+            let calldata = input.calldata.clone();
+            let args = input.args.clone();
             let replay = self.symbolic_fuzz_seed_replay(sender, &input, fuzz_config);
             let replay_matches = matches!(
                 (expect_failure, replay),
@@ -2799,7 +2805,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     );
                 }
             }
+
+            if expect_failure {
+                return Some(FuzzTestResult {
+                    reason: Some(format!(
+                        "targeted symbolic frontier {id} produced a replay-confirmed counterexample"
+                    )),
+                    counterexample: Some(CounterExample::Single(
+                        BaseCounterExample::from_fuzz_call(calldata, args, None),
+                    )),
+                    ..Default::default()
+                });
+            }
         }
+
+        None
     }
 
     fn try_seed_fuzz_corpus_symbolically(&self, func: &Function, fuzz_config: &FuzzConfig) {
@@ -4052,7 +4072,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             fuzz_config.corpus.corpus_dir = None;
         }
 
-        self.try_seed_fuzz_corpus_from_frontiers(func, &fuzz_config);
+        let record_counterexample = |result: &FuzzTestResult| {
+            if let Some(CounterExample::Single(counterexample)) = &result.counterexample {
+                if let Err(err) = foundry_common::fs::create_dir_all(&failure_dir) {
+                    error!(%err, "Failed to create fuzz failure dir");
+                } else if let Err(err) =
+                    foundry_common::fs::write_json_file(failure_file.as_path(), counterexample)
+                {
+                    error!(%err, "Failed to record call sequence");
+                }
+            }
+        };
+
+        if let Some(result) = self.try_seed_fuzz_corpus_from_frontiers(func, &fuzz_config) {
+            record_counterexample(&result);
+            self.result.fuzz_result(result);
+            return self.result;
+        }
         self.try_seed_fuzz_corpus_symbolically(func, &fuzz_config);
 
         let progress = start_fuzz_progress(
@@ -4109,15 +4145,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
 
         // Record counterexample.
-        if let Some(CounterExample::Single(counterexample)) = &result.counterexample {
-            if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
-                error!(%err, "Failed to create fuzz failure dir");
-            } else if let Err(err) =
-                foundry_common::fs::write_json_file(failure_file.as_path(), counterexample)
-            {
-                error!(%err, "Failed to record call sequence");
-            }
-        }
+        record_counterexample(&result);
 
         self.result.fuzz_result(result);
         self.result

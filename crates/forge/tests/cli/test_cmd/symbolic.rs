@@ -2671,12 +2671,13 @@ contract SymbolicFuzzFrontierSeed {
             "--symbolic-frontier-selectors",
             &target_frontier_selector,
         ])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .clone();
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
     assert!(stdout.contains("testFuzz_frontier(uint64,uint256)"), "{stdout}");
+    assert!(stdout.contains("targeted symbolic frontier"), "{stdout}");
     assert!(
         stderr.contains("Symbolic frontier selection for testFuzz_frontier(uint64,uint256)"),
         "{stderr}"

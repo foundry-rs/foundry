@@ -157,7 +157,9 @@ forge test --match-test test_hard_branch \
 Forge imports up to `symbolic.frontier_limit` records (default 256), replays the
 recorded one-call seed as a path-priority hint, constrains symbolic execution to
 flip the captured comparison result, and persists only candidates that replay
-with the expected concrete outcome.
+with the expected concrete outcome. If the candidate replays as a fuzz failure,
+Forge reports it immediately as the fuzz counterexample and also persists the
+seed for later corpus replay.
 
 To focus solver time on specific captured sites, pass frontier artifact IDs,
 comparison PCs, or calldata selectors:
