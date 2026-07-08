@@ -617,6 +617,14 @@ impl NodeConfig {
         {
             return hardfork.into();
         }
+        if self.networks.is_monad()
+            && let Some(hardfork) = MonadHardfork::from_chain_and_timestamp(
+                self.get_chain_id(),
+                self.get_genesis_timestamp(),
+            )
+        {
+            return hardfork.into();
+        }
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
             return foundry_evm::hardforks::OpHardfork::default().into();
@@ -1865,5 +1873,14 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert!(matches!(config.get_hardfork(), FoundryHardfork::Tempo(_)));
+    }
+
+    #[test]
+    fn get_hardfork_on_monad_uses_chain_timestamp_mapping() {
+        let config = NodeConfig::test_monad()
+            .with_chain_id(Some(143u64))
+            .with_genesis_timestamp(Some(1_763_648_999u64));
+
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Monad(MonadHardfork::MonadEight));
     }
 }
