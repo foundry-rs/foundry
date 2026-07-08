@@ -159,6 +159,7 @@ impl VerifyBundle {
                     force: false,
                     skip_is_verified_check: true,
                     watch: true,
+                    print_submission_result_to_stdout: false,
                     retry: self.retry,
                     libraries: libraries.to_vec(),
                     root: None,
