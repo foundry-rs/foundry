@@ -2256,7 +2256,7 @@ impl TestArgs {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
             if total_tests == 0 {
-                sh_println!(
+                sh_warn!(
                     "No tests found in project! Forge looks for functions that start with `test`"
                 )?;
             } else {
