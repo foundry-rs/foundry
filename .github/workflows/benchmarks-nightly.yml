@@ -204,8 +204,8 @@ jobs:
           DATE=$(date -u +%Y-%m-%d)
           shopt -s nullglob
 
-          stable_parts=( benches/stable-${DATE}-*.json )
-          nightly_parts=( benches/nightly-${DATE}-*.json )
+          stable_parts=( "benches/stable-${DATE}-"*.json )
+          nightly_parts=( "benches/nightly-${DATE}-"*.json )
 
           if [[ ${#stable_parts[@]} -eq 0 && ${#nightly_parts[@]} -eq 0 ]]; then
             echo "No benchmark results produced — all steps failed."

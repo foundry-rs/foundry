@@ -242,7 +242,7 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--locked --target $TARGET --profile $RUST_PROFILE --bins
+          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE" --bins
             --no-default-features --features "$RUST_FEATURES")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
@@ -280,22 +280,25 @@ jobs:
         run: |
           if [[ "$PLATFORM_NAME" == "linux" || "$PLATFORM_NAME" == "alpine" ]]; then
             tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel
-            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
+            file_name="foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
             gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel
-            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
+            file_name="foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
           else
             cd "$OUT_DIR"
             7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
             mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
-            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> "$GITHUB_OUTPUT"
+            file_name="foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
           fi
-          printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> "$GITHUB_OUTPUT"
-          printf "foundry_sbom=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.spdx.json" >> "$GITHUB_OUTPUT"
-          printf "foundry_checksum=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sha256" >> "$GITHUB_OUTPUT"
-          printf "foundry_signature=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sigstore.json" >> "$GITHUB_OUTPUT"
+          {
+            printf "file_name=%s\n" "$file_name"
+            printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt"
+            printf "foundry_sbom=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.spdx.json"
+            printf "foundry_checksum=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sha256"
+            printf "foundry_signature=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sigstore.json"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate archive checksum
         env:
@@ -342,10 +345,10 @@ jobs:
         shell: bash
         run: |
           sudo apt-get -y install help2man
-          help2man -N $OUT_DIR/forge > forge.1
-          help2man -N $OUT_DIR/cast > cast.1
-          help2man -N $OUT_DIR/anvil > anvil.1
-          help2man -N $OUT_DIR/chisel > chisel.1
+          help2man -N "$OUT_DIR/forge" > forge.1
+          help2man -N "$OUT_DIR/cast" > cast.1
+          help2man -N "$OUT_DIR/anvil" > anvil.1
+          help2man -N "$OUT_DIR/chisel" > chisel.1
           gzip forge.1
           gzip cast.1
           gzip anvil.1
