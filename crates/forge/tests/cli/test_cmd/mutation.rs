@@ -352,6 +352,92 @@ contract StackTooDeepTest {
     assert!(summary["total"].as_u64().unwrap() > 0, "unexpected summary:\n{summary}");
 });
 
+forgetest_init!(mutation_testing_rerun_preserves_exact_failure_filter, |prj, _cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "../src/Counter.sol";
+
+contract WeakTest {
+    function test_increment() public {
+        Counter target = new Counter();
+        target.increment();
+        assert(target.number() >= 0);
+    }
+}
+
+contract StrongTest {
+    function test_increment() public {
+        Counter target = new Counter();
+        target.increment();
+        assert(target.number() == 1);
+    }
+}
+"#,
+    );
+
+    let mut weak_cmd = prj.forge_command();
+    let weak_stdout = weak_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Counter.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-contract",
+            "WeakTest",
+            "--match-test",
+            "test_increment",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let weak_summary = mutation_summary(&weak_stdout);
+
+    let failures_file = prj.root().join("cache/test-failures");
+    fs::create_dir_all(failures_file.parent().unwrap()).unwrap();
+    fs::write(
+        failures_file,
+        r#"{"version":1,"failures":[{"contract":"test/Counter.t.sol:WeakTest","test":"test_increment()"}]}"#,
+    )
+    .unwrap();
+
+    let mut rerun_cmd = prj.forge_command();
+    let rerun_stdout = rerun_cmd
+        .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--rerun", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let rerun_summary = mutation_summary(&rerun_stdout);
+
+    for key in ["total", "killed", "survived", "invalid", "skipped", "timed_out"] {
+        assert_eq!(
+            rerun_summary[key], weak_summary[key],
+            "expected --rerun to match the exact WeakTest baseline for `{key}`: weak={weak_summary}, rerun={rerun_summary}",
+        );
+    }
+});
+
 forgetest_init!(mutation_testing_rejects_empty_mutate_path_selection, |prj, cmd| {
     prj.add_source(
         "Counter.sol",
