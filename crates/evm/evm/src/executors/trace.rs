@@ -10,7 +10,9 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::EvmOpts,
 };
-use foundry_evm_hardforks::{MonadHardfork, TempoHardfork};
+#[cfg(feature = "monad")]
+use foundry_evm_hardforks::MonadHardfork;
+use foundry_evm_hardforks::TempoHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceMode;
 use revm::{context::Transaction, state::Bytecode};
@@ -91,10 +93,13 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
 
         let fork = evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block).unwrap();
         let networks = evm_opts.networks.with_chain_id(evm_env.cfg_env.chain_id);
-        config.labels.extend(networks.precompiles_label(
-            Some(config.evm_spec_id::<TempoHardfork>()),
-            networks.is_monad().then(|| config.evm_spec_id::<MonadHardfork>()),
-        ));
+        #[cfg(feature = "monad")]
+        let monad_hardfork = networks.is_monad().then(|| config.evm_spec_id::<MonadHardfork>());
+        #[cfg(not(feature = "monad"))]
+        let monad_hardfork = None;
+        config.labels.extend(
+            networks.precompiles_label(Some(config.evm_spec_id::<TempoHardfork>()), monad_hardfork),
+        );
 
         let chain = tx_env.chain_id().unwrap().into();
         Ok((evm_env, tx_env, fork, chain, networks))

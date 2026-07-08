@@ -29,6 +29,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
+#[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
@@ -43,9 +44,11 @@ use tempo_precompiles::{
     TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
 };
 
+#[cfg(feature = "monad")]
 mod monad;
 mod precompiles;
 
+#[cfg(feature = "monad")]
 use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
 
 /// Build a new [CallTraceDecoder].
@@ -235,98 +238,116 @@ impl CallTraceDecoder {
             ISignatureVerifier::abi::contract(),
             IReceivePolicyGuard::abi::contract(),
         ];
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut labels = HashMap::from_iter([
+            (CHEATCODE_ADDRESS, "VM".to_string()),
+            (MONAD_CHEATCODE_ADDRESS, "MonadVM".to_string()),
+            (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
+            (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
+            (CALLER, "DefaultSender".to_string()),
+            (EC_RECOVER, "ECRecover".to_string()),
+            (SHA_256, "SHA-256".to_string()),
+            (RIPEMD_160, "RIPEMD-160".to_string()),
+            (IDENTITY, "Identity".to_string()),
+            (MOD_EXP, "ModExp".to_string()),
+            (EC_ADD, "ECAdd".to_string()),
+            (EC_MUL, "ECMul".to_string()),
+            (EC_PAIRING, "ECPairing".to_string()),
+            (BLAKE_2F, "Blake2F".to_string()),
+            (POINT_EVALUATION, "PointEvaluation".to_string()),
+            (BLS12_G1ADD, "BLS12_G1ADD".to_string()),
+            (BLS12_G1MSM, "BLS12_G1MSM".to_string()),
+            (BLS12_G2ADD, "BLS12_G2ADD".to_string()),
+            (BLS12_G2MSM, "BLS12_G2MSM".to_string()),
+            (BLS12_PAIRING_CHECK, "BLS12_PAIRING_CHECK".to_string()),
+            (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
+            (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
+            (P256_VERIFY, "P256VERIFY".to_string()),
+            // Tempo
+            (TIP_FEE_MANAGER_ADDRESS, "FeeManager".to_string()),
+            (TIP403_REGISTRY_ADDRESS, "TIP403Registry".to_string()),
+            (TIP20_FACTORY_ADDRESS, "TIP20Factory".to_string()),
+            (STABLECOIN_DEX_ADDRESS, "StablecoinDex".to_string()),
+            (NONCE_PRECOMPILE_ADDRESS, "Nonce".to_string()),
+            (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
+            (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
+            (ADDRESS_REGISTRY_ADDRESS, "AddressRegistry".to_string()),
+            (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
+            (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
+            (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
+            (PATH_USD_ADDRESS, "PathUSD".to_string()),
+        ]);
+        #[cfg(feature = "monad")]
+        labels.extend([
+            (STAKING_ADDRESS, "Staking".to_string()),
+            (RESERVE_BALANCE_ADDRESS, "ReserveBalance".to_string()),
+        ]);
+
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut function_groups: Vec<_> = console::hh::abi::functions()
+            .into_values()
+            .chain(Vm::abi::functions().into_values())
+            .chain(IFeeManager::abi::functions().into_values())
+            .chain(ITIP20::abi::functions().into_values())
+            .chain(ITIP403Registry::abi::functions().into_values())
+            .chain(ITIP20Factory::abi::functions().into_values())
+            .chain(IStablecoinDEX::abi::functions().into_values())
+            .chain(INonce::abi::functions().into_values())
+            .chain(IValidatorConfig::abi::functions().into_values())
+            .chain(IAccountKeychain::abi::functions().into_values())
+            .chain(IAddressRegistry::abi::functions().into_values())
+            .chain(ITIP20ChannelReserve::abi::functions().into_values())
+            .chain(ISignatureVerifier::abi::functions().into_values())
+            .chain(IReceivePolicyGuard::abi::functions().into_values())
+            .collect();
+        #[cfg(feature = "monad")]
+        {
+            function_groups.extend(IMonadStaking::abi::functions().into_values());
+            function_groups.extend(IMonadStakingSyscalls::abi::functions().into_values());
+            function_groups.extend(IReserveBalance::abi::functions().into_values());
+        }
+        let functions = function_groups
+            .into_iter()
+            .flatten()
+            .map(|func| (func.selector(), vec![func]))
+            .collect();
+
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut event_groups: Vec<_> = console::ds::abi::events()
+            .into_values()
+            .chain(IFeeManager::abi::events().into_values())
+            .chain(ITIP20::abi::events().into_values())
+            .chain(ITIP403Registry::abi::events().into_values())
+            .chain(ITIP20Factory::abi::events().into_values())
+            .chain(IStablecoinDEX::abi::events().into_values())
+            .chain(INonce::abi::events().into_values())
+            .chain(IValidatorConfig::abi::events().into_values())
+            .chain(IAccountKeychain::abi::events().into_values())
+            .chain(IAddressRegistry::abi::events().into_values())
+            .chain(ITIP20ChannelReserve::abi::events().into_values())
+            .chain(ISignatureVerifier::abi::events().into_values())
+            .chain(IReceivePolicyGuard::abi::events().into_values())
+            .collect();
+        #[cfg(feature = "monad")]
+        {
+            event_groups.extend(IMonadStaking::abi::events().into_values());
+            event_groups.extend(IReserveBalance::abi::events().into_values());
+        }
+        let events = event_groups
+            .into_iter()
+            .flatten()
+            .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
+            .collect();
+
         Self {
             contracts: Default::default(),
-            labels: HashMap::from_iter([
-                (CHEATCODE_ADDRESS, "VM".to_string()),
-                (MONAD_CHEATCODE_ADDRESS, "MonadVM".to_string()),
-                (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
-                (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
-                (CALLER, "DefaultSender".to_string()),
-                (EC_RECOVER, "ECRecover".to_string()),
-                (SHA_256, "SHA-256".to_string()),
-                (RIPEMD_160, "RIPEMD-160".to_string()),
-                (IDENTITY, "Identity".to_string()),
-                (MOD_EXP, "ModExp".to_string()),
-                (EC_ADD, "ECAdd".to_string()),
-                (EC_MUL, "ECMul".to_string()),
-                (EC_PAIRING, "ECPairing".to_string()),
-                (BLAKE_2F, "Blake2F".to_string()),
-                (POINT_EVALUATION, "PointEvaluation".to_string()),
-                (BLS12_G1ADD, "BLS12_G1ADD".to_string()),
-                (BLS12_G1MSM, "BLS12_G1MSM".to_string()),
-                (BLS12_G2ADD, "BLS12_G2ADD".to_string()),
-                (BLS12_G2MSM, "BLS12_G2MSM".to_string()),
-                (BLS12_PAIRING_CHECK, "BLS12_PAIRING_CHECK".to_string()),
-                (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
-                (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
-                (P256_VERIFY, "P256VERIFY".to_string()),
-                // Monad
-                (STAKING_ADDRESS, "Staking".to_string()),
-                (RESERVE_BALANCE_ADDRESS, "ReserveBalance".to_string()),
-                // Tempo
-                (TIP_FEE_MANAGER_ADDRESS, "FeeManager".to_string()),
-                (TIP403_REGISTRY_ADDRESS, "TIP403Registry".to_string()),
-                (TIP20_FACTORY_ADDRESS, "TIP20Factory".to_string()),
-                (STABLECOIN_DEX_ADDRESS, "StablecoinDex".to_string()),
-                (NONCE_PRECOMPILE_ADDRESS, "Nonce".to_string()),
-                (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
-                (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
-                (ADDRESS_REGISTRY_ADDRESS, "AddressRegistry".to_string()),
-                (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
-                (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
-                (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
-                (PATH_USD_ADDRESS, "PathUSD".to_string()),
-            ]),
+            labels,
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
             non_fallback_contracts: Default::default(),
-
-            functions: console::hh::abi::functions()
-                .into_values()
-                .chain(Vm::abi::functions().into_values())
-                // Tempo
-                .chain(IFeeManager::abi::functions().into_values())
-                .chain(ITIP20::abi::functions().into_values())
-                .chain(ITIP403Registry::abi::functions().into_values())
-                .chain(ITIP20Factory::abi::functions().into_values())
-                .chain(IStablecoinDEX::abi::functions().into_values())
-                .chain(INonce::abi::functions().into_values())
-                .chain(IValidatorConfig::abi::functions().into_values())
-                .chain(IAccountKeychain::abi::functions().into_values())
-                .chain(IAddressRegistry::abi::functions().into_values())
-                .chain(ITIP20ChannelReserve::abi::functions().into_values())
-                .chain(ISignatureVerifier::abi::functions().into_values())
-                .chain(IReceivePolicyGuard::abi::functions().into_values())
-                // Monad
-                .chain(IMonadStaking::abi::functions().into_values())
-                .chain(IMonadStakingSyscalls::abi::functions().into_values())
-                .chain(IReserveBalance::abi::functions().into_values())
-                .flatten()
-                .map(|func| (func.selector(), vec![func]))
-                .collect(),
+            functions,
             functions_by_address: Default::default(),
-            events: console::ds::abi::events()
-                .into_values()
-                // Tempo
-                .chain(IFeeManager::abi::events().into_values())
-                .chain(ITIP20::abi::events().into_values())
-                .chain(ITIP403Registry::abi::events().into_values())
-                .chain(ITIP20Factory::abi::events().into_values())
-                .chain(IStablecoinDEX::abi::events().into_values())
-                .chain(INonce::abi::events().into_values())
-                .chain(IValidatorConfig::abi::events().into_values())
-                .chain(IAccountKeychain::abi::events().into_values())
-                .chain(IAddressRegistry::abi::events().into_values())
-                .chain(ITIP20ChannelReserve::abi::events().into_values())
-                .chain(ISignatureVerifier::abi::events().into_values())
-                .chain(IReceivePolicyGuard::abi::events().into_values())
-                // Monad
-                .chain(IMonadStaking::abi::events().into_values())
-                .chain(IReserveBalance::abi::events().into_values())
-                .flatten()
-                .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
-                .collect(),
+            events,
             // Decode Tempo precompile custom errors by name in traces.
             revert_decoder: RevertDecoder::new().with_abis(tempo_abis.iter()),
 
@@ -1137,12 +1158,16 @@ fn indexed_inputs(event: &Event) -> usize {
 mod tests {
     use super::*;
     use alloy_primitives::{address, aliases::U96, hex};
-    use alloy_sol_types::{SolCall, SolEvent, TopicList};
+    #[cfg(feature = "monad")]
+    use alloy_sol_types::TopicList;
+    use alloy_sol_types::{SolCall, SolEvent};
+    #[cfg(feature = "monad")]
     use monad_revm::{
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
         staking::interface::IMonadStaking::{getEpochCall, getEpochReturn},
     };
 
+    #[cfg(feature = "monad")]
     fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
         let mut items = functions
             .into_iter()
@@ -1152,6 +1177,7 @@ mod tests {
         items
     }
 
+    #[cfg(feature = "monad")]
     fn event_abi_items(events: impl IntoIterator<Item = Event>) -> Vec<(String, usize, String)> {
         let mut items = events
             .into_iter()
@@ -1161,10 +1187,12 @@ mod tests {
         items
     }
 
+    #[cfg(feature = "monad")]
     fn typed_call_abi_item<C: SolCall>() -> (String, String) {
         (Selector::from(C::SELECTOR).to_string(), C::SIGNATURE.to_string())
     }
 
+    #[cfg(feature = "monad")]
     fn typed_event_abi_item<E: SolEvent>() -> (String, usize, String) {
         let signature_topics = usize::from(!E::ANONYMOUS);
         let indexed_inputs = <E::TopicList as TopicList>::COUNT - signature_topics;
@@ -1172,6 +1200,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn test_monad_decoder_abis_match_monad_revm() {
         use monad_revm::{
             reserve_balance::interface::IReserveBalance as RevmReserveBalance,
@@ -1946,6 +1975,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "monad")]
     async fn test_decodes_monad_staking_precompile_call() {
         let trace = CallTrace {
             address: STAKING_ADDRESS,
@@ -1969,6 +1999,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "monad")]
     async fn test_decodes_monad_staking_syscall() {
         let block_author = Address::from([0x42; 20]);
         let trace = CallTrace {
@@ -1991,6 +2022,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "monad")]
     async fn test_decodes_monad_reserve_balance_precompile_call() {
         let trace = CallTrace {
             address: RESERVE_BALANCE_ADDRESS,
@@ -2010,6 +2042,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "monad")]
     async fn test_decodes_monad_staking_precompile_event() {
         let event = Event::parse(
             "event Delegate(uint64 indexed validatorId,address indexed delegator,uint256 amount,uint64 activationEpoch)",
@@ -2031,12 +2064,14 @@ mod tests {
         assert_eq!(params[3], ("activationEpoch".to_string(), "9".to_string()));
     }
 
+    #[cfg(feature = "monad")]
     fn topic_from_u64(value: u64) -> B256 {
         let mut topic = [0u8; 32];
         topic[24..].copy_from_slice(&value.to_be_bytes());
         B256::from(topic)
     }
 
+    #[cfg(feature = "monad")]
     fn topic_from_address(address: Address) -> B256 {
         let mut topic = [0u8; 32];
         topic[12..].copy_from_slice(address.as_slice());
@@ -2497,6 +2532,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn test_identify_addresses_skips_monad_precompiles() {
         let mut decoder = CallTraceDecoder::new().clone();
         decoder.chain_id = Some(143);
@@ -2533,6 +2569,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn test_identify_addresses_does_not_skip_monad_precompiles_on_other_chains() {
         let mut decoder = CallTraceDecoder::new().clone();
         decoder.chain_id = Some(1);

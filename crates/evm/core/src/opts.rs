@@ -155,6 +155,7 @@ impl EvmOpts {
                 {
                     match node_info.network.as_deref() {
                         Some("tempo") => self.networks = NetworkConfigs::with_tempo(),
+                        #[cfg(feature = "monad")]
                         Some("monad") => self.networks = NetworkConfigs::with_monad(),
                         _ => {}
                     }
@@ -520,6 +521,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
     async fn infer_network_monad_anvil_via_node_info() {
         let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_monad()).await;
 
@@ -535,6 +537,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
     async fn infer_network_monad_anvil_skips_rpc_when_already_set() {
         // Use a URL that would fail if any RPC call were attempted (connection refused).
         // This proves the early-return guard prevents all network requests.

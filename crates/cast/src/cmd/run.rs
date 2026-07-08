@@ -32,12 +32,14 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -139,6 +141,7 @@ impl RunArgs {
             return self.run_with_evm::<TempoEvmNetwork>().await;
         }
 
+        #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return self.run_with_evm::<MonadEvmNetwork>().await;
         }

@@ -38,7 +38,7 @@ revm = { workspace = true, features = [
     "c-kzg",
     "blst",
 ] }
-monad-revm.workspace = true
+monad-revm = { workspace = true, optional = true }
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 serde.workspace = true
@@ -49,4 +49,5 @@ serde_json.workspace = true
 
 [features]
 default = ["optimism"]
+monad = ["dep:monad-revm", "foundry-evm-hardforks/monad"]
 optimism = ["dep:alloy-op-hardforks", "foundry-evm-hardforks/optimism"]

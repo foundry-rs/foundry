@@ -34,10 +34,12 @@ use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
 };
 use foundry_config::Config;
+#[cfg(feature = "monad")]
+use foundry_evm::hardfork::MonadHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::{FoundryHardfork, MonadHardfork},
+    hardfork::FoundryHardfork,
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -448,6 +450,7 @@ impl NodeConfig {
     }
 
     /// Returns a test config with Monad network enabled.
+    #[cfg(feature = "monad")]
     #[doc(hidden)]
     pub fn test_monad() -> Self {
         Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
@@ -617,6 +620,7 @@ impl NodeConfig {
         {
             return hardfork.into();
         }
+        #[cfg(feature = "monad")]
         if self.networks.is_monad()
             && let Some(hardfork) = MonadHardfork::from_chain_and_timestamp(
                 self.get_chain_id(),
@@ -632,6 +636,7 @@ impl NodeConfig {
         if self.networks.is_tempo() {
             return TempoHardfork::default().into();
         }
+        #[cfg(feature = "monad")]
         if self.networks.is_monad() {
             return MonadHardfork::default().into();
         }
@@ -1131,6 +1136,7 @@ impl NodeConfig {
     }
 
     /// Enable Monad network features.
+    #[cfg(feature = "monad")]
     #[must_use]
     pub fn with_monad(mut self) -> Self {
         self.networks = NetworkConfigs::with_monad();
@@ -1876,6 +1882,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn get_hardfork_on_monad_uses_chain_timestamp_mapping() {
         let config = NodeConfig::test_monad()
             .with_chain_id(Some(143u64))

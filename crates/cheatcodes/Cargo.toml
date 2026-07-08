@@ -58,7 +58,7 @@ p256 = "0.13"
 ed25519-consensus = "2.1"
 ecdsa = "0.16"
 rand.workspace = true
-monad-revm.workspace = true
+monad-revm = { workspace = true, optional = true }
 revm.workspace = true
 revm-inspectors.workspace = true
 semver.workspace = true
@@ -80,6 +80,12 @@ tempo-precompiles = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = ["optimism"]
+monad = [
+    "dep:monad-revm",
+    "foundry-evm-core/monad",
+    "foundry-evm-fuzz/monad",
+    "foundry-evm-traces/monad",
+]
 optimism = [
     "foundry-common/optimism",
     "foundry-evm-core/optimism",

@@ -12,9 +12,11 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
+#[cfg(feature = "monad")]
+use foundry_evm::hardfork::MonadHardfork;
 #[cfg(feature = "optimism")]
 use foundry_evm::hardfork::OpHardfork;
-use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork, MonadHardfork};
+use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -912,14 +914,15 @@ fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHa
         return Ok(OpHardfork::from_str(hf)?.into());
     }
     if networks.is_tempo() {
-        Ok(TempoHardfork::from_str(hf)?.into())
-    } else if networks.is_monad() {
-        Ok(MonadHardfork::from_str(hf)
-            .map_err(|err| eyre::eyre!("unknown monad hardfork '{hf}': {err:?}"))?
-            .into())
-    } else {
-        Ok(EthereumHardfork::from_str(hf)?.into())
+        return Ok(TempoHardfork::from_str(hf)?.into());
     }
+    #[cfg(feature = "monad")]
+    if networks.is_monad() {
+        return Ok(MonadHardfork::from_str(hf)
+            .map_err(|err| eyre::eyre!("unknown monad hardfork '{hf}': {err:?}"))?
+            .into());
+    }
+    Ok(EthereumHardfork::from_str(hf)?.into())
 }
 
 /// Clap's value parser for genesis. Loads a genesis.json file.
@@ -1042,6 +1045,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn can_parse_monad_hardfork() {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
@@ -1051,6 +1055,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn monad_uses_monad_default_hardfork() {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
         let config = args.into_node_config().unwrap();

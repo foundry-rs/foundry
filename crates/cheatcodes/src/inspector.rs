@@ -1,5 +1,7 @@
 //! Cheatcode EVM inspector.
 
+#[cfg(feature = "monad")]
+use crate::monad::{apply_monad_cheatcode as apply_monad_cheatcode_call, is_monad_cheatcode_call};
 use crate::{
     Cheatcode, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
@@ -9,7 +11,6 @@ use crate::{
         prank::Prank,
     },
     inspector::utils::CommonCreateInput,
-    monad::{apply_monad_cheatcode as apply_monad_cheatcode_call, is_monad_cheatcode_call},
     script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
@@ -822,6 +823,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     /// Decodes the input data and applies Monad-specific cheatcodes.
+    #[cfg(feature = "monad")]
     fn apply_monad_cheatcode(
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
@@ -966,6 +968,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             };
         }
 
+        #[cfg(feature = "monad")]
         if is_monad_cheatcode_call::<FEN>(call.target_address) {
             return match self.apply_monad_cheatcode(ecx, call) {
                 Ok(retdata) => Some(CallOutcome {
@@ -1572,9 +1575,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        #[cfg(feature = "monad")]
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
-            || call.target_address == HARDHAT_CONSOLE_ADDRESS
-            || is_monad_cheatcode_call::<FEN>(call.target_address);
+            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        #[cfg(not(feature = "monad"))]
+        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
+            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        #[cfg(feature = "monad")]
+        let cheatcode_call = cheatcode_call || is_monad_cheatcode_call::<FEN>(call.target_address);
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.

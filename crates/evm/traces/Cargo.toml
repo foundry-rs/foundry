@@ -35,7 +35,7 @@ revm-inspectors.workspace = true
 
 tempo-contracts.workspace = true
 tempo-precompiles.workspace = true
-monad-revm.workspace = true
+monad-revm = { workspace = true, optional = true }
 
 async-trait.workspace = true
 eyre.workspace = true
@@ -55,4 +55,5 @@ yansi.workspace = true
 
 [features]
 default = ["optimism"]
+monad = ["dep:monad-revm", "foundry-evm-core/monad", "foundry-evm-hardforks/monad"]
 optimism = ["foundry-common/optimism", "foundry-evm-core/optimism"]

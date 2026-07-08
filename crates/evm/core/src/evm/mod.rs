@@ -1,15 +1,17 @@
 use std::{fmt::Debug, ops::Deref};
 
+#[cfg(feature = "monad")]
+use crate::constants::MONAD_CHEATCODE_ADDRESS;
 use crate::{
     FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
-    constants::MONAD_CHEATCODE_ADDRESS,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
 };
+#[cfg(feature = "monad")]
 use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, Signature, U256};
@@ -35,12 +37,14 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_revm::TempoHaltReason;
 
 pub mod eth;
+#[cfg(feature = "monad")]
 pub mod monad;
 #[cfg(feature = "optimism")]
 pub mod op;
 pub mod tempo;
 
 pub use eth::*;
+#[cfg(feature = "monad")]
 pub use monad::*;
 #[cfg(feature = "optimism")]
 pub use op::*;
@@ -89,7 +93,9 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+#[cfg(feature = "monad")]
 pub struct MonadEvmNetwork;
+#[cfg(feature = "monad")]
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;
     type EvmFactory = MonadEvmFactory;
@@ -275,7 +281,7 @@ impl IntoInstructionResult for TempoHaltReason {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "monad"))]
 mod tests {
     use super::*;
 

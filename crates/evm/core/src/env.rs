@@ -1,10 +1,13 @@
-use std::{fmt::Debug, ops::DerefMut};
+use std::fmt::Debug;
+#[cfg(feature = "monad")]
+use std::ops::DerefMut;
 
 use alloy_consensus::Typed2718;
 pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
+#[cfg(feature = "monad")]
 use monad_revm::{MonadCfgEnv, MonadChainContext, MonadJournal};
 #[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
@@ -523,6 +526,7 @@ impl<
     }
 }
 
+#[cfg(feature = "monad")]
 impl<DB: Database> FoundryContextExt
     for Context<BlockEnv, TxEnv, MonadCfgEnv, DB, MonadJournal<DB>, MonadChainContext>
 {
@@ -837,12 +841,14 @@ mod tests {
     use super::*;
     use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
+    #[cfg(feature = "monad")]
     use alloy_monad_evm::MonadEvmFactory;
     use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
     use alloy_primitives::Signature;
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
     use foundry_evm_hardforks::TempoHardfork;
+    #[cfg(feature = "monad")]
     use monad_revm::MonadHardfork;
     use revm::database::EmptyDB;
     use tempo_alloy::primitives::{
@@ -875,6 +881,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn monad_evm_foundry_context_ext_implementation() {
         let mut evm = MonadEvmFactory::default().create_evm(
             EmptyDB::default(),

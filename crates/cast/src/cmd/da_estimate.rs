@@ -39,6 +39,7 @@ impl DAEstimateArgs {
         match network {
             NetworkVariant::Optimism => da_estimate::<Optimism>(&config, block).await,
             NetworkVariant::Ethereum => da_estimate::<Ethereum>(&config, block).await,
+            #[cfg(feature = "monad")]
             NetworkVariant::Monad => unsupported_da_estimation("Monad"),
             NetworkVariant::Tempo => unsupported_da_estimation("Tempo"),
         }
@@ -69,11 +70,12 @@ pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Resu
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "monad"))]
 mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg(feature = "monad")]
     async fn monad_da_estimate_is_unsupported() {
         let args = DAEstimateArgs {
             block: BlockId::latest(),

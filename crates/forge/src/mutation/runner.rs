@@ -21,12 +21,13 @@ use eyre::Result;
 use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::Config;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, SpecFor, TempoEvmNetwork,
-        TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     opts::EvmOpts,
 };
@@ -638,15 +639,17 @@ fn compile_and_test(
             selected_sources_relative,
             isolate,
         )
-    } else if evm_opts.networks.is_monad() {
-        compile_and_test_inner::<MonadEvmNetwork>(
-            config,
-            evm_opts,
-            filter_args,
-            selected_sources_relative,
-            isolate,
-        )
     } else {
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return compile_and_test_inner::<MonadEvmNetwork>(
+                config,
+                evm_opts,
+                filter_args,
+                selected_sources_relative,
+                isolate,
+            );
+        }
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
             return compile_and_test_inner::<OpEvmNetwork>(

@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 pub use alloy_hardforks::EthereumHardfork;
 #[cfg(feature = "optimism")]
 pub use alloy_op_hardforks::OpHardfork;
+#[cfg(feature = "monad")]
 pub use monad_revm::MonadHardfork;
 pub use tempo_chainspec::hardfork::TempoHardfork;
 
@@ -29,6 +30,7 @@ pub enum FoundryHardfork {
     #[cfg(feature = "optimism")]
     Optimism(OpHardfork),
     Tempo(TempoHardfork),
+    #[cfg(feature = "monad")]
     Monad(MonadHardfork),
 }
 
@@ -39,6 +41,7 @@ impl From<FoundryHardfork> for String {
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(h) => format!("optimism:{h}"),
             FoundryHardfork::Tempo(h) => format!("tempo:{h}"),
+            #[cfg(feature = "monad")]
             FoundryHardfork::Monad(h) => format!("monad:{h}"),
         }
     }
@@ -83,6 +86,7 @@ impl FromStr for FoundryHardfork {
                 .map(Self::Tempo)
                 .map_err(|_| format!("unknown tempo hardfork '{fork_raw}'")),
 
+            #[cfg(feature = "monad")]
             "m" | "monad" => MonadHardfork::from_str(&fork)
                 .map(Self::Monad)
                 .map_err(|_| format!("unknown monad hardfork '{fork_raw}'")),
@@ -107,6 +111,7 @@ impl FoundryHardfork {
         Self::Tempo(h)
     }
 
+    #[cfg(feature = "monad")]
     pub const fn monad(h: MonadHardfork) -> Self {
         Self::Monad(h)
     }
@@ -118,6 +123,7 @@ impl FoundryHardfork {
             #[cfg(feature = "optimism")]
             Self::Optimism(h) => format!("{h}"),
             Self::Tempo(h) => format!("{h}"),
+            #[cfg(feature = "monad")]
             Self::Monad(h) => format!("{h}"),
         }
     }
@@ -131,6 +137,7 @@ impl FoundryHardfork {
             #[cfg(feature = "optimism")]
             Self::Optimism(_) => Some("optimism"),
             Self::Tempo(_) => Some("tempo"),
+            #[cfg(feature = "monad")]
             Self::Monad(_) => Some("monad"),
         }
     }
@@ -150,7 +157,11 @@ impl FoundryHardfork {
         if let Some(fork) = TempoHardfork::from_chain_and_timestamp(chain_id, timestamp) {
             return Some(Self::Tempo(fork));
         }
-        MonadHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Self::Monad)
+        #[cfg(feature = "monad")]
+        if let Some(fork) = MonadHardfork::from_chain_and_timestamp(chain_id, timestamp) {
+            return Some(Self::Monad(fork));
+        }
+        None
     }
 }
 
@@ -201,12 +212,14 @@ impl From<FoundryHardfork> for TempoHardfork {
     }
 }
 
+#[cfg(feature = "monad")]
 impl From<MonadHardfork> for FoundryHardfork {
     fn from(value: MonadHardfork) -> Self {
         Self::Monad(value)
     }
 }
 
+#[cfg(feature = "monad")]
 impl From<FoundryHardfork> for MonadHardfork {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
@@ -223,6 +236,7 @@ impl From<FoundryHardfork> for SpecId {
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(hardfork) => eth_spec_id_from_optimism_hardfork(hardfork),
             FoundryHardfork::Tempo(hardfork) => spec_id_from_tempo_hardfork(hardfork),
+            #[cfg(feature = "monad")]
             FoundryHardfork::Monad(hardfork) => hardfork.into(),
         }
     }
@@ -439,12 +453,14 @@ impl ExecutionSpec for TempoHardfork {
     }
 }
 
+#[cfg(feature = "monad")]
 impl FromEvmVersion for MonadHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
         Self::default()
     }
 }
 
+#[cfg(feature = "monad")]
 impl ExecutionSpec for MonadHardfork {
     // Returns the user-facing name for the active execution spec.
     fn evm_version_name(&self) -> String {
@@ -459,6 +475,7 @@ impl ExecutionSpec for MonadHardfork {
     // Converts only Monad namespaced hardforks to a Monad spec.
     fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
         match hardfork {
+            #[cfg(feature = "monad")]
             FoundryHardfork::Monad(hardfork) => Some(hardfork),
             _ => None,
         }
@@ -512,6 +529,7 @@ pub fn ethereum_hardfork_from_block_tag(block: impl Into<BlockNumberOrTag>) -> E
 mod tests {
     use super::*;
     use alloy_hardforks::ethereum::mainnet::*;
+    #[cfg(feature = "monad")]
     use monad_revm::{MONAD_MAINNET_CHAIN_ID, MONAD_TESTNET_CHAIN_ID};
     use tempo_chainspec::constants::{mainnet::*, moderato::*};
 
@@ -540,6 +558,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn test_monad_hardfork_parsing() {
         assert_eq!(
             "monad:MonadNine".parse::<FoundryHardfork>().unwrap(),
@@ -552,6 +571,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn test_monad_hardfork_serialization() {
         assert_eq!(
             String::from(FoundryHardfork::Monad(MonadHardfork::MonadEight)),
@@ -562,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn test_monad_hardfork_spec_id_mapping() {
         assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadHardfork::MonadEight)), SpecId::PRAGUE);
         assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadHardfork::MonadNine)), SpecId::OSAKA);
@@ -601,6 +622,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn test_monad_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(MONAD_MAINNET_CHAIN_ID, 1_763_648_999),
@@ -628,15 +650,18 @@ mod tests {
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T8"), Some(TempoHardfork::T8));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
 
-        assert_eq!(
-            evm_spec_id_from_str::<MonadHardfork>("MonadNine"),
-            Some(MonadHardfork::MonadNine)
-        );
-        assert_eq!(
-            evm_spec_id_from_str::<MonadHardfork>("monad:MonadEight"),
-            Some(MonadHardfork::MonadEight)
-        );
-        assert_eq!(evm_spec_id_from_str::<MonadHardfork>("tempo:T3"), None);
+        #[cfg(feature = "monad")]
+        {
+            assert_eq!(
+                evm_spec_id_from_str::<MonadHardfork>("MonadNine"),
+                Some(MonadHardfork::MonadNine)
+            );
+            assert_eq!(
+                evm_spec_id_from_str::<MonadHardfork>("monad:MonadEight"),
+                Some(MonadHardfork::MonadEight)
+            );
+            assert_eq!(evm_spec_id_from_str::<MonadHardfork>("tempo:T3"), None);
+        }
     }
 
     #[test]

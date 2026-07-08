@@ -6,10 +6,12 @@ use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
-    core::evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork},
+    core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     opts::EvmOpts,
 };
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
@@ -63,6 +65,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
     }
 
+    #[cfg(feature = "monad")]
     if evm_opts.networks.is_monad() {
         return run_command_with_network::<MonadEvmNetwork>(args, config, evm_opts).await;
     }

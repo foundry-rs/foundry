@@ -126,6 +126,12 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
+monad = [
+    "foundry-common/monad",
+    "foundry-evm-networks/monad",
+    "foundry-evm/monad",
+    "foundry-cli/monad",
+]
 optimism = [
     "dep:op-alloy-flz",
     "dep:op-alloy-consensus",

@@ -181,6 +181,7 @@ Traces:
 "#]]);
 });
 
+#[cfg(feature = "monad")]
 forgetest_init!(test_set_evm_version_monad_hardfork, |prj, cmd| {
     prj.add_test(
         "MonadEvmVersion.t.sol",

@@ -69,6 +69,11 @@ asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
+monad = [
+    "foundry-common/monad",
+    "foundry-evm/monad",
+    "foundry-cli/monad",
+]
 optimism = [
     "foundry-common/optimism",
     "foundry-evm/optimism",

@@ -50,12 +50,13 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, SpecFor, TempoEvmNetwork,
-        TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     executors::ShowmapDomain,
     fuzz::CounterExample,
@@ -1386,10 +1387,15 @@ impl TestArgs {
         if dispatch_opts.networks.is_tempo() {
             self.build_and_run_tests::<TempoEvmNetwork>(config, evm_opts, output, filter, execution)
                 .await
-        } else if dispatch_opts.networks.is_monad() {
-            self.build_and_run_tests::<MonadEvmNetwork>(config, evm_opts, output, filter, execution)
-                .await
         } else {
+            #[cfg(feature = "monad")]
+            if dispatch_opts.networks.is_monad() {
+                return self
+                    .build_and_run_tests::<MonadEvmNetwork>(
+                        config, evm_opts, output, filter, execution,
+                    )
+                    .await;
+            }
             #[cfg(feature = "optimism")]
             if dispatch_opts.networks.is_optimism() {
                 return self

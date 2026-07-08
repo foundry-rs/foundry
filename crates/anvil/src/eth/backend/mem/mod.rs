@@ -53,6 +53,7 @@ use alloy_evm::{
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
+#[cfg(feature = "monad")]
 use alloy_monad_evm::{MonadContext, MonadEvmFactory};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
@@ -117,6 +118,7 @@ use foundry_primitives::{
     FoundryTxReceipt,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
+#[cfg(feature = "monad")]
 use monad_revm::{MonadCfgEnv, MonadHardfork, instructions::monad_gas_params};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
@@ -138,7 +140,7 @@ struct OpCallDepositInfo;
 /// Marker trait that abstracts over the per-network inspector trait bounds
 /// required by the in-memory backend. The OP bound is only included when the
 /// `optimism` feature is enabled.
-#[cfg(feature = "optimism")]
+#[cfg(all(feature = "optimism", feature = "monad"))]
 pub trait BackendInspector<DB: Database>:
     Inspector<EthEvmContext<DB>>
     + Inspector<OpEvmContext<DB>>
@@ -146,7 +148,7 @@ pub trait BackendInspector<DB: Database>:
     + Inspector<MonadContext<DB>>
 {
 }
-#[cfg(feature = "optimism")]
+#[cfg(all(feature = "optimism", feature = "monad"))]
 impl<DB: Database, T> BackendInspector<DB> for T where
     T: Inspector<EthEvmContext<DB>>
         + Inspector<OpEvmContext<DB>>
@@ -154,14 +156,34 @@ impl<DB: Database, T> BackendInspector<DB> for T where
         + Inspector<MonadContext<DB>>
 {
 }
-#[cfg(not(feature = "optimism"))]
+#[cfg(all(feature = "optimism", not(feature = "monad")))]
+pub trait BackendInspector<DB: Database>:
+    Inspector<EthEvmContext<DB>> + Inspector<OpEvmContext<DB>> + Inspector<TempoContext<DB>>
+{
+}
+#[cfg(all(feature = "optimism", not(feature = "monad")))]
+impl<DB: Database, T> BackendInspector<DB> for T where
+    T: Inspector<EthEvmContext<DB>> + Inspector<OpEvmContext<DB>> + Inspector<TempoContext<DB>>
+{
+}
+#[cfg(all(not(feature = "optimism"), feature = "monad"))]
 pub trait BackendInspector<DB: Database>:
     Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>> + Inspector<MonadContext<DB>>
 {
 }
-#[cfg(not(feature = "optimism"))]
+#[cfg(all(not(feature = "optimism"), feature = "monad"))]
 impl<DB: Database, T> BackendInspector<DB> for T where
     T: Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>> + Inspector<MonadContext<DB>>
+{
+}
+#[cfg(all(not(feature = "optimism"), not(feature = "monad")))]
+pub trait BackendInspector<DB: Database>:
+    Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>>
+{
+}
+#[cfg(all(not(feature = "optimism"), not(feature = "monad")))]
+impl<DB: Database, T> BackendInspector<DB> for T where
+    T: Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>>
 {
 }
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -600,6 +622,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the active Monad hardfork.
+    #[cfg(feature = "monad")]
     pub fn monad_hardfork(&self) -> MonadHardfork {
         MonadHardfork::from(self.hardfork())
     }
@@ -620,10 +643,14 @@ impl<N: Network> Backend<N> {
         }
 
         // Extend with configured network precompiles.
-        precompiles_map.extend(self.networks.precompiles(
-            self.is_tempo().then(|| self.tempo_hardfork()),
-            self.is_monad().then(|| self.monad_hardfork()),
-        ));
+        #[cfg(feature = "monad")]
+        let monad_hardfork = self.is_monad().then(|| self.monad_hardfork());
+        #[cfg(not(feature = "monad"))]
+        let monad_hardfork = None;
+        precompiles_map.extend(
+            self.networks
+                .precompiles(self.is_tempo().then(|| self.tempo_hardfork()), monad_hardfork),
+        );
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {
@@ -727,6 +754,7 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    #[cfg(feature = "monad")]
     fn monad_cfg_env(&self, evm_env: &EvmEnv) -> Option<MonadCfgEnv> {
         if !self.is_monad() {
             return None;
@@ -739,9 +767,11 @@ impl<N: Network> Backend<N> {
     }
 
     fn tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> u64 {
-        self.monad_cfg_env(evm_env)
-            .map(|cfg| cfg.tx_gas_limit_cap())
-            .unwrap_or_else(|| evm_env.cfg_env.tx_gas_limit_cap())
+        #[cfg(feature = "monad")]
+        if let Some(cfg) = self.monad_cfg_env(evm_env) {
+            return cfg.tx_gas_limit_cap();
+        }
+        evm_env.cfg_env.tx_gas_limit_cap()
     }
 
     pub(crate) fn fallback_tx_gas_limit(&self, evm_env: &EvmEnv) -> u64 {
@@ -754,9 +784,11 @@ impl<N: Network> Backend<N> {
     }
 
     fn max_initcode_size(&self, evm_env: &EvmEnv) -> usize {
-        self.monad_cfg_env(evm_env)
-            .map(|cfg| cfg.max_initcode_size())
-            .unwrap_or_else(|| evm_env.cfg_env.max_initcode_size())
+        #[cfg(feature = "monad")]
+        if let Some(cfg) = self.monad_cfg_env(evm_env) {
+            return cfg.max_initcode_size();
+        }
+        evm_env.cfg_env.max_initcode_size()
     }
 
     /// Returns the block gas limit
@@ -1277,12 +1309,18 @@ impl<N: Network> Backend<N> {
         // `op_deposit` only matters on the OP path; eth/tempo ignore it.
         let _ = op_deposit;
         if self.is_tempo() {
-            self.transact_tempo_with_inspector_ref(db, evm_env, inspector, TempoTxEnv::from(tx_env))
-        } else if self.is_monad() {
-            self.transact_monad_with_inspector_ref(db, evm_env, inspector, tx_env)
-        } else {
-            self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)
+            return self.transact_tempo_with_inspector_ref(
+                db,
+                evm_env,
+                inspector,
+                TempoTxEnv::from(tx_env),
+            );
         }
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            return self.transact_monad_with_inspector_ref(db, evm_env, inspector, tx_env);
+        }
+        self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)
     }
 
     /// Eth path of [`Backend::transact_with_inspector_ref`].
@@ -1343,11 +1381,14 @@ impl<N: Network> Backend<N> {
         let tx_env: TxEnv =
             FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
         let base = tx_env.clone();
+        #[cfg(feature = "monad")]
         let result = if self.is_monad() {
             self.transact_monad_with_inspector_ref(db, evm_env, inspector, tx_env)?
         } else {
             self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)?
         };
+        #[cfg(not(feature = "monad"))]
+        let result = self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)?;
         Ok((result, base))
     }
 
@@ -1386,6 +1427,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Monad path of [`Backend::transact_with_inspector_ref`].
+    #[cfg(feature = "monad")]
     fn transact_monad_with_inspector_ref<'db, I, DB>(
         &self,
         db: &'db DB,
@@ -1475,8 +1517,10 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            run!(evm)
-        } else if self.is_monad() {
+            return run!(evm);
+        }
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
             let hardfork = MonadHardfork::from(self.hardfork());
             let monad_env = EvmEnv::new(
                 evm_env
@@ -1487,12 +1531,11 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
-            run!(evm)
-        } else {
-            let mut evm =
-                EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-            run!(evm)
+            return run!(evm);
         }
+        let mut evm =
+            EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
+        run!(evm)
     }
 
     /// ## EVM settings

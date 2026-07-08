@@ -68,6 +68,15 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [features]
 default = ["optimism"]
+monad = [
+    "foundry-evm/monad",
+    "foundry-evm-networks/monad",
+    "foundry-common/monad",
+    "foundry-cheatcodes/monad",
+    "foundry-cli/monad",
+    "forge-script-sequence/monad",
+    "forge-verify/monad",
+]
 optimism = [
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",

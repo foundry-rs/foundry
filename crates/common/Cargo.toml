@@ -103,6 +103,7 @@ k256 = { workspace = true }
 
 [features]
 default = ["optimism"]
+monad = []
 optimism = [
     "dep:op-alloy-network",
     "dep:op-alloy-rpc-types",

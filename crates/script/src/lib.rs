@@ -46,13 +46,15 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -365,6 +367,7 @@ impl ScriptArgs {
             return Ok(());
         }
 
+        #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return self.run_generic_script::<MonadEvmNetwork>(config, evm_opts).await;
         }
@@ -1317,6 +1320,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn contract_size_limits_use_resolved_monad_network() {
         let args =
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
@@ -1329,6 +1333,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn contract_size_limits_prefer_cli_then_config_over_network() {
         let args = ScriptArgs::parse_from([
             "foundry-cli",

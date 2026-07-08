@@ -12,6 +12,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
+#[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::DecodedCallTrace;
 
@@ -98,6 +99,7 @@ pub(super) fn is_known_precompile(
         return true;
     }
     // Monad precompiles (only on Monad chains).
+    #[cfg(feature = "monad")]
     if chain_id.is_some_and(|id| {
         matches!(Chain::from_id(id).named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
     }) && matches!(address, STAKING_ADDRESS | RESERVE_BALANCE_ADDRESS)

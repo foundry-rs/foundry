@@ -33,15 +33,15 @@ use foundry_common::{
 };
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         FoundryBlock as _, FoundryTransaction as _,
-        evm::{
-            EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
-        },
+        evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::EvmError,
 };
@@ -184,6 +184,7 @@ impl VerifyBytecodeArgs {
             NetworkVariant::Tempo => {
                 self.run_with_network_and_config::<TempoEvmNetwork>(config).await
             }
+            #[cfg(feature = "monad")]
             NetworkVariant::Monad => {
                 self.run_with_network_and_config::<MonadEvmNetwork>(config).await
             }
@@ -662,6 +663,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn can_parse_monad_network() {
         let args = VerifyBytecodeArgs::parse_from([
             "foundry-cli",
@@ -685,6 +687,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn configured_network_uses_monad_config_network() {
         let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
 
@@ -695,6 +698,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn configured_network_prefers_cli_network() {
         let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
 
