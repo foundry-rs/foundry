@@ -44,8 +44,9 @@ struct Cli {
     #[clap(long)]
     output_file: Option<String>,
 
-    /// Filename for a flat JSON summary (benchmark/repo -> mean_seconds).
-    /// Resolved relative to --output-dir. Used by the nightly regression comparison script.
+    /// Filename for a JSON summary (benchmark/repo -> wall-time stats and, when
+    /// available, symbolic solver counters). Resolved relative to --output-dir.
+    /// Consumed by the nightly regression comparison script.
     #[clap(long)]
     json_output: Option<PathBuf>,
 
