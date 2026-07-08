@@ -615,6 +615,66 @@ forgetest_async!(create_verify_json_keeps_stdout_clean, |prj, cmd| {
     assert!(stderr.contains(guid), "expected verification GUID on stderr, got: {stderr}");
 });
 
+// Tests that `forge script --broadcast --verify --json` keeps stdout clean (valid JSON Lines only)
+// and does not leak the verification submission GUID/URL into stdout, while still reporting it on
+// stderr. <https://github.com/foundry-rs/foundry/issues/1976>
+forgetest_async!(script_verify_json_keeps_stdout_clean, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+contract Noop {}
+contract Deploy is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Noop();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let (verifier_url, guid, _server) = spawn_full_mock_verifier().await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "script",
+            "script/Deploy.s.sol:Deploy",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "VALID_KEY",
+            "--json",
+        ])
+        .execute();
+
+    assert!(output.status.success(), "expected command to succeed");
+
+    let stdout = output.stdout_lossy();
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        serde_json::from_str::<serde_json::Value>(line)
+            .unwrap_or_else(|e| panic!("stdout line is not valid JSON ({e}): {line}"));
+    }
+    assert!(!stdout.contains(guid), "verification GUID leaked into stdout: {stdout}");
+
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains(guid), "expected verification GUID on stderr, got: {stderr}");
+});
+
 // Tests that the preflight check passes (does not block deploy) when the verifier responds
 // with ContractCodeNotVerified (the normal "valid key, unknown address" response).
 forgetest_async!(create_preflight_passes_on_contract_not_verified, |prj, cmd| {
