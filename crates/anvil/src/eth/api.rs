@@ -403,6 +403,18 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Sets the `prevrandao` value of the next block.
+    ///
+    /// This is a one-shot override: it applies to the next mined block only, after which anvil
+    /// resumes deriving `prevrandao` from the parent hash and block number.
+    ///
+    /// Handler for RPC call: `anvil_setNextBlockPrevRandao`
+    pub async fn anvil_set_next_block_prevrandao(&self, prevrandao: B256) -> Result<()> {
+        node_info!("anvil_setNextBlockPrevRandao");
+        self.backend.set_next_block_prevrandao(prevrandao);
+        Ok(())
+    }
+
     /// Retrieves the Anvil node configuration params.
     ///
     /// Handler for RPC call: `anvil_nodeInfo`
@@ -1985,6 +1997,9 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_storage_at(addr, slot, val).await.to_rpc_result()
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
+            EthRequest::SetNextBlockPrevRandao(prevrandao) => {
+                self.anvil_set_next_block_prevrandao(prevrandao).await.to_rpc_result()
+            }
             EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
             EthRequest::SetMinGasPrice(gas) => {

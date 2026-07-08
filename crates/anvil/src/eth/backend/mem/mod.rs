@@ -504,6 +504,14 @@ impl<N: Network> Backend<N> {
         self.evm_env.write().block_env.beneficiary = address;
     }
 
+    /// Sets the `prevrandao` value to use for the next mined block.
+    ///
+    /// This is a one-shot override that is consumed by the next block; afterwards anvil resumes its
+    /// default per-block `prevrandao` derivation.
+    pub fn set_next_block_prevrandao(&self, prevrandao: B256) {
+        self.cheats.set_next_block_prevrandao(prevrandao);
+    }
+
     /// Sets the nonce of the given address
     pub async fn set_nonce(&self, address: Address, nonce: U256) -> DatabaseResult<()> {
         self.db.write().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX))
@@ -2892,7 +2900,11 @@ where
             let mut input = Vec::with_capacity(40);
             input.extend_from_slice(best_hash.as_slice());
             input.extend_from_slice(&block_number.to_le_bytes());
-            evm_env.block_env.prevrandao = Some(keccak256(&input));
+            // Use the `prevrandao` value set via `anvil_setNextBlockPrevRandao` for this block if
+            // one was provided, otherwise derive it from the parent hash and block number. The
+            // manual override is consumed here so it only applies to this single block.
+            evm_env.block_env.prevrandao =
+                Some(self.cheats.take_next_block_prevrandao().unwrap_or_else(|| keccak256(&input)));
 
             if self.prune_state_history_config.is_state_history_supported() {
                 let db = self.db.read().await.current_state();

@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes};
+use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
@@ -601,6 +601,50 @@ async fn test_fork_revert_next_block_timestamp() {
     api.mine_one().await;
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert!(block.header.timestamp >= latest_block.header.timestamp);
+}
+
+// Tests that `anvil_setNextBlockPrevRandao` overrides the `prevrandao` (block header `mixHash`) of
+// the next mined block, and that the override is one-shot: subsequent blocks fall back to anvil's
+// default per-block `prevrandao` derivation.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, Some(prevrandao));
+
+    // the override only applies to a single block: the next block uses the default derivation
+    api.mine_one().await;
+    let next = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(next.header.mix_hash, Some(prevrandao));
+}
+
+// Tests that the `prevrandao` set via `anvil_setNextBlockPrevRandao` is observed by the EVM: the
+// `PREVRANDAO` opcode (exposed through `Multicall::getCurrentBlockDifficulty`) returns the manually
+// set value for the overridden block.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_evm() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // deploying the contract auto-mines a block
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+
+    let prevrandao = b256!("0x00000000000000000000000000000000000000000000000000000000deadbeef");
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    api.mine_one().await;
+
+    // post-merge the `PREVRANDAO` opcode (0x44) returns the current block's `prevrandao`
+    let difficulty = multicall.getCurrentBlockDifficulty().call().await.unwrap();
+    assert_eq!(difficulty, U256::from_be_bytes(prevrandao.0));
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, Some(prevrandao));
 }
 
 // test that after a snapshot revert, the env block is reset
