@@ -101,7 +101,10 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
-    core::precompiles::EC_RECOVER,
+    core::{
+        evm::{EvmEnvFor, TempoEvmNetwork},
+        precompiles::EC_RECOVER,
+    },
     decode::RevertDecoder,
     hardfork::FoundryHardfork,
     inspectors::AccessListInspector,
@@ -1306,6 +1309,20 @@ impl<N: Network> Backend<N> {
         Ok((result, base))
     }
 
+    /// Builds the Tempo [`EvmEnv`] (spec, gas params, [`TempoBlockEnv`]) from a base
+    /// env.
+    fn build_tempo_evm_env(&self, evm_env: &EvmEnv) -> EvmEnvFor<TempoEvmNetwork> {
+        let hardfork = self.tempo_hardfork();
+        EvmEnv::new(
+            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
+            TempoBlockEnv {
+                inner: evm_env.block_env.clone(),
+                timestamp_millis_part: 0,
+                ..Default::default()
+            },
+        )
+    }
+
     /// Creates a Tempo EVM, injects precompiles, and transacts with a native [`TempoTxEnv`].
     fn transact_tempo_with_inspector_ref<'db, I, DB>(
         &self,
@@ -1319,15 +1336,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let hardfork = self.tempo_hardfork();
-        let tempo_env = EvmEnv::new(
-            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
-            TempoBlockEnv {
-                inner: evm_env.block_env.clone(),
-                timestamp_millis_part: 0,
-                ..Default::default()
-            },
-        );
+        let tempo_env = self.build_tempo_evm_env(evm_env);
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
             tempo_env,
@@ -1397,18 +1406,7 @@ impl<N: Network> Backend<N> {
         }
 
         if self.is_tempo() {
-            let hardfork = self.tempo_hardfork();
-            let tempo_env = EvmEnv::new(
-                evm_env
-                    .cfg_env
-                    .clone()
-                    .with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
-                TempoBlockEnv {
-                    inner: evm_env.block_env.clone(),
-                    timestamp_millis_part: 0,
-                    ..Default::default()
-                },
-            );
+            let tempo_env = self.build_tempo_evm_env(evm_env);
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
             run!(evm)
@@ -4982,24 +4980,13 @@ impl Backend<FoundryNetwork> {
 
     /// Sets the fee token for a user address (Tempo-only).
     pub async fn set_fee_token(&self, user: Address, token: Address) -> DatabaseResult<()> {
-        let hardfork = self.hardfork();
-        let chain_id = self.evm_env.read().cfg_env.chain_id;
-        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
-        let block_number: u64 = self.evm_env.read().block_env.number.to();
-        let mut db = self.db.write().await;
-        let mut storage = AnvilStorageProvider::new(
-            &mut **db,
-            chain_id,
-            timestamp,
-            block_number,
-            hardfork.into(),
-        );
-        StorageCtx::enter(&mut storage, || {
+        self.with_tempo_storage(|| {
             let mut fee_manager = TipFeeManager::new();
             fee_manager
                 .set_user_token(user, IFeeManager::setUserTokenCall { token })
-                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))
+                .map_err(tempo_db_err)
         })
+        .await
     }
 
     /// Sets the fee token for a validator address (Tempo-only).
@@ -5008,19 +4995,7 @@ impl Backend<FoundryNetwork> {
         validator: Address,
         token: Address,
     ) -> DatabaseResult<()> {
-        let hardfork = self.hardfork();
-        let chain_id = self.evm_env.read().cfg_env.chain_id;
-        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
-        let block_number: u64 = self.evm_env.read().block_env.number.to();
-        let mut db = self.db.write().await;
-        let mut storage = AnvilStorageProvider::new(
-            &mut **db,
-            chain_id,
-            timestamp,
-            block_number,
-            hardfork.into(),
-        );
-        StorageCtx::enter(&mut storage, || {
+        self.with_tempo_storage(|| {
             let mut fee_manager = TipFeeManager::new();
             // Use Address::ZERO as beneficiary so the check `sender != beneficiary` passes
             fee_manager
@@ -5029,8 +5004,9 @@ impl Backend<FoundryNetwork> {
                     IFeeManager::setValidatorTokenCall { token },
                     Address::ZERO,
                 )
-                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))
+                .map_err(tempo_db_err)
         })
+        .await
     }
 
     /// Mints FeeAMM liquidity for a token pair (Tempo-only).
@@ -5040,11 +5016,37 @@ impl Backend<FoundryNetwork> {
         validator_token: Address,
         amount: U256,
     ) -> DatabaseResult<()> {
-        let hardfork = self.hardfork();
-        let chain_id = self.evm_env.read().cfg_env.chain_id;
-        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
-        let block_number: u64 = self.evm_env.read().block_env.number.to();
         let admin = Address::ZERO;
+        self.with_tempo_storage(|| {
+            // Mint the required tokens to admin so it can provide liquidity.
+            // grant_role_internal bypasses the caller check, matching genesis seeding.
+            for &token_address in &[user_token, validator_token] {
+                let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
+                token.grant_role_internal(admin, *ISSUER_ROLE).map_err(tempo_db_err)?;
+                token.mint(admin, ITIP20::mintCall { to: admin, amount }).map_err(tempo_db_err)?;
+            }
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager
+                .mint(admin, user_token, validator_token, amount, admin)
+                .map_err(tempo_db_err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Runs `f` inside a Tempo storage context initialized from the current state
+    /// (Tempo-only).
+    async fn with_tempo_storage<R>(&self, f: impl FnOnce() -> R) -> R {
+        let hardfork = self.hardfork();
+        // One consistent snapshot of the current env to build the storage context.
+        let (chain_id, timestamp, block_number) = {
+            let env = self.evm_env.read();
+            (
+                env.cfg_env.chain_id,
+                U256::from(env.block_env.timestamp),
+                env.block_env.number.to::<u64>(),
+            )
+        };
         let mut db = self.db.write().await;
         let mut storage = AnvilStorageProvider::new(
             &mut **db,
@@ -5053,26 +5055,13 @@ impl Backend<FoundryNetwork> {
             block_number,
             hardfork.into(),
         );
-        StorageCtx::enter(&mut storage, || {
-            // Mint the required tokens to admin so it can provide liquidity.
-            // grant_role_internal bypasses the caller check, matching genesis seeding.
-            for &token_address in &[user_token, validator_token] {
-                let mut token = TIP20Token::from_address(token_address)
-                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
-                token
-                    .grant_role_internal(admin, *ISSUER_ROLE)
-                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
-                token
-                    .mint(admin, ITIP20::mintCall { to: admin, amount })
-                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
-            }
-            let mut fee_manager = TipFeeManager::new();
-            fee_manager
-                .mint(admin, user_token, validator_token, amount, admin)
-                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
-            Ok(())
-        })
+        StorageCtx::enter(&mut storage, f)
     }
+}
+
+/// Converts a Tempo error into an anvil [`DatabaseError`].
+fn tempo_db_err<E: std::fmt::Display>(e: E) -> DatabaseError {
+    DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}")))
 }
 
 /// Get max nonce from transaction pool by address.
