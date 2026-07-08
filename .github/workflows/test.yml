@@ -124,8 +124,9 @@ jobs:
           NEXTEST_FILTER: ${{ matrix.filter }}
           NEXTEST_PARTITION: ${{ matrix.partition_arg }}
         run: |
-          args=(-E "$NEXTEST_FILTER" --no-fail-fast)
+          args=(-E "$NEXTEST_FILTER")
           if [[ -n "$NEXTEST_PARTITION" ]]; then
             args+=(--partition "$NEXTEST_PARTITION")
           fi
+          args+=(--no-fail-fast)
           cargo nextest run --locked "${args[@]}"
