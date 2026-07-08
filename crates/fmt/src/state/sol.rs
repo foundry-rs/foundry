@@ -1419,6 +1419,7 @@ impl<'ast> State<'_, 'ast> {
                     self.word(op);
                 }
             }
+            ast::ExprKind::Err(_) => self.print_span(span),
         }
         self.cursor.advance_to(span.hi(), true);
     }

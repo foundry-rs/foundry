@@ -156,6 +156,9 @@ The script builds the `foundry-bench` harness from the current checkout once,
 then points it at each checked-out workspace with
 `FOUNDRY_BENCH_WORKSPACE_ROOT`. The `local` version builds and activates that
 workspace with `FOUNDRY_BENCH_LOCAL_BUILD_PROFILE=profiling` before each run.
+By default, the PR script sets `FOUNDRY_BENCH_LOCAL_BUILD_BINS=forge` so forge
+benchmarks do not build unused targets. Set it to a comma- or whitespace-
+separated list such as `forge,cast,anvil,chisel` when a run needs more binaries.
 Keep `REPOS`, `BENCHMARKS`, and any per-repo extra arguments identical for
 `master` and `candidate`. Override `CANDIDATE_REF`, `RUN_ID`, or `BENCH_ROOT`
 when needed.

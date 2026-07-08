@@ -1277,18 +1277,16 @@ impl TestArgs {
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
-        let should_mutate = self.mutate.is_some();
-
-        // Force dyn test linking for mutation testing
-        if should_mutate {
-            config.dynamic_test_linking = true;
-            config.cache = true;
-        }
-
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
+        }
+
+        if self.mutate.is_some() {
+            // Force dyn test linking and cache usage for mutation testing after any config reload.
+            config.dynamic_test_linking = true;
+            config.cache = true;
         }
 
         // Set up the project.
@@ -2258,7 +2256,7 @@ impl TestArgs {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
             if total_tests == 0 {
-                sh_println!(
+                sh_warn!(
                     "No tests found in project! Forge looks for functions that start with `test`"
                 )?;
             } else {
