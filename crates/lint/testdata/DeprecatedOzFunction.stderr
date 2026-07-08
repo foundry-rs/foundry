@@ -78,3 +78,11 @@ LL │         return SafeERC20.safeApprove;
    │
    ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
 
+warning[deprecated-oz-function]: OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`
+   ╭▸ ROOT/testdata/DeprecatedOzFunction.sol:LL:CC
+   │
+LL │         runs(SafeERC20.safeApprove)
+   │              ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/deprecated-oz-function
+

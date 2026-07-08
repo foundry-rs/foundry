@@ -7,11 +7,10 @@ use solar::{
     interface::source_map::FileName,
     sema::{
         Gcx,
-        hir::{self, Expr, ExprKind, FunctionId, Hir, Visit},
+        hir::{self, Expr, ExprKind, FunctionId, Hir},
         ty::TyKind,
     },
 };
-use std::{convert::Infallible, ops::ControlFlow};
 
 declare_forge_lint!(
     DEPRECATED_OZ_FUNCTION,
@@ -21,51 +20,35 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for DeprecatedOzFunction {
-    fn check_function(
+    fn check_expr(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
-        func: &'hir hir::Function<'hir>,
+        expr: &'hir Expr<'hir>,
     ) {
-        if let Some(body) = &func.body {
-            let mut finder = DeprecatedRefFinder { gcx, hir, ctx };
-            for stmt in body.stmts {
-                let _ = finder.visit_stmt(stmt);
+        // A name or member expression typed as a function is a resolved reference, called or
+        // used as a value: judge the single declaration the type checker selected. The linter
+        // visits every expression in the unit, so a reference in a function header (a modifier
+        // or base-constructor argument) is caught too, not only one inside a function body.
+        if matches!(expr.kind, ExprKind::Ident(..) | ExprKind::Member(..)) {
+            let resolver = DeprecatedRefResolver { gcx, hir };
+            if let Some(function_id) = resolver.resolved_function(expr)
+                && resolver.is_deprecated_oz(function_id)
+            {
+                ctx.emit(&DEPRECATED_OZ_FUNCTION, expr.span);
             }
         }
     }
 }
 
-/// Looks for references to the deprecated OpenZeppelin functions, called or used as values.
-struct DeprecatedRefFinder<'ctx, 's, 'c, 'hir> {
+/// Resolves an expression to the deprecated OpenZeppelin function it references, if any.
+struct DeprecatedRefResolver<'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
-    ctx: &'ctx LintContext<'s, 'c>,
 }
 
-impl<'hir> Visit<'hir> for DeprecatedRefFinder<'_, '_, '_, 'hir> {
-    type BreakValue = Infallible;
-
-    fn hir(&self) -> &'hir Hir<'hir> {
-        self.hir
-    }
-
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        // A name or member expression typed as a function is a resolved reference, called or
-        // used as a value: judge the single declaration the type checker selected. The callee
-        // of a call is visited by the default walk, so calls need no dedicated arm.
-        if matches!(expr.kind, ExprKind::Ident(..) | ExprKind::Member(..))
-            && let Some(function_id) = self.resolved_function(expr)
-            && self.is_deprecated_oz(function_id)
-        {
-            self.ctx.emit(&DEPRECATED_OZ_FUNCTION, expr.span);
-        }
-        self.walk_expr(expr)
-    }
-}
-
-impl DeprecatedRefFinder<'_, '_, '_, '_> {
+impl DeprecatedRefResolver<'_> {
     /// The single function an expression resolves to, for a callee or a reference used as a
     /// value. `type_of_expr` is the function the type checker resolved, so overload selection,
     /// override shadowing, `super.`, the qualified and `using for` forms and import aliases
@@ -109,11 +92,18 @@ impl DeprecatedRefFinder<'_, '_, '_, '_> {
         }
     }
 
-    /// Whether a source file belongs to an OpenZeppelin package, judged by its path. A
-    /// vendored copy under a path that does not name OpenZeppelin is not recognized.
+    /// Whether a source file belongs to an OpenZeppelin package, judged by a full path
+    /// component against the package roots (the npm scope and the git-submodule directories).
+    /// Matching a whole component rather than a substring keeps a same-name local declaration
+    /// under a misleading path such as `src/not-openzeppelin/` from being recognized.
     fn is_openzeppelin_source(&self, source_id: hir::SourceId) -> bool {
+        const OPENZEPPELIN_PACKAGE_ROOTS: [&str; 3] =
+            ["@openzeppelin", "openzeppelin-contracts", "openzeppelin-contracts-upgradeable"];
         match &self.hir.source(source_id).file.name {
-            FileName::Real(path) => path.to_string_lossy().to_lowercase().contains("openzeppelin"),
+            FileName::Real(path) => path.components().any(|component| {
+                matches!(component, std::path::Component::Normal(name)
+                    if OPENZEPPELIN_PACKAGE_ROOTS.iter().any(|root| name.eq_ignore_ascii_case(root)))
+            }),
             _ => false,
         }
     }

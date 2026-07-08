@@ -14,6 +14,10 @@ import {
     SafeERC20 as LocalSafeERC20,
     AccessControl as LocalAccessControl
 } from "./auxiliary/LocalOzNames.sol";
+import {
+    SafeERC20 as NotOzSafeERC20,
+    AccessControl as NotOzAccessControl
+} from "./auxiliary/not-openzeppelin/OzMocks.sol";
 
 // Tests for `deprecated-oz-function`: OpenZeppelin deprecated `SafeERC20.safeApprove` (replaced
 // by `safeIncreaseAllowance` / `forceApprove`) and `AccessControl._setupRole` (replaced by
@@ -157,5 +161,38 @@ contract Standalone {
 
     function setup(bytes32 role, address account) internal {
         _setupRole(role, account);
+    }
+}
+
+// The same OpenZeppelin names under a `not-openzeppelin/` path: the substring "openzeppelin"
+// is in the path but is not one of its components, so the provenance check keeps them out.
+contract UsesNotOzNames is NotOzAccessControl {
+    using NotOzSafeERC20 for IERC20;
+
+    IERC20 internal token;
+
+    function approveIt(address spender, uint256 amount) internal {
+        token.safeApprove(spender, amount);
+    }
+
+    function setup(bytes32 role, address account) internal {
+        _setupRole(role, account);
+    }
+}
+
+// A deprecated function referenced as a value in a modifier argument sits in the function
+// header, outside the body: the reference is caught there too, not only inside the body.
+contract ModifierArgRef {
+    modifier runs(function(IERC20, address, uint256) internal callback) {
+        _;
+    }
+
+    IERC20 internal token;
+
+    function act(address spender, uint256 amount)
+        internal
+        runs(SafeERC20.safeApprove) //~WARN: OpenZeppelin deprecated this function
+    {
+        token.approve(spender, amount);
     }
 }
