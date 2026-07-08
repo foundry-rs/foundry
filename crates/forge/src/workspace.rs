@@ -108,11 +108,11 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
     }
     if let Some(path) = &config.fuzz.corpus.corpus_dir {
         temp_config.fuzz.corpus.corpus_dir =
-            Some(rebase_project_path(&config.root, temp_path, path));
+            Some(rebase_mutable_project_path(config, temp_path, path));
     }
     if let Some(path) = &config.fuzz.corpus.frontier_dir {
         temp_config.fuzz.corpus.frontier_dir =
-            Some(rebase_project_path(&config.root, temp_path, path));
+            Some(rebase_mutable_project_path(config, temp_path, path));
     }
     if let Some(path) = &config.invariant.failure_persist_dir {
         temp_config.invariant.failure_persist_dir =
@@ -120,11 +120,11 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
     }
     if let Some(path) = &config.invariant.corpus.corpus_dir {
         temp_config.invariant.corpus.corpus_dir =
-            Some(rebase_project_path(&config.root, temp_path, path));
+            Some(rebase_mutable_project_path(config, temp_path, path));
     }
     if let Some(path) = &config.invariant.corpus.frontier_dir {
         temp_config.invariant.corpus.frontier_dir =
-            Some(rebase_project_path(&config.root, temp_path, path));
+            Some(rebase_mutable_project_path(config, temp_path, path));
     }
     for permission in &mut temp_config.fs_permissions.permissions {
         let path = rebase_project_path(&config.root, temp_path, &permission.path);
@@ -147,6 +147,33 @@ fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
     let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
     if rel.is_absolute() { resolved } else { temp_path.join(rel) }
+}
+
+fn rebase_mutable_project_path(config: &Config, temp_path: &Path, path: &Path) -> PathBuf {
+    let resolved = resolve_against_root(&config.root, path);
+    let rel = relative_to_root(&config.root, &resolved);
+    if rel.is_absolute() || is_covered_by_symlinked_project_root(config, &rel) {
+        return temp_path.join(isolated_mutable_path_rel(&resolved));
+    }
+    temp_path.join(rel)
+}
+
+fn isolated_mutable_path_rel(resolved: &Path) -> PathBuf {
+    let mut rel = PathBuf::from(".foundry_mutable");
+    for component in resolved.components() {
+        if let Component::Normal(component) = component {
+            rel.push(component);
+        }
+    }
+    rel
+}
+
+fn is_covered_by_symlinked_project_root(config: &Config, rel: &Path) -> bool {
+    config.libs.iter().any(|path| {
+        let resolved = resolve_against_root(&config.root, path);
+        let lib_rel = relative_to_root(&config.root, &resolved);
+        !lib_rel.is_absolute() && !lib_rel.as_os_str().is_empty() && rel.starts_with(lib_rel)
+    }) || ["node_modules", "dependencies"].iter().any(|dep_dir| rel.starts_with(dep_dir))
 }
 
 fn normalize_existing_ancestor(path: &Path) -> PathBuf {
@@ -248,6 +275,25 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
             "include/allow",
         )?;
     }
+    for remapping in &config.remappings {
+        let remapping: Remapping = remapping.clone().into();
+        copy_extra_project_path(
+            &config.root,
+            temp_dir,
+            Path::new(&remapping.path),
+            &handled_extra_roots,
+            "remapping",
+        )?;
+        if let Some(context) = remapping.context {
+            copy_extra_project_path(
+                &config.root,
+                temp_dir,
+                Path::new(&context),
+                &handled_extra_roots,
+                "remapping context",
+            )?;
+        }
+    }
     for permission in &config.fs_permissions.permissions {
         if permission.is_granted(FsAccessKind::Read) {
             copy_project_local_permission_path(
@@ -305,22 +351,26 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     }
 
     for lib_path in &config.libs {
-        if lib_path.exists() {
-            let lib_rel = relative_to_root(&config.root, lib_path);
+        let resolved = resolve_against_root(&config.root, lib_path);
+        if resolved.exists() {
+            let lib_rel = relative_to_root(&config.root, &resolved);
+            if lib_rel.is_absolute() {
+                continue;
+            }
             ensure_safe_relative_path(&lib_rel, "lib", lib_path)?;
-            ensure_within_root(&config.root, lib_path, "lib", lib_path)?;
+            ensure_within_root(&config.root, &resolved, "lib", lib_path)?;
             let target = temp_dir.join(&lib_rel);
 
             if !target.exists() {
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                if symlink_dir(lib_path, &target).is_err() {
-                    copy_dir_recursive(lib_path, &target)?;
+                if symlink_dir(&resolved, &target).is_err() {
+                    copy_dir_recursive(&resolved, &target)?;
                 }
             }
 
-            symlink_nested_libs(lib_path, &target, 0)?;
+            symlink_nested_libs(&resolved, &target, 0)?;
         }
     }
 
@@ -359,8 +409,13 @@ pub(crate) fn handled_project_roots(config: &Config) -> Result<Vec<PathBuf>> {
     }
 
     for lib_path in &config.libs {
-        if lib_path.exists() {
-            push_handled_project_root(&mut roots, &config.root, lib_path, "lib")?;
+        let resolved = resolve_against_root(&config.root, lib_path);
+        if resolved.exists() {
+            let lib_rel = relative_to_root(&config.root, &resolved);
+            if lib_rel.is_absolute() {
+                continue;
+            }
+            push_handled_project_root(&mut roots, &config.root, &resolved, "lib")?;
         }
     }
 
@@ -489,18 +544,27 @@ fn copy_project_local_optional_path(
     let Some(path) = path else { return Ok(()) };
     let resolved = resolve_against_root(root, path);
     let rel = relative_to_root(root, &resolved);
-    if rel.is_absolute() || rel.as_os_str().is_empty() || !resolved.exists() {
+    if rel.as_os_str().is_empty() || !resolved.exists() {
         return Ok(());
     }
-    if is_covered_by_handled_root(&rel, handled_roots) {
+    let is_external = rel.is_absolute();
+    let target = if is_external || is_covered_by_handled_root(&rel, handled_roots) {
+        temp_dir.join(isolated_mutable_path_rel(&resolved))
+    } else {
+        ensure_safe_relative_path(&rel, "corpus/frontier", path)?;
+        ensure_within_root(root, &resolved, "corpus/frontier", path)?;
+        temp_dir.join(rel)
+    };
+    if target.exists() {
         return Ok(());
     }
-    ensure_safe_relative_path(&rel, "corpus/frontier", path)?;
-    ensure_within_root(root, &resolved, "corpus/frontier", path)?;
 
-    let target = temp_dir.join(rel);
     if resolved.is_dir() {
-        copy_project_dir_recursive(root, &resolved, &target)
+        if is_external {
+            copy_dir_recursive(&resolved, &target)
+        } else {
+            copy_project_dir_recursive(root, &resolved, &target)
+        }
     } else {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -929,6 +993,139 @@ mod tests {
             temp_config.invariant.corpus.frontier_dir,
             Some(workspace.join("invariant-frontier"))
         );
+    }
+
+    #[test]
+    fn test_copy_project_isolates_external_corpus_and_frontier_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        let corpus = temp.path().join("shared-corpus");
+        let frontier = temp.path().join("shared-frontier");
+        create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
+        create_test_dir_structure(&corpus, &["seed.json"]);
+        create_test_dir_structure(&frontier, &["frontier.json"]);
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            invariant: foundry_config::InvariantConfig {
+                corpus: foundry_config::FuzzCorpusConfig {
+                    corpus_dir: Some(PathBuf::from("../shared-corpus")),
+                    frontier_dir: Some(PathBuf::from("../shared-frontier")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+        let temp_config = rebase_config_paths(&config, &workspace);
+        let rebased_corpus = temp_config.invariant.corpus.corpus_dir.unwrap();
+        let rebased_frontier = temp_config.invariant.corpus.frontier_dir.unwrap();
+
+        assert!(rebased_corpus.starts_with(workspace.join(".foundry_mutable")));
+        assert!(rebased_frontier.starts_with(workspace.join(".foundry_mutable")));
+        assert!(rebased_corpus.join("seed.json").exists());
+        assert!(rebased_frontier.join("frontier.json").exists());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_copy_project_isolates_corpus_under_symlinked_lib_root() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        create_test_dir_structure(
+            &root,
+            &[
+                "src/Target.sol",
+                "test/Target.t.sol",
+                ".real-lib/mycorpus/seed.json",
+                ".real-lib/Dependency.sol",
+            ],
+        );
+        symlink_dir(Path::new(".real-lib"), &root.join("lib")).unwrap();
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            libs: vec![root.join("lib")],
+            invariant: foundry_config::InvariantConfig {
+                corpus: foundry_config::FuzzCorpusConfig {
+                    corpus_dir: Some(PathBuf::from("lib/mycorpus")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+        let temp_config = rebase_config_paths(&config, &workspace);
+        let rebased_corpus = temp_config.invariant.corpus.corpus_dir.unwrap();
+
+        assert!(rebased_corpus.starts_with(workspace.join(".foundry_mutable")));
+        assert!(rebased_corpus.join("seed.json").exists());
+        assert!(!rebased_corpus.starts_with(workspace.join("lib")));
+    }
+
+    #[test]
+    fn test_copy_project_copies_project_local_remapping_targets() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        create_test_dir_structure(
+            &root,
+            &["src/Target.sol", "test/Target.t.sol", "packages/shared/src/Shared.sol"],
+        );
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            remappings: vec![Remapping::from_str("shared/=packages/shared/src/").unwrap().into()],
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+        let temp_config = rebase_config_paths(&config, &workspace);
+        let remappings =
+            temp_config.remappings.into_iter().map(Remapping::from).collect::<Vec<_>>();
+
+        assert!(workspace.join("packages/shared/src/Shared.sol").exists());
+        assert_eq!(
+            remappings[0].path,
+            format!("{}/", workspace.join("packages/shared/src").display())
+        );
+    }
+
+    #[test]
+    fn test_copy_project_preserves_external_libs() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        let external = temp.path().join("shared-lib");
+        create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol", "lib/Local.sol"]);
+        create_test_dir_structure(&external, &["External.sol"]);
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            libs: vec![PathBuf::from("lib"), PathBuf::from("../shared-lib")],
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+        let temp_config = rebase_config_paths(&config, &workspace);
+
+        assert!(workspace.join("lib/Local.sol").exists());
+        assert!(!workspace.join("shared-lib/External.sol").exists());
+        assert_eq!(temp_config.libs, vec![workspace.join("lib"), external]);
     }
 
     #[test]
