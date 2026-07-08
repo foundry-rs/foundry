@@ -11414,6 +11414,7 @@ dependencies = [
  "solar-data-structures",
  "solar-interface",
  "solar-sema",
+ "tikv-jemallocator",
  "tracing",
  "tracing-subscriber 0.3.23",
  "tracing-tracy",
