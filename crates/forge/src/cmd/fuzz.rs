@@ -41,6 +41,10 @@ pub struct FuzzArgs {
 }
 
 impl FuzzArgs {
+    #[allow(
+        clippy::large_stack_frames,
+        reason = "FuzzSubcommands carries TestArgs; boxing the parser shape is outside this PR."
+    )]
     pub async fn run(self) -> Result<TestOutcome> {
         match self.command {
             FuzzSubcommands::Run(mut args) => {
