@@ -78,13 +78,17 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
             if name.as_str().starts_with('_') {
                 continue;
             }
-            // Exactly one reference: zero references is dead code, a different concern.
-            // Self-references do not count and mark the function recursive, which rules it
-            // out entirely: a recursive function cannot be inlined into its caller. A single
-            // reference that only enters through a reference cycle (mutually recursive
-            // helpers with no external caller) has no caller to inline into either.
+            // Exactly one reference, and it must be a direct call: zero references is dead
+            // code, a different concern, and a reference used as a value (assigned to a
+            // function pointer, returned, or passed as a callback) has no call site to inline
+            // into, so it is not an inlining candidate. Self-references do not count and mark
+            // the function recursive, which rules it out entirely: a recursive function cannot
+            // be inlined into its caller. A single reference that only enters through a
+            // reference cycle (mutually recursive helpers with no external caller) has no
+            // caller to inline into either.
             let Some(info) = counts.get(&function_id) else { continue };
             if info.count == 1
+                && info.value_count == 0
                 && !info.self_referencing
                 && !only_referenced_within_cycle(&counts, function_id)
             {
@@ -122,6 +126,7 @@ fn operator_bound_functions(hir: &hir::Hir<'_>) -> HashSet<hir::FunctionId> {
 #[derive(Default)]
 struct RefInfo {
     count: usize,
+    value_count: usize,
     self_referencing: bool,
     first_from: Option<hir::FunctionId>,
 }
@@ -194,23 +199,58 @@ impl<'gcx> hir::Visit<'gcx> for ReferenceCounter<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
-        // A name or member expression typed as a function is one resolved reference. A
-        // self-reference marks the function recursive instead of counting.
-        if matches!(expr.kind, hir::ExprKind::Ident(..) | hir::ExprKind::Member(..))
-            && let Some(ty) = self.gcx.type_of_expr(expr.peel_parens().id)
-            && let TyKind::Fn(function_ty) = ty.kind
-            && let Some(function_id) = function_ty.function_id
-        {
-            let info = self.refs.entry(function_id).or_default();
-            if self.current == Some(function_id) {
-                info.self_referencing = true;
-            } else {
-                info.count += 1;
-                if info.count == 1 {
-                    info.first_from = self.current;
+        // The callee of a call is a direct, inlinable use: record it as a call and descend into
+        // the callee's own sub-expressions (a member receiver, a nested call) without also
+        // counting the callee node as a value reference. Every other name or member expression
+        // typed as a function is a value-position reference, such as a function pointer that is
+        // assigned, returned or passed as a callback, which has no call site to inline into.
+        if let hir::ExprKind::Call(callee, args, opts) = &expr.kind {
+            let peeled = callee.peel_parens();
+            match peeled.kind {
+                hir::ExprKind::Ident(_) => self.record_reference(peeled, true),
+                hir::ExprKind::Member(receiver, _) => {
+                    self.record_reference(peeled, true);
+                    let _ = self.visit_expr(receiver);
+                }
+                _ => {
+                    let _ = self.visit_expr(peeled);
                 }
             }
+            if let Some(opts) = opts {
+                for arg in opts.args {
+                    let _ = self.visit_expr(&arg.value);
+                }
+            }
+            return self.visit_call_args(args);
+        }
+        if matches!(expr.kind, hir::ExprKind::Ident(..) | hir::ExprKind::Member(..)) {
+            self.record_reference(expr, false);
         }
         self.walk_expr(expr)
+    }
+}
+
+impl<'gcx> ReferenceCounter<'gcx> {
+    /// Records one resolved function reference from `expr`, marking whether it is a direct call
+    /// or a value-position use. `type_of_expr` gives the single declaration the type checker
+    /// selected, so overloads, the qualified and `using for` forms and import aliases are all
+    /// attributed to the right function. A self-reference marks the function recursive rather
+    /// than counting.
+    fn record_reference(&mut self, expr: &hir::Expr<'_>, is_call: bool) {
+        let Some(ty) = self.gcx.type_of_expr(expr.peel_parens().id) else { return };
+        let TyKind::Fn(function_ty) = ty.kind else { return };
+        let Some(function_id) = function_ty.function_id else { return };
+        let info = self.refs.entry(function_id).or_default();
+        if self.current == Some(function_id) {
+            info.self_referencing = true;
+        } else {
+            info.count += 1;
+            if info.count == 1 {
+                info.first_from = self.current;
+            }
+            if !is_call {
+                info.value_count += 1;
+            }
+        }
     }
 }

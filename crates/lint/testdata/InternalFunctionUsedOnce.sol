@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-// Tests for `internal-function-used-once`: an internal function referenced exactly once in the
-// whole unit can usually be inlined into its caller. References are resolved through the type
-// checker, calls and values alike. Out of scope: functions whose name starts with `_` (hook
-// convention), `virtual` functions and overrides (they exist for dynamic dispatch), functions
-// referenced zero times (dead code is another concern) or more than once, and functions bound
-// as user-defined operators (their operator uses are not name references, and the binding
-// requires a named function).
+// Tests for `internal-function-used-once`: an internal function called exactly once in the
+// whole unit can usually be inlined into its caller. The single reference must be a direct
+// call, resolved through the type checker; a reference used as a value (a function pointer
+// assigned, returned or passed as a callback) has no call site to inline into and is out of
+// scope. Also out of scope: functions whose name starts with `_` (hook convention), `virtual`
+// functions and overrides (they exist for dynamic dispatch), functions referenced zero times
+// (dead code is another concern) or more than once, and functions bound as user-defined
+// operators (their operator uses are not name references, and the binding requires a named
+// function).
 
 library MathLib {
     function onceQualified(uint256 v) internal pure returns (uint256) { //~NOTE: this internal function is used only once
@@ -46,7 +48,9 @@ contract Counter {
         return v == 0 ? 0 : recurse(v - 1);
     }
 
-    function pointed(uint256 v) internal pure returns (uint256) { //~NOTE: this internal function is used only once
+    // Referenced exactly once, but as a value assigned to a function pointer rather than a
+    // direct call: there is no call site to inline into, so it stays out of scope.
+    function pointed(uint256 v) internal pure returns (uint256) {
         return v + 6;
     }
 
@@ -56,7 +60,6 @@ contract Counter {
     }
 
     function runAgain(uint256 v) internal {
-        // a reference used as a value is a reference like any other
         function(uint256) internal pure returns (uint256) f = pointed;
         count = twice(f(v));
     }
@@ -176,5 +179,37 @@ contract TailOffCycle {
 
     function cycleB(uint256 v) internal pure returns (uint256) {
         return cycleA(v);
+    }
+}
+
+// The remaining value positions: a helper returned as a function pointer and one passed as a
+// callback argument. Neither is a call site to inline into, so both stay out of scope, while
+// the function actually called once (`invoke`) is reported.
+contract ValuePositions {
+    function returned(uint256 v) internal pure returns (uint256) {
+        return v + 1;
+    }
+
+    function passed(uint256 v) internal pure returns (uint256) {
+        return v + 2;
+    }
+
+    function invoke( //~NOTE: this internal function is used only once
+        function(uint256) internal pure returns (uint256) cb,
+        uint256 v
+    ) internal pure returns (uint256) {
+        return cb(v);
+    }
+
+    function pickReturned()
+        internal
+        pure
+        returns (function(uint256) internal pure returns (uint256))
+    {
+        return returned;
+    }
+
+    function usePassed(uint256 v) internal pure returns (uint256) {
+        return invoke(passed, v);
     }
 }
