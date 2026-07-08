@@ -772,6 +772,7 @@ fn stddev(values: &[f64]) -> Option<f64> {
 const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 const WORKSPACE_ROOT_ENV: &str = "FOUNDRY_BENCH_WORKSPACE_ROOT";
 const LOCAL_BUILD_PROFILE_ENV: &str = "FOUNDRY_BENCH_LOCAL_BUILD_PROFILE";
+const LOCAL_BUILD_BINS_ENV: &str = "FOUNDRY_BENCH_LOCAL_BUILD_BINS";
 const DEFAULT_LOCAL_BUILD_PROFILE: &str = "dist";
 const FOUNDRY_BINS: [&str; 4] = ["forge", "cast", "anvil", "chisel"];
 
@@ -812,15 +813,17 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
 pub fn install_local_version() -> Result<()> {
     let workspace = workspace_root()?;
     let profile = local_build_profile();
+    let bins = local_build_bins()?;
     sh_println!(
-        "  Building local workspace at {} with {} profile",
+        "  Building local workspace at {} with {} profile for {}",
         workspace.display(),
-        profile.to_string_lossy()
+        profile.to_string_lossy(),
+        bins.join(", ")
     );
 
     let mut cmd = Command::new("cargo");
     cmd.current_dir(&workspace).args(["build", "--locked", "--profile"]).arg(&profile);
-    for bin in FOUNDRY_BINS {
+    for bin in &bins {
         cmd.args(["--bin", bin]);
     }
 
@@ -830,7 +833,7 @@ pub fn install_local_version() -> Result<()> {
         eyre::bail!("local Foundry build failed");
     }
 
-    activate_local_binaries(&workspace, &profile)?;
+    activate_local_binaries(&workspace, &profile, &bins)?;
     sh_println!("  Successfully activated local {} build", profile.to_string_lossy());
     Ok(())
 }
@@ -849,14 +852,37 @@ fn local_build_profile() -> std::ffi::OsString {
         .unwrap_or_else(|| DEFAULT_LOCAL_BUILD_PROFILE.into())
 }
 
-fn activate_local_binaries(workspace: &Path, profile: &std::ffi::OsStr) -> Result<()> {
+fn local_build_bins() -> Result<Vec<String>> {
+    let Some(raw_bins) = env::var_os(LOCAL_BUILD_BINS_ENV).filter(|bins| !bins.is_empty()) else {
+        return Ok(FOUNDRY_BINS.into_iter().map(String::from).collect());
+    };
+
+    let bins = raw_bins
+        .to_string_lossy()
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter(|bin| !bin.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    if bins.is_empty() {
+        eyre::bail!("{LOCAL_BUILD_BINS_ENV} did not contain any binary names");
+    }
+
+    Ok(bins)
+}
+
+fn activate_local_binaries(
+    workspace: &Path,
+    profile: &std::ffi::OsStr,
+    bins: &[String],
+) -> Result<()> {
     let bin_dir = foundry_bin_dir()?;
     fs::create_dir_all(&bin_dir).wrap_err_with(|| {
         format!("Failed to create Foundry bin directory at {}", bin_dir.display())
     })?;
 
     let local_bin_dir = workspace.join("target").join(profile);
-    for bin in FOUNDRY_BINS {
+    for bin in bins {
         let bin_name = format!("{bin}{}", env::consts::EXE_SUFFIX);
         let source = local_bin_dir.join(&bin_name);
         let destination = bin_dir.join(&bin_name);

@@ -213,7 +213,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -242,7 +242,7 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--locked --target $TARGET --profile $RUST_PROFILE --bins
+          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE" --bins
             --no-default-features --features "$RUST_FEATURES")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
@@ -290,12 +290,15 @@ jobs:
             cd "$OUT_DIR"
             7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe solar.exe
             mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
-            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> "$GITHUB_OUTPUT"
+            file_name="foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
           fi
-          printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> "$GITHUB_OUTPUT"
-          printf "foundry_sbom=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.spdx.json" >> "$GITHUB_OUTPUT"
-          printf "foundry_checksum=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sha256" >> "$GITHUB_OUTPUT"
-          printf "foundry_signature=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sigstore.json" >> "$GITHUB_OUTPUT"
+          {
+            printf "file_name=%s\n" "$file_name"
+            printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt"
+            printf "foundry_sbom=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.spdx.json"
+            printf "foundry_checksum=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sha256"
+            printf "foundry_signature=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sigstore.json"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate archive checksum
         env:

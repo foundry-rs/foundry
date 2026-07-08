@@ -545,6 +545,76 @@ async fn spawn_mock_verifier(body: &'static str) -> (String, tokio::task::JoinHa
     (format!("http://{addr}"), handle)
 }
 
+/// Spawns a local HTTP server mocking the full Etherscan verification flow: the `getabi` preflight
+/// returns "not verified", `verifysourcecode` returns a submission GUID, and `checkverifystatus`
+/// reports success. Returns the server URL and the GUID it emits.
+async fn spawn_full_mock_verifier() -> (String, &'static str, tokio::task::JoinHandle<()>) {
+    const GUID: &str = "mockguid1976000000000000000000000000000000000000000";
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().fallback(move |uri: axum::http::Uri, body: String| async move {
+        let combined = format!("{}&{body}", uri.query().unwrap_or_default());
+        if combined.contains("verifysourcecode") {
+            format!(r#"{{"status":"1","message":"OK","result":"{GUID}"}}"#)
+        } else if combined.contains("checkverifystatus") {
+            r#"{"status":"1","message":"OK","result":"Pass - Verified"}"#.to_string()
+        } else {
+            r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#
+                .to_string()
+        }
+    });
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{addr}"), GUID, handle)
+}
+
+// Tests that `forge create --broadcast --verify --json` keeps stdout clean (valid JSON only) and
+// does not leak the verification submission GUID/URL into stdout, while still reporting it on
+// stderr. <https://github.com/foundry-rs/foundry/issues/1976>
+forgetest_async!(create_verify_json_keeps_stdout_clean, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let (verifier_url, guid, _server) = spawn_full_mock_verifier().await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "src/Counter.sol:Counter",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "VALID_KEY",
+            "--json",
+        ])
+        .execute();
+
+    assert!(output.status.success(), "expected command to succeed");
+
+    let stdout = output.stdout_lossy();
+    // stdout must be a single valid JSON document (the deployment result).
+    serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON ({e}): {stdout}"));
+    // The verification submission GUID must not pollute stdout.
+    assert!(!stdout.contains(guid), "verification GUID leaked into stdout: {stdout}");
+
+    // The GUID/URL is still reported to the user on stderr.
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains(guid), "expected verification GUID on stderr, got: {stderr}");
+});
+
 // Tests that the preflight check passes (does not block deploy) when the verifier responds
 // with ContractCodeNotVerified (the normal "valid key, unknown address" response).
 forgetest_async!(create_preflight_passes_on_contract_not_verified, |prj, cmd| {
