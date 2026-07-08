@@ -202,3 +202,36 @@ contract ShiftAmounts {
         acc += 700; //~NOTE: this literal appears multiple times
     }
 }
+
+contract Capped {
+    constructor(uint256 cap) {}
+}
+
+// A value repeated between a header (a base-constructor or modifier argument) and a body is a
+// repetition too: the header occurrence is counted, not only the body one.
+contract HeaderLiterals is Capped {
+    uint256 internal x;
+
+    modifier withLimit(uint256 limit) {
+        _;
+    }
+
+    constructor() Capped(4242) { //~NOTE: this literal appears multiple times
+        x = 4242; //~NOTE: this literal appears multiple times
+    }
+
+    function f() internal withLimit(8888) { //~NOTE: this literal appears multiple times
+        x = 8888; //~NOTE: this literal appears multiple times
+    }
+}
+
+// A fixed array size in a parameter type is a header literal too. Sizes of local array
+// declarations were already counted, so a size repeated between a signature and a body
+// groups with it.
+contract SignatureArraySizes {
+    uint256 internal y;
+
+    function sized(uint256[365] calldata a) internal { //~NOTE: this literal appears multiple times
+        y = a[0] + 365; //~NOTE: this literal appears multiple times
+    }
+}

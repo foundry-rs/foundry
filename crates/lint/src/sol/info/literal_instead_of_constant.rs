@@ -30,16 +30,13 @@ impl<'hir> LateLintPass<'hir> for LiteralInsteadOfConstant {
         hir: &'hir Hir<'hir>,
         id: hir::ContractId,
     ) {
-        // Group the literals of the contract's own function and modifier bodies by semantic
-        // value; inherited items group with their declaring contract.
+        // Group the literals of the contract's own functions and modifiers by semantic value,
+        // headers included: a repeated value in a modifier or base-constructor argument counts
+        // like one in a body. Inherited items group with their declaring contract.
         let mut collector = LiteralCollector { gcx, hir, groups: HashMap::new() };
         for item_id in hir.contract(id).items {
-            if let hir::ItemId::Function(function_id) = item_id
-                && let Some(body) = &hir.function(*function_id).body
-            {
-                for stmt in body.stmts {
-                    let _ = collector.visit_stmt(stmt);
-                }
+            if let hir::ItemId::Function(function_id) = item_id {
+                let _ = collector.visit_function(hir.function(*function_id));
             }
         }
         // A value used in one single place is fine: only repetitions report. Emissions are
