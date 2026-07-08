@@ -1,12 +1,12 @@
+use crate::tempo::tempo_provider;
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
-use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_common::shell;
 use serde_json::json;
 use std::sync::LazyLock;
-use tempo_alloy::TempoNetwork;
 use tempo_primitives::TempoAddressExt;
 
 static TRANSFER_TOPIC: LazyLock<B256> =
@@ -23,7 +23,7 @@ pub(super) async fn run(
     }
 
     let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
 
     // Transfer(address indexed from, address indexed to, uint256 value)
     // topic[0] = event sig, topic[1] = from, topic[2] = to

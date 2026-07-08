@@ -1,3 +1,4 @@
+use crate::tempo::tempo_provider;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
@@ -9,7 +10,6 @@ use foundry_cli::{
     utils::{LoadConfig, parse_fee_token_address},
 };
 use foundry_common::{
-    provider::ProviderBuilder,
     sh_println, shell,
     tempo::{
         GeneratedSessionKey, SessionAuthorizationRequest, SessionEntry, SessionSpendLimit,
@@ -395,7 +395,7 @@ async fn resolve_session_chain_id(send_tx: &SendTxOpts) -> Result<u64> {
         return Ok(chain.id());
     }
 
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     provider.get_chain_id().await.wrap_err(
         "failed to resolve session chain id from RPC; pass --chain/--chain-id or --rpc-url",
     )
@@ -585,7 +585,7 @@ async fn run_revoke_with_policy(
     }
 
     let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     let rpc_chain_id = provider.get_chain_id().await?;
     if rpc_chain_id != entry.chain_id {
         eyre::bail!(
@@ -1067,8 +1067,7 @@ mod tests {
                 let mut send_tx = empty_send_tx_opts();
                 send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
                 let config = send_tx.eth.load_config().unwrap();
-                let provider =
-                    ProviderBuilder::<TempoNetwork>::from_config(&config).unwrap().build().unwrap();
+                let provider = crate::tempo::tempo_provider(&config).unwrap();
                 handle_revoke_error(
                     &provider,
                     session_id,
@@ -1104,8 +1103,7 @@ mod tests {
                 let mut send_tx = empty_send_tx_opts();
                 send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
                 let config = send_tx.eth.load_config().unwrap();
-                let provider =
-                    ProviderBuilder::<TempoNetwork>::from_config(&config).unwrap().build().unwrap();
+                let provider = crate::tempo::tempo_provider(&config).unwrap();
                 handle_revoke_error(&provider, session_id, &entry).await;
 
                 let session = read_session_entry(session_id).unwrap().unwrap();

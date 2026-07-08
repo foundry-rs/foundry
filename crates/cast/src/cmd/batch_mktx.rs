@@ -6,6 +6,7 @@
 use crate::{
     call_spec::CallSpec,
     tempo,
+    tempo::tempo_provider,
     tx::{self, CastTxBuilder},
 };
 use alloy_consensus::SignableTransaction;
@@ -22,7 +23,6 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder,
-    provider::ProviderBuilder,
     tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
@@ -76,7 +76,7 @@ impl BatchMakeTxArgs {
         }
 
         let config = eth.load_config()?;
-        let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+        let provider = tempo_provider(&config)?;
 
         // Resolve `--tempo.lane <name>` against the lanes file (default
         // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.

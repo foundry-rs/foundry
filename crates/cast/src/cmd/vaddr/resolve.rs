@@ -1,16 +1,14 @@
+use crate::tempo::tempo_provider;
 use alloy_primitives::{Address, hex};
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
-use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_common::shell;
 use serde_json::json;
-use tempo_alloy::{
-    TempoNetwork,
-    contracts::precompiles::{ADDRESS_REGISTRY_ADDRESS, IAddressRegistry},
-};
+use tempo_alloy::contracts::precompiles::{ADDRESS_REGISTRY_ADDRESS, IAddressRegistry};
 
 pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     let registry = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider);
 
     let decode_builder = registry.decodeVirtualAddress(addr);

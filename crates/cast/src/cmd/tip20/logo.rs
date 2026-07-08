@@ -1,11 +1,10 @@
-use crate::tx::{SendTxOpts, TxParams};
+use crate::{
+    tempo::tempo_provider,
+    tx::{SendTxOpts, TxParams},
+};
 use alloy_ens::NameOrAddress;
 use foundry_cli::utils::LoadConfig;
-use foundry_common::{
-    provider::ProviderBuilder,
-    tempo::{Tip20LogoUriValidationError, validate_tip20_logo_uri},
-};
-use tempo_alloy::TempoNetwork;
+use foundry_common::tempo::{Tip20LogoUriValidationError, validate_tip20_logo_uri};
 
 pub(super) fn check(logo_uri: String) -> eyre::Result<()> {
     validate_logo_uri(&logo_uri)?;
@@ -24,7 +23,7 @@ pub(super) async fn set(
     let (signer, tempo_access_key) = super::resolve_tip20_signer(&send_tx, &tx_opts).await?;
 
     let config = send_tx.eth.rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     let token_addr = token.resolve(&provider).await?;
 
     super::send_tip20_transaction(

@@ -8,6 +8,7 @@ use crate::{
     call_spec::CallSpec,
     cmd::send::{cast_send, cast_send_with_access_key},
     tempo,
+    tempo::tempo_provider,
     tx::{self, CastTxBuilder, SendTxOpts},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -19,7 +20,6 @@ use foundry_cli::{
     opts::TransactionOpts,
     utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
-use foundry_common::provider::ProviderBuilder;
 use std::time::Duration;
 use tempo_alloy::TempoNetwork;
 
@@ -69,7 +69,7 @@ impl BatchSendArgs {
         }
 
         let config = send_tx.eth.load_config()?;
-        let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+        let provider = tempo_provider(&config)?;
 
         // Resolve `--tempo.lane <name>` against the lanes file (default
         // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.

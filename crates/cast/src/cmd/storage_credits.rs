@@ -1,17 +1,17 @@
 use crate::{
     cmd::{
-        keychain::is_tempo_hardfork_active,
+        keychain::ensure_tempo_precompile_active,
         tip20::{resolve_tip20_signer, send_tip20_transaction},
     },
+    tempo::{print_payload, tempo_provider},
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
 use clap::{Parser, ValueEnum};
 use eyre::Result;
-use foundry_cli::{json::print_json_success, opts::RpcOpts, utils::LoadConfig};
-use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
 use foundry_evm::hardfork::TempoHardfork;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{IStorageCredits, STORAGE_CREDITS_ADDRESS};
@@ -116,7 +116,7 @@ impl StorageCreditsSubcommand {
 
 async fn balance(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     ensure_storage_credits_t7(&provider, "cast storage-credits balance").await?;
     let account = account.resolve(&provider).await?;
 
@@ -134,7 +134,7 @@ async fn balance(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
 
 async fn mode(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     ensure_storage_credits_t7(&provider, "cast storage-credits mode").await?;
     let account = account.resolve(&provider).await?;
 
@@ -152,7 +152,7 @@ async fn mode(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
 
 async fn budget(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     ensure_storage_credits_t7(&provider, "cast storage-credits budget").await?;
     let account = account.resolve(&provider).await?;
 
@@ -206,34 +206,21 @@ async fn ensure_storage_credits_t7<P>(provider: &P, command: &str) -> Result<()>
 where
     P: alloy_provider::Provider<TempoNetwork>,
 {
-    let active = match is_tempo_hardfork_active(provider, TempoHardfork::T7).await {
-        Ok(active) => active,
-        Err(_) => !provider.get_code_at(STORAGE_CREDITS_ADDRESS).await?.is_empty(),
-    };
-    if !active {
-        eyre::bail!("{command} requires a Tempo T7-capable StorageCredits RPC");
-    }
-    Ok(())
+    ensure_tempo_precompile_active(
+        provider,
+        TempoHardfork::T7,
+        STORAGE_CREDITS_ADDRESS,
+        &format!("{command} requires a Tempo T7-capable StorageCredits RPC"),
+    )
+    .await
 }
 
 /// Gate a write command on T7 before signing: on pre-T7 the precompile address is an empty account,
 /// so a transaction to it would silently succeed as a no-op.
 async fn ensure_send_storage_credits_t7(send_tx: &SendTxOpts, command: &str) -> Result<()> {
     let config = send_tx.eth.rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     ensure_storage_credits_t7(&provider, command).await
-}
-
-fn print_payload<F>(payload: Value, human: F) -> Result<()>
-where
-    F: FnOnce(&Value) -> Result<()>,
-{
-    if shell::is_json() {
-        print_json_success(payload)?;
-    } else {
-        human(&payload)?;
-    }
-    Ok(())
 }
 
 impl CreditMode {

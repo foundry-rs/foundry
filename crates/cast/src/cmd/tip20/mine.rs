@@ -4,13 +4,13 @@ use crate::{
         send::{cast_send, cast_send_with_access_key},
     },
     tempo,
+    tempo::tempo_provider,
     tx::{SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::{LoadConfig, get_chain};
-use foundry_common::provider::ProviderBuilder;
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
 use tempo_alloy::{
@@ -83,7 +83,7 @@ pub(super) async fn register(
 ) -> Result<()> {
     let config = send_tx.eth.load_config()?;
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let provider = tempo_provider(&config)?;
     let chain = get_chain(config.chain, &provider).await?;
     tempo::ensure_session_not_browser(&tx_opts.tempo, send_tx.browser.browser)?;
     let (signer, tempo_access_key) =
