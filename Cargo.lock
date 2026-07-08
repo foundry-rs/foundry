@@ -5258,7 +5258,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=643aa536a005708ef088633e8afec4f065f32b91#643aa536a005708ef088633e8afec4f065f32b91"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ce11bfee31e04a5d70ec6af900c63043f686bc10#ce11bfee31e04a5d70ec6af900c63043f686bc10"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5504,7 +5504,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=643aa536a005708ef088633e8afec4f065f32b91#643aa536a005708ef088633e8afec4f065f32b91"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ce11bfee31e04a5d70ec6af900c63043f686bc10#ce11bfee31e04a5d70ec6af900c63043f686bc10"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5535,7 +5535,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=643aa536a005708ef088633e8afec4f065f32b91#643aa536a005708ef088633e8afec4f065f32b91"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ce11bfee31e04a5d70ec6af900c63043f686bc10#ce11bfee31e04a5d70ec6af900c63043f686bc10"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5544,7 +5544,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=643aa536a005708ef088633e8afec4f065f32b91#643aa536a005708ef088633e8afec4f065f32b91"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ce11bfee31e04a5d70ec6af900c63043f686bc10#ce11bfee31e04a5d70ec6af900c63043f686bc10"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5564,7 +5564,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=643aa536a005708ef088633e8afec4f065f32b91#643aa536a005708ef088633e8afec4f065f32b91"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ce11bfee31e04a5d70ec6af900c63043f686bc10#ce11bfee31e04a5d70ec6af900c63043f686bc10"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5577,7 +5577,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=643aa536a005708ef088633e8afec4f065f32b91#643aa536a005708ef088633e8afec4f065f32b91"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ce11bfee31e04a5d70ec6af900c63043f686bc10#ce11bfee31e04a5d70ec6af900c63043f686bc10"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -5860,7 +5860,7 @@ dependencies = [
  "foundry-config",
  "foundry-evm",
  "hashbrown 0.17.1",
- "inturn 0.2.0",
+ "inturn",
  "serde",
  "serde_json",
  "shlex",
@@ -5908,7 +5908,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=7610c7e6f88429caa400ec35606afd28270ecf9f#7610c7e6f88429caa400ec35606afd28270ecf9f"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ce11bfee31e04a5d70ec6af900c63043f686bc10#ce11bfee31e04a5d70ec6af900c63043f686bc10"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -6014,7 +6014,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=8cb3bf1f5452ca872fd765c5f51a3074ee511734#8cb3bf1f5452ca872fd765c5f51a3074ee511734"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=ce11bfee31e04a5d70ec6af900c63043f686bc10#ce11bfee31e04a5d70ec6af900c63043f686bc10"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -7001,19 +7001,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "189d0897e4cbe8c75efedf3502c18c887b05046e59d28404d4d8e46cbc4d1e86"
 dependencies = [
  "memoffset 0.9.1",
-]
-
-[[package]]
-name = "inturn"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d58cf1c5e088a860e4b7def7d8fdf8cf222ca33c7a0365619af22e0453b3b79c"
-dependencies = [
- "boxcar",
- "dashmap",
- "hashbrown 0.14.5",
- "stumpalo",
- "thread_local",
 ]
 
 [[package]]
@@ -8325,9 +8312,9 @@ checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
 
 [[package]]
 name = "oxc_index"
-version = "4.1.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb3e6120999627ec9703025eab7c9f410ebb7e95557632a8902ca48210416c2b"
+checksum = "191884bee6c3744909a51acc7d78d4ae370d817b25875b10642f632327b6296e"
 dependencies = [
  "nonmax",
 ]
@@ -11385,9 +11372,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solar"
+version = "1.7.2"
+dependencies = [
+ "solar-cli",
+]
+
+[[package]]
 name = "solar-ast"
-version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756d3259a664e087dcc43b4a7d335c8d86d9d1971d396430f128a0ce33622b18"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -11401,12 +11396,57 @@ dependencies = [
 ]
 
 [[package]]
-name = "solar-compiler"
-version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+name = "solar-cli"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d7900d1e5de0bdd4faa16cd8dd9b5f4fe1d4629367502c99b6ee5ce35fef7f3"
 dependencies = [
  "alloy-primitives",
+ "cfg-if",
+ "clap",
+ "indexmap 2.14.0",
+ "libc",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "solar-codegen",
+ "solar-config",
+ "solar-data-structures",
+ "solar-interface",
+ "solar-sema",
+ "tikv-jemallocator",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+ "tracing-tracy",
+]
+
+[[package]]
+name = "solar-codegen"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cd401083e2463480b4c11840ec7f654ca0b75a976a915033ca8b1804c3ad95e"
+dependencies = [
+ "alloy-primitives",
+ "derive_more",
+ "smallvec",
  "solar-ast",
+ "solar-config",
+ "solar-data-structures",
+ "solar-interface",
+ "solar-sema",
+ "tracing",
+]
+
+[[package]]
+name = "solar-compiler"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d0fb69164d78ebd2e399ebc47818e3a610414fe9da4f6b2579a058d7fc567f9"
+dependencies = [
+ "alloy-primitives",
+ "idna_adapter",
+ "solar-ast",
+ "solar-codegen",
  "solar-config",
  "solar-data-structures",
  "solar-interface",
@@ -11417,17 +11457,21 @@ dependencies = [
 
 [[package]]
 name = "solar-config"
-version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4aae5537cc9b12d88f4d4464319b2f3395522b24d8661ae3ae466023f3bb217"
 dependencies = [
+ "clap",
  "colorchoice",
  "strum 0.28.0",
+ "vergen-gitcl",
 ]
 
 [[package]]
 name = "solar-data-structures"
-version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "199a526376b5b66acaee7a96349207e85242516e8daf4aad20963f1389145ee1"
 dependencies = [
  "bumpalo",
  "indexmap 2.14.0",
@@ -11440,15 +11484,16 @@ dependencies = [
 
 [[package]]
 name = "solar-interface"
-version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eca1dc6ececb31400960e2614fa2c16f361633b8ce3497b3a358f509dd8195e"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
  "anstyle",
  "derive_more",
  "dunce",
- "inturn 0.1.3",
+ "inturn",
  "itertools 0.14.0",
  "itoa",
  "normalize-path",
@@ -11468,8 +11513,9 @@ dependencies = [
 
 [[package]]
 name = "solar-macros"
-version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acba5b79d1cf90faca7c9115c35b2bee41c3f940b611bfd384b926fa40bc7083"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -11478,8 +11524,9 @@ dependencies = [
 
 [[package]]
 name = "solar-parse"
-version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdfec224fb34c504576d0124fcfb0ffbdb5461d2b55df00253e89e37fcd3f6f5"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.0",
@@ -11499,13 +11546,15 @@ dependencies = [
 
 [[package]]
 name = "solar-sema"
-version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=da6b0c3a8c0edd23f8b1414c61418ba78d6c4670#da6b0c3a8c0edd23f8b1414c61418ba78d6c4670"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d13d74065eeed9b3f70ab8e62a8a449de624ebcc8618b5fb3afee0520f93cc57"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "bitflags 2.13.0",
  "bumpalo",
+ "comfy-table",
  "derive_more",
  "either",
  "num-bigint",
@@ -11513,8 +11562,6 @@ dependencies = [
  "once_map",
  "paste",
  "rayon",
- "serde",
- "serde_json",
  "solar-ast",
  "solar-data-structures",
  "solar-interface",
@@ -11695,15 +11742,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "stumpalo"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1628a62e30c1399999472f01517efa4dad9fddb3585cef572520e5dc21c3cf8"
-dependencies = [
- "readme-rustdocifier",
 ]
 
 [[package]]
@@ -13178,6 +13216,7 @@ dependencies = [
  "anyhow",
  "bon",
  "rustversion",
+ "serde_json",
 ]
 
 [[package]]
