@@ -557,8 +557,8 @@ impl BenchmarkProject {
         )
     }
 
-    /// Benchmark forge test with --no-isolate flag
-    pub fn bench_forge_no_isolate_test(
+    /// Benchmark forge test with --isolate flag
+    pub fn bench_forge_isolate_test(
         &self,
         version: &str,
         runs: u32,
@@ -566,13 +566,13 @@ impl BenchmarkProject {
     ) -> Result<HyperfineResult> {
         // Build before running tests
         self.hyperfine(
-            "forge_no_isolate_test",
+            "forge_isolate_test",
             version,
             &self.cmd(
-                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge test --no-isolate",
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge test --isolate",
             ),
             runs,
-            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge build"),
             None,
             None,
             verbose,
@@ -678,7 +678,7 @@ impl BenchmarkProject {
             "forge_build_with_cache" => self.bench_forge_build_with_cache(version, runs, verbose),
             "forge_fuzz_test" => self.bench_forge_fuzz_test(version, runs, verbose),
             "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
-            "forge_no_isolate_test" => self.bench_forge_no_isolate_test(version, runs, verbose),
+            "forge_isolate_test" => self.bench_forge_isolate_test(version, runs, verbose),
             "forge_symbolic_test" => self.bench_forge_symbolic_test(version, runs, verbose),
             _ => eyre::bail!("Unknown benchmark: {}", benchmark),
         }
