@@ -147,8 +147,6 @@ struct Dirs {
     scfuzz_root: PathBuf,
     scfuzz_work: PathBuf,
     scfuzz_logs: PathBuf,
-    foundry_fuzz_corpus: PathBuf,
-    foundry_invariant_corpus: PathBuf,
     unzipped: PathBuf,
     analysis_logs: PathBuf,
 }
@@ -168,8 +166,6 @@ impl Dirs {
             scfuzz_root: work.join("scfuzz-root"),
             scfuzz_work: work.join("scfuzz-work"),
             scfuzz_logs: work.join("scfuzz-logs"),
-            foundry_fuzz_corpus: work.join("foundry-fuzz-corpus"),
-            foundry_invariant_corpus: work.join("foundry-invariant-corpus"),
             unzipped: work.join("unzipped"),
             analysis_logs: work.join("analysis-logs"),
             work,
@@ -188,8 +184,6 @@ impl Dirs {
             &self.scfuzz_root,
             &self.scfuzz_work,
             &self.scfuzz_logs,
-            &self.foundry_fuzz_corpus,
-            &self.foundry_invariant_corpus,
             &self.unzipped,
             &self.analysis_logs,
         ] {
@@ -209,12 +203,6 @@ impl RunEnv {
     fn apply(&self, command: &mut Command) {
         command.env("PATH", &self.path).env("HOME", &self.home);
     }
-}
-
-fn apply_foundry_corpus_env(command: &mut Command, dirs: &Dirs) {
-    command
-        .env("FOUNDRY_FUZZ_CORPUS_DIR", &dirs.foundry_fuzz_corpus)
-        .env("FOUNDRY_INVARIANT_CORPUS_DIR", &dirs.foundry_invariant_corpus);
 }
 
 struct FoundrySelection {
@@ -795,7 +783,6 @@ fn run_campaign(
     }
 
     foundry.env.apply(&mut command);
-    apply_foundry_corpus_env(&mut command, dirs);
     command
         .env("SCFUZZBENCH_ROOT", &dirs.scfuzz_root)
         .env("SCFUZZBENCH_WORKDIR", &dirs.scfuzz_work)
@@ -1106,10 +1093,6 @@ fn write_manifest(
             "run_id": metadata.run_id,
             "exit_code": metadata.campaign_exit_code,
             "foundry_test_args": cli.foundry_test_args.as_deref(),
-            "foundry_corpus": {
-                "fuzz": dirs.foundry_fuzz_corpus.display().to_string(),
-                "invariant": dirs.foundry_invariant_corpus.display().to_string(),
-            },
             "properties_path": cli.properties_path.as_ref().map(|path| path.display().to_string()),
         },
         "artifacts": artifacts,
@@ -1144,8 +1127,6 @@ fn write_llm_summary(
             "- workers: `{}`",
             cli.workers.map(|w| w.to_string()).unwrap_or_else(|| "default".to_string())
         ),
-        format!("- fuzz corpus: `{}`", dirs.foundry_fuzz_corpus.display()),
-        format!("- invariant corpus: `{}`", dirs.foundry_invariant_corpus.display()),
         format!("- run id: `{}`", metadata.run_id),
         format!(
             "- campaign exit code: `{}`",
@@ -1514,27 +1495,6 @@ mod tests {
         .expect("failed to write relscores");
         fs::write(dirs.data.join("differential_coverage_relcov.csv"), relcov)
             .expect("failed to write relcov");
-    }
-
-    #[test]
-    fn applies_work_local_foundry_corpus_env() {
-        let (_temp, dirs) = temp_dirs();
-        let mut command = Command::new("true");
-
-        apply_foundry_corpus_env(&mut command, &dirs);
-
-        let envs = command
-            .get_envs()
-            .map(|(key, value)| (key.to_owned(), value.map(|value| value.to_owned())))
-            .collect::<Vec<_>>();
-        assert!(envs.iter().any(|(key, value)| {
-            key == "FOUNDRY_FUZZ_CORPUS_DIR"
-                && value.as_deref() == Some(dirs.foundry_fuzz_corpus.as_os_str())
-        }));
-        assert!(envs.iter().any(|(key, value)| {
-            key == "FOUNDRY_INVARIANT_CORPUS_DIR"
-                && value.as_deref() == Some(dirs.foundry_invariant_corpus.as_os_str())
-        }));
     }
 
     #[test]

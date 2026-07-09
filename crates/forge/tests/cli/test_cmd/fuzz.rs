@@ -2469,6 +2469,61 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
     assert!(invariant_stdout.contains(&invariant_corpus_path), "{invariant_stdout}");
 });
 
+forgetest_init!(forge_fuzz_run_seeds_default_invariant_corpus_from_tests, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "ForgeFuzzAutoCorpusSeed.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzAutoCorpusHandler {
+    uint256 public touched;
+
+    function touch(uint256 value) external {
+        touched = value;
+    }
+}
+
+contract ForgeFuzzAutoCorpusSeedTest is Test {
+    ForgeFuzzAutoCorpusHandler handler;
+
+    function setUp() public {
+        handler = new ForgeFuzzAutoCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function test_seedCorpusFromUnitTestTrace() public {
+        handler.touch(0x1234);
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzAutoCorpusSeedTest", "-q"]).assert_success();
+
+    let corpus_root = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("corpus")
+        .join("ForgeFuzzAutoCorpusSeedTest")
+        .join("worker0")
+        .join("corpus");
+    let seed_entry = std::fs::read_to_string(find_first_json(&corpus_root)).unwrap();
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzAutoCorpusSeed.t.sol/ForgeFuzzAutoCorpusHandler.json",
+    );
+    let touch = calldata_for(&abi, "touch", 0x1234);
+    assert!(seed_entry.contains(&touch), "{seed_entry}");
+});
+
 forgetest_init!(fuzz_branch_frontiers_capture_comparison_for_symbolic_followup, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzFrontier.t.sol",

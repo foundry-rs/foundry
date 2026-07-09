@@ -97,6 +97,27 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
+const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
+const AUTO_INVARIANT_FAILURE_DIR: &str = "invariant";
+const AUTO_CORPUS_DIR: &str = "corpus";
+
+#[derive(Clone, Copy, Debug, Default)]
+enum FuzzOnlyMode {
+    #[default]
+    Disabled,
+    Enabled,
+    WithAutoCorpus,
+}
+
+impl FuzzOnlyMode {
+    const fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    const fn uses_auto_corpus(self) -> bool {
+        matches!(self, Self::WithAutoCorpus)
+    }
+}
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -368,7 +389,7 @@ fn sources_to_compile_from_artifacts(
 pub struct TestArgs {
     /// Internal mode used by `forge fuzz`.
     #[arg(skip)]
-    pub(crate) fuzz_only: bool,
+    fuzz_only: FuzzOnlyMode,
 
     /// Internal showmap/replay override used by `forge fuzz replay`.
     #[arg(skip)]
@@ -1003,7 +1024,35 @@ impl TestArgs {
 
     /// Restricts this test invocation to fuzz and invariant tests.
     pub(crate) const fn enable_fuzz_only(&mut self) {
-        self.fuzz_only = true;
+        self.fuzz_only = FuzzOnlyMode::Enabled;
+    }
+
+    /// Restricts this test invocation to fuzz and invariant tests and enables default corpus dirs
+    /// after user config is loaded.
+    pub(crate) const fn enable_fuzz_only_with_auto_corpus(&mut self) {
+        self.fuzz_only = FuzzOnlyMode::WithAutoCorpus;
+    }
+
+    fn apply_auto_fuzz_corpus_dirs(&self, config: &mut Config) {
+        if !self.fuzz_only.uses_auto_corpus() {
+            return;
+        }
+
+        if config.fuzz.corpus.corpus_dir.is_none() {
+            config.fuzz.corpus.corpus_dir = Some(match &config.fuzz.failure_persist_dir {
+                Some(root) => root.join(AUTO_CORPUS_DIR),
+                None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
+            });
+        }
+        if config.invariant.corpus.corpus_dir.is_none() {
+            config.invariant.corpus.corpus_dir =
+                Some(match &config.invariant.failure_persist_dir {
+                    Some(root) => root.join(AUTO_CORPUS_DIR),
+                    None => {
+                        config.cache_path.join(AUTO_INVARIANT_FAILURE_DIR).join(AUTO_CORPUS_DIR)
+                    }
+                });
+        }
     }
 
     /// Overrides showmap config for callers that reuse replay mode without the
@@ -1232,6 +1281,7 @@ impl TestArgs {
         let test_failures_file = config.test_failures_file.clone();
         let mut config = workspace::rebase_config_paths(&config, temp_path).sanitized();
         config.test_failures_file = test_failures_file;
+        self.apply_auto_fuzz_corpus_dirs(&mut config);
         let project = config.project()?;
         let project_root = project.paths.root.clone();
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1288,6 +1338,8 @@ impl TestArgs {
             config.dynamic_test_linking = true;
             config.cache = true;
         }
+
+        self.apply_auto_fuzz_corpus_dirs(&mut config);
 
         // Set up the project.
         let mut project = config.project()?;
@@ -1529,7 +1581,7 @@ impl TestArgs {
                 &config,
                 &execution.inline_config,
                 filter,
-                self.fuzz_only,
+                self.fuzz_only.is_enabled(),
                 execution.replay_symbolic_artifact.as_ref(),
             );
         }
@@ -2123,7 +2175,7 @@ impl TestArgs {
             .set_coverage(execution.coverage)
             .with_multi_network(execution.multi_network)
             .with_showmap(showmap)
-            .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
@@ -2151,7 +2203,7 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .with_multi_network(options.multi_network)
-            .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
     }
@@ -3729,6 +3781,73 @@ mod tests {
         let args = args.unwrap();
         assert_eq!(args.fuzz_corpus_dir, Some(PathBuf::from("env_fuzz_corpus")));
         assert_eq!(args.invariant_corpus_dir, Some(PathBuf::from("env_invariant_corpus")));
+    }
+
+    #[test]
+    fn auto_fuzz_corpus_defaults_to_cache_failure_layout() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.enable_fuzz_only_with_auto_corpus();
+        let mut config = Config::default();
+
+        args.apply_auto_fuzz_corpus_dirs(&mut config);
+
+        assert_eq!(
+            config.fuzz.corpus.corpus_dir,
+            Some(config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR))
+        );
+        assert_eq!(
+            config.invariant.corpus.corpus_dir,
+            Some(config.cache_path.join(AUTO_INVARIANT_FAILURE_DIR).join(AUTO_CORPUS_DIR))
+        );
+    }
+
+    #[test]
+    fn auto_fuzz_corpus_uses_configured_failure_persist_dirs() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.enable_fuzz_only_with_auto_corpus();
+        let mut config = Config::default();
+        config.fuzz.failure_persist_dir = Some(PathBuf::from("custom_fuzz_failures"));
+        config.invariant.failure_persist_dir = Some(PathBuf::from("custom_invariant_failures"));
+
+        args.apply_auto_fuzz_corpus_dirs(&mut config);
+
+        assert_eq!(
+            config.fuzz.corpus.corpus_dir,
+            Some(PathBuf::from("custom_fuzz_failures").join(AUTO_CORPUS_DIR))
+        );
+        assert_eq!(
+            config.invariant.corpus.corpus_dir,
+            Some(PathBuf::from("custom_invariant_failures").join(AUTO_CORPUS_DIR))
+        );
+    }
+
+    #[test]
+    fn auto_fuzz_corpus_preserves_configured_corpus_dirs() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.enable_fuzz_only_with_auto_corpus();
+        let mut config = Config::default();
+        config.fuzz.corpus.corpus_dir = Some(PathBuf::from("configured_fuzz_corpus"));
+        config.invariant.corpus.corpus_dir = Some(PathBuf::from("configured_invariant_corpus"));
+
+        args.apply_auto_fuzz_corpus_dirs(&mut config);
+
+        assert_eq!(config.fuzz.corpus.corpus_dir, Some(PathBuf::from("configured_fuzz_corpus")));
+        assert_eq!(
+            config.invariant.corpus.corpus_dir,
+            Some(PathBuf::from("configured_invariant_corpus"))
+        );
+    }
+
+    #[test]
+    fn fuzz_only_does_not_enable_auto_fuzz_corpus() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.enable_fuzz_only();
+        let mut config = Config::default();
+
+        args.apply_auto_fuzz_corpus_dirs(&mut config);
+
+        assert_eq!(config.fuzz.corpus.corpus_dir, None);
+        assert_eq!(config.invariant.corpus.corpus_dir, None);
     }
 
     #[test]
