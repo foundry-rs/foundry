@@ -29,9 +29,12 @@ use std::{
     fs::OpenOptions,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
+    pin::Pin,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tempfile::{Builder as TempDirBuilder, TempDir};
+
+type FuzzOutcomeFuture = Pin<Box<dyn Future<Output = Result<TestOutcome>>>>;
 
 /// Run and manage Forge fuzzing corpora.
 #[derive(Clone, Debug, Parser)]
@@ -41,22 +44,26 @@ pub struct FuzzArgs {
 }
 
 impl FuzzArgs {
-    pub async fn run(self) -> Result<TestOutcome> {
+    pub fn run(self) -> FuzzOutcomeFuture {
         match self.command {
-            FuzzSubcommands::Run(args) => TestArgs::from_fuzz_run(args).run().await,
-            FuzzSubcommands::Replay(args) => args.run().await,
-            FuzzSubcommands::Show(args) => {
+            FuzzSubcommands::Run(args) => {
+                let mut test = TestArgs::from_fuzz_run(args);
+                test.enable_fuzz_only_with_auto_fuzz_corpus();
+                Box::pin(test.run())
+            }
+            FuzzSubcommands::Replay(args) => Box::pin(args.run()),
+            FuzzSubcommands::Show(args) => Box::pin(async move {
                 args.run()?;
                 Ok(TestOutcome::empty(None, true))
-            }
-            FuzzSubcommands::Cmin(args) => {
+            }),
+            FuzzSubcommands::Cmin(args) => Box::pin(async move {
                 args.run().await?;
                 Ok(TestOutcome::empty(None, true))
-            }
-            FuzzSubcommands::Tmin(args) => {
+            }),
+            FuzzSubcommands::Tmin(args) => Box::pin(async move {
                 args.run().await?;
                 Ok(TestOutcome::empty(None, true))
-            }
+            }),
         }
     }
 
