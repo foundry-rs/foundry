@@ -744,6 +744,7 @@ impl Config {
         "doc",
         "fuzz",
         "invariant",
+        "symbolic",
         "coverage",
         "mutation",
         "labels",
@@ -4624,29 +4625,46 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [fuzz]
                 runs = 100
 
                 [invariant]
                 runs = 120
 
+                [symbolic]
+                enabled = true
+                max_paths = 12
+                storage_layout = "generic"
+
                 [profile.ci.fuzz]
                 runs = 420
 
                 [profile.ci.invariant]
                 runs = 500
-            ",
+
+                [profile.ci.symbolic]
+                max_paths = 34
+                dump_smt = true
+            "#,
             )?;
 
             let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 100);
             assert_eq!(config.invariant.runs, 120);
+            assert!(config.symbolic.enabled);
+            assert_eq!(config.symbolic.max_paths, 12);
+            assert_eq!(config.symbolic.storage_layout, SymbolicStorageLayout::Generic);
+            assert!(!config.symbolic.dump_smt);
 
             jail.set_env("FOUNDRY_PROFILE", "ci");
             let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.runs, 500);
+            assert!(config.symbolic.enabled);
+            assert_eq!(config.symbolic.max_paths, 34);
+            assert_eq!(config.symbolic.storage_layout, SymbolicStorageLayout::Generic);
+            assert!(config.symbolic.dump_smt);
 
             Ok(())
         });
@@ -5227,6 +5245,8 @@ mod tests {
             jail.set_env("FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", "30");
             jail.set_env("FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", "12");
             jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
+            jail.set_env("FOUNDRY_SYMBOLIC_MAX_PATHS", "64");
+            jail.set_env("FOUNDRY_SYMBOLIC_DUMP_SMT", "true");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
@@ -5243,6 +5263,8 @@ mod tests {
             assert!(config.invariant.corpus_random_sequence_weight_configured);
             assert_eq!(config.invariant.corpus.payable_value_weight, 12);
             assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+            assert_eq!(config.symbolic.max_paths, 64);
+            assert!(config.symbolic.dump_smt);
 
             Ok(())
         });
@@ -7220,6 +7242,10 @@ mod tests {
                 runs = 256
                 unknown_invariant_key = "should_warn"
 
+                [symbolic]
+                enabled = true
+                unknown_symbolic_key = "should_warn"
+
                 [mutation]
                 unknown_mutation_key = "should_warn"
 
@@ -7250,6 +7276,10 @@ mod tests {
                 [profile.default.invariant]
                 runs = 512
                 unknown_nested_invariant_key = "should_warn"
+
+                [profile.default.symbolic]
+                max_paths = 512
+                unknown_nested_symbolic_key = "should_warn"
 
                 [profile.default.mutation]
                 unknown_nested_mutation_key = "should_warn"
@@ -7292,6 +7322,7 @@ mod tests {
                 ("unknown_doc_key", "doc"),
                 ("unknown_fuzz_key", "fuzz"),
                 ("unknown_invariant_key", "invariant"),
+                ("unknown_symbolic_key", "symbolic"),
                 ("unknown_mutation_key", "mutation"),
                 ("unknown_vyper_key", "vyper"),
                 ("unknown_bind_json_key", "bind_json"),
@@ -7318,6 +7349,7 @@ mod tests {
                 ("unknown_nested_doc_key", "doc"),
                 ("unknown_nested_fuzz_key", "fuzz"),
                 ("unknown_nested_invariant_key", "invariant"),
+                ("unknown_nested_symbolic_key", "symbolic"),
                 ("unknown_nested_mutation_key", "mutation"),
                 ("unknown_nested_vyper_key", "vyper"),
                 ("unknown_nested_bind_json_key", "bind_json"),
@@ -7367,11 +7399,11 @@ mod tests {
                 })
                 .collect();
 
-            // 1 profile key + 8 standalone + 8 nested + 2 array = 19 total
+            // 1 profile key + 9 standalone + 9 nested + 2 array = 21 total
             assert_eq!(
                 unknown_key_warnings.len(),
-                19,
-                "Expected 19 unknown key warnings (1 profile + 8 standalone + 8 nested + 2 array), got {}: {:?}",
+                21,
+                "Expected 21 unknown key warnings (1 profile + 9 standalone + 9 nested + 2 array), got {}: {:?}",
                 unknown_key_warnings.len(),
                 unknown_key_warnings
             );
