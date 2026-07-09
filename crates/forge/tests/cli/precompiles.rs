@@ -481,3 +481,34 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+forgetest_init!(
+    #[ignore]
+    arbitrum_fork_arbsys_arb_block_number,
+    |prj, cmd| {
+        prj.add_test(
+            "ArbitrumArbSys.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+interface ArbSys {
+    function arbBlockNumber() external view returns (uint256);
+}
+
+contract ArbitrumArbSysTest is Test {
+    function test_arbitrum_fork_arbsys_arb_block_number() public {
+        vm.createSelectFork("https://arbitrum-one.public.blastapi.io", 75219831);
+
+        assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219831);
+        assertLt(block.number, 75219831);
+
+        vm.rollFork(75219832);
+        assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219832);
+    }
+}
+   "#,
+        );
+
+        cmd.args(["test", "--mt", "test_arbitrum_fork_arbsys_arb_block_number"]).assert_success();
+    }
+);

@@ -117,7 +117,7 @@ use foundry_evm::{
         get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
     },
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 #[cfg(feature = "optimism")]
 use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
@@ -1209,6 +1209,13 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    fn inject_arbitrum_precompile(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
+        let Some(block_number) = self.arbitrum_block_number(evm_env) else { return };
+        precompiles.apply_precompile(&arbitrum::ARB_SYS_ADDRESS, move |_| {
+            Some(arbitrum::arb_sys_precompile(block_number))
+        });
+    }
+
     fn inject_tempo_precompiles<DB, I>(&self, evm: &mut tempo_evm::evm::TempoEvm<DB, I>)
     where
         DB: Database,
@@ -1277,6 +1284,7 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut());
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         Ok(evm.transact(tx_env)?)
     }
 
@@ -1386,6 +1394,7 @@ impl<N: Network> Backend<N> {
         macro_rules! run {
             ($evm:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut());
+                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
                 let pool_result = execute_pool_transactions(
@@ -1642,6 +1651,15 @@ impl<N: Network> Backend<N> {
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
+    }
+
+    fn arbitrum_block_number(&self, evm_env: &EvmEnv) -> Option<u64> {
+        if !arbitrum::is_arbitrum_chain(evm_env.cfg_env.chain_id) {
+            return None;
+        }
+
+        let env_block = evm_env.block_env.number.saturating_to();
+        Some(self.get_fork().map_or(env_block, |fork| fork.block_number().max(env_block)))
     }
 
     pub fn get_code_with_state(
