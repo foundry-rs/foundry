@@ -203,21 +203,25 @@ impl SymExpr {
     }
 
     fn storage_base_eq(&self, cx: &mut SymCx, other: &Self) -> Option<SymBoolExpr> {
-        let (read_key, read_slot) = self.storage_mapping_key(cx)?;
-        let (write_key, write_slot) = other.storage_mapping_key(cx)?;
+        let read = self.storage_mapping_key(cx)?;
+        let write = other.storage_mapping_key(cx)?;
 
-        let key_eq = SymBoolExpr::eq(cx, read_key, write_key);
-        let slot_eq = read_slot
-            .storage_base_eq(cx, &write_slot)
-            .unwrap_or_else(|| SymBoolExpr::eq(cx, read_slot, write_slot));
+        let key_eq = storage_mapping_key_eq(cx, &read, &write);
+        let slot_eq = read
+            .slot
+            .storage_base_eq(cx, &write.slot)
+            .unwrap_or_else(|| SymBoolExpr::eq(cx, read.slot, write.slot));
         Some(SymBoolExpr::and(cx, vec![key_eq, slot_eq]))
     }
 
-    fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<(Self, Self)> {
+    fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<StorageMappingKey> {
         let bytes = self.storage_mapping_key_bytes(cx)?;
-        let key = Self::from_bytes(cx, bytes[..32].iter().cloned());
+        let key_bytes = &bytes[..32];
+        let preserve_key_bytes =
+            (!storage_mapping_key_bytes_form_compact_word(key_bytes)).then(|| key_bytes.to_vec());
+        let key = Self::from_bytes(cx, key_bytes.iter().cloned());
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
-        Some((key, slot))
+        Some(StorageMappingKey { key, key_bytes: preserve_key_bytes, slot })
     }
 
     fn storage_mapping_root_slot(&self, cx: &mut SymCx) -> Option<U256> {
@@ -269,6 +273,51 @@ impl SymExpr {
             _ => None,
         }
     }
+}
+
+struct StorageMappingKey {
+    key: SymExpr,
+    key_bytes: Option<Vec<SymExpr>>,
+    slot: SymExpr,
+}
+
+fn storage_mapping_key_eq(
+    cx: &mut SymCx,
+    read: &StorageMappingKey,
+    write: &StorageMappingKey,
+) -> SymBoolExpr {
+    if read.key_bytes.is_some() || write.key_bytes.is_some() {
+        let read_owned;
+        let read_bytes = if let Some(bytes) = read.key_bytes.as_deref() {
+            bytes
+        } else {
+            read_owned = read.key.clone().into_byte_exprs(cx);
+            &read_owned
+        };
+        let write_owned;
+        let write_bytes = if let Some(bytes) = write.key_bytes.as_deref() {
+            bytes
+        } else {
+            write_owned = write.key.clone().into_byte_exprs(cx);
+            &write_owned
+        };
+        let byte_equalities = read_bytes
+            .iter()
+            .zip(write_bytes)
+            .map(|(read, write)| {
+                let read = read.byte_term(cx, 31).unwrap_or_else(|| read.clone().low_byte(cx));
+                let write = write.byte_term(cx, 31).unwrap_or_else(|| write.clone().low_byte(cx));
+                SymBoolExpr::eq(cx, read, write)
+            })
+            .collect();
+        SymBoolExpr::and(cx, byte_equalities)
+    } else {
+        SymBoolExpr::eq(cx, read.key.clone(), write.key.clone())
+    }
+}
+
+fn storage_mapping_key_bytes_form_compact_word(bytes: &[SymExpr]) -> bool {
+    bytes.iter().all(|byte| byte.as_const().is_some()) || word_from_extracted_bytes(bytes).is_some()
 }
 
 fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256> {

@@ -349,6 +349,11 @@ token balances, token allowances, and oracle prices. Do not blanket-mark the
 invariant harness or protocol state as arbitrary; that can create unreachable
 states and counterexamples that concrete replay rejects.
 
+Replay currently materializes only concrete storage slots observed during
+symbolic execution. Dependency storage keyed by symbolic calldata is still
+explored symbolically, but it can replay-filter to `Incomplete` or `mismatch`
+instead of a confirmed counterexample if the required slot is not concrete.
+
 ## Configuration
 
 The primary configuration path is native Foundry config.

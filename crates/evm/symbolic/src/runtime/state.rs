@@ -1636,19 +1636,29 @@ impl SymbolicWorld {
     pub(crate) fn replay_storage_assignments(
         &self,
         model: &SymbolicModel,
-    ) -> Vec<SymbolicStorageAssignment> {
-        self.replay_storage_slots
-            .iter()
-            .flat_map(|(symbol, slots)| {
-                model.get(symbol).copied().into_iter().flat_map(|value| {
-                    slots.iter().map(move |slot| SymbolicStorageAssignment {
-                        address: slot.address,
-                        slot: slot.slot,
-                        value,
-                    })
-                })
-            })
-            .collect()
+    ) -> Result<Vec<SymbolicStorageAssignment>, SymbolicError> {
+        let mut assignments = std::collections::BTreeMap::<(Address, U256), U256>::new();
+        for (symbol, slots) in &self.replay_storage_slots {
+            let Some(value) = model.get(symbol).copied() else { continue };
+            for slot in slots {
+                match assignments.entry((slot.address, slot.slot)) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(value);
+                    }
+                    std::collections::btree_map::Entry::Occupied(entry)
+                        if *entry.get() == value => {}
+                    std::collections::btree_map::Entry::Occupied(_) => {
+                        return Err(SymbolicError::Solver(
+                            "conflicting symbolic storage replay assignments".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(assignments
+            .into_iter()
+            .map(|((address, slot), value)| SymbolicStorageAssignment { address, slot, value })
+            .collect())
     }
 
     pub(crate) fn resolve_address(&self, expr: &SymExpr) -> Option<Address> {
@@ -1755,10 +1765,15 @@ impl SymbolicWorld {
         key: &SymExpr,
         concrete_key: Option<U256>,
     ) -> Option<SymExpr> {
-        let copied_source = self.arbitrary_storage_copies.get(&address).copied();
         let has_arbitrary_storage = self.arbitrary_storage_accounts.contains(&address);
-        let symbol_address = copied_source
-            .or_else(|| (self.arbitrary_storage_all || has_arbitrary_storage).then_some(address))?;
+        let copied_source = (!has_arbitrary_storage)
+            .then(|| self.arbitrary_storage_copies.get(&address).copied())
+            .flatten();
+        let symbol_address = if self.arbitrary_storage_all || has_arbitrary_storage {
+            address
+        } else {
+            copied_source?
+        };
         let symbol = symbolic_storage_symbol(cx, symbol_address, key);
         if let Some(slot) = concrete_key.or_else(|| key.as_const()) {
             if has_arbitrary_storage {
@@ -2216,7 +2231,7 @@ mod tests {
         let symbol = source_base.kind().get_var().expect("storage symbol");
         let mut model = SymbolicModel::default();
         model.insert(symbol, U256::from(42));
-        let mut assignments = world.replay_storage_assignments(&model);
+        let mut assignments = world.replay_storage_assignments(&model).unwrap();
         assignments.sort_by_key(|assignment| assignment.address);
         assert_eq!(
             assignments,
@@ -2224,6 +2239,59 @@ mod tests {
                 SymbolicStorageAssignment { address: source, slot, value: U256::from(42) },
                 SymbolicStorageAssignment { address: copied, slot, value: U256::from(42) },
             ]
+        );
+    }
+
+    #[test]
+    fn explicit_arbitrary_storage_takes_precedence_over_copied_storage() {
+        let source = Address::repeat_byte(0x11);
+        let copied = Address::repeat_byte(0x22);
+        let slot = U256::from(7);
+        let mut cx = SymCx::new();
+        let key = SymExpr::constant(&mut cx, slot);
+        let mut world = SymbolicWorld::default();
+        world.enable_arbitrary_storage(source);
+        world.enable_arbitrary_storage_copy(source, copied);
+        world.enable_arbitrary_storage(copied);
+
+        let source_base = world.arbitrary_storage_base(&mut cx, source, &key, Some(slot)).unwrap();
+        let copied_base = world.arbitrary_storage_base(&mut cx, copied, &key, Some(slot)).unwrap();
+
+        assert_ne!(source_base, copied_base);
+
+        let source_symbol = source_base.kind().get_var().expect("source storage symbol");
+        let copied_symbol = copied_base.kind().get_var().expect("copied storage symbol");
+        let mut model = SymbolicModel::default();
+        model.insert(source_symbol, U256::from(42));
+        model.insert(copied_symbol, U256::from(99));
+
+        assert_eq!(
+            world.replay_storage_assignments(&model).unwrap(),
+            vec![
+                SymbolicStorageAssignment { address: source, slot, value: U256::from(42) },
+                SymbolicStorageAssignment { address: copied, slot, value: U256::from(99) },
+            ]
+        );
+    }
+
+    #[test]
+    fn conflicting_replay_storage_assignments_error() {
+        let address = Address::repeat_byte(0x11);
+        let slot = U256::from(7);
+        let mut cx = SymCx::new();
+        let mut world = SymbolicWorld::default();
+        let first = cx.intern("first_storage");
+        let second = cx.intern("second_storage");
+        world.record_replay_storage_slot(first, address, slot);
+        world.record_replay_storage_slot(second, address, slot);
+
+        let mut model = SymbolicModel::default();
+        model.insert(first, U256::from(42));
+        model.insert(second, U256::from(99));
+
+        let err = world.replay_storage_assignments(&model).unwrap_err();
+        assert!(
+            matches!(err, SymbolicError::Solver(message) if message.contains("conflicting symbolic storage replay assignments"))
         );
     }
 }

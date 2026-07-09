@@ -238,7 +238,7 @@ impl SymbolicExecutor {
                 })
             })
             .collect::<Result<Vec<_>, SymbolicError>>()?;
-        let storage = state.world.replay_storage_assignments(&model);
+        let storage = state.world.replay_storage_assignments(&model)?;
         Ok((sequence, storage))
     }
 }

@@ -2227,6 +2227,39 @@ fn symbolic_storage_key_equality_compares_mapping_key_words() {
 }
 
 #[test]
+fn symbolic_storage_key_equality_preserves_calldata_key_bytes_for_concrete_mapping_key() {
+    let mut cx = SymCx::new();
+    let calldata_key_bytes =
+        (0..32).map(|idx| SymExpr::var(&mut cx, &format!("calldata_0_{idx}"))).collect::<Vec<_>>();
+    let slot = SymExpr::zero(&mut cx);
+
+    let calldata_key = SymExpr::from_bytes(&mut cx, calldata_key_bytes);
+    let mut read_key_bytes = calldata_key.into_byte_exprs(&mut cx);
+    read_key_bytes.extend(slot.clone().into_byte_exprs(&mut cx));
+    let read = keccak_word(&mut cx, read_key_bytes);
+
+    let mut write_key_bytes = vec![SymExpr::zero(&mut cx); 32];
+    write_key_bytes.extend(slot.into_byte_exprs(&mut cx));
+    let write = keccak_word(&mut cx, write_key_bytes);
+
+    let condition = read.storage_key_eq(&mut cx, &write);
+    assert!(!condition.smt(&cx).contains("bvor"));
+
+    let zero_root =
+        symbolic_model(&mut cx, (0..32).map(|idx| (format!("calldata_0_{idx}"), U256::ZERO)));
+    assert!(condition.eval_model(&zero_root).unwrap());
+
+    let non_zero_root = symbolic_model(
+        &mut cx,
+        (0..32).map(|idx| {
+            let value = if idx == 31 { U256::ONE } else { U256::ZERO };
+            (format!("calldata_0_{idx}"), value)
+        }),
+    );
+    assert!(!condition.eval_model(&non_zero_root).unwrap());
+}
+
+#[test]
 fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
     let mut cx = SymCx::new();
     let owner = SymExpr::var(&mut cx, "owner");
