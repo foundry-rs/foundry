@@ -15,7 +15,7 @@ const ALL_BENCHMARKS: [&str; 7] = [
     "forge_build_with_cache",
     "forge_fuzz_test",
     "forge_coverage",
-    "forge_isolate_test",
+    "forge_no_isolate_test",
     "forge_symbolic_test",
 ];
 
