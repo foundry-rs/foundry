@@ -134,6 +134,7 @@ impl RunArgs {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
+        let tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
 
         let with_local_artifacts = self.with_local_artifacts;
         let debug = self.debug;
@@ -226,7 +227,7 @@ impl RunArgs {
         let trace_requirements = TraceRequirements::none()
             .with_calls(true)
             .with_debug(self.debug)
-            .with_decode_internal(if self.tracing.decode_internal(&config.tracing) {
+            .with_decode_internal(if tracing.decode_internal {
                 InternalTraceMode::Full
             } else {
                 InternalTraceMode::None
@@ -377,7 +378,7 @@ impl RunArgs {
             &config,
             chain,
             &contracts_bytecode,
-            &self.tracing,
+            &tracing,
             with_local_artifacts,
             debug,
             resolved_tempo_hardfork,

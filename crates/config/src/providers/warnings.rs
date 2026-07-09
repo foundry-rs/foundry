@@ -85,7 +85,7 @@ const SYMBOLIC_KEYS: &[&str] = &[
 /// Required because empty labels and optional trace depth are skipped by default serialization,
 /// but they are still valid user-facing config keys.
 const TRACING_KEYS: &[&str] =
-    &["verbosity", "labels", "disable_labels", "trace_depth", "decode_internal"];
+    &["verbosity", "labels", "disable_labels", "compact_labels", "trace_depth", "decode_internal"];
 
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];

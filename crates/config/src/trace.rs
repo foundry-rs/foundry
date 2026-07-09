@@ -13,6 +13,8 @@ pub struct TracingConfig {
     pub labels: AddressHashMap<String>,
     /// Whether to disable labels in traces.
     pub disable_labels: bool,
+    /// Whether to hide addresses in trace parameters when labels are available.
+    pub compact_labels: bool,
     /// Maximum depth of rendered traces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace_depth: Option<usize>,

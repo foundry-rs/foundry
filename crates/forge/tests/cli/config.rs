@@ -290,6 +290,7 @@ exclude_operators = []
 [tracing]
 verbosity = 0
 disable_labels = false
+compact_labels = false
 decode_internal = false
 
 [vyper]
@@ -407,7 +408,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         },
         coverage: Default::default(),
         mutation: Default::default(),
-        tracing: TracingConfig { verbosity: 4, ..Default::default() },
+        tracing: TracingConfig { verbosity: 4, compact_labels: true, ..Default::default() },
         ffi: true,
         live_logs: true,
         allow_internal_expect_revert: false,

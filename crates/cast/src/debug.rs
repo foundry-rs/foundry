@@ -1,11 +1,8 @@
 use alloy_chains::Chain;
 use alloy_primitives::{Bytes, map::AddressHashMap};
-use foundry_cli::{
-    opts::TracingArgs,
-    utils::{TraceResult, print_traces},
-};
-use foundry_common::{ContractsByArtifact, compile::ProjectCompiler, shell};
-use foundry_config::Config;
+use foundry_cli::utils::{TraceResult, print_traces};
+use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
+use foundry_config::{Config, TracingConfig};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     hardforks::TempoHardfork,
@@ -23,7 +20,7 @@ pub(crate) async fn handle_traces(
     config: &Config,
     chain: Chain,
     contracts_bytecode: &AddressHashMap<Bytes>,
-    tracing: &TracingArgs,
+    tracing: &TracingConfig,
     with_local_artifacts: bool,
     debug: bool,
     tempo_hardfork: Option<TempoHardfork>,
@@ -44,19 +41,14 @@ pub(crate) async fn handle_traces(
         (None, ContractSources::default())
     };
 
-    let labels = tracing.parsed_labels();
-    let config_labels = config.labels.clone().into_iter();
-
     let mut builder = CallTraceDecoderBuilder::new()
-        .with_labels(labels.into_iter().chain(config_labels))
+        .with_tracing_config(tracing)
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
-        .with_label_disabled(tracing.disable_labels(&config.tracing))
         .with_chain_id(Some(chain.id()))
         .with_tempo_hardfork(
             tempo_hardfork
                 .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),
-        )
-        .with_compact_labels(tracing.compact_labels);
+        );
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
@@ -69,7 +61,7 @@ pub(crate) async fn handle_traces(
         decoder.identify(trace, &mut identifier);
     }
 
-    if tracing.decode_internal(&config.tracing) || debug {
+    if tracing.decode_internal || debug {
         if let Some(ref etherscan_identifier) = identifier.external {
             sources.merge(etherscan_identifier.get_compiled_contracts().await?);
         }
@@ -87,13 +79,12 @@ pub(crate) async fn handle_traces(
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
-    let verbosity = shell::verbosity().max(config.tracing.verbosity);
     print_traces(
         &mut result,
         &decoder,
-        verbosity > 0,
-        verbosity > 4,
-        tracing.trace_depth(&config.tracing),
+        tracing.verbosity > 0,
+        tracing.verbosity > 4,
+        tracing.trace_depth,
     )
     .await?;
 

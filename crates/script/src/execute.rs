@@ -21,7 +21,7 @@ use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::ProviderBuilder,
 };
-use foundry_config::NamedChain;
+use foundry_config::{NamedChain, TracingConfig};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
@@ -346,32 +346,22 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         let chain_id = self.script_config.evm_opts.get_remote_chain_id().await;
         let is_tempo = self.script_config.evm_opts.networks.is_tempo()
             || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
+        let mut tracing = self.tracing_config();
+        tracing.labels.extend(self.execution_result.labeled_addresses.clone());
 
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(
-                self.args
-                    .tracing
-                    .parsed_labels()
-                    .into_iter()
-                    .chain(self.script_config.config.labels.clone())
-                    .chain(self.execution_result.labeled_addresses.clone()),
-            )
-            .with_verbosity(self.script_config.evm_opts.verbosity)
+            .with_tracing_config(&tracing)
             .with_known_contracts(known_contracts)
             .with_signature_identifier(SignaturesIdentifier::from_config(
                 &self.script_config.config,
             )?)
-            .with_label_disabled(
-                self.args.tracing.disable_labels(&self.script_config.config.tracing),
-            )
             .with_chain_id(chain_id.map(|c| c.id()))
             .with_tempo_hardfork(
                 is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
             )
-            .with_compact_labels(self.args.tracing.compact_labels)
             .build();
 
-        if self.args.tracing.decode_internal(&self.script_config.config.tracing) {
+        if tracing.decode_internal {
             decoder.debug_identifier =
                 Some(DebugTraceIdentifier::new(self.build_data.sources.clone()));
         }
@@ -391,6 +381,12 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         }
 
         Ok(decoder)
+    }
+
+    fn tracing_config(&self) -> TracingConfig {
+        self.args
+            .tracing
+            .resolve(&self.script_config.config.tracing, self.script_config.evm_opts.verbosity)
     }
 
     /// Collects the return values from the execution result.
@@ -433,6 +429,12 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
+    fn tracing_config(&self) -> TracingConfig {
+        self.args
+            .tracing
+            .resolve(&self.script_config.config.tracing, self.script_config.evm_opts.verbosity)
+    }
+
     pub async fn show_json(&self) -> Result<()> {
         let mut result = self.execution_result.clone();
 
@@ -464,7 +466,8 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     }
 
     pub async fn show_traces(&self) -> Result<()> {
-        let verbosity = self.script_config.evm_opts.verbosity;
+        let tracing = self.tracing_config();
+        let verbosity = tracing.verbosity;
         let func = &self.execution_data.func;
         let result = &self.execution_result;
         let decoder = &self.execution_artifacts.decoder;
@@ -485,9 +488,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 if should_include {
                     let mut trace = trace.clone();
                     decode_trace_arena(&mut trace, decoder).await;
-                    if let Some(trace_depth) =
-                        self.args.tracing.trace_depth(&self.script_config.config.tracing)
-                    {
+                    if let Some(trace_depth) = tracing.trace_depth {
                         prune_trace_depth(&mut trace, trace_depth);
                     }
                     sh_println!("{}", render_trace_arena(&trace))?;

@@ -300,6 +300,7 @@ impl CallArgs {
             wallet,
             ..
         } = self;
+        let tracing = tracing.resolve(&config.tracing, evm_opts.verbosity);
 
         if let Some(data) = data {
             sig = Some(data);
@@ -480,7 +481,7 @@ impl CallArgs {
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
                 .with_debug(debug)
-                .with_decode_internal(if tracing.decode_internal(&config.tracing) {
+                .with_decode_internal(if tracing.decode_internal {
                     InternalTraceMode::Full
                 } else {
                     InternalTraceMode::None

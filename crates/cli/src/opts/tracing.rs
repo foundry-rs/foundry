@@ -51,23 +51,19 @@ pub struct TracingArgs {
 }
 
 impl TracingArgs {
-    /// Returns whether labels should be disabled.
-    pub const fn disable_labels(&self, config: &TracingConfig) -> bool {
-        self.disable_labels || config.disable_labels
+    /// Resolves CLI overrides against the configured trace rendering settings.
+    pub fn resolve(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
+        let mut tracing = config.clone();
+        tracing.verbosity = tracing.verbosity.max(verbosity);
+        tracing.labels.extend(self.parsed_labels());
+        tracing.disable_labels |= self.disable_labels;
+        tracing.compact_labels |= self.compact_labels;
+        tracing.trace_depth = self.trace_depth.or(tracing.trace_depth);
+        tracing.decode_internal |= self.decode_internal;
+        tracing
     }
 
-    /// Returns the configured trace depth.
-    pub const fn trace_depth(&self, config: &TracingConfig) -> Option<usize> {
-        if self.trace_depth.is_some() { self.trace_depth } else { config.trace_depth }
-    }
-
-    /// Returns whether internal trace decoding is enabled.
-    pub const fn decode_internal(&self, config: &TracingConfig) -> bool {
-        self.decode_internal || config.decode_internal
-    }
-
-    /// Returns the CLI labels as an address map.
-    pub fn parsed_labels(&self) -> AddressHashMap<String> {
+    fn parsed_labels(&self) -> AddressHashMap<String> {
         self.labels
             .iter()
             .filter_map(|label| {
@@ -76,5 +72,39 @@ impl TracingArgs {
                 Some((address, label.to_string()))
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+
+    #[test]
+    fn resolve_merges_cli_overrides() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let config = TracingConfig {
+            verbosity: 2,
+            labels: AddressHashMap::from_iter([(address, "config".to_string())]),
+            disable_labels: false,
+            compact_labels: false,
+            trace_depth: Some(1),
+            decode_internal: false,
+        };
+        let args = TracingArgs {
+            decode_internal: true,
+            trace_depth: Some(2),
+            disable_labels: true,
+            compact_labels: true,
+            labels: vec![format!("{address}:cli")],
+        };
+
+        let tracing = args.resolve(&config, 3);
+        assert_eq!(tracing.verbosity, 3);
+        assert_eq!(tracing.labels.get(&address), Some(&"cli".to_string()));
+        assert!(tracing.disable_labels);
+        assert!(tracing.compact_labels);
+        assert_eq!(tracing.trace_depth, Some(2));
+        assert!(tracing.decode_internal);
     }
 }

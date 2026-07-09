@@ -5834,6 +5834,7 @@ mod tests {
                 [tracing]
                 verbosity = 4
                 disable_labels = true
+                compact_labels = true
                 trace_depth = 3
                 decode_internal = true
 
@@ -5848,6 +5849,7 @@ mod tests {
             assert!(config.tracing.disable_labels);
             assert_eq!(config.tracing.trace_depth, Some(3));
             assert!(config.tracing.decode_internal);
+            assert!(config.tracing.compact_labels);
             let labels = AddressHashMap::from_iter(vec![(
                 address!("0x0000000000000000000000000000000000000002"),
                 "Bob".to_string(),

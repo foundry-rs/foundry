@@ -1825,8 +1825,8 @@ impl TestArgs {
         }
 
         // Enable internal tracing for more informative flamegraph/profile.
-        let decode_internal_enabled =
-            self.tracing.decode_internal(&config.tracing) || trace_output.is_some();
+        let tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        let decode_internal_enabled = tracing.decode_internal || trace_output.is_some();
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
         let decode_internal = if decode_internal_enabled {
@@ -2505,6 +2505,7 @@ impl TestArgs {
         let silent = self.gas_report && shell::is_json()
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
+        let tracing = self.tracing.resolve(&config.tracing, verbosity);
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
@@ -2652,11 +2653,8 @@ impl TestArgs {
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
-            .with_labels(self.tracing.parsed_labels().into_iter().chain(config.labels.clone()))
+            .with_tracing_config(&tracing)
             .with_known_contracts(&known_contracts)
-            .with_label_disabled(self.tracing.disable_labels(&config.tracing))
-            .with_compact_labels(self.tracing.compact_labels)
-            .with_verbosity(verbosity)
             .with_chain_id(remote_chain.map(|c| c.id()))
             .with_tempo_hardfork(
                 (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
@@ -2805,7 +2803,7 @@ impl TestArgs {
                         if renders_trace && should_include {
                             decode_trace_arena(arena, &decoder).await;
 
-                            if let Some(trace_depth) = self.tracing.trace_depth(&config.tracing) {
+                            if let Some(trace_depth) = tracing.trace_depth {
                                 prune_trace_depth(arena, trace_depth);
                             }
 

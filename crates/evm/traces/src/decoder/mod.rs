@@ -14,6 +14,7 @@ use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
 };
+use foundry_config::TracingConfig;
 use foundry_evm_core::{
     abi::{Vm, console},
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
@@ -91,6 +92,16 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub const fn with_verbosity(mut self, level: u8) -> Self {
         self.decoder.verbosity = level;
+        self
+    }
+
+    /// Applies trace rendering settings.
+    #[inline]
+    pub fn with_tracing_config(mut self, config: &TracingConfig) -> Self {
+        self.decoder.labels.extend(config.labels.clone());
+        self.decoder.verbosity = config.verbosity;
+        self.decoder.disable_labels = config.disable_labels;
+        self.decoder.compact_labels = config.compact_labels;
         self
     }
 
@@ -1215,14 +1226,15 @@ mod tests {
     fn compact_labels_hide_address_in_trace_parameters() {
         let address = address!("0x0000000000000000000000000000000000000001");
         let value = DynSolValue::Address(address);
-        let decoder =
-            CallTraceDecoderBuilder::new().with_labels([(address, "Alice".to_string())]).build();
+        let tracing = TracingConfig {
+            labels: AddressHashMap::from_iter([(address, "Alice".to_string())]),
+            ..Default::default()
+        };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
         assert_eq!(decoder.format_value(&value), format!("Alice: [{address}]"));
 
-        let decoder = CallTraceDecoderBuilder::new()
-            .with_labels([(address, "Alice".to_string())])
-            .with_compact_labels(true)
-            .build();
+        let tracing = TracingConfig { compact_labels: true, ..tracing };
+        let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
         assert_eq!(decoder.format_value(&value), "Alice");
     }
 
