@@ -7,6 +7,7 @@ BENCHMARKS="${BENCHMARKS:-forge_test}"
 REPOS="${REPOS:-ithacaxyz/account:v0.5.7}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
 BENCH_ROOT="${BENCH_ROOT:-/tmp/foundry-pr-bench-${RUN_ID}}"
+FOUNDRY_BENCH_LOCAL_BUILD_BINS="${FOUNDRY_BENCH_LOCAL_BUILD_BINS:-forge}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -38,6 +39,7 @@ for label in master candidate; do
     foundry_dir="${BENCH_ROOT}/${label}/.foundry"
     FOUNDRY_BENCH_WORKSPACE_ROOT="${BENCH_ROOT}/${label}" \
       FOUNDRY_BENCH_LOCAL_BUILD_PROFILE=profiling \
+      FOUNDRY_BENCH_LOCAL_BUILD_BINS="${FOUNDRY_BENCH_LOCAL_BUILD_BINS}" \
       FOUNDRY_DIR="${foundry_dir}" \
       PATH="${foundry_dir}/bin:${PATH}" \
       "${RUNNER_BIN}" \

@@ -63,7 +63,6 @@ pub fn run_command(args: Forge) -> Result<()> {
             }
         }
         ForgeSubcommand::Fuzz(cmd) => {
-            cmd.reject_unsupported_flags()?;
             let silent = cmd.is_junit() || shell::is_json();
             let outcome = global.block_on(cmd.run())?;
             outcome.ensure_ok(silent)
@@ -84,7 +83,10 @@ pub fn run_command(args: Forge) -> Result<()> {
                 global.block_on(cmd.run()).map(drop)
             }
         }
-        ForgeSubcommand::VerifyContract(args) => global.block_on(args.run()),
+        ForgeSubcommand::VerifyContract(mut args) => {
+            args.print_submission_result_to_stdout = true;
+            global.block_on(args.run())
+        }
         ForgeSubcommand::VerifyCheck(args) => global.block_on(args.run()),
         ForgeSubcommand::VerifyBytecode(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Clone(cmd) => global.block_on(cmd.run()),

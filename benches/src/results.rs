@@ -6,6 +6,7 @@ use std::{collections::HashMap, process::Command, thread};
 /// Hyperfine benchmark result
 #[derive(Debug, Deserialize, Serialize)]
 pub struct HyperfineResult {
+    #[serde(skip_serializing)]
     pub command: String,
     pub mean: f64,
     pub stddev: Option<f64>,
@@ -90,18 +91,19 @@ impl BenchmarkResults {
         self.version_details.insert(version.to_string(), details);
     }
 
-    /// Generate a flat JSON summary mapping `"benchmark/repo" -> mean_seconds`.
+    /// Generate a JSON summary mapping `"benchmark/repo"` to its full
+    /// [`HyperfineResult`], including wall-time statistics and, when available,
+    /// aggregated symbolic solver counters.
     ///
-    /// Used by the nightly regression comparison script.
-    pub fn generate_json_summary(&self, versions: &[String]) -> HashMap<String, f64> {
+    /// Consumed by the nightly regression comparison script.
+    pub fn generate_json_summary(&self, versions: &[String]) -> HashMap<String, &HyperfineResult> {
         let mut summary = HashMap::new();
         for (benchmark_name, version_data) in &self.data {
             for version in versions {
                 if let Some(repo_data) = version_data.get(version) {
                     for (repo_name, result) in repo_data {
                         let key = format!("{benchmark_name}/{repo_name}");
-                        let rounded = (result.mean * 10_000.0).round() / 10_000.0;
-                        summary.insert(key, rounded);
+                        summary.insert(key, result);
                     }
                 }
             }
@@ -302,7 +304,7 @@ pub fn format_benchmark_name(name: &str) -> String {
         "forge_build_with_cache" => "Forge Build (With Cache)",
         "forge_fuzz_test" => "Forge Fuzz Test",
         "forge_coverage" => "Forge Coverage",
-        "forge_isolate_test" => "Forge Test (Isolated)",
+        "forge_no_isolate_test" => "Forge Test (No Isolate)",
         "forge_symbolic_test" => "Forge Symbolic Test",
         _ => name,
     }
@@ -354,4 +356,77 @@ pub fn get_rustc_version() -> Result<String> {
     let output = Command::new("rustc").arg("--version").output()?;
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hyperfine_result(command: &str, mean: f64) -> HyperfineResult {
+        HyperfineResult {
+            command: command.to_string(),
+            mean,
+            stddev: Some(0.02),
+            median: mean,
+            user: mean * 0.9,
+            system: mean * 0.1,
+            min: mean - 0.05,
+            max: mean + 0.05,
+            times: vec![mean - 0.01, mean, mean + 0.01],
+            exit_codes: None,
+            parameters: None,
+            symbolic: None,
+        }
+    }
+
+    #[test]
+    fn json_summary_includes_symbolic_counters() {
+        let mut results = BenchmarkResults::new();
+
+        // A symbolic run carries the aggregated solver counters.
+        let mut symbolic_run = hyperfine_result("forge test --symbolic --json", 1.2345);
+        symbolic_run.symbolic = Some(SymbolicBenchmarkSummary {
+            tests: 3,
+            passed: 3,
+            failed: 0,
+            incomplete: 0,
+            paths: 42,
+            solver_queries: 100,
+            smt_queries: 80,
+            sat_queries: 5,
+            model_queries: 2,
+            sat_cache_hits: 1,
+            model_cache_hits: 0,
+            heuristic_witnesses: 0,
+            solver_time_ms: 1234,
+            smt_input_bytes: 5000,
+            smt_max_query_bytes: 900,
+            smt_build_time_ms: 12,
+            smt_max_query_time_ms: 34,
+        });
+        results.add_result("forge_symbolic_test", "local", "solady", symbolic_run);
+
+        // A plain run has no symbolic block, so `symbolic` is skipped.
+        results.add_result("forge_test", "local", "solady", hyperfine_result("forge test", 2.5));
+
+        let summary = results.generate_json_summary(&["local".to_string()]);
+        let json = serde_json::to_string_pretty(&summary).unwrap();
+
+        // The serialized entry omits `command` but keeps every timing field.
+        assert!(!json.contains("\"command\""));
+        assert!(json.contains("\"times\""));
+
+        // Symbolic run exposes wall-time stats and every solver counter.
+        let symbolic = &summary["forge_symbolic_test/solady"];
+        assert_eq!(symbolic.mean, 1.2345);
+        let counters = symbolic.symbolic.as_ref().expect("symbolic counters present");
+        assert_eq!(counters.solver_queries, 100);
+        assert_eq!(counters.smt_input_bytes, 5000);
+        assert_eq!(counters.passed, 3);
+
+        // Plain run keeps timing stats but omits the symbolic block.
+        let plain = &summary["forge_test/solady"];
+        assert_eq!(plain.mean, 2.5);
+        assert!(plain.symbolic.is_none());
+    }
 }

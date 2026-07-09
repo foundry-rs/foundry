@@ -14,6 +14,7 @@ set -euo pipefail
 #   Sets outputs in $GITHUB_OUTPUT if it exists:
 #     - current_rev: The current tempo revision
 #     - latest_rev: The latest tempo revision on main
+#     - latest_rev_short: The short latest tempo revision
 #     - updated: "true" if dependencies were updated, "false" otherwise
 #     - changelog: Path to changelog file (if updated)
 
@@ -107,6 +108,7 @@ main() {
   LATEST_REV=$(get_latest_rev)
   echo "Latest revision:  $LATEST_REV"
   set_output "latest_rev" "$LATEST_REV"
+  set_output "latest_rev_short" "${LATEST_REV:0:7}"
 
   if [[ "$CURRENT_REV" == "$LATEST_REV" ]]; then
     echo ""

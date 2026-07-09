@@ -23,6 +23,7 @@ use crate::cmd::{
     run::RunArgs,
     send::SendTxArgs,
     storage::StorageArgs,
+    storage_credits::StorageCreditsSubcommand,
     tempo::TempoSubcommand,
     tip20::Tip20Subcommand,
     tip403::Tip403Subcommand,
@@ -1214,7 +1215,10 @@ pub enum CastSubcommand {
         /// Encoded transaction
         tx: Option<String>,
 
-        /// Specify the Network for correct encoding.
+        /// Override the network used to decode the transaction.
+        ///
+        /// By default, cast decodes with Foundry's transaction envelope, which recognizes
+        /// standard Ethereum txs and Foundry-supported network-specific tx types such as Tempo.
         #[arg(long, short, num_args = 1, value_name = "NETWORK")]
         network: Option<NetworkVariant>,
     },
@@ -1271,6 +1275,13 @@ pub enum CastSubcommand {
     Tip403 {
         #[command(subcommand)]
         command: Tip403Subcommand,
+    },
+
+    /// T7 storage credits operations (Tempo).
+    #[command(name = "storage-credits", visible_alias = "sc")]
+    StorageCredits {
+        #[command(subcommand)]
+        command: StorageCreditsSubcommand,
     },
 
     /// Tempo keychain (access key) management.

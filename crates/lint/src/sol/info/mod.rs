@@ -57,6 +57,12 @@ use unused_error::UNUSED_ERROR;
 mod internal_function_used_once;
 use internal_function_used_once::INTERNAL_FUNCTION_USED_ONCE;
 
+mod incorrect_using_for;
+use incorrect_using_for::INCORRECT_USING_FOR;
+
+mod modifier_used_only_once;
+use modifier_used_only_once::MODIFIER_USED_ONLY_ONCE;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -78,4 +84,6 @@ register_lints!(
     (EventFields, early, (EVENT_FIELDS)),
     (UnusedError, project, (UNUSED_ERROR)),
     (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE)),
+    (IncorrectUsingFor, late, (INCORRECT_USING_FOR)),
+    (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE)),
 );

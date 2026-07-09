@@ -12,6 +12,7 @@ use foundry_test_utils::{
 use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
+mod brutalize;
 mod core;
 mod fuzz;
 mod invariant;
@@ -205,17 +206,15 @@ contract Dummy {}
 ",
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
-...
-No tests found in project! Forge looks for functions that start with `test`
+    cmd.arg("test").assert_success().stderr_eq(str![[r#"
+Warning: No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
 
     cmd.forge_fuse();
     dummy_test_filter(&mut cmd);
-    cmd.assert_success().stdout_eq(str![[r#"
-...
-No tests found in project! Forge looks for functions that start with `test`
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
 });
@@ -4438,6 +4437,65 @@ Selectors successfully uploaded to OpenChain
 Uploading selectors for Counter...
 
 "#]]);
+});
+
+forgetest_init!(selectors_collision_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source(
+        "First.sol",
+        r"
+contract First {
+    function burn(uint256 value) public pure {
+        value;
+    }
+}
+   ",
+    );
+    prj.add_source(
+        "Second.sol",
+        r"
+contract Second {
+    function collate_propagate_storage(bytes16 value) public pure {
+        value;
+    }
+}
+   ",
+    );
+
+    let first_artifact = prj.paths().artifacts.join("First.sol/First.json");
+    let second_artifact = prj.paths().artifacts.join("Second.sol/Second.json");
+
+    let output = cmd.args(["selectors", "collision", "First", "Second"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+
+    assert!(stdout.contains("1 collisions found:"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("42966c68"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("burn(uint256)"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("collate_propagate_storage(bytes16)"), "unexpected stdout:\n{stdout}");
+    assert!(!first_artifact.exists());
+    assert!(!second_artifact.exists());
+});
+
+forgetest_init!(selectors_list_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+}
+   ",
+    );
+
+    let artifact = prj.paths().artifacts.join("Counter.sol/Counter.json");
+    let output = cmd.args(["selectors", "list", "Counter"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+
+    assert!(stdout.contains("Counter"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("setNumber(uint256)"), "unexpected stdout:\n{stdout}");
+    assert!(!artifact.exists());
 });
 
 forgetest_init!(selectors_list_cmd, |prj, cmd| {

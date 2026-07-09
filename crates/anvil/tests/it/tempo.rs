@@ -35,7 +35,10 @@ use foundry_evm::core::tempo::{
     active_tempo_precompile_addresses,
 };
 use tempo_alloy::primitives::TempoTxEnvelope;
-use tempo_hardfork::TempoHardfork;
+use tempo_hardfork::{
+    TempoHardfork,
+    constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
+};
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN,
     RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
@@ -4089,4 +4092,83 @@ async fn test_anvil_set_fee_amm_liquidity_non_tempo_fails() {
     let result =
         api.anvil_set_fee_amm_liquidity(PATH_USD, ALPHA_USD, U256::from(1_000_000u64)).await;
     assert!(result.is_err(), "anvil_setFeeAmmLiquidity should fail outside of Tempo mode");
+}
+
+/// Pre-T7 Tempo uses a fixed base fee, so mining empty blocks must not drift it (EIP-1559 would).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_pre_t7_base_fee_stays_fixed() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()))).await;
+    let provider = handle.http_provider();
+
+    for _ in 0..5 {
+        api.mine_one().await;
+    }
+
+    let latest = provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.number;
+    for n in 0..=latest {
+        let block = provider.get_block(BlockId::number(n)).await.unwrap().unwrap();
+        assert_eq!(
+            block.header.base_fee_per_gas,
+            Some(TEMPO_T1_BASE_FEE),
+            "pre-T7 block {n} base fee should stay fixed"
+        );
+    }
+}
+
+/// `anvil_reset` must restore the Tempo base fee, not fall back to Anvil's Ethereum default.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_base_fee_survives_reset() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()))).await;
+    let provider = handle.http_provider();
+
+    for _ in 0..3 {
+        api.mine_one().await;
+    }
+
+    api.anvil_reset(None).await.unwrap();
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(
+        block.header.base_fee_per_gas,
+        Some(TEMPO_T1_BASE_FEE),
+        "base fee after reset should be the fixed Tempo value, not the Ethereum default"
+    );
+}
+
+/// T7 Tempo uses the TIP-1067 dynamic controller: empty blocks lower the base fee within the clamp.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t7_base_fee_is_dynamic() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T7.into()))).await;
+    let provider = handle.http_provider();
+
+    for _ in 0..8 {
+        api.mine_one().await;
+    }
+
+    // The genesis block keeps the 20B seed (matching Tempo's T7 genesis).
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(TEMPO_T1_BASE_FEE));
+
+    let latest = provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.number;
+    let mut fees = Vec::new();
+    for n in 1..=latest {
+        let block = provider.get_block(BlockId::number(n)).await.unwrap().unwrap();
+        fees.push(block.header.base_fee_per_gas.unwrap());
+    }
+
+    // Block 1 already clamps the 20B seed down to the TIP-1067 cap; generic EIP-1559 would give
+    // ~17.5B instead, so this pins the T7 path. Later empty blocks decay below the cap.
+    assert_eq!(fees[0], TEMPO_T7_BASE_FEE_CAP, "block 1 clamps to the T7 cap: {fees:?}");
+    assert!(fees[1] < TEMPO_T7_BASE_FEE_CAP, "empty blocks decay below the cap: {fees:?}");
+    // Empty blocks never raise the base fee, and it stays within the TIP-1067 clamp.
+    assert!(fees.windows(2).all(|w| w[1] <= w[0]), "base fee should not rise: {fees:?}");
+    let last = *fees.last().unwrap();
+    assert!(
+        (TEMPO_T7_BASE_FEE_FLOOR..=TEMPO_T7_BASE_FEE_CAP).contains(&last),
+        "base fee should be clamped to the TIP-1067 range: {fees:?}"
+    );
 }

@@ -7,7 +7,9 @@ mod monotonic_product;
 mod opt;
 
 use hard_arith_fallback::constraints_prefer_hard_arith_fallback_first;
-pub(crate) use hard_arith_fallback::{fallback_single_var_model, hard_arith_fallback_model};
+pub(crate) use hard_arith_fallback::{
+    fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
+};
 #[cfg(test)]
 pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
@@ -387,8 +389,16 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if constraints_prefer_hard_arith_fallback_first(&smt_constraints)
-            && let Some(model) = validated_hard_arith_fallback_model(&smt_constraints, constraints)
+        if let Some(model) = fallback_two_var_model(&smt_constraints)
+            && model_satisfies_constraints(&model, constraints)
+        {
+            self.cache_sat_result(cache_key.clone(), true);
+            self.cache_model_result(cache_key, model.clone());
+            return Ok(model);
+        }
+        if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints)
+            && let Some(model) =
+                validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
         {
             self.heuristic_witnesses += 1;
             trace!("model: validated hard arithmetic fallback model before solver");
@@ -396,11 +406,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        let output = match self.query_normalized(&smt_constraints, true, constraints) {
+        let output = match self.query_normalized(cx, &smt_constraints, true, constraints) {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
                 if let Some(model) =
-                    validated_hard_arith_fallback_model(&smt_constraints, constraints)
+                    validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
                 {
                     self.heuristic_witnesses += 1;
                     trace!("model: validated hard arithmetic fallback model after solver unknown");
@@ -415,7 +425,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         let mut lines = output.lines();
         match lines.next().unwrap_or_default().trim() {
             "sat" => {
-                let model = parse_and_validate_model(&output, constraints)?;
+                let model = parse_and_validate_model(cx, &output, constraints)?;
                 self.cache_sat_result(cache_key.clone(), true);
                 self.cache_model_result(cache_key, model.clone());
                 Ok(model)
@@ -427,7 +437,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             }
             "unknown" => {
                 if let Some(model) =
-                    validated_hard_arith_fallback_model(&smt_constraints, constraints)
+                    validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
                 {
                     self.heuristic_witnesses += 1;
                     self.cache_sat_result(cache_key.clone(), true);
@@ -509,8 +519,14 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(true);
         }
-        if constraints_prefer_hard_arith_fallback_first(&smt_constraints) {
-            if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
+        if let Some(model) = fallback_two_var_model(&smt_constraints)
+            && model_satisfies_constraints(&model, constraints)
+        {
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
+        }
+        if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints) {
+            if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some() {
                 self.heuristic_witnesses += 1;
                 trace!("is_sat: validated hard arithmetic fallback model before solver");
                 self.cache_sat_result(cache_key, true);
@@ -521,10 +537,11 @@ impl SmtLibSubprocessSolver {
                 return Err(SymbolicError::SolverUnknown);
             }
         }
-        let output = match self.query_normalized(&smt_constraints, false, constraints) {
+        let output = match self.query_normalized(cx, &smt_constraints, false, constraints) {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
-                if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
+                if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
+                {
                     self.heuristic_witnesses += 1;
                     trace!("is_sat: validated hard arithmetic fallback model after solver unknown");
                     self.cache_sat_result(cache_key, true);
@@ -544,7 +561,8 @@ impl SmtLibSubprocessSolver {
                 Ok(false)
             }
             "unknown" => {
-                if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
+                if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
+                {
                     self.heuristic_witnesses += 1;
                     self.cache_sat_result(cache_key, true);
                     Ok(true)
@@ -626,6 +644,7 @@ impl SmtLibSubprocessSolver {
     /// Sends already-normalized constraints to the configured solver portfolio.
     pub(crate) fn query_normalized(
         &mut self,
+        cx: &SymCx,
         smt_constraints: &[SymBoolExpr],
         model: bool,
         model_constraints: &[SymBoolExpr],
@@ -650,9 +669,10 @@ impl SmtLibSubprocessSolver {
             let _ = writeln!(smt, "(set-option :timeout {})", timeout.saturating_mul(1000));
         }
         for var in vars {
-            let _ = writeln!(smt, "(declare-fun {var} () (_ BitVec 256))");
+            let name = cx.symbol_name(var);
+            let _ = writeln!(smt, "(declare-fun {name} () (_ BitVec 256))");
         }
-        write_smt_assertions(&mut smt, smt_constraints)?;
+        write_smt_assertions(cx, &mut smt, smt_constraints)?;
         smt.push_str("(check-sat)\n");
         if model {
             smt.push_str("(get-model)\n");
@@ -667,8 +687,13 @@ impl SmtLibSubprocessSolver {
         }
 
         let started = Instant::now();
-        let result =
-            run_solver_commands(&commands, &smt, self.timeout, model.then_some(model_constraints));
+        let result = run_solver_commands(
+            cx,
+            &commands,
+            &smt,
+            self.timeout,
+            model.then_some(model_constraints),
+        );
         let query_time = started.elapsed();
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
@@ -688,10 +713,11 @@ impl SmtLibSubprocessSolver {
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
 fn validated_hard_arith_fallback_model(
+    cx: &SymCx,
     normalized_constraints: &[SymBoolExpr],
     original_constraints: &[SymBoolExpr],
 ) -> Option<SymbolicModel> {
-    let model = hard_arith_fallback_model(normalized_constraints)?;
+    let model = hard_arith_fallback_model(cx, normalized_constraints)?;
     model_satisfies_constraints(&model, original_constraints).then_some(model)
 }
 
@@ -1141,6 +1167,7 @@ fn merge_counts<K: Eq + std::hash::Hash + Clone>(
 
 /// Runs one or more solver commands and returns the first decisive SMT-LIB response.
 fn run_solver_commands(
+    cx: &SymCx,
     commands: &[SolverCommand],
     smt: &str,
     timeout: Option<u32>,
@@ -1244,7 +1271,7 @@ fn run_solver_commands(
             match outcome {
                 SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
                     if let Some(constraints) = model_constraints
-                        && let Err(err) = validate_solver_model_output(&output, constraints)
+                        && let Err(err) = validate_solver_model_output(cx, &output, constraints)
                     {
                         summaries.push(
                             SolverRunSummary::new(
@@ -1588,10 +1615,12 @@ fn first_solver_line(output: &str) -> &str {
 }
 
 pub(crate) fn parse_and_validate_model(
+    cx: &SymCx,
     output: &str,
     constraints: &[SymBoolExpr],
 ) -> Result<SymbolicModel, SymbolicError> {
-    let model = parse_model(output)?;
+    let symbols = model_symbols_for_constraints(cx, constraints);
+    let model = parse_model_with_symbols(output, &symbols)?;
     if constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(false)) {
         Ok(model)
     } else {
@@ -1609,14 +1638,46 @@ pub(crate) fn parse_and_validate_model(
 }
 
 pub(crate) fn validate_solver_model_output(
+    cx: &SymCx,
     output: &str,
     constraints: &[SymBoolExpr],
 ) -> Result<(), SymbolicError> {
-    parse_and_validate_model(output, constraints).map(|_| ())
+    parse_and_validate_model(cx, output, constraints).map(|_| ())
 }
 
-pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> {
+#[cfg(test)]
+pub(crate) fn parse_model(output: &str) -> Result<BTreeMap<String, U256>, SymbolicError> {
+    let mut values = BTreeMap::new();
+    parse_model_values(output, |name, value| {
+        values.insert(name.to_owned(), value);
+    })?;
+    Ok(values)
+}
+
+fn parse_model_with_symbols(
+    output: &str,
+    symbols: &HashMap<String, Symbol>,
+) -> Result<SymbolicModel, SymbolicError> {
+    parse_model_with_symbol(output, |name| symbols.get(name).copied())
+}
+
+fn parse_model_with_symbol(
+    output: &str,
+    mut symbol_for: impl FnMut(&str) -> Option<Symbol>,
+) -> Result<SymbolicModel, SymbolicError> {
     let mut values = SymbolicModel::default();
+    parse_model_values(output, |name, value| {
+        if let Some(symbol) = symbol_for(name) {
+            values.insert(symbol, value);
+        }
+    })?;
+    Ok(values)
+}
+
+fn parse_model_values(
+    output: &str,
+    mut insert_value: impl FnMut(&str, U256),
+) -> Result<(), SymbolicError> {
     let mut tokens = output
         .split(|c: char| c.is_whitespace() || matches!(c, '(' | ')'))
         .filter(|token| !token.is_empty());
@@ -1636,7 +1697,7 @@ pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> 
                     })?;
                     let start = 32usize.saturating_sub(decoded.len());
                     bytes[start..start + decoded.len()].copy_from_slice(&decoded);
-                    values.insert(Symbol::intern(name), U256::from_be_bytes(bytes));
+                    insert_value(name, U256::from_be_bytes(bytes));
                     break;
                 }
                 if let Some(binary) = value.strip_prefix("#b") {
@@ -1648,7 +1709,7 @@ pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> 
                     let parsed = U256::from_str_radix(binary, 2).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver binary model value: {err}"))
                     })?;
-                    values.insert(Symbol::intern(name), parsed);
+                    insert_value(name, parsed);
                     break;
                 }
                 if value == "_"
@@ -1657,11 +1718,22 @@ pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> 
                     let parsed = U256::from_str_radix(bv, 10).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver decimal model value: {err}"))
                     })?;
-                    values.insert(Symbol::intern(name), parsed);
+                    insert_value(name, parsed);
                     break;
                 }
             }
         }
     }
-    Ok(values)
+    Ok(())
+}
+
+fn model_symbols_for_constraints(
+    cx: &SymCx,
+    constraints: &[SymBoolExpr],
+) -> HashMap<String, Symbol> {
+    let mut vars = SymbolicVars::default();
+    for constraint in constraints {
+        constraint.collect_vars(&mut vars);
+    }
+    vars.into_iter().map(|symbol| (cx.symbol_name(symbol).to_owned(), symbol)).collect()
 }

@@ -161,6 +161,10 @@ pub struct InvariantConfig {
     #[serde(default, skip_serializing)]
     #[doc(hidden)]
     pub corpus_random_sequence_weight_configured: bool,
+    /// Whether `workers` was supplied by a config provider.
+    #[serde(default, skip_serializing)]
+    #[doc(hidden)]
+    pub workers_configured: bool,
     /// Path where invariant failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
@@ -199,6 +203,7 @@ impl Default for InvariantConfig {
             gas_report_samples: 256,
             corpus: FuzzCorpusConfig::default(),
             corpus_random_sequence_weight_configured: false,
+            workers_configured: false,
             failure_persist_dir: None,
             show_metrics: true,
             timeout: None,

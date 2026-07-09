@@ -460,7 +460,7 @@ contract ContractB {
 
     cmd.args(["build", "src/ContractWithInvalidNatspec.sol"]).assert_success().stderr_eq(str![[
         r#"
-warning: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
+warning[6546]: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
   [FILE]:5:5
   │
 5 │     /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
@@ -468,7 +468,7 @@ warning: invalid natspec tag '@deprecated', custom tags must use format '@custom
   │
 ...
 
-warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
+warning[6546]: invalid natspec tag '@note', custom tags must use format '@custom:name'
   [FILE]:9:1
   │
 9 │ /// @note foo bar
