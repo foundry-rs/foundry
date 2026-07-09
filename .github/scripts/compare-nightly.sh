@@ -23,6 +23,11 @@ prev = json.load(open(prev_path)) if prev_path and os.path.isfile(prev_path) els
 with open(os.environ["TODAY_JSON"]) as f:
     today = json.load(f)
 
+# Each value is either the current summary object ({"mean": ..., ...}) or, for
+# historical files, a bare mean-seconds float. Normalize to the mean.
+def mean_of(v):
+    return v["mean"] if isinstance(v, dict) else v
+
 print("## Nightly Benchmark Regression Report\n")
 print("| Benchmark | Stable | Nightly | Δ | Status |")
 print("|-----------|--------|---------|---|--------|")
@@ -33,12 +38,14 @@ for key in all_keys:
     t = today.get(key)
     p = prev.get(key)
     if t is None:
-        print(f"| `{key}` | {p:.5f}s | N/A | — | ⚠️ Missing |")
+        print(f"| `{key}` | {mean_of(p):.5f}s | N/A | — | ⚠️ Missing |")
         has_regression = True
         continue
     if p is None:
-        print(f"| `{key}` | N/A | {t:.5f}s | — | 🆕 New |")
+        print(f"| `{key}` | N/A | {mean_of(t):.5f}s | — | 🆕 New |")
         continue
+    t = mean_of(t)
+    p = mean_of(p)
     delta = (t - p) / p * 100
     if delta >= fail:
         status = "🔴 Regression"

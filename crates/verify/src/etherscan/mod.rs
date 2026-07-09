@@ -140,7 +140,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 resp.result,
                 url
             )?;
-            sh_println!("{}\t{}", resp.result, url)?;
+            if args.print_submission_result_to_stdout {
+                sh_println!("{}\t{}", resp.result, url)?;
+            }
             Ok(Some(VerifyCheckArgs {
                 id: resp.result,
                 etherscan: args.etherscan,

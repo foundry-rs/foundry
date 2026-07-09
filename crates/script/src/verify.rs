@@ -159,6 +159,7 @@ impl VerifyBundle {
                     force: false,
                     skip_is_verified_check: true,
                     watch: true,
+                    print_submission_result_to_stdout: false,
                     retry: self.retry,
                     libraries: libraries.to_vec(),
                     root: None,
@@ -248,7 +249,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
         let num_verifications = future_verifications.len();
         let mut num_of_successful_verifications = 0;
-        sh_println!("##\nStart verification for ({num_verifications}) contracts")?;
+        sh_status!("##\nStart verification for ({num_verifications}) contracts")?;
         for verification in future_verifications {
             match verification.await {
                 Ok(_) => {
@@ -266,7 +267,7 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
             ));
         }
 
-        sh_println!("All ({num_verifications}) contracts were verified!")?;
+        sh_status!("All ({num_verifications}) contracts were verified!")?;
     }
 
     Ok(())
