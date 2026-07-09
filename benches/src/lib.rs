@@ -568,9 +568,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_isolate_test",
             version,
-            &self.cmd(
-                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge test",
-            ),
+            &self.cmd("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge test"),
             runs,
             Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge build"),
             None,
