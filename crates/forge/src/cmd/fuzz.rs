@@ -1,5 +1,5 @@
 use crate::{
-    cmd::test::{FilterArgs, FuzzMinimizeReplaySession, TestArgs},
+    cmd::test::{CampaignArgs, FilterArgs, FuzzMinimizeReplaySession, ShowmapDomainArg, TestArgs},
     multi_runner::{FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, ShowmapConfig},
     result::TestOutcome,
 };
@@ -18,7 +18,7 @@ use foundry_common::{
     fs, sh_println, sh_status,
     shell::{OutputMode, Shell},
 };
-use foundry_config::Config;
+use foundry_config::{Config, filter::GlobMatcher};
 use foundry_evm::{
     executors::{CorpusDirEntry, ReplayObservation, ShowmapDomain, read_corpus_tree},
     fuzz::BasicTxDetails,
@@ -46,9 +46,10 @@ pub struct FuzzArgs {
 impl FuzzArgs {
     pub fn run(self) -> FuzzOutcomeFuture {
         match self.command {
-            FuzzSubcommands::Run(mut args) => {
-                args.enable_fuzz_only_with_auto_corpus();
-                Box::pin(args.run())
+            FuzzSubcommands::Run(args) => {
+                let mut test = TestArgs::from_fuzz_run(args);
+                test.enable_fuzz_only_with_auto_corpus();
+                Box::pin(test.run())
             }
             FuzzSubcommands::Replay(args) => Box::pin(args.run()),
             FuzzSubcommands::Show(args) => Box::pin(async move {
@@ -73,24 +74,13 @@ impl FuzzArgs {
             FuzzSubcommands::Show(_) | FuzzSubcommands::Cmin(_) | FuzzSubcommands::Tmin(_) => false,
         }
     }
-
-    pub fn reject_unsupported_flags(&self) -> Result<()> {
-        match &self.command {
-            FuzzSubcommands::Run(args) if args.is_watch() => {
-                bail!("`--watch` is not supported for `forge fuzz run`")
-            }
-            FuzzSubcommands::Replay(args) if args.is_watch() => {
-                bail!("`--watch` is not supported for `forge fuzz replay`")
-            }
-            _ => Ok(()),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum FuzzSubcommands {
     /// Run only fuzz and invariant tests.
-    Run(TestArgs),
+    Run(FuzzRunArgs),
     /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
     Replay(FuzzReplayArgs),
     /// Print persisted corpus entries.
@@ -101,44 +91,146 @@ pub enum FuzzSubcommands {
     Tmin(FuzzTminArgs),
 }
 
+/// Run only fuzz and invariant tests.
+#[derive(Clone, Debug, Parser)]
+pub struct FuzzRunArgs {
+    #[command(flatten)]
+    pub(crate) global: GlobalArgs,
+
+    /// The contract file you want to test, it's a shortcut for --match-path.
+    #[arg(value_hint = ValueHint::FilePath)]
+    pub(crate) path: Option<GlobMatcher>,
+
+    #[command(flatten)]
+    pub(crate) filter: FilterArgs,
+
+    #[command(flatten)]
+    pub(crate) campaign: CampaignArgs,
+
+    #[command(flatten)]
+    pub(crate) evm: EvmArgs,
+
+    #[command(flatten)]
+    pub(crate) build: BuildOpts,
+
+    /// Output test results as JUnit XML report.
+    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "list", "show_progress"], help_heading = "Display options")]
+    pub(crate) junit: bool,
+
+    /// Exit with code 0 even if a test fails.
+    #[arg(long, env = "FORGE_ALLOW_FAILURE")]
+    pub(crate) allow_failure: bool,
+
+    /// Stop running tests after the first failure.
+    #[arg(long)]
+    pub(crate) fail_fast: bool,
+
+    /// Re-run recorded test failures from last run.
+    /// If no failure recorded then regular test run is performed.
+    #[arg(long)]
+    pub(crate) rerun: bool,
+
+    /// Show test execution progress.
+    #[arg(long, conflicts_with_all = ["quiet", "json"], help_heading = "Display options")]
+    pub(crate) show_progress: bool,
+
+    /// The Etherscan (or equivalent) API key.
+    #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    pub(crate) etherscan_api_key: Option<String>,
+
+    /// List fuzz and invariant tests instead of running them.
+    #[arg(long, short, conflicts_with_all = ["show_progress"], help_heading = "Display options")]
+    pub(crate) list: bool,
+
+    /// Print a gas report.
+    #[arg(long, env = "FORGE_GAS_REPORT")]
+    pub(crate) gas_report: bool,
+
+    /// Replay the persisted corpus and emit AFL-`afl-showmap`-style coverage
+    /// files at the given output directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Showmap replay",
+        conflicts_with_all = ["rerun", "fuzz_input_file", "gas_report"],
+    )]
+    pub(crate) showmap_out: Option<PathBuf>,
+
+    /// Emit one showmap file per corpus entry (default: one aggregated file per test).
+    #[arg(long, help_heading = "Showmap replay", requires = "showmap_out")]
+    pub(crate) showmap_per_input: bool,
+
+    /// Coverage domain(s) to dump.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ShowmapDomainArg::Evm,
+        help_heading = "Showmap replay",
+        requires = "showmap_out",
+    )]
+    pub(crate) showmap_domain: ShowmapDomainArg,
+
+    /// Approach name (used as a subdirectory of `--showmap-out`).
+    #[arg(
+        long,
+        default_value = "replay",
+        help_heading = "Showmap replay",
+        requires = "showmap_out"
+    )]
+    pub(crate) showmap_approach: String,
+
+    /// Trial identifier embedded in each showmap filename.
+    #[arg(long, help_heading = "Showmap replay", requires = "showmap_out")]
+    pub(crate) showmap_trial: Option<String>,
+
+    /// Override the corpus directory to replay.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Showmap replay",
+        requires = "showmap_out",
+    )]
+    pub(crate) showmap_corpus_dir: Option<PathBuf>,
+
+    /// File to rerun fuzz failures from.
+    #[arg(long)]
+    pub(crate) fuzz_input_file: Option<String>,
+}
+
 /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzReplayArgs {
     #[command(flatten)]
-    test: TestArgs,
-    /// Replay corpus entries from this directory instead of persisted fuzz failures.
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
-    corpus_dir: Option<PathBuf>,
+    run: FuzzRunArgs,
 }
 
 impl FuzzReplayArgs {
-    async fn run(mut self) -> Result<TestOutcome> {
-        self.test.enable_fuzz_only();
-        if self.corpus_dir.is_none() {
-            self.test.enable_fuzz_failure_replay();
-            return self.test.run().await;
+    async fn run(self) -> Result<TestOutcome> {
+        let corpus_dir = self.run.campaign.corpus_dir.clone();
+        let mut test = TestArgs::from_fuzz_run(self.run);
+        if corpus_dir.is_none() {
+            test.enable_fuzz_failure_replay();
+            return test.run().await;
         }
 
         let replay_id =
             SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
-        self.test.set_showmap_override(ShowmapConfig {
+        test.set_showmap_override(ShowmapConfig {
             out_dir: std::env::temp_dir().join(format!("forge-fuzz-replay-{replay_id}")),
             approach: "replay".to_string(),
             trial: "replay".to_string(),
             per_input: false,
             domain: ShowmapDomain::Evm,
-            corpus_dir: self.corpus_dir.clone(),
+            corpus_dir,
             emit_files: false,
         });
-        self.test.run().await
+        test.run().await
     }
 
     const fn is_junit(&self) -> bool {
-        self.test.junit
-    }
-
-    const fn is_watch(&self) -> bool {
-        self.test.is_watch()
+        self.run.junit
     }
 }
 
@@ -1257,7 +1349,23 @@ fn merge_new_edge_vec(cumulative: &mut Vec<u8>, candidate: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use foundry_evm::executors::ReplayFailure;
+
+    #[test]
+    fn fuzz_args_clap_shape_is_valid() {
+        FuzzArgs::command().debug_assert();
+    }
+
+    #[test]
+    fn fuzz_run_rejects_fuzz_worker() {
+        assert!(FuzzArgs::try_parse_from(["foundry-cli", "run", "--fuzz-worker", "1"]).is_err());
+    }
+
+    #[test]
+    fn fuzz_run_rejects_fuzz_run() {
+        assert!(FuzzArgs::try_parse_from(["foundry-cli", "run", "--fuzz-run", "1"]).is_err());
+    }
 
     fn decoder_with_functions(functions: Vec<Function>) -> CorpusDecoder {
         let mut decoder = CorpusDecoder::default();
