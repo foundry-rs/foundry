@@ -116,7 +116,7 @@ impl LintArgs {
 
         // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
         // compiler, we should reuse the parser from the project output.
-        let mut opts = solar::interface::config::Opts::default();
+        let mut opts = solar::interface::config::CompileOpts::default();
         opts.unstable.typeck = true;
         let mut compiler = solar::sema::Compiler::new(
             solar::interface::Session::builder().opts(opts).with_stderr_emitter().build(),

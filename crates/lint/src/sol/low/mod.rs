@@ -9,6 +9,9 @@ use calls_loop::CALLS_LOOP;
 mod delegatecall_loop;
 use delegatecall_loop::DELEGATECALL_LOOP;
 
+mod deprecated_oz_function;
+use deprecated_oz_function::DEPRECATED_OZ_FUNCTION;
+
 mod empty_block;
 use empty_block::EMPTY_BLOCK;
 
@@ -45,6 +48,7 @@ register_lints!(
     (BlockTimestamp, late, (BLOCK_TIMESTAMP)),
     (CallsLoop, late, (CALLS_LOOP)),
     (DelegatecallLoop, late, (DELEGATECALL_LOOP)),
+    (DeprecatedOzFunction, late, (DEPRECATED_OZ_FUNCTION)),
     (EmptyBlock, early, (EMPTY_BLOCK)),
     (IncorrectModifier, late, (INCORRECT_MODIFIER)),
     (MsgValueLoop, late, (MSG_VALUE_LOOP)),

@@ -42,6 +42,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
   - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
+  - `deprecated-oz-function`: OpenZeppelin deprecated `SafeERC20.safeApprove` (use `safeIncreaseAllowance` / `safeDecreaseAllowance`) and `AccessControl._setupRole` (use `_grantRole`).
   - `empty-block`: Flags regular functions with an empty body; constructors, `receive`/`fallback`, `virtual` functions, functions with modifiers and value-less `payable` functions are exempt.
   - `incorrect-modifier`: Modifiers should not be able to finish without executing `_` or reverting.
   - `missing-events-access-control`: Access control changes should emit events.
@@ -70,6 +71,9 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
   - `unused-error`: Custom error declarations that are never referenced should be removed.
+  - `cyclomatic-complexity`: functions with a cyclomatic complexity above 11 should be split into smaller functions.
+  - `incorrect-using-for`: `using ... for` directives naming a library with no function applicable to the type attach nothing and should be fixed or removed.
+  - `modifier-used-only-once`: Modifiers invoked by exactly one function can usually be inlined as checks in that function.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.
