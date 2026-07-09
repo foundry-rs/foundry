@@ -444,6 +444,44 @@ contract Consumer {
     );
 });
 
+// tests that when a filtered internal library shares a name with a kept contract, the survivor is
+// unique and prints without the `(path)` disambiguation suffix.
+// <https://github.com/foundry-rs/foundry/issues/1356>
+forgetest!(build_sizes_filtered_internal_library_frees_unique_name, |prj, cmd| {
+    prj.add_source(
+        "a/Foo",
+        r"
+library Foo {
+    function add(uint256 a) internal pure returns (uint256) {
+        return a + 1;
+    }
+}
+",
+    );
+    prj.add_source(
+        "b/Foo",
+        r"
+contract Foo {
+    function f() external pure returns (uint256) {
+        return 1;
+    }
+}
+",
+    );
+
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+...
+
+╭----------+------------------+-------------------+--------------------+---------------------╮
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
++============================================================================================+
+| Foo      | 175              | 201               | 24,401             | 48,951              |
+╰----------+------------------+-------------------+--------------------+---------------------╯
+
+
+"#]]);
+});
+
 // tests that skip key in config can be used to skip non-compilable contract
 forgetest_init!(test_can_skip_contract, |prj, cmd| {
     prj.add_source(

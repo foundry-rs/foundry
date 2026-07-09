@@ -289,28 +289,39 @@ impl ProjectCompiler {
             }
 
             // Internal libraries are inlined into consumers and never deployed; skip them.
+            // Only artifacts whose ABI has no functions can be internal libraries, so restrict the
+            // solar parse to those sources to avoid a second full parse pass.
             let abs_source = |path: &Path| -> PathBuf {
                 if path.is_absolute() { path.to_path_buf() } else { self.project_root.join(path) }
             };
             let source_paths = artifacts
                 .values()
                 .flatten()
+                .filter(|(_, artifact)| {
+                    artifact.abi.as_ref().is_some_and(|abi| abi.functions().next().is_none())
+                })
                 .map(|(path, _)| abs_source(path))
                 .collect::<BTreeSet<_>>();
             let libraries = collect_libraries(&source_paths);
 
             for (name, artifact_list) in artifacts {
-                for (path, artifact) in &artifact_list {
-                    // A library with no functions in its ABI is internal-only; fail open if the
-                    // ABI is missing.
-                    let is_library =
-                        libraries.get(&abs_source(path)).is_some_and(|libs| libs.contains(&name));
-                    let has_no_abi_functions =
-                        artifact.abi.as_ref().is_some_and(|abi| abi.functions().next().is_none());
-                    if is_library && has_no_abi_functions {
-                        continue;
-                    }
+                // A library with no functions in its ABI is internal-only; fail open if the ABI is
+                // missing. Filter first so the duplicate-name suffix below reflects kept contracts.
+                let kept = artifact_list
+                    .iter()
+                    .filter(|(path, artifact)| {
+                        let is_library = libraries
+                            .get(&abs_source(path))
+                            .is_some_and(|libs| libs.contains(&name));
+                        let has_no_abi_functions = artifact
+                            .abi
+                            .as_ref()
+                            .is_some_and(|abi| abi.functions().next().is_none());
+                        !(is_library && has_no_abi_functions)
+                    })
+                    .collect::<Vec<_>>();
 
+                for (path, artifact) in &kept {
                     let runtime_size = contract_size(*artifact, false).unwrap_or_default();
                     let init_size = contract_size(*artifact, true).unwrap_or_default();
 
@@ -325,7 +336,7 @@ impl ProjectCompiler {
                         })
                         .unwrap_or(false);
 
-                    let unique_name = if artifact_list.len() > 1 {
+                    let unique_name = if kept.len() > 1 {
                         format!(
                             "{} ({})",
                             name,
