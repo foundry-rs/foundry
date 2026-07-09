@@ -140,6 +140,7 @@ impl CoverageArgs {
         // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
         // flags take precedence; unset CLI flags fall back to the config.
         self.resolve_with(&config.coverage);
+        self.test.ensure_mutation_mode_compatible(true)?;
 
         let (paths, mut output) = {
             let (project, output) = self.build(&config)?;
