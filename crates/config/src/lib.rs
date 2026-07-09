@@ -119,6 +119,9 @@ pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayo
 mod coverage;
 pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
 
+mod trace;
+pub use trace::TracingConfig;
+
 mod fee;
 pub use fee::Eip1559FeeEstimatePreset;
 
@@ -379,6 +382,8 @@ pub struct Config {
     pub coverage: CoverageConfig,
     /// Configuration for mutation testing
     pub mutation: MutationConfig,
+    /// Configuration for trace rendering
+    pub tracing: TracingConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Whether to show `console.log` outputs in realtime during script/test execution
@@ -550,6 +555,7 @@ pub struct Config {
     pub enable_tx_gas_limit: bool,
 
     /// Address labels
+    #[serde(default, skip_serializing)]
     pub labels: AddressHashMap<String>,
 
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
@@ -746,6 +752,7 @@ impl Config {
         "invariant",
         "coverage",
         "mutation",
+        "tracing",
         "labels",
         "dependencies",
         "soldeer",
@@ -845,13 +852,20 @@ impl Config {
             || provider.contains("invariant.workers")
             || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
             || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
-        let figment = self.to_figment(FigmentProviders::None).merge(provider);
+        let tracing_verbosity_configured =
+            provider.contains("tracing.verbosity") || provider.contains("tracing");
+        let tracing_labels_configured =
+            provider.contains("tracing.labels") || provider.contains("tracing");
+        let figment = Self::normalize_tracing_figment(
+            self.to_figment(FigmentProviders::None).merge(provider),
+        );
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
+        config.normalize_tracing_settings(tracing_verbosity_configured, tracing_labels_configured);
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -877,6 +891,7 @@ impl Config {
         figment: Figment,
         strict_profile: bool,
     ) -> Result<Self, ExtractConfigError> {
+        let figment = Self::normalize_tracing_figment(figment);
         let invariant_corpus_random_sequence_weight_configured = figment
             .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
             .unwrap_or_else(|_| {
@@ -885,10 +900,15 @@ impl Config {
         let invariant_workers_configured = figment
             .extract_inner::<bool>("invariant.workers_configured")
             .unwrap_or_else(|_| figment_value_is_configured(&figment, "invariant.workers"));
+        let tracing_verbosity_configured =
+            figment_value_or_parent_is_configured(&figment, "tracing.verbosity", "tracing");
+        let tracing_labels_configured =
+            figment_value_or_parent_is_configured(&figment, "tracing.labels", "tracing");
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
+        config.normalize_tracing_settings(tracing_verbosity_configured, tracing_labels_configured);
         let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
@@ -939,10 +959,47 @@ impl Config {
         Ok(config)
     }
 
+    fn normalize_tracing_figment(mut figment: Figment) -> Figment {
+        if figment_value_or_parent_is_configured(&figment, "tracing.verbosity", "tracing")
+            && let Ok(verbosity) = figment.extract_inner::<u8>("tracing.verbosity")
+        {
+            figment = figment.merge(("verbosity", verbosity));
+        }
+
+        if figment_value_or_parent_is_configured(&figment, "tracing.labels", "tracing")
+            && let Ok(tracing_labels) =
+                figment.extract_inner::<AddressHashMap<String>>("tracing.labels")
+        {
+            let mut labels =
+                figment.extract_inner::<AddressHashMap<String>>("labels").unwrap_or_default();
+            labels.extend(tracing_labels);
+            figment = figment.merge(("labels", labels));
+        }
+
+        figment
+    }
+
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
         let Some(hardfork) = self.hardfork else { return Ok(()) };
         self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
         Ok(())
+    }
+
+    fn normalize_tracing_settings(
+        &mut self,
+        tracing_verbosity_configured: bool,
+        tracing_labels_configured: bool,
+    ) {
+        if tracing_verbosity_configured {
+            self.verbosity = self.tracing.verbosity;
+        } else {
+            self.tracing.verbosity = self.verbosity;
+        }
+
+        if tracing_labels_configured {
+            self.labels.extend(self.tracing.labels.clone());
+        }
+        self.tracing.labels = self.labels.clone();
     }
 
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
@@ -1037,6 +1094,8 @@ impl Config {
             || figment.extract_inner::<bool>("invariant.workers_configured").unwrap_or_else(|_| {
                 figment.extract_inner::<InvariantWorkers>("invariant.workers").is_ok()
             });
+
+        figment = Self::normalize_tracing_figment(figment);
 
         // normalize defaults
         figment = self.normalize_defaults(figment);
@@ -2601,6 +2660,10 @@ fn figment_value_is_configured(figment: &Figment, key: &str) -> bool {
     figment.find_metadata(key).is_some_and(|metadata| metadata.name.as_ref() != "Foundry Config")
 }
 
+fn figment_value_or_parent_is_configured(figment: &Figment, key: &str, parent: &str) -> bool {
+    figment_value_is_configured(figment, key) || figment_value_is_configured(figment, parent)
+}
+
 /// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -2788,6 +2851,7 @@ impl Default for Config {
             symbolic: SymbolicConfig::default(),
             coverage: CoverageConfig::default(),
             mutation: MutationConfig::default(),
+            tracing: TracingConfig::default(),
             always_use_create_2_factory: false,
             eip1559_fee_estimate: Eip1559FeeEstimatePreset::default(),
             ffi: false,
@@ -4150,6 +4214,7 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
+                    tracing: TracingConfig { verbosity: 3, ..Default::default() },
                     via_ir: true,
                     rpc_storage_caching: StorageCachingConfig {
                         chains: CachedChains::Chains(vec![
@@ -4471,6 +4536,7 @@ mod tests {
                     src: "mysrc".into(),
                     out: "myout".into(),
                     verbosity: 3,
+                    tracing: TracingConfig { verbosity: 3, ..Default::default() },
                     ..Config::default().normalized_optimizer_settings()
                 }
             );
@@ -4483,6 +4549,7 @@ mod tests {
                     src: "other-src".into(),
                     out: "myout".into(),
                     verbosity: 3,
+                    tracing: TracingConfig { verbosity: 3, ..Default::default() },
                     ..Config::default().normalized_optimizer_settings()
                 }
             );
@@ -5712,6 +5779,82 @@ mod tests {
                     ),
                 ])
             );
+            assert_eq!(config.tracing.labels, config.labels);
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "[labels]".to_string(),
+                    new: "[tracing.labels]".to_string(),
+                }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_deprecated_profile_labels() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.labels]
+                0x0000000000000000000000000000000000000001 = "Alice"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            let labels = AddressHashMap::from_iter(vec![(
+                address!("0x0000000000000000000000000000000000000001"),
+                "Alice".to_string(),
+            )]);
+            assert_eq!(config.labels, labels);
+            assert_eq!(config.tracing.labels, labels);
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "labels".to_string(),
+                    new: "tracing.labels".to_string(),
+                }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_tracing_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                verbosity = 2
+
+                [tracing]
+                verbosity = 4
+                disable_labels = true
+                trace_depth = 3
+                decode_internal = true
+
+                [tracing.labels]
+                0x0000000000000000000000000000000000000002 = "Bob"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.verbosity, 4);
+            assert_eq!(config.tracing.verbosity, 4);
+            assert!(config.tracing.disable_labels);
+            assert_eq!(config.tracing.trace_depth, Some(3));
+            assert!(config.tracing.decode_internal);
+            let labels = AddressHashMap::from_iter(vec![(
+                address!("0x0000000000000000000000000000000000000002"),
+                "Bob".to_string(),
+            )]);
+            assert_eq!(config.labels, labels);
+            assert_eq!(config.tracing.labels, labels);
+            assert!(config.warnings.is_empty());
 
             Ok(())
         });

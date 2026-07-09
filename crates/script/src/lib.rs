@@ -28,7 +28,7 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts},
+    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts, TracingArgs},
     utils::LoadConfig,
 };
 use foundry_common::{
@@ -220,9 +220,8 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub disable_code_size_limit: bool,
 
-    /// Disables the labels in the traces.
-    #[arg(long)]
-    pub disable_labels: bool,
+    #[command(flatten)]
+    pub tracing: TracingArgs,
 
     /// The Etherscan (or equivalent) API key
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]

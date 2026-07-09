@@ -31,7 +31,7 @@ use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs},
+    opts::{BuildOpts, EvmArgs, GlobalArgs, TracingArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{
@@ -546,14 +546,8 @@ pub struct TestArgs {
     #[arg(long, requires = "evm_profile")]
     no_open: bool,
 
-    /// Identify internal functions in traces.
-    ///
-    /// This will trace internal functions and decode stack parameters.
-    ///
-    /// Parameters stored in memory (such as bytes or arrays) are currently decoded only when a
-    /// single function is matched, similarly to `--debug`, for performance reasons.
-    #[arg(long)]
-    decode_internal: bool,
+    #[command(flatten)]
+    tracing: TracingArgs,
 
     /// Dumps all debugger steps to file.
     #[arg(
@@ -581,12 +575,8 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Suppress successful test traces and show only traces for failures.
-    #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Display options")]
+    #[arg(long, short, env = "FORGE_SUPPRESS_SUCCESSFUL_TRACES", help_heading = "Trace options")]
     suppress_successful_traces: bool,
-
-    /// Defines the depth of a trace
-    #[arg(long)]
-    trace_depth: Option<usize>,
 
     /// Output test results as JUnit XML report.
     #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "summary", "list", "show_progress"], help_heading = "Display options")]
@@ -950,10 +940,6 @@ pub struct TestArgs {
     /// Print detailed test summary table.
     #[arg(long, help_heading = "Display options", requires = "summary")]
     pub detailed: bool,
-
-    /// Disables the labels in the traces.
-    #[arg(long, help_heading = "Display options")]
-    pub disable_labels: bool,
 
     /// Replay the persisted corpus and emit AFL-`afl-showmap`-style coverage
     /// files at the given output directory. Disables the regular fuzz/invariant
@@ -1839,12 +1825,11 @@ impl TestArgs {
         }
 
         // Enable internal tracing for more informative flamegraph/profile.
-        if !self.decode_internal && trace_output.is_some() {
-            self.decode_internal = true;
-        }
+        let decode_internal_enabled =
+            self.tracing.decode_internal(&config.tracing) || trace_output.is_some();
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
-        let decode_internal = if self.decode_internal {
+        let decode_internal = if decode_internal_enabled {
             // If more than one function matched, we enable simple tracing.
             // If only one function matched, we enable full tracing. This is done in `run_tests`.
             InternalTraceMode::Simple
@@ -2583,7 +2568,7 @@ impl TestArgs {
         }
 
         // If exactly one test matched, we enable full tracing.
-        if num_filtered == 1 && self.decode_internal {
+        if num_filtered == 1 && runner.decode_internal != InternalTraceMode::None {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
@@ -2644,6 +2629,7 @@ impl TestArgs {
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
         let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
+        let decode_internal = runner.decode_internal != InternalTraceMode::None;
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -2666,8 +2652,9 @@ impl TestArgs {
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
+            .with_labels(self.tracing.parsed_labels().into_iter().chain(config.labels.clone()))
             .with_known_contracts(&known_contracts)
-            .with_label_disabled(self.disable_labels)
+            .with_label_disabled(self.tracing.disable_labels(&config.tracing))
             .with_verbosity(verbosity)
             .with_chain_id(remote_chain.map(|c| c.id()))
             .with_tempo_hardfork(
@@ -2680,7 +2667,7 @@ impl TestArgs {
                 builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
 
-        if self.decode_internal {
+        if decode_internal {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
@@ -2817,7 +2804,7 @@ impl TestArgs {
                         if renders_trace && should_include {
                             decode_trace_arena(arena, &decoder).await;
 
-                            if let Some(trace_depth) = self.trace_depth {
+                            if let Some(trace_depth) = self.tracing.trace_depth(&config.tracing) {
                                 prune_trace_depth(arena, trace_depth);
                             }
 
@@ -3913,7 +3900,7 @@ mod tests {
     #[test]
     fn depth_trace() {
         let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--trace-depth", "2"]);
-        assert!(args.trace_depth.is_some());
+        assert!(args.tracing.trace_depth.is_some());
     }
 
     #[test]

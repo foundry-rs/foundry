@@ -1,8 +1,9 @@
-use std::str::FromStr;
-
 use alloy_chains::Chain;
-use alloy_primitives::{Address, Bytes, map::AddressHashMap};
-use foundry_cli::utils::{TraceResult, print_traces};
+use alloy_primitives::{Bytes, map::AddressHashMap};
+use foundry_cli::{
+    opts::TracingArgs,
+    utils::{TraceResult, print_traces},
+};
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler, shell};
 use foundry_config::Config;
 use foundry_debugger::Debugger;
@@ -22,12 +23,9 @@ pub(crate) async fn handle_traces(
     config: &Config,
     chain: Chain,
     contracts_bytecode: &AddressHashMap<Bytes>,
-    labels: Vec<String>,
+    tracing: &TracingArgs,
     with_local_artifacts: bool,
     debug: bool,
-    decode_internal: bool,
-    disable_label: bool,
-    trace_depth: Option<usize>,
     tempo_hardfork: Option<TempoHardfork>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
@@ -46,22 +44,13 @@ pub(crate) async fn handle_traces(
         (None, ContractSources::default())
     };
 
-    let labels = labels.iter().filter_map(|label_str| {
-        let mut iter = label_str.split(':');
-
-        if let Some(addr) = iter.next()
-            && let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next())
-        {
-            return Some((address, label.to_string()));
-        }
-        None
-    });
+    let labels = tracing.parsed_labels();
     let config_labels = config.labels.clone().into_iter();
 
     let mut builder = CallTraceDecoderBuilder::new()
-        .with_labels(labels.chain(config_labels))
+        .with_labels(labels.into_iter().chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
-        .with_label_disabled(disable_label)
+        .with_label_disabled(tracing.disable_labels(&config.tracing))
         .with_chain_id(Some(chain.id()))
         .with_tempo_hardfork(
             tempo_hardfork
@@ -79,7 +68,7 @@ pub(crate) async fn handle_traces(
         decoder.identify(trace, &mut identifier);
     }
 
-    if decode_internal || debug {
+    if tracing.decode_internal(&config.tracing) || debug {
         if let Some(ref etherscan_identifier) = identifier.external {
             sources.merge(etherscan_identifier.get_compiled_contracts().await?);
         }
@@ -97,12 +86,13 @@ pub(crate) async fn handle_traces(
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
     }
 
+    let verbosity = shell::verbosity().max(config.tracing.verbosity);
     print_traces(
         &mut result,
         &decoder,
-        shell::verbosity() > 0,
-        shell::verbosity() > 4,
-        trace_depth,
+        verbosity > 0,
+        verbosity > 4,
+        tracing.trace_depth(&config.tracing),
     )
     .await?;
 

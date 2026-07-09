@@ -29,9 +29,10 @@ use foundry_evm::{
     hardforks::TempoHardfork,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
+        CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
+        decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena,
+        prune_trace_depth, render_trace_arena,
     },
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
@@ -347,18 +348,32 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
 
         let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(self.execution_result.labeled_addresses.clone())
+            .with_labels(
+                self.args
+                    .tracing
+                    .parsed_labels()
+                    .into_iter()
+                    .chain(self.script_config.config.labels.clone())
+                    .chain(self.execution_result.labeled_addresses.clone()),
+            )
             .with_verbosity(self.script_config.evm_opts.verbosity)
             .with_known_contracts(known_contracts)
             .with_signature_identifier(SignaturesIdentifier::from_config(
                 &self.script_config.config,
             )?)
-            .with_label_disabled(self.args.disable_labels)
+            .with_label_disabled(
+                self.args.tracing.disable_labels(&self.script_config.config.tracing),
+            )
             .with_chain_id(chain_id.map(|c| c.id()))
             .with_tempo_hardfork(
                 is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
             )
             .build();
+
+        if self.args.tracing.decode_internal(&self.script_config.config.tracing) {
+            decoder.debug_identifier =
+                Some(DebugTraceIdentifier::new(self.build_data.sources.clone()));
+        }
 
         let use_debug_bytecodes =
             self.args.debug && !self.execution_result.debug_bytecodes.is_empty();
@@ -469,6 +484,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 if should_include {
                     let mut trace = trace.clone();
                     decode_trace_arena(&mut trace, decoder).await;
+                    if let Some(trace_depth) =
+                        self.args.tracing.trace_depth(&self.script_config.config.tracing)
+                    {
+                        prune_trace_depth(&mut trace, trace_depth);
+                    }
                     sh_println!("{}", render_trace_arena(&trace))?;
                 }
             }
