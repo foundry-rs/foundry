@@ -49,6 +49,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
   - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
   - `return-bomb`: External calls with a gas limit should not consume unbounded return data.
+  - `solmate-safe-transfer-lib`: solmate's released `SafeTransferLib` does not check that the token has code, so token operations against a token-less address succeed silently.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
   - `too-many-digits`: Numeric literals with 5+ consecutive zeros are error-prone.
