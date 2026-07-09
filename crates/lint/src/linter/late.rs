@@ -12,6 +12,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_nested_source(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _id: hir::SourceId,
     ) {
@@ -148,7 +149,7 @@ where
 
     fn visit_nested_source(&mut self, id: hir::SourceId) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_nested_source(self.ctx, self.hir, id);
+            pass.check_nested_source(self.ctx, self.gcx, self.hir, id);
         }
         self.walk_nested_source(id)
     }
