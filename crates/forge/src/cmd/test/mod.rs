@@ -1083,6 +1083,53 @@ impl TestArgs {
         self.compile_and_run().await
     }
 
+    pub(crate) fn ensure_mutation_mode_compatible(&self, coverage: bool) -> Result<()> {
+        if self.mutate.is_none() {
+            return Ok(());
+        }
+
+        // Mutation testing has bespoke orchestration that is not compatible with these modes.
+        // Run this before compiling when the caller owns the build step so project errors do not
+        // mask CLI conflicts.
+        let mut conflicts = Vec::new();
+        if self.list {
+            conflicts.push("--list");
+        }
+        if self.debug {
+            conflicts.push("--debug");
+        }
+        if self.flamegraph {
+            conflicts.push("--flamegraph");
+        }
+        if self.flamechart {
+            conflicts.push("--flamechart");
+        }
+        if self.evm_profile.is_some() {
+            conflicts.push("--evm-profile");
+        }
+        if self.junit {
+            conflicts.push("--junit");
+        }
+        if coverage {
+            conflicts.push("coverage");
+        }
+        if self.showmap_out.is_some() {
+            conflicts.push("--showmap-out");
+        }
+        if self.replay_symbolic_artifact.is_some() {
+            conflicts.push("--replay-symbolic-artifact");
+        }
+        if !conflicts.is_empty() {
+            bail!(
+                "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
+                 mutation testing.",
+                conflicts.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
     fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
         if let Some(showmap) = self.showmap_override.clone() {
@@ -1429,6 +1476,8 @@ impl TestArgs {
             return self.compile_and_run_brutalized().await;
         }
 
+        self.ensure_mutation_mode_compatible(false)?;
+
         let (
             project_root,
             config,
@@ -1734,53 +1783,10 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         mut execution: TestExecutionOptions,
     ) -> Result<TestOutcome> {
+        self.ensure_mutation_mode_compatible(execution.coverage)?;
+
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
-        }
-
-        // Mutation testing has bespoke orchestration (per-mutant temp
-        // workspaces, baseline + N mutants, aggregated mutation report). It is
-        // not compatible with the single-run debug / flame / list / junit
-        // modes — running them together would either mix incompatible output
-        // formats, or run the secondary mode against the baseline tests and
-        // then silently continue into mutation testing. Reject up front with a
-        // clear error rather than do the wrong thing.
-        if self.mutate.is_some() {
-            let mut conflicts = Vec::new();
-            if self.list {
-                conflicts.push("--list");
-            }
-            if self.debug {
-                conflicts.push("--debug");
-            }
-            if self.flamegraph {
-                conflicts.push("--flamegraph");
-            }
-            if self.flamechart {
-                conflicts.push("--flamechart");
-            }
-            if self.evm_profile.is_some() {
-                conflicts.push("--evm-profile");
-            }
-            if self.junit {
-                conflicts.push("--junit");
-            }
-            if execution.coverage {
-                conflicts.push("coverage");
-            }
-            if self.showmap_out.is_some() {
-                conflicts.push("--showmap-out");
-            }
-            if self.replay_symbolic_artifact.is_some() {
-                conflicts.push("--replay-symbolic-artifact");
-            }
-            if !conflicts.is_empty() {
-                bail!(
-                    "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
-                     mutation testing.",
-                    conflicts.join(", ")
-                );
-            }
         }
 
         self.warn_unsupported_engine_flags(
