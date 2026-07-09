@@ -150,15 +150,13 @@ impl<P: Provider> WarningsProvider<P> {
             .filter(|(profile, _)| **profile == Config::PROFILE_SECTION)
             .map(|(_, dict)| dict);
 
-        out.extend(profiles.clone().flat_map(BTreeMap::keys).filter_map(deprecated_key_warning));
-        out.extend(
-            profiles
-                .clone()
-                .filter_map(|dict| dict.get(self.profile.as_str().as_str()))
-                .filter_map(Value::as_dict)
-                .flat_map(BTreeMap::keys)
-                .filter_map(deprecated_key_warning),
-        );
+        let deprecated_profile_keys = profiles
+            .clone()
+            .flat_map(BTreeMap::values)
+            .filter_map(Value::as_dict)
+            .flat_map(BTreeMap::keys)
+            .collect::<BTreeSet<_>>();
+        out.extend(deprecated_profile_keys.into_iter().filter_map(deprecated_key_warning));
 
         // Add warning for unknown keys within profiles (root keys only here).
         if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
