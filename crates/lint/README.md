@@ -70,6 +70,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
   - `unused-error`: Custom error declarations that are never referenced should be removed.
   - `function-init-state`: State variable initializers run before the constructor; depending on a non-pure function or another state variable there observes partial state.
+  - `cyclomatic-complexity`: functions with a cyclomatic complexity above 11 should be split into smaller functions.
   - `incorrect-using-for`: `using ... for` directives naming a library with no function applicable to the type attach nothing and should be fixed or removed.
   - `modifier-used-only-once`: Modifiers invoked by exactly one function can usually be inlined as checks in that function.
 - **Gas Optimizations:**

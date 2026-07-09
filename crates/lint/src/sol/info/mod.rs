@@ -57,6 +57,9 @@ use unused_error::UNUSED_ERROR;
 mod function_init_state;
 use function_init_state::FUNCTION_INIT_STATE;
 
+mod cyclomatic_complexity;
+use cyclomatic_complexity::CYCLOMATIC_COMPLEXITY;
+
 mod incorrect_using_for;
 use incorrect_using_for::INCORRECT_USING_FOR;
 
@@ -84,6 +87,7 @@ register_lints!(
     (EventFields, early, (EVENT_FIELDS)),
     (UnusedError, project, (UNUSED_ERROR)),
     (FunctionInitState, late, (FUNCTION_INIT_STATE)),
+    (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY)),
     (IncorrectUsingFor, late, (INCORRECT_USING_FOR)),
     (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE)),
 );
