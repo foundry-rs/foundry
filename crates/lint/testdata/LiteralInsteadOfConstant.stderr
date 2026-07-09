@@ -318,19 +318,3 @@ LL │         x = 8888;
    │
    ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
 
-note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
-   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
-   │
-LL │     function sized(uint256[365] calldata a) internal {
-   │                            ━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
-
-note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
-   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
-   │
-LL │         y = a[0] + 365;
-   │                    ━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
-

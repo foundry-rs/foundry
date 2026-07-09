@@ -225,13 +225,24 @@ contract HeaderLiterals is Capped {
     }
 }
 
-// A fixed array size in a parameter type is a header literal too. Sizes of local array
-// declarations were already counted, so a size repeated between a signature and a body
-// groups with it.
+// A fixed array size in a parameter or return type is a type annotation, not an executable
+// expression: repeated sizes across signatures stay clean, and one repeated between a
+// signature and a body does not group with it either.
 contract SignatureArraySizes {
     uint256 internal y;
 
-    function sized(uint256[365] calldata a) internal { //~NOTE: this literal appears multiple times
-        y = a[0] + 365; //~NOTE: this literal appears multiple times
+    function a(uint256[365] calldata v) internal {
+        y = v[0];
     }
+
+    function b(uint256[365] calldata v) internal {
+        y = v[1];
+    }
+
+    // The single body occurrence does not group with the sizes of the signatures either.
+    function c(uint256[365] calldata v) internal {
+        y = v[0] + 365;
+    }
+
+    function d() internal pure returns (uint256[365] memory r) {}
 }
