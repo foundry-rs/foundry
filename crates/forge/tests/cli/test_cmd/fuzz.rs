@@ -2714,11 +2714,13 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
     assert!(invariant_stdout.contains(&invariant_corpus_path), "{invariant_stdout}");
 });
 
-forgetest_init!(forge_fuzz_run_seeds_default_invariant_corpus_from_tests, |prj, cmd| {
+forgetest_init!(forge_fuzz_run_keeps_invariant_trace_seeding_opt_in, |prj, cmd| {
+    let marker = prj.root().join("unit-trace-seed-ran.txt");
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 1;
         config.invariant.corpus.corpus_gzip = false;
+        config.fs_permissions.add(PathPermission::write(prj.root()));
     });
     prj.add_test(
         "ForgeFuzzAutoCorpusSeed.t.sol",
@@ -2742,6 +2744,7 @@ contract ForgeFuzzAutoCorpusSeedTest is Test {
     }
 
     function test_seedCorpusFromUnitTestTrace() public {
+        vm.writeFile(string.concat(vm.projectRoot(), "/unit-trace-seed-ran.txt"), "ran");
         handler.touch(0x1234);
     }
 
@@ -2760,13 +2763,8 @@ contract ForgeFuzzAutoCorpusSeedTest is Test {
         .join("ForgeFuzzAutoCorpusSeedTest")
         .join("worker0")
         .join("corpus");
-    let seed_entry = std::fs::read_to_string(find_first_json(&corpus_root)).unwrap();
-    let abi = artifact_abi(
-        prj.root(),
-        "out/ForgeFuzzAutoCorpusSeed.t.sol/ForgeFuzzAutoCorpusHandler.json",
-    );
-    let touch = calldata_for(&abi, "touch", 0x1234);
-    assert!(seed_entry.contains(&touch), "{seed_entry}");
+    assert!(!has_regular_file(&corpus_root));
+    assert!(!marker.exists());
 });
 
 forgetest_init!(fuzz_branch_frontiers_capture_comparison_for_symbolic_followup, |prj, cmd| {

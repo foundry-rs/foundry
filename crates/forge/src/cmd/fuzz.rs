@@ -48,7 +48,7 @@ impl FuzzArgs {
         match self.command {
             FuzzSubcommands::Run(args) => {
                 let mut test = TestArgs::from_fuzz_run(args);
-                test.enable_fuzz_only_with_auto_corpus();
+                test.enable_fuzz_only_with_auto_fuzz_corpus();
                 Box::pin(test.run())
             }
             FuzzSubcommands::Replay(args) => Box::pin(args.run()),
