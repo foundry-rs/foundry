@@ -179,6 +179,50 @@ For more information, try '--help'.
     ]]);
 });
 
+forgetest_init!(test_list_outputs_matching_tests, |prj, cmd| {
+    prj.add_test(
+        "ListTests.t.sol",
+        r#"
+contract ListTests {
+    function test_alpha() public pure {}
+    function test_beta() public pure {}
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "ConstructorArgListTests.t.sol",
+        r#"
+contract ConstructorArgListTests {
+    constructor(uint256 value) {
+        value;
+    }
+
+    function test_constructor_arg() public pure {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--list", "--match-test", "test_"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+test/ListTests.t.sol
+  ListTests
+    test_alpha
+    test_beta
+
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--list", "--match-test", "test_alpha", "--json"])
+        .assert_success()
+        .stdout_eq("{\"test/ListTests.t.sol\":{\"ListTests\":[\"test_alpha\"]}}\n");
+});
+
 forgetest_init!(evm_profile_requires_execution_trace, |prj, cmd| {
     prj.add_test(
         "EvmProfileNoExecutionTrace.t.sol",

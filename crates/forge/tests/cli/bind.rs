@@ -1,3 +1,4 @@
+use foundry_compilers::utils::read_json_file;
 use std::{path::Path, process::Command};
 
 fn assert_bindings_compile(bindings_path: &Path) {
@@ -56,6 +57,29 @@ Generating bindings for [..] contracts
 Bindings have been generated to [..]
 
 "#]]);
+});
+
+forgetest_init!(bind_writes_abi_only_artifacts, |prj, cmd| {
+    prj.add_source(
+        "BindTarget.sol",
+        r#"
+contract BindTarget {
+    function value() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.clear();
+
+    cmd.args(["bind", "--select", "^BindTarget$"]).assert_success();
+
+    let artifact_path = prj.paths().artifacts.join("BindTarget.sol/BindTarget.json");
+    let artifact: serde_json::Value = read_json_file(&artifact_path).unwrap();
+    let abi = artifact["abi"].as_array().expect("bind artifact should include ABI");
+    assert!(!abi.is_empty());
+    assert!(artifact["bytecode"]["object"].as_str().is_none());
+    assert!(artifact["deployedBytecode"]["object"].as_str().is_none());
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11177>

@@ -6,8 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Non-verification tempo checks: local tests, fork tests, cast commands, DEX operations
 
-# Hardfork version, defaults to T5.
-HARDFORK="${TEMPO_HARDFORK:-T5}"
+# Hardfork version, defaults to T7.
+HARDFORK="${TEMPO_HARDFORK:-T7}"
 HARDFORK_UPPER=$(echo "$HARDFORK" | tr '[:lower:]' '[:upper:]')
 
 # Fee token address, defaults to native fee token

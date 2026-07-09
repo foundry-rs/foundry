@@ -29,6 +29,8 @@ casttest!(tempo_state_changing_help_includes_expires, |_prj, cmd| {
         ("tip20 create", &["tip20", "create", "--help"]),
         ("tip20 logo-set", &["tip20", "logo-set", "--help"]),
         ("tip20 mine", &["tip20", "mine", "--help"]),
+        ("storage-credits set-mode", &["storage-credits", "set-mode", "--help"]),
+        ("storage-credits set-budget", &["storage-credits", "set-budget", "--help"]),
         ("vaddr create", &["vaddr", "create", "--help"]),
     ];
 
@@ -566,6 +568,103 @@ casttest!(tip403_works_pre_t6, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(json_success_data(&check)["authorized"], true);
+});
+
+casttest!(storage_credits_reads_and_writes, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T7.into()))).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let account = wallet.address();
+
+    // A fresh account starts with no credits, the default `refund` mode, and a zero budget.
+    let balance = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "balance", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&balance)["balance"], 0);
+
+    let mode = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "mode", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&mode)["mode"], "refund");
+
+    let budget = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "budget", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&budget)["budget"], 0);
+
+    // set-mode / set-budget send valid transactions that the precompile accepts.
+    cmd.cast_fuse()
+        .args(["storage-credits", "set-mode", "direct", "--private-key", &pk, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["storage-credits", "set-budget", "42", "--private-key", &pk, "--rpc-url", &rpc])
+        .assert_success();
+
+    // Mode and budget are transaction-local transient state (TIP-1060), so they reset to defaults
+    // after the setter transaction ends; a standalone read never observes the previous write.
+    let mode = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "mode", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&mode)["mode"], "refund");
+
+    let budget = cmd
+        .cast_fuse()
+        .args(["--json", "storage-credits", "budget", &account.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&budget)["budget"], 0);
+});
+
+casttest!(storage_credits_require_t7, async |_prj, cmd| {
+    // The StorageCredits precompile only activates at T7, so reads must fail cleanly before then.
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+    let account = handle.dev_wallets().next().unwrap().address();
+
+    let pk =
+        format!("0x{}", hex::encode(handle.dev_wallets().next().unwrap().credential().to_bytes()));
+    let expected = "requires a Tempo T7-capable StorageCredits RPC";
+
+    let read_err = cmd
+        .cast_fuse()
+        .args(["storage-credits", "balance", &account.to_string(), "--rpc-url", &rpc])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(read_err.contains(expected), "{read_err}");
+
+    // Writes must fail closed too; otherwise a pre-T7 send would look like a successful no-op.
+    let set_mode_err = cmd
+        .cast_fuse()
+        .args(["storage-credits", "set-mode", "direct", "--private-key", &pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(set_mode_err.contains(expected), "{set_mode_err}");
+
+    let set_budget_err = cmd
+        .cast_fuse()
+        .args(["storage-credits", "set-budget", "1", "--private-key", &pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(set_budget_err.contains(expected), "{set_budget_err}");
 });
 
 casttest!(tip20_logo_create_help_includes_logo_uri, |_prj, cmd| {

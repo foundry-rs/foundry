@@ -24,11 +24,6 @@ impl SymBoolExpr {
         self.kind.value()
     }
 
-    #[cfg(test)]
-    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
-        self.kind.ptr_eq(&other.kind)
-    }
-
     pub(in crate::runtime) fn into_kind(self) -> SymBoolExprKind {
         self.kind.into_value()
     }
@@ -309,11 +304,6 @@ impl SymBoolExpr {
             {
                 Some(left)
             }
-            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
-                if left.as_const().is_some_and(|value| value.is_zero()) =>
-            {
-                Some(right)
-            }
             _ => None,
         }
     }
@@ -336,25 +326,17 @@ impl SymBoolExpr {
         context: &[Self],
     ) -> Option<U256> {
         match self.kind() {
-            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => match (left.kind(), right.kind()) {
-                (_, SymExprKind::Const(value)) => left.equality_forces_const(*value, expr, context),
-                (SymExprKind::Const(value), _) => {
-                    right.equality_forces_const(*value, expr, context)
-                }
+            SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => match right.kind() {
+                SymExprKind::Const(value) => left.equality_forces_const(*value, expr, context),
                 _ => None,
             },
             SymBoolExprKind::Not(value) => match value.kind() {
-                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
-                    match (left.kind(), right.kind()) {
-                        (_, SymExprKind::Const(value)) if value.is_zero() => {
-                            left.nonzero_forces_const(expr, context)
-                        }
-                        (SymExprKind::Const(value), _) if value.is_zero() => {
-                            right.nonzero_forces_const(expr, context)
-                        }
-                        _ => None,
+                SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => match right.kind() {
+                    SymExprKind::Const(value) if value.is_zero() => {
+                        left.nonzero_forces_const(expr, context)
                     }
-                }
+                    _ => None,
+                },
                 SymBoolExprKind::Not(value) => value.forces_expr_const_with_context(expr, context),
                 _ => None,
             },
@@ -437,7 +419,7 @@ impl SymBoolExpr {
     ) -> Result<Option<bool>, SymbolicError> {
         let mut vars = SymbolicVars::default();
         self.collect_eval_vars(&mut vars);
-        if vars.iter().cloned().all(|var| model.contains_name(var)) {
+        if vars.iter().copied().all(|var| model.contains_name(var)) {
             self.eval_model(model).map(Some)
         } else {
             Ok(None)
@@ -544,16 +526,8 @@ impl SymBoolExpr {
 
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         let _ = self.visit_exprs(&mut |expr| {
-            match expr.kind() {
-                SymExprKind::Var(var)
-                | SymExprKind::Keccak { name: var, .. }
-                | SymExprKind::Hash { name: var, .. } => {
-                    vars.insert(var.clone());
-                }
-                SymExprKind::GasLeft(id) => {
-                    vars.insert(SymExpr::gas_left_symbol(*id));
-                }
-                _ => {}
+            if let Some(var) = expr.kind().get_var() {
+                vars.insert(var);
             }
             ControlFlow::<()>::Continue(())
         });
@@ -561,46 +535,40 @@ impl SymBoolExpr {
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
         let _ = self.visit_exprs(&mut |expr| {
-            match expr.kind() {
-                SymExprKind::Var(var) | SymExprKind::Hash { name: var, .. } => {
-                    vars.insert(var.clone());
-                }
-                SymExprKind::GasLeft(id) => {
-                    vars.insert(SymExpr::gas_left_symbol(*id));
-                }
-                _ => {}
+            if let Some(var) = expr.kind().get_eval_var() {
+                vars.insert(var);
             }
             ControlFlow::<()>::Continue(())
         });
     }
 
-    pub(crate) fn smt(&self) -> String {
+    pub(crate) fn smt(&self, cx: &SymCx) -> String {
         let mut smt = String::new();
-        self.write_smt(&mut smt);
+        self.write_smt(cx, &mut smt);
         smt
     }
 
-    pub(in crate::runtime::expr) fn write_smt(&self, out: &mut String) {
+    pub(in crate::runtime::expr) fn write_smt(&self, cx: &SymCx, out: &mut String) {
         match self.kind() {
             SymBoolExprKind::Const(value) => out.push_str(if *value { "true" } else { "false" }),
             SymBoolExprKind::Not(value) => {
                 out.push_str("(not ");
-                value.write_smt(out);
+                value.write_smt(cx, out);
                 out.push(')');
             }
             SymBoolExprKind::And(values) => {
                 out.push_str("(and");
                 for value in values.iter() {
                     out.push(' ');
-                    value.write_smt(out);
+                    value.write_smt(cx, out);
                 }
                 out.push(')');
             }
             SymBoolExprKind::Cmp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
-                left.write_smt(out);
+                left.write_smt(cx, out);
                 out.push(' ');
-                right.write_smt(out);
+                right.write_smt(cx, out);
                 out.push(')');
             }
         }

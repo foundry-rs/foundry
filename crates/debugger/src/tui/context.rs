@@ -89,7 +89,10 @@ pub(crate) struct TUIContext<'a> {
     /// Whether to decode active buffer as utf8 or not.
     pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
+    pub(crate) show_opcodes: bool,
     pub(crate) show_source: bool,
+    pub(crate) show_variables: bool,
+    pub(crate) show_stack: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
     pub(crate) active_buffer: BufferKind,
 }
@@ -114,7 +117,10 @@ impl<'a> TUIContext<'a> {
             stack_labels: false,
             buf_utf: false,
             show_shortcuts: true,
+            show_opcodes: true,
             show_source: true,
+            show_variables: true,
+            show_stack: true,
             active_buffer: BufferKind::Memory,
         }
     }
@@ -350,13 +356,6 @@ impl TUIContext<'_> {
             KeyCode::Char('m') => {
                 self.buf_utf = !self.buf_utf;
                 self.set_info(format!("UTF-8 decoding: {}", toggle_state(self.buf_utf)));
-            }
-
-            // Toggle source pane
-            KeyCode::Char('v') => {
-                self.show_source = !self.show_source;
-                let state = if self.show_source { "shown" } else { "hidden" };
-                self.set_info(format!("Source pane: {state}"));
             }
 
             // Go to program counter
@@ -637,6 +636,14 @@ impl TUIContext<'_> {
             self.run_buffer_command(command, BufferKind::Returndata, parts);
         } else if STORAGE_COMMANDS.contains(&command) {
             self.run_storage_command(command, parts);
+        } else if OPCODE_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Opcodes, parts);
+        } else if SOURCE_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Source, parts);
+        } else if VARIABLES_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Variables, parts);
+        } else if STACK_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Stack, parts);
         } else if HELP_COMMANDS.contains(&command) {
             self.set_info(command_help());
         } else {
@@ -667,6 +674,37 @@ impl TUIContext<'_> {
             return self.set_error(command_usage(command, "<slot>"));
         }
         self.goto_storage_slot_from_input(slot);
+    }
+
+    fn run_pane_command<'a>(
+        &mut self,
+        command: &str,
+        pane: PaneCommand,
+        mut args: impl Iterator<Item = &'a str>,
+    ) {
+        if args.next().is_some() {
+            return self.set_error(command_usage(command, ""));
+        }
+        let shown = match pane {
+            PaneCommand::Opcodes => {
+                self.show_opcodes = !self.show_opcodes;
+                self.show_opcodes
+            }
+            PaneCommand::Source => {
+                self.show_source = !self.show_source;
+                self.show_source
+            }
+            PaneCommand::Variables => {
+                self.show_variables = !self.show_variables;
+                self.show_variables
+            }
+            PaneCommand::Stack => {
+                self.show_stack = !self.show_stack;
+                self.show_stack
+            }
+        };
+        let state = if shown { "shown" } else { "hidden" };
+        self.set_info(format!("{} pane: {state}", pane.label()));
     }
 
     fn goto_storage_slot_from_input(&mut self, input: &str) {
@@ -869,21 +907,48 @@ const MEMORY_COMMANDS: &[&str] = &["mem", "memory"];
 const CALLDATA_COMMANDS: &[&str] = &["calldata", "cd"];
 const RETURNDATA_COMMANDS: &[&str] = &["returndata", "ret", "rd"];
 const STORAGE_COMMANDS: &[&str] = &["storage", "store", "slot"];
+const OPCODE_COMMANDS: &[&str] = &["opcodes", "opcode", "ops"];
+const SOURCE_COMMANDS: &[&str] = &["source", "src"];
+const VARIABLES_COMMANDS: &[&str] = &["variables", "vars"];
+const STACK_COMMANDS: &[&str] = &["stack"];
 const HELP_COMMANDS: &[&str] = &["help", "h"];
 
+#[derive(Clone, Copy)]
+enum PaneCommand {
+    Opcodes,
+    Source,
+    Variables,
+    Stack,
+}
+
+impl PaneCommand {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Opcodes => "Opcodes",
+            Self::Source => "Source",
+            Self::Variables => "Variables",
+            Self::Stack => "Stack",
+        }
+    }
+}
+
 fn command_usage(command: &str, arg: &str) -> String {
-    format!("Usage: :{command} {arg}")
+    if arg.is_empty() { format!("Usage: :{command}") } else { format!("Usage: :{command} {arg}") }
 }
 
 fn command_help() -> String {
     format!(
-        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>, {} <slot>",
+        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>, {} <slot>, {}, {}, {}, {}",
         command_aliases(CONTINUE_COMMANDS),
         command_aliases(PC_COMMANDS),
         command_aliases(MEMORY_COMMANDS),
         command_aliases(CALLDATA_COMMANDS),
         command_aliases(RETURNDATA_COMMANDS),
-        command_aliases(STORAGE_COMMANDS)
+        command_aliases(STORAGE_COMMANDS),
+        command_aliases(OPCODE_COMMANDS),
+        command_aliases(SOURCE_COMMANDS),
+        command_aliases(VARIABLES_COMMANDS),
+        command_aliases(STACK_COMMANDS)
     )
 }
 
@@ -1456,13 +1521,6 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('m')));
         assert!(!tui.buf_utf);
         assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: off");
-
-        let _ = tui.handle_key_event(key(KeyCode::Char('v')));
-        assert!(!tui.show_source);
-        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: hidden");
-        let _ = tui.handle_key_event(key(KeyCode::Char('v')));
-        assert!(tui.show_source);
-        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: shown");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('h')));
         assert!(!tui.show_shortcuts);
@@ -2067,6 +2125,10 @@ mod tests {
             CALLDATA_COMMANDS,
             RETURNDATA_COMMANDS,
             STORAGE_COMMANDS,
+            OPCODE_COMMANDS,
+            SOURCE_COMMANDS,
+            VARIABLES_COMMANDS,
+            STACK_COMMANDS,
         ] {
             assert!(help.contains(&command_aliases(commands)));
         }
@@ -2080,6 +2142,51 @@ mod tests {
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Error);
         assert_eq!(status.text, "Usage: :store <slot>");
+    }
+
+    #[test]
+    fn command_prompt_toggles_panes() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("opcodes");
+        assert!(!tui.show_opcodes);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Opcodes pane: hidden");
+
+        tui.run_command_from_input(":ops");
+        assert!(tui.show_opcodes);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Opcodes pane: shown");
+
+        tui.run_command_from_input("source");
+        assert!(!tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: hidden");
+
+        tui.run_command_from_input(":src");
+        assert!(tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: shown");
+
+        tui.run_command_from_input("variables");
+        assert!(!tui.show_variables);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Variables pane: hidden");
+
+        tui.run_command_from_input(":vars");
+        assert!(tui.show_variables);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Variables pane: shown");
+
+        tui.run_command_from_input("stack");
+        assert!(!tui.show_stack);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack pane: hidden");
+
+        tui.run_command_from_input(":stack");
+        assert!(tui.show_stack);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack pane: shown");
+
+        tui.run_command_from_input("stack extra");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Usage: :stack");
     }
 
     #[test]

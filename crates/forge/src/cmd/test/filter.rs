@@ -25,7 +25,7 @@ pub struct RerunFailures {
 /// The filter to use during testing.
 ///
 /// See also `FileFilter`.
-#[derive(Clone, Parser)]
+#[derive(Clone, Default, Parser)]
 #[command(next_help_heading = "Test filtering")]
 pub struct FilterArgs {
     /// Only run test functions matching the specified regex pattern.
@@ -222,6 +222,41 @@ impl ProjectPathsAwareFilter {
     pub fn set_rerun_failures(&mut self, failures: Vec<RerunFailure>) {
         self.rerun_failures = Some(failures);
     }
+
+    fn matches_rerun_contract(&self, failure_contract: &str, contract_id: &str) -> bool {
+        if failure_contract == contract_id {
+            return true;
+        }
+
+        let Some((failure_path, failure_name)) = failure_contract.rsplit_once(':') else {
+            return false;
+        };
+        let Some((contract_path, contract_name)) = contract_id.rsplit_once(':') else {
+            return false;
+        };
+        if failure_name != contract_name {
+            return false;
+        }
+
+        let normalize = |path: &str| {
+            let path = Path::new(path);
+            if let Ok(path) = path.strip_prefix(&self.paths.root) {
+                return path.to_path_buf();
+            }
+
+            if path.is_absolute()
+                && let Ok(root) = dunce::canonicalize(&self.paths.root)
+                && let Ok(path) = dunce::canonicalize(path)
+                && let Ok(path) = path.strip_prefix(root)
+            {
+                return path.to_path_buf();
+            }
+
+            path.to_path_buf()
+        };
+
+        normalize(failure_path) == normalize(contract_path)
+    }
 }
 
 impl FileFilter for ProjectPathsAwareFilter {
@@ -262,7 +297,7 @@ impl TestFilter for ProjectPathsAwareFilter {
             let signature = func.signature();
             let name = signature.split('(').next().unwrap_or(&signature);
             failures.iter().any(|failure| {
-                failure.contract == contract_id
+                self.matches_rerun_contract(&failure.contract, contract_id)
                     && (failure.test == signature || failure.test == name)
             })
         } else {

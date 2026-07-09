@@ -27,7 +27,7 @@ use foundry_config::{
 };
 use serde::Serialize;
 use solar::{
-    interface::{Session, config::Opts},
+    interface::{Session, config::CompileOpts},
     sema::Compiler,
 };
 use std::path::PathBuf;
@@ -213,7 +213,7 @@ impl BuildArgs {
 
             // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
             // compiler, we should reuse the parser from the project output.
-            let mut opts = Opts::default();
+            let mut opts = CompileOpts::default();
             opts.unstable.typeck = true;
             let mut compiler =
                 Compiler::new(Session::builder().opts(opts).with_stderr_emitter().build());
