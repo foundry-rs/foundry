@@ -7244,6 +7244,7 @@ mod tests {
 
                 [symbolic]
                 enabled = true
+                depth = 128
                 unknown_symbolic_key = "should_warn"
 
                 [mutation]
