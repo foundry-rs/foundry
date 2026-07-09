@@ -557,7 +557,7 @@ impl BenchmarkProject {
         )
     }
 
-    /// Benchmark forge test with --isolate flag
+    /// Benchmark forge test with isolate mode
     pub fn bench_forge_isolate_test(
         &self,
         version: &str,
@@ -569,7 +569,7 @@ impl BenchmarkProject {
             "forge_isolate_test",
             version,
             &self.cmd(
-                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge test --isolate",
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge test",
             ),
             runs,
             Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge build"),
