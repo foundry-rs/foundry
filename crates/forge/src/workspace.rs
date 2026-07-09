@@ -104,7 +104,7 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
 
     if let Some(path) = &config.fuzz.failure_persist_dir {
         temp_config.fuzz.failure_persist_dir =
-            Some(rebase_project_path(&config.root, temp_path, path));
+            Some(rebase_mutable_project_path(config, temp_path, path));
     }
     if let Some(path) = &config.fuzz.corpus.corpus_dir {
         temp_config.fuzz.corpus.corpus_dir =
@@ -116,7 +116,7 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
     }
     if let Some(path) = &config.invariant.failure_persist_dir {
         temp_config.invariant.failure_persist_dir =
-            Some(rebase_project_path(&config.root, temp_path, path));
+            Some(rebase_mutable_project_path(config, temp_path, path));
     }
     if let Some(path) = &config.invariant.corpus.corpus_dir {
         temp_config.invariant.corpus.corpus_dir =
@@ -1030,6 +1030,33 @@ mod tests {
         assert!(rebased_frontier.starts_with(workspace.join(".foundry_mutable")));
         assert!(rebased_corpus.join("seed.json").exists());
         assert!(rebased_frontier.join("frontier.json").exists());
+    }
+
+    #[test]
+    fn test_rebase_config_paths_isolates_external_failure_persist_dirs() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+
+        let config = Config {
+            root,
+            fuzz: foundry_config::FuzzConfig {
+                failure_persist_dir: Some(PathBuf::from("../shared-fuzz-failures")),
+                ..Default::default()
+            },
+            invariant: foundry_config::InvariantConfig {
+                failure_persist_dir: Some(PathBuf::from("../shared-invariant-failures")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let temp_config = rebase_config_paths(&config, &workspace);
+        let fuzz_failure_dir = temp_config.fuzz.failure_persist_dir.unwrap();
+        let invariant_failure_dir = temp_config.invariant.failure_persist_dir.unwrap();
+
+        assert!(fuzz_failure_dir.starts_with(workspace.join(".foundry_mutable")));
+        assert!(invariant_failure_dir.starts_with(workspace.join(".foundry_mutable")));
     }
 
     #[cfg(not(target_os = "windows"))]
