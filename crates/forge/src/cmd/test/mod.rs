@@ -3905,6 +3905,12 @@ mod tests {
     }
 
     #[test]
+    fn compact_labels_trace() {
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--compact-labels"]);
+        assert!(args.tracing.compact_labels);
+    }
+
+    #[test]
     fn silent_output_disables_trace_rendering() {
         assert!(!should_render_trace_output(true, true));
         assert!(!should_render_trace_output(false, false));
