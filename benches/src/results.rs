@@ -304,7 +304,7 @@ pub fn format_benchmark_name(name: &str) -> String {
         "forge_build_with_cache" => "Forge Build (With Cache)",
         "forge_fuzz_test" => "Forge Fuzz Test",
         "forge_coverage" => "Forge Coverage",
-        "forge_isolate_test" => "Forge Test (Isolated)",
+        "forge_no_isolate_test" => "Forge Test (No Isolate)",
         "forge_symbolic_test" => "Forge Symbolic Test",
         _ => name,
     }

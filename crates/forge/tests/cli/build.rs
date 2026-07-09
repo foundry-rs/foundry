@@ -369,6 +369,119 @@ contract Counter {
     );
 });
 
+// tests that `--sizes` filters out internal libraries (libraries without any external/public
+// functions), which are never deployed on their own.
+// <https://github.com/foundry-rs/foundry/issues/1356>
+forgetest!(build_sizes_filters_internal_libraries, |prj, cmd| {
+    prj.add_source(
+        "Libraries",
+        r"
+// Internal library: all functions internal, never deployed on its own.
+library InternalLib {
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a + b;
+    }
+}
+
+// Internal library that declares an event and error but no external functions.
+library EventLib {
+    event Ping(uint256 x);
+    error Boom();
+    function ping(uint256 a) internal pure returns (uint256) {
+        return a;
+    }
+}
+
+// Public library: deployed and linked.
+library PublicLib {
+    function sub(uint256 a, uint256 b) public pure returns (uint256) {
+        return a - b;
+    }
+}
+
+contract Consumer {
+    using InternalLib for uint256;
+    function run(uint256 x) external pure returns (uint256) {
+        return x.add(1);
+    }
+}
+",
+    );
+
+    // `InternalLib` and `EventLib` must not appear; `PublicLib` and `Consumer` must.
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+...
+
+╭-----------+------------------+-------------------+--------------------+---------------------╮
+| Contract  | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
++=============================================================================================+
+| Consumer  | 430              | 458               | 24,146             | 48,694              |
+|-----------+------------------+-------------------+--------------------+---------------------|
+| PublicLib | 432              | 509               | 24,144             | 48,643              |
+╰-----------+------------------+-------------------+--------------------+---------------------╯
+
+
+"#]]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "Consumer": {
+    "runtime_size": 430,
+    "init_size": 458,
+    "runtime_margin": 24146,
+    "init_margin": 48694
+  },
+  "PublicLib": {
+    "runtime_size": 432,
+    "init_size": 509,
+    "runtime_margin": 24144,
+    "init_margin": 48643
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+// tests that when a filtered internal library shares a name with a kept contract, the survivor is
+// unique and prints without the `(path)` disambiguation suffix.
+// <https://github.com/foundry-rs/foundry/issues/1356>
+forgetest!(build_sizes_filtered_internal_library_frees_unique_name, |prj, cmd| {
+    prj.add_source(
+        "a/Foo",
+        r"
+library Foo {
+    function add(uint256 a) internal pure returns (uint256) {
+        return a + 1;
+    }
+}
+",
+    );
+    prj.add_source(
+        "b/Foo",
+        r"
+contract Foo {
+    function f() external pure returns (uint256) {
+        return 1;
+    }
+}
+",
+    );
+
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+...
+
+╭----------+------------------+-------------------+--------------------+---------------------╮
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
++============================================================================================+
+| Foo      | 175              | 201               | 24,401             | 48,951              |
+╰----------+------------------+-------------------+--------------------+---------------------╯
+
+
+"#]]);
+});
+
 // tests that skip key in config can be used to skip non-compilable contract
 forgetest_init!(test_can_skip_contract, |prj, cmd| {
     prj.add_source(
