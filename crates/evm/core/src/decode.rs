@@ -133,12 +133,14 @@ impl RevertDecoder {
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
-        self.maybe_decode_known(err).or_else(|| Self::maybe_decode_fallback(err, status))
+        self.maybe_decode_known(err)
+            .or_else(|| decode_as_non_empty_string(err))
+            .or_else(|| Self::maybe_decode_fallback(err, status))
     }
 
     /// Tries to decode the given revert bytes as one of the errors known to this decoder:
-    /// Solidity's `Error(string)` and `Panic(uint256)`, `Vm`'s custom errors, custom errors
-    /// registered with this decoder, or a plain string.
+    /// Solidity's `Error(string)` and `Panic(uint256)`, `Vm`'s custom errors, or custom errors
+    /// registered with this decoder.
     ///
     /// Unlike [`maybe_decode`](Self::maybe_decode), this returns `None` for unrecognized custom
     /// errors instead of falling back to a generic `custom error <selector>` representation.
@@ -169,7 +171,7 @@ impl RevertDecoder {
             }
         }
 
-        decode_as_non_empty_string(err)
+        None
     }
 
     /// Formats revert bytes that could not be decoded as a known error.
@@ -290,5 +292,14 @@ mod tests {
 
         assert_eq!(reason, "FOUNDRY::SKIP");
         assert!(SkipReason::decode_self(&reason).is_none());
+    }
+
+    #[test]
+    fn plain_string_is_not_a_known_error() {
+        let decoder = RevertDecoder::new();
+        let data = b".,Bo";
+
+        assert_eq!(decoder.maybe_decode_known(data), None);
+        assert_eq!(decoder.maybe_decode(data, None).as_deref(), Some(".,Bo"));
     }
 }

@@ -4539,9 +4539,14 @@ forgetest_async!(flaky_cast_call_trace_decodes_error_from_signatures_cache, |prj
         r#"
 contract CustomErrorContract {
     error WTF273987(uint256 a, uint256 b);
+    error PrintableError18();
 
     function wtf2890230(uint256 a, uint128 b) external pure {
         revert WTF273987(a, b);
+    }
+
+    function printableError() external pure {
+        revert PrintableError18();
     }
 }
 "#,
@@ -4581,6 +4586,32 @@ contract CustomErrorContract {
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::wtf2890230(42, 69)
     └─ ← [Revert] WTF273987(42, 69)
+
+
+[GAS]
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: Transaction failed.
+
+"#]]);
+
+    // A custom error whose selector is valid ASCII must also be decoded from the cache rather than
+    // rendered as a raw string. `PrintableError18()` has selector `0x2e2c426f` (`.,Bo`).
+    cmd.cast_fuse().env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "printableError()",
+        "--trace",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::printableError()
+    └─ ← [Revert] PrintableError18()
 
 
 [GAS]
