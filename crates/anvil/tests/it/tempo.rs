@@ -36,7 +36,8 @@ use foundry_evm::core::tempo::{
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
     active_tempo_precompile_addresses,
 };
-use tempo_alloy::{primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
+use futures::StreamExt;
+use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
@@ -108,6 +109,25 @@ async fn can_get_tempo_header_by_number() {
             provider.client().request("eth_getHeaderByNumber", (number,)).await.unwrap();
         assert_tempo_header_fields(&header.unwrap());
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_new_heads_subscription_returns_full_header() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+        .connect(&handle.ws_endpoint())
+        .await
+        .unwrap();
+    let subscription = provider.subscribe_blocks().await.unwrap();
+    let mut blocks = subscription.into_stream();
+
+    api.mine_one().await;
+    let header = blocks.next().await.unwrap();
+    assert_tempo_header_fields(&header);
+
+    let stored_header = api.backend.get_block(header.number()).unwrap().header;
+    assert_eq!(stored_header.as_tempo().unwrap(), header.as_ref());
+    assert_eq!(header.hash, header.as_ref().hash_slow());
 }
 
 #[tokio::test(flavor = "multi_thread")]
