@@ -3021,8 +3021,14 @@ impl EthApi<FoundryNetwork> {
 
         let raw = tx.encoded_2718().into();
 
-        let mut tx =
-            transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None);
+        let mut tx = transaction_build(
+            None,
+            MaybeImpersonatedTransaction::new(tx),
+            None,
+            None,
+            None,
+            self.backend.is_tempo(),
+        );
 
         // Set the correct `from` address (overrides the recovered zero address from dummy
         // signature)
@@ -3065,6 +3071,7 @@ impl EthApi<FoundryNetwork> {
             None,
             None,
             Some(self.backend.base_fee()),
+            self.backend.is_tempo(),
         );
 
         let WithOtherFields { inner: mut tx, other } = tx.0;
@@ -3111,6 +3118,7 @@ impl EthApi<FoundryNetwork> {
                     None,
                     None,
                     Some(self.backend.base_fee()),
+                    self.backend.is_tempo(),
                 );
 
                 let WithOtherFields { inner: mut tx, other } = tx.0;
@@ -3293,7 +3301,7 @@ impl EthApi<FoundryNetwork> {
         let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
         let receipts = self
             .backend
-            .mined_receipts(block.header.hash_slow())
+            .mined_receipts(self.backend.block_hash(&block.header))
             .ok_or(BlockchainError::BlockNotFound)?;
         Ok(receipts.into_iter().map(|receipt| receipt.encoded_2718().into()).collect())
     }
@@ -3912,6 +3920,7 @@ impl EthApi<FoundryNetwork> {
                 None,
                 None,
                 None,
+                false,
             );
 
             let WithOtherFields { inner: mut tx, other } = tx.0;
@@ -4183,6 +4192,7 @@ impl EthApi<FoundryNetwork> {
                 Some(&block),
                 Some(info),
                 Some(base_fee),
+                self.backend.is_tempo(),
             );
             block_transactions.push(tx);
         }

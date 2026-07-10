@@ -55,11 +55,11 @@ where
 
             if let Some(notification) = ready!(self.blocks.poll_next_unpin(cx)) {
                 let logs = match notification {
-                    ChainNotification::Block(block) => {
-                        let b = self.storage.block(block.hash);
-                        let receipts = self.storage.receipts(block.hash);
+                    ChainNotification::Block(notification) => {
+                        let b = self.storage.block(notification.hash);
+                        let receipts = self.storage.receipts(notification.hash);
                         if let (Some(receipts), Some(block)) = (receipts, b) {
-                            filter_logs(block, receipts, &self.filter)
+                            filter_logs(notification.hash, block, receipts, &self.filter)
                         } else {
                             continue;
                         }
@@ -209,7 +209,12 @@ where
 }
 
 /// Returns all the logs that match the given filter
-pub fn filter_logs<R>(block: Block, receipts: Vec<R>, filter: &FilteredParams) -> Vec<Log>
+pub fn filter_logs<R>(
+    block_hash: B256,
+    block: Block,
+    receipts: Vec<R>,
+    filter: &FilteredParams,
+) -> Vec<Log>
 where
     R: TxReceipt<Log = alloy_primitives::Log>,
 {
@@ -233,7 +238,6 @@ where
         true
     }
 
-    let block_hash = block.header.hash_slow();
     let mut logs = vec![];
     let mut log_index: u32 = 0;
     for (receipt_index, receipt) in receipts.into_iter().enumerate() {

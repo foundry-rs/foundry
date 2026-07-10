@@ -17,7 +17,7 @@ use std::{
 
 #[cfg(feature = "cli")]
 use crate::utils::http_provider;
-use alloy_consensus::Typed2718;
+use alloy_consensus::{BlockHeader, Sealable, Typed2718};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
@@ -105,6 +105,30 @@ async fn can_get_tempo_header_by_number() {
         let header: Option<TempoHeaderResponse> =
             provider.client().request("eth_getHeaderByNumber", (number,)).await.unwrap();
         assert_tempo_header_fields(&header.unwrap());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_rpc_block_hashes_match_canonical_headers() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.mine_one().await;
+    api.mine_one().await;
+
+    let provider = handle.http_provider();
+    let mut parent_hash = None;
+    for number in 0..=2 {
+        let header: TempoHeaderResponse = provider
+            .client()
+            .request("eth_getHeaderByNumber", (format!("0x{number:x}"),))
+            .await
+            .unwrap();
+        let canonical_hash = header.as_ref().hash_slow();
+
+        assert_eq!(header.hash, canonical_hash, "block {number} RPC hash");
+        if let Some(parent_hash) = parent_hash {
+            assert_eq!(header.parent_hash(), parent_hash, "block {number} parent hash");
+        }
+        parent_hash = Some(canonical_hash);
     }
 }
 

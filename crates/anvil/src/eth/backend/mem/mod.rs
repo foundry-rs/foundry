@@ -36,7 +36,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    Blob, BlockHeader, EnvKzgSettings, Header, Sealable, Signed, Transaction as TransactionTrait,
     TrieAccount, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
@@ -199,7 +199,7 @@ use tempo_precompiles::{
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
 };
-use tempo_primitives::TEMPO_TX_TYPE_ID;
+use tempo_primitives::{TEMPO_TX_TYPE_ID, TempoHeader};
 use tempo_revm::{
     TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
     gas_params::tempo_gas_params,
@@ -214,6 +214,22 @@ pub mod inspector;
 pub mod optimism;
 pub mod state;
 pub mod storage;
+
+/// Converts an Ethereum-shaped Anvil header into Tempo's consensus header shape.
+fn tempo_header(inner: Header) -> TempoHeader {
+    TempoHeader {
+        general_gas_limit: inner.gas_limit,
+        shared_gas_limit: 0,
+        timestamp_millis_part: 0,
+        inner,
+        consensus_context: None,
+    }
+}
+
+/// Computes the canonical header hash for the configured network.
+pub(super) fn header_hash(header: &Header, is_tempo: bool) -> B256 {
+    if is_tempo { tempo_header(header.clone()).hash_slow() } else { header.hash_slow() }
+}
 
 /// Helper trait that combines revm::DatabaseRef with Debug.
 /// This is needed because alloy-evm requires Debug on Database implementations.
@@ -458,6 +474,11 @@ impl<N: Network> Backend<N> {
     /// Returns the current best hash of the chain
     pub fn best_hash(&self) -> B256 {
         self.blockchain.storage.read().best_hash
+    }
+
+    /// Returns the canonical hash of a local block header.
+    pub(crate) fn block_hash(&self, header: &Header) -> B256 {
+        header_hash(header, self.is_tempo())
     }
 
     /// Returns the current best number of the chain
@@ -1017,7 +1038,14 @@ impl<N: Network> Backend<N> {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
+            let tx = transaction_build(
+                Some(hash),
+                tx,
+                Some(block),
+                Some(info),
+                base_fee,
+                self.is_tempo(),
+            );
             transactions.push(tx);
         }
         Some(transactions)
@@ -1051,7 +1079,7 @@ impl<N: Network> Backend<N> {
         let header = block.header.clone();
         let transactions = block.body.transactions;
 
-        let hash = known_hash.unwrap_or_else(|| header.hash_slow());
+        let hash = known_hash.unwrap_or_else(|| header_hash(&header, self.is_tempo()));
         let Header { number, withdrawals_root, .. } = header;
 
         let block = AlloyBlock {
@@ -1768,6 +1796,7 @@ impl<N: Network> Backend<N> {
             Some(&block),
             Some(info),
             block.header.base_fee_per_gas(),
+            self.is_tempo(),
         ))
     }
 
@@ -1806,6 +1835,7 @@ impl<N: Network> Backend<N> {
             Some(&block),
             Some(info),
             block.header.base_fee_per_gas(),
+            self.is_tempo(),
         ))
     }
 
@@ -2246,13 +2276,19 @@ impl<N: Network> Backend<N> {
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(fork) = fork.read().as_ref() {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
-            Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
+            Blockchain::forked(
+                fork.block_number(),
+                fork.block_hash(),
+                fork.total_difficulty(),
+                networks.is_tempo(),
+            )
         } else {
             Blockchain::new(
                 &env.read(),
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
                 genesis.number,
+                networks.is_tempo(),
             )
         };
 
@@ -2526,6 +2562,7 @@ impl<N: Network> Backend<N> {
                 fork.block_number(),
                 fork.block_hash(),
                 fork.total_difficulty(),
+                self.is_tempo(),
             );
             self.states.write().clear();
             self.db.write().await.clear();
@@ -2571,6 +2608,7 @@ impl<N: Network> Backend<N> {
             base_fee,
             genesis_timestamp,
             genesis_number,
+            self.is_tempo(),
         );
         self.states.write().clear();
 
@@ -3032,7 +3070,7 @@ where
                 );
 
                 // update the new blockhash in the db itself
-                let block_hash = block_info.block.header.hash_slow();
+                let block_hash = header_hash(&block_info.block.header, self.is_tempo());
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
 
                 (block_info, included, invalid, not_yet_valid, block_hash)
@@ -4164,7 +4202,7 @@ where
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
-        let hash = common_block.header.hash_slow();
+        let hash = header_hash(&common_block.header, self.is_tempo());
 
         // Get the database at the common block
         let common_state = {
@@ -4196,7 +4234,7 @@ where
 
             // Clean up in-memory and on-disk states for removed blocks
             let removed_hashes: Vec<_> =
-                removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+                removed_blocks.iter().map(|b| header_hash(&b.header, self.is_tempo())).collect();
             self.states.write().remove_block_states(&removed_hashes);
 
             // Notify all log subscriptions and filters about the removed logs, so they receive
@@ -4299,7 +4337,7 @@ where
             )));
         }
 
-        self.debug_trace_block_by_hash(block.header.hash_slow(), opts).await
+        self.debug_trace_block_by_hash(header_hash(&block.header, self.is_tempo()), opts).await
     }
 
     /// Returns geth-style traces for all transactions in a block by hash.
@@ -4959,6 +4997,7 @@ impl Backend<FoundryNetwork> {
                         None,
                         None,
                         Some(block_env.basefee),
+                        self.is_tempo(),
                     );
                     transactions.push(rpc_tx);
 
@@ -5026,7 +5065,7 @@ impl Backend<FoundryNetwork> {
                 };
                 let mut block = alloy_rpc_types::Block {
                     header: AnyRpcHeader {
-                        hash: header.hash_slow(),
+                        hash: header_hash(&header, self.is_tempo()),
                         inner: header.into(),
                         total_difficulty: None,
                         size: None,
@@ -5516,6 +5555,7 @@ pub fn transaction_build(
     block: Option<&Block>,
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
+    is_tempo: bool,
 ) -> AnyRpcTransaction {
     #[cfg(feature = "optimism")]
     if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
@@ -5583,7 +5623,7 @@ pub fn transaction_build(
 
                 let tx = Transaction {
                     inner: Recovered::new_unchecked(envelope, from),
-                    block_hash: block.as_ref().map(|block| block.header.hash_slow()),
+                    block_hash: block.as_ref().map(|block| header_hash(&block.header, is_tempo)),
                     block_number: block.as_ref().map(|block| block.header.number()),
                     transaction_index: info.as_ref().map(|info| info.transaction_index),
                     effective_gas_price: None,
@@ -5622,7 +5662,7 @@ pub fn transaction_build(
 
     let tx = Transaction {
         inner: Recovered::new_unchecked(envelope, from),
-        block_hash: block.as_ref().map(|block| block.header.hash_slow()),
+        block_hash: block.as_ref().map(|block| header_hash(&block.header, is_tempo)),
         block_number: block.as_ref().map(|block| block.header.number()),
         transaction_index: info.as_ref().map(|info| info.transaction_index),
         // deprecated

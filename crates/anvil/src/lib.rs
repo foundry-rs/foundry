@@ -216,7 +216,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     );
     // create an entry for the best block
     if let Some(header) = backend.get_block(backend.best_number()).map(|block| block.header) {
-        fee_history_service.insert_cache_entry_for_block(header.hash_slow(), &header);
+        fee_history_service.insert_cache_entry_for_block(backend.best_hash(), &header);
     }
 
     let filters = Filters::default();

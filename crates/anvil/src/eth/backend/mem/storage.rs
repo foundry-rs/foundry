@@ -5,7 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        mem::cache::DiskStateCache,
+        mem::{cache::DiskStateCache, header_hash},
     },
     pool::transactions::PoolTransaction,
 };
@@ -297,6 +297,8 @@ pub struct BlockchainStorage<N: Network> {
     pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
+    /// Whether locally stored headers use Tempo consensus hashing.
+    is_tempo: bool,
 }
 
 impl<N: Network> BlockchainStorage<N> {
@@ -306,6 +308,7 @@ impl<N: Network> BlockchainStorage<N> {
         base_fee: Option<u64>,
         timestamp: u64,
         genesis_number: u64,
+        is_tempo: bool,
     ) -> Self {
         let is_shanghai = *evm_env.spec_id() >= SpecId::SHANGHAI;
         let is_cancun = *evm_env.spec_id() >= SpecId::CANCUN;
@@ -328,7 +331,7 @@ impl<N: Network> BlockchainStorage<N> {
         };
         let block =
             create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
-        let genesis_hash = block.header.hash_slow();
+        let genesis_hash = header_hash(&block.header, is_tempo);
         let best_hash = genesis_hash;
         let best_number = genesis_number;
 
@@ -346,10 +349,16 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            is_tempo,
         }
     }
 
-    pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
+    pub fn forked(
+        block_number: u64,
+        block_hash: B256,
+        total_difficulty: U256,
+        is_tempo: bool,
+    ) -> Self {
         let mut hashes = HashMap::default();
         hashes.insert(block_number, block_hash);
 
@@ -362,6 +371,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
+            is_tempo,
         }
     }
 
@@ -399,6 +409,7 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
+            is_tempo: false,
         }
     }
 
@@ -428,7 +439,7 @@ impl<N: Network> BlockchainStorage<N> {
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
         for serializable_block in &serializable_blocks {
             let block: Block = serializable_block.clone().into();
-            let block_hash = block.header.hash_slow();
+            let block_hash = header_hash(&block.header, self.is_tempo);
             let block_number = block.header.number();
             self.blocks.insert(block_hash, block);
             self.hashes.insert(block_number, block_hash);
@@ -496,6 +507,7 @@ impl<N: Network> Blockchain<N> {
         base_fee: Option<u64>,
         timestamp: u64,
         genesis_number: u64,
+        is_tempo: bool,
     ) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::new(
@@ -503,16 +515,23 @@ impl<N: Network> Blockchain<N> {
                 base_fee,
                 timestamp,
                 genesis_number,
+                is_tempo,
             ))),
         }
     }
 
-    pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
+    pub fn forked(
+        block_number: u64,
+        block_hash: B256,
+        total_difficulty: U256,
+        is_tempo: bool,
+    ) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::forked(
                 block_number,
                 block_hash,
                 total_difficulty,
+                is_tempo,
             ))),
         }
     }
