@@ -650,6 +650,7 @@ mod tests {
     use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
     use revm::{database::DatabaseRef, state::AccountInfo};
+    use tempo_primitives::TempoHeader;
 
     #[test]
     fn test_interval_update() {
@@ -838,6 +839,35 @@ mod tests {
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
+    }
+
+    #[test]
+    fn test_tempo_storage_dump_reload_cycle() {
+        let mut dump_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        let header = TempoHeader {
+            general_gas_limit: 30_000_000,
+            shared_gas_limit: 1_000_000,
+            timestamp_millis_part: 123,
+            inner: Header { number: 7, gas_limit: 30_000_000, timestamp: 42, ..Default::default() },
+            consensus_context: None,
+        };
+        let block = create_block(
+            header.into(),
+            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+        );
+        let expected_header = block.header.clone();
+        let block_hash = block.header.hash_slow();
+        dump_storage.blocks.insert(block_hash, block);
+
+        let serialized = serde_json::to_string(&dump_storage.serialized_blocks()).unwrap();
+        let blocks: Vec<SerializableBlock> = serde_json::from_str(&serialized).unwrap();
+        let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        load_storage.load_blocks(blocks);
+
+        let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
+        assert_eq!(loaded_block.header, expected_header);
+        assert_eq!(loaded_block.header.as_tempo().unwrap().shared_gas_limit, 1_000_000);
+        assert_eq!(load_storage.hashes.get(&7), Some(&block_hash));
     }
 
     // Regression test for https://github.com/foundry-rs/foundry/issues/12645:

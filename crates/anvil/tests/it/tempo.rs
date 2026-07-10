@@ -23,12 +23,14 @@ use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, aliases::U96, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
+use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolEvent, SolValue, sol};
 use anvil::{NodeConfig, spawn};
+use anvil_core::eth::block::Block;
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
@@ -131,8 +133,45 @@ async fn tempo_rpc_block_hashes_match_canonical_headers() {
         if let Some(parent_hash) = parent_hash {
             assert_eq!(header.parent_hash(), parent_hash, "block {number} parent hash");
         }
+
+        let header_by_hash: Option<TempoHeaderResponse> =
+            provider.client().request("eth_getHeaderByHash", (canonical_hash,)).await.unwrap();
+        assert_eq!(header_by_hash.unwrap().as_ref(), header.as_ref());
         parent_hash = Some(canonical_hash);
     }
+
+    let pending: TempoHeaderResponse =
+        provider.client().request("eth_getHeaderByNumber", ("pending",)).await.unwrap();
+    assert_eq!(pending.hash, pending.as_ref().hash_slow(), "pending RPC hash");
+    assert_eq!(pending.parent_hash(), parent_hash.unwrap(), "pending parent hash");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_raw_header_and_block_use_tempo_rlp() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.mine_one().await;
+
+    let provider = handle.http_provider();
+    let header: TempoHeaderResponse =
+        provider.client().request("eth_getHeaderByNumber", ("0x1",)).await.unwrap();
+
+    let raw_header: Bytes = provider
+        .client()
+        .request("debug_getRawHeader", (BlockId::hash(header.hash),))
+        .await
+        .unwrap();
+    let decoded_header = TempoHeader::decode(&mut raw_header.as_ref()).unwrap();
+    assert_eq!(&decoded_header, header.as_ref());
+    assert_eq!(decoded_header.hash_slow(), header.hash);
+
+    let raw_block: Bytes = provider
+        .client()
+        .request("debug_getRawBlock", (BlockId::hash(header.hash),))
+        .await
+        .unwrap();
+    let decoded_block: Block = Block::decode(&mut raw_block.as_ref()).unwrap();
+    assert_eq!(decoded_block.header.as_tempo().unwrap(), header.as_ref());
+    assert_eq!(decoded_block.header.hash_slow(), header.hash);
 }
 
 #[tokio::test(flavor = "multi_thread")]
