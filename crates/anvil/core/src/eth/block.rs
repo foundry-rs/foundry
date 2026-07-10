@@ -1,15 +1,16 @@
 use super::transaction::TransactionInfo;
-use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root,
-};
+#[cfg(test)]
+use alloy_consensus::Header;
+use alloy_consensus::{BlockBody, EMPTY_OMMER_ROOT_HASH, proofs::calculate_transaction_root};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::Network;
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryHeader, FoundryTxEnvelope};
 
 use crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Type alias for a block containing potentially impersonated transactions.
-pub type Block<T = FoundryTxEnvelope> = alloy_consensus::Block<MaybeImpersonatedTransaction<T>>;
+pub type Block<T = FoundryTxEnvelope, H = FoundryHeader> =
+    alloy_consensus::Block<MaybeImpersonatedTransaction<T>, H>;
 
 /// Container type that gathers all block data, generic over a [`Network`].
 #[derive(Clone, Debug)]
@@ -25,7 +26,7 @@ pub struct BlockInfo<N: Network> {
 /// Note: if the `impersonate-tx` feature is enabled this will also accept
 /// `MaybeImpersonatedTransaction`.
 pub fn create_block<T, Tx>(
-    mut header: Header,
+    mut header: FoundryHeader,
     transactions: impl IntoIterator<Item = T>,
 ) -> Block<Tx>
 where

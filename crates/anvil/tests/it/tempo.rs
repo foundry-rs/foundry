@@ -122,7 +122,10 @@ async fn tempo_rpc_block_hashes_match_canonical_headers() {
             .request("eth_getHeaderByNumber", (format!("0x{number:x}"),))
             .await
             .unwrap();
+        let stored_header = api.backend.get_block(number).unwrap().header;
+        assert_eq!(stored_header.as_tempo().unwrap(), header.as_ref());
         let canonical_hash = header.as_ref().hash_slow();
+        assert_eq!(stored_header.hash_slow(), canonical_hash);
 
         assert_eq!(header.hash, canonical_hash, "block {number} RPC hash");
         if let Some(parent_hash) = parent_hash {

@@ -5,7 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        mem::{cache::DiskStateCache, header_hash},
+        mem::cache::DiskStateCache,
     },
     pool::transactions::PoolTransaction,
 };
@@ -34,7 +34,7 @@ use foundry_evm::{
 };
 #[cfg(test)]
 use foundry_primitives::FoundryNetwork;
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
@@ -297,8 +297,6 @@ pub struct BlockchainStorage<N: Network> {
     pub transactions: B256HashMap<MinedTransaction<N>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
-    /// Whether locally stored headers use Tempo consensus hashing.
-    is_tempo: bool,
 }
 
 impl<N: Network> BlockchainStorage<N> {
@@ -329,9 +327,11 @@ impl<N: Network> BlockchainStorage<N> {
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
-        let block =
-            create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
-        let genesis_hash = header_hash(&block.header, is_tempo);
+        let block = create_block(
+            FoundryHeader::new(header, is_tempo),
+            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+        );
+        let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
         let best_number = genesis_number;
 
@@ -349,16 +349,10 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
-            is_tempo,
         }
     }
 
-    pub fn forked(
-        block_number: u64,
-        block_hash: B256,
-        total_difficulty: U256,
-        is_tempo: bool,
-    ) -> Self {
+    pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
         let mut hashes = HashMap::default();
         hashes.insert(block_number, block_hash);
 
@@ -371,7 +365,6 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
-            is_tempo,
         }
     }
 
@@ -409,7 +402,6 @@ impl<N: Network> BlockchainStorage<N> {
             genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
-            is_tempo: false,
         }
     }
 
@@ -439,7 +431,7 @@ impl<N: Network> BlockchainStorage<N> {
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
         for serializable_block in &serializable_blocks {
             let block: Block = serializable_block.clone().into();
-            let block_hash = header_hash(&block.header, self.is_tempo);
+            let block_hash = block.header.hash_slow();
             let block_number = block.header.number();
             self.blocks.insert(block_hash, block);
             self.hashes.insert(block_number, block_hash);
@@ -520,18 +512,12 @@ impl<N: Network> Blockchain<N> {
         }
     }
 
-    pub fn forked(
-        block_number: u64,
-        block_hash: B256,
-        total_difficulty: U256,
-        is_tempo: bool,
-    ) -> Self {
+    pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {
         Self {
             storage: Arc::new(RwLock::new(BlockchainStorage::forked(
                 block_number,
                 block_hash,
                 total_difficulty,
-                is_tempo,
             ))),
         }
     }
@@ -836,7 +822,7 @@ mod tests {
         let bytes_first = &mut &hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap()[..];
         let tx: MaybeImpersonatedTransaction<FoundryTxEnvelope> =
             FoundryTxEnvelope::decode(&mut &bytes_first[..]).unwrap().into();
-        let block = create_block(header.clone(), vec![tx.clone()]);
+        let block = create_block(header.clone().into(), vec![tx.clone()]);
         let block_hash = block.header.hash_slow();
         dump_storage.blocks.insert(block_hash, block);
 
@@ -864,8 +850,10 @@ mod tests {
 
         // Build a serialized block at the configured genesis number.
         let header = Header { number: GENESIS_NUMBER, gas_limit: 123456, ..Default::default() };
-        let block =
-            create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
+        let block = create_block(
+            header.into(),
+            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
+        );
         let block_hash = block.header.hash_slow();
         let serialized_blocks: Vec<SerializableBlock> = vec![block.into()];
 
@@ -891,7 +879,7 @@ mod tests {
         let header_only_73 =
             Header { number: GENESIS_NUMBER, gas_limit: 123456, ..Default::default() };
         let block_73 = create_block(
-            header_only_73,
+            header_only_73.into(),
             Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
         );
         sanity_storage.load_blocks(vec![block_73.into()]);

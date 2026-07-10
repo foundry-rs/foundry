@@ -225,11 +225,11 @@ where
         let mut logs = self.historic.take().unwrap_or_default();
         while let Poll::Ready(Some(notification)) = self.blocks.poll_next_unpin(cx) {
             match notification {
-                ChainNotification::Block(notification) => {
-                    let b = self.storage.block(notification.hash);
-                    let receipts = self.storage.receipts(notification.hash);
+                ChainNotification::Block(block) => {
+                    let b = self.storage.block(block.hash);
+                    let receipts = self.storage.receipts(block.hash);
                     if let (Some(receipts), Some(block)) = (receipts, b) {
-                        logs.extend(filter_logs(notification.hash, block, receipts, &self.filter))
+                        logs.extend(filter_logs(block, receipts, &self.filter))
                     }
                 }
                 ChainNotification::RemovedLogs(removed) => {
