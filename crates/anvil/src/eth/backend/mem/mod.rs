@@ -47,8 +47,10 @@ use alloy_eips::{
     eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams, eip7910::SystemContract,
 };
 use alloy_evm::{
-    Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
+    Database, EthEvmFactory, Evm, EvmEnv, EvmError as AlloyEvmError, EvmFactory, FromTxWithEncoded,
+    InvalidTxError, TransactionEnvMut,
     block::{BlockExecutionResult, BlockExecutor, StateDB},
+    call::estimate_gas_limit_with,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
@@ -128,7 +130,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
 #[cfg(feature = "optimism")]
-use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+use op_revm::{OpHaltReason, OpTransaction, transaction::deposit::DepositTransactionParts};
 
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env`] and consumed by the OP transact path.
@@ -141,6 +143,38 @@ type OpCallDepositInfo = DepositTransactionParts;
 #[cfg(not(feature = "optimism"))]
 #[derive(Default, Clone, Debug)]
 struct OpCallDepositInfo;
+
+type TempoCallOverrides = (Option<Address>, U256, Option<u64>, Option<u64>);
+
+fn build_tempo_call_tx(
+    base: TxEnv,
+    fee_token: Option<Address>,
+    nonce_key: U256,
+    valid_before: Option<u64>,
+    valid_after: Option<u64>,
+) -> TempoTxEnv {
+    let mut tempo_tx = TempoTxEnv::from(base.clone());
+    tempo_tx.fee_token = fee_token;
+
+    if !nonce_key.is_zero() || valid_before.is_some() || valid_after.is_some() {
+        // Estimation does not have a signed transaction, so use a deterministic non-zero hash for
+        // expiring-nonce replay protection. Set both hash fields for compatibility across Tempo
+        // hardforks.
+        let estimation_hash = keccak256(base.data.as_ref());
+        tempo_tx.unique_tx_identifier = Some(estimation_hash);
+        tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
+            nonce_key,
+            valid_before,
+            valid_after,
+            aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
+            tx_hash: estimation_hash,
+            expiring_nonce_idx: Some(0),
+            ..Default::default()
+        }));
+    }
+
+    tempo_tx
+}
 
 /// Marker trait that abstracts over the per-network inspector trait bounds
 /// required by the in-memory backend. The OP bound is only included when the
@@ -171,7 +205,7 @@ use revm::{
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{ExecutionResult, HaltReason, Output, ResultAndState},
+        result::{EVMError, ExecutionResult, HaltReason, HaltReasonTr, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
@@ -198,10 +232,10 @@ use tempo_precompiles::{
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
 };
-use tempo_primitives::TEMPO_TX_TYPE_ID;
+use tempo_primitives::{TEMPO_TX_TYPE_ID, transaction::Call};
 use tempo_revm::{
-    TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
-    gas_params::tempo_gas_params,
+    TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoInvalidTransaction, TempoTxEnv,
+    evm::TempoContext, gas_params::tempo_gas_params,
 };
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -813,6 +847,14 @@ impl<N: Network> Backend<N> {
         inspector
     }
 
+    fn finish_call_inspector(&self, inspector: AnvilInspector) {
+        inspector.print_logs();
+
+        if self.print_traces {
+            inspector.into_print_traces(self.call_trace_decoder.clone());
+        }
+    }
+
     /// Builds an inspector configured for block mining (tracing always enabled).
     fn build_mining_inspector(&self) -> AnvilInspector {
         let mut inspector = AnvilInspector::default().with_tracing();
@@ -1295,6 +1337,21 @@ impl<N: Network> Backend<N> {
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        Ok(self.transact_eth_raw_with_inspector_ref(db, evm_env, inspector, tx_env)?)
+    }
+
+    fn transact_eth_raw_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
         let mut evm = EthEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
             evm_env.clone(),
@@ -1302,7 +1359,7 @@ impl<N: Network> Backend<N> {
         );
         self.inject_precompiles(evm.precompiles_mut());
         self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
-        Ok(evm.transact(tx_env)?)
+        evm.transact(tx_env)
     }
 
     /// Builds the appropriate tx env from a [`FoundryTxEnvelope`], executes via the correct
@@ -1369,14 +1426,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let tempo_env = self.build_tempo_evm_env(evm_env);
-        let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
-            WrapDatabaseRef(db),
-            tempo_env,
-            inspector,
-        );
-        self.inject_tempo_precompiles(&mut evm);
-        let result = evm.transact(tx_env)?;
+        let result = self.transact_tempo_raw_with_inspector_ref(db, evm_env, inspector, tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {
                 TempoHaltReason::Ethereum(eth) => eth,
@@ -1384,6 +1434,28 @@ impl<N: Network> Backend<N> {
             }),
             state: result.state,
         })
+    }
+
+    fn transact_tempo_raw_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TempoTxEnv,
+    ) -> Result<ResultAndState<TempoHaltReason>, EVMError<DatabaseError, TempoInvalidTransaction>>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
+        let tempo_env = self.build_tempo_evm_env(evm_env);
+        let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
+            WrapDatabaseRef(db),
+            tempo_env,
+            inspector,
+        );
+        self.inject_tempo_precompiles(&mut evm);
+        evm.transact(tx_env)
     }
 
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
@@ -1570,17 +1642,11 @@ impl<N: Network> Backend<N> {
         (evm_env, tx_env, op_deposit)
     }
 
-    pub fn call_with_state(
+    fn tempo_call_overrides(
         &self,
-        state: &dyn DatabaseRef,
-        request: WithOtherFields<TransactionRequest>,
-        fee_details: FeeDetails,
-        block_env: BlockEnv,
-    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        let mut inspector = self.build_inspector();
-
-        // Extract Tempo-specific fields before `build_call_env` consumes `other`.
-        let tempo_overrides = self.is_tempo().then(|| {
+        request: &WithOtherFields<TransactionRequest>,
+    ) -> Option<TempoCallOverrides> {
+        self.is_tempo().then(|| {
             let fee_token =
                 request.other.get_deserialized::<Address>("feeToken").and_then(|r| r.ok());
             let nonce_key = request
@@ -1599,38 +1665,118 @@ impl<N: Network> Backend<N> {
                 .and_then(|r| r.ok())
                 .map(|v| v.saturating_to::<u64>());
             (fee_token, nonce_key, valid_before, valid_after)
-        });
+        })
+    }
+
+    pub(crate) fn estimate_gas_with_state(
+        &self,
+        state: &dyn DatabaseRef,
+        request: WithOtherFields<TransactionRequest>,
+        fee_details: FeeDetails,
+        block_env: BlockEnv,
+        error_ratio: f64,
+    ) -> Result<u64, BlockchainError> {
+        let tempo_overrides = self.tempo_call_overrides(&request);
+        let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block_env);
+
+        if let Some((fee_token, nonce_key, valid_before, valid_after)) = tempo_overrides {
+            let _ = op_deposit;
+            let tempo_tx =
+                build_tempo_call_tx(tx_env, fee_token, nonce_key, valid_before, valid_after);
+            return self.estimate_tempo_gas_with_state(state, &evm_env, tempo_tx, error_ratio);
+        }
+
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() {
+            let op_tx =
+                OpTx(OpTransaction { base: tx_env, deposit: op_deposit, ..Default::default() });
+            return self.estimate_op_gas_with_state(state, &evm_env, op_tx, error_ratio);
+        }
+
+        let _ = op_deposit;
+        self.estimate_eth_gas_with_state(state, &evm_env, tx_env, error_ratio)
+    }
+
+    fn estimate_eth_gas_with_state(
+        &self,
+        state: &dyn DatabaseRef,
+        evm_env: &EvmEnv,
+        tx_env: TxEnv,
+        error_ratio: f64,
+    ) -> Result<u64, BlockchainError> {
+        estimate_gas_with(tx_env, error_ratio, |tx_env| {
+            let mut inspector = self.build_inspector();
+            let result =
+                self.transact_eth_raw_with_inspector_ref(state, evm_env, &mut inspector, tx_env);
+            if result.is_ok() {
+                self.finish_call_inspector(inspector);
+            }
+            result
+        })
+    }
+
+    fn estimate_tempo_gas_with_state(
+        &self,
+        state: &dyn DatabaseRef,
+        evm_env: &EvmEnv,
+        tx_env: TempoTxEnv,
+        error_ratio: f64,
+    ) -> Result<u64, BlockchainError> {
+        estimate_gas_with(tx_env, error_ratio, |tx_env| {
+            let mut inspector = self.build_inspector();
+            let result =
+                self.transact_tempo_raw_with_inspector_ref(state, evm_env, &mut inspector, tx_env);
+            if result.is_ok() {
+                self.finish_call_inspector(inspector);
+            }
+            result
+        })
+    }
+
+    #[cfg(feature = "optimism")]
+    fn estimate_op_gas_with_state(
+        &self,
+        state: &dyn DatabaseRef,
+        evm_env: &EvmEnv,
+        tx_env: OpTx,
+        error_ratio: f64,
+    ) -> Result<u64, BlockchainError> {
+        estimate_gas_with(tx_env, error_ratio, |tx_env| {
+            let mut inspector = self.build_inspector();
+            let result = self
+                .transact_op_raw_with_inspector_ref(state, evm_env, &mut inspector, tx_env)
+                .map(|ResultAndState { result, state }| ResultAndState {
+                    result: result.map_haltreason(|reason| match reason {
+                        OpHaltReason::Base(reason) => reason,
+                        _ => HaltReason::PrecompileError,
+                    }),
+                    state,
+                });
+            if result.is_ok() {
+                self.finish_call_inspector(inspector);
+            }
+            result
+        })
+    }
+
+    pub fn call_with_state(
+        &self,
+        state: &dyn DatabaseRef,
+        request: WithOtherFields<TransactionRequest>,
+        fee_details: FeeDetails,
+        block_env: BlockEnv,
+    ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
+        let mut inspector = self.build_inspector();
+
+        // Extract Tempo-specific fields before `build_call_env` consumes `other`.
+        let tempo_overrides = self.tempo_call_overrides(&request);
 
         let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block_env);
 
         let ResultAndState { result, state } =
             if let Some((fee_token, nonce_key, valid_before, valid_after)) = tempo_overrides {
-                use tempo_primitives::transaction::Call;
-
-                let base = tx_env;
-                let mut tempo_tx = TempoTxEnv::from(base.clone());
-                tempo_tx.fee_token = fee_token;
-
-                if !nonce_key.is_zero() || valid_before.is_some() || valid_after.is_some() {
-                    // For gas estimation we don't have a signed tx, so generate a
-                    // unique hash for expiring-nonce replay protection.  The nonce
-                    // manager needs a non-zero hash; the actual value doesn't matter
-                    // because the state is discarded after estimation.
-                    let estimation_hash = keccak256(base.data.as_ref());
-                    // T1B+ uses `TempoTxEnv::unique_tx_identifier` (sender-scoped) as
-                    // the expiring-nonce replay hash; pre-T1B uses `tx_hash`.
-                    // Set both so the synthetic env works across hardforks.
-                    tempo_tx.unique_tx_identifier = Some(estimation_hash);
-                    tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
-                        nonce_key,
-                        valid_before,
-                        valid_after,
-                        aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
-                        tx_hash: estimation_hash,
-                        expiring_nonce_idx: Some(0),
-                        ..Default::default()
-                    }));
-                }
+                let tempo_tx =
+                    build_tempo_call_tx(tx_env, fee_token, nonce_key, valid_before, valid_after);
                 self.transact_tempo_with_inspector_ref(state, &evm_env, &mut inspector, tempo_tx)?
             } else {
                 self.transact_with_inspector_ref(
@@ -1643,11 +1789,7 @@ impl<N: Network> Backend<N> {
             };
 
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
-        inspector.print_logs();
-
-        if self.print_traces {
-            inspector.into_print_traces(self.call_trace_decoder.clone());
-        }
+        self.finish_call_inspector(inspector);
 
         Ok((exit_reason, out, gas_used as u128, state))
     }
@@ -5636,6 +5778,63 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum();
     }
     false
+}
+
+fn estimate_gas_with<T, H, E>(
+    tx: T,
+    error_ratio: f64,
+    mut transact: impl FnMut(T) -> Result<ResultAndState<H>, E>,
+) -> Result<u64, BlockchainError>
+where
+    T: TransactionEnvMut,
+    H: HaltReasonTr + IntoInstructionResult,
+    E: AlloyEvmError,
+    BlockchainError: From<E>,
+{
+    let initial_gas_limit = tx.gas_limit();
+    let initial_result = match transact(tx.clone()) {
+        Ok(result) => result,
+        Err(err)
+            if err
+                .as_invalid_tx_err()
+                .is_some_and(|err| err.is_gas_limit_too_low() || err.is_gas_limit_too_high()) =>
+        {
+            return Err(
+                InvalidTransactionError::BasicOutOfGas(u128::from(initial_gas_limit)).into()
+            );
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    let (gas_used, gas_refunded) = match initial_result.result {
+        ExecutionResult::Success { gas, .. } => (gas.tx_gas_used(), gas.final_refunded()),
+        ExecutionResult::Revert { output, .. } => {
+            return Err(InvalidTransactionError::Revert(Some(output)).into());
+        }
+        ExecutionResult::Halt { reason, .. } => {
+            let reason = reason.into_instruction_result();
+            if is_out_of_gas(reason) {
+                return Err(
+                    InvalidTransactionError::BasicOutOfGas(u128::from(initial_gas_limit)).into()
+                );
+            }
+            return Err(BlockchainError::EvmError(reason));
+        }
+    };
+
+    estimate_gas_limit_with(tx, gas_used, gas_refunded, error_ratio, transact).map_err(Into::into)
+}
+
+const fn is_out_of_gas(result: InstructionResult) -> bool {
+    matches!(
+        result,
+        InstructionResult::OutOfGas
+            | InstructionResult::MemoryOOG
+            | InstructionResult::MemoryLimitOOG
+            | InstructionResult::PrecompileOOG
+            | InstructionResult::InvalidOperandOOG
+            | InstructionResult::ReentrancySentryOOG
+    )
 }
 
 /// Unpacks an [`ExecutionResult`] into its exit reason, gas used, output, and logs.

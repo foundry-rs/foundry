@@ -8,8 +8,8 @@ use crate::{
         diagnostic::RevertDiagnostic,
     },
     evm::{
-        EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor,
-        TxEnvFor,
+        EvmEnvFor, EvmErrorFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
+        HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId},
 };
@@ -87,6 +87,16 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
+        self.inspect_raw(evm_env, tx_env, inspector).wrap_err("EVM error")
+    }
+
+    /// Executes the configured transaction without mapping its typed EVM error.
+    pub fn inspect_raw<I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>>(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: &mut TxEnvFor<FEN>,
+        inspector: I,
+    ) -> Result<ResultAndState<HaltReasonFor<FEN>>, EvmErrorFor<FEN>> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
@@ -97,7 +107,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
             inspector,
         );
 
-        let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
+        let res = evm.transact(tx_env.clone())?;
 
         *tx_env = evm.tx().clone();
         *evm_env = evm.finish().1;

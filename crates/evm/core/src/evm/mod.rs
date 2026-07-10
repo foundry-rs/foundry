@@ -7,7 +7,8 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{
-    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
+    EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, TransactionEnvMut,
+    precompiles::PrecompilesMap,
 };
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, Signature, U256};
@@ -83,6 +84,7 @@ pub type HaltReasonFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::HaltReason;
 pub type SpecFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Spec;
 pub type BlockEnvFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::BlockEnv;
 pub type PrecompilesFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Precompiles;
+pub type EvmErrorFor<FEN> = <EvmFactoryFor<FEN> as EvmFactory>::Error<DatabaseError>;
 pub type EvmEnvFor<FEN> = EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>;
 
 pub type NetworkFor<FEN> = <FEN as FoundryEvmNetwork>::Network;
@@ -95,7 +97,14 @@ pub trait FoundryEvmFactory:
     EvmFactory<
         Spec: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
-        Tx: Clone + Debug + FoundryTransaction + FromAnyRpcTransaction + Default + Send + Sync,
+        Tx: Clone
+                + Debug
+                + FoundryTransaction
+                + FromAnyRpcTransaction
+                + TransactionEnvMut
+                + Default
+                + Send
+                + Sync,
         HaltReason: IntoInstructionResult,
         Precompiles = PrecompilesMap,
     > + Clone
@@ -120,6 +129,7 @@ pub trait FoundryEvmFactory:
             BlockEnv = Self::BlockEnv,
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
+            Error = Self::Error<DatabaseError>,
         > + Deref<Target = Self::FoundryContext<'db>>
     where
         Self: 'db;

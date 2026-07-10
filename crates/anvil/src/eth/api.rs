@@ -1,16 +1,13 @@
 use super::{
-    backend::mem::{BlockRequest, DatabaseRef, State},
+    backend::mem::{BlockRequest, DatabaseRef},
     sign::build_impersonated,
 };
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
         backend::{
-            self,
-            db::SerializableState,
-            mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
-            notifications::ChainNotifications,
-            validate::TransactionValidator,
+            self, db::SerializableState, mem::MIN_TRANSACTION_GAS,
+            notifications::ChainNotifications, validate::TransactionValidator,
         },
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
@@ -103,7 +100,6 @@ use revm::{
     },
     database::CacheDB,
     interpreter::{InstructionResult, SuccessOrHalt, return_ok, return_revert},
-    primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
@@ -1539,7 +1535,7 @@ impl EthApi<FoundryNetwork> {
     /// This will execute the transaction request and find the best gas limit via binary search.
     fn do_estimate_gas_with_state(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: WithOtherFields<TransactionRequest>,
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
     ) -> Result<u128> {
@@ -1606,75 +1602,15 @@ impl EthApi<FoundryNetwork> {
             }
         }
 
-        let mut call_to_estimate = request.clone();
+        let mut call_to_estimate = request;
         call_to_estimate.gas = Some(highest_gas_limit as u64);
 
-        // execute the call without writing to db
-        let ethres =
-            self.backend.call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone());
+        let estimated_gas =
+            self.backend.estimate_gas_with_state(state, call_to_estimate, fees, block_env, 0.0)?;
 
-        let gas_used = match ethres.try_into()? {
-            GasEstimationCallResult::Success(gas) => Ok(gas),
-            GasEstimationCallResult::OutOfGas => {
-                Err(InvalidTransactionError::BasicOutOfGas(highest_gas_limit).into())
-            }
-            GasEstimationCallResult::Revert(output) => {
-                Err(InvalidTransactionError::Revert(output).into())
-            }
-            GasEstimationCallResult::EvmError(err) => {
-                warn!(target: "node", "estimation failed due to {:?}", err);
-                Err(BlockchainError::EvmError(err))
-            }
-        }?;
+        trace!(target : "node", "Estimated Gas for call {:?}", estimated_gas);
 
-        // at this point we know the call succeeded but want to find the _best_ (lowest) gas the
-        // transaction succeeds with. we find this by doing a binary search over the
-        // possible range NOTE: this is the gas the transaction used, which is less than the
-        // transaction requires to succeed
-
-        // Get the starting lowest gas needed depending on the transaction kind.
-        let mut lowest_gas_limit = determine_base_gas_by_kind(&request);
-
-        // pick a point that's close to the estimated gas
-        let mut mid_gas_limit =
-            std::cmp::min(gas_used * 3, (highest_gas_limit + lowest_gas_limit) / 2);
-
-        // Binary search for the ideal gas limit
-        while (highest_gas_limit - lowest_gas_limit) > 1 {
-            request.gas = Some(mid_gas_limit as u64);
-            let ethres = self.backend.call_with_state(
-                &state,
-                request.clone(),
-                fees.clone(),
-                block_env.clone(),
-            );
-
-            match ethres.try_into()? {
-                GasEstimationCallResult::Success(_) => {
-                    // If the transaction succeeded, we can set a ceiling for the highest gas limit
-                    // at the current midpoint, as spending any more gas would
-                    // make no sense (as the TX would still succeed).
-                    highest_gas_limit = mid_gas_limit;
-                }
-                GasEstimationCallResult::OutOfGas
-                | GasEstimationCallResult::Revert(_)
-                | GasEstimationCallResult::EvmError(_) => {
-                    // If the transaction failed, we can set a floor for the lowest gas limit at the
-                    // current midpoint, as spending any less gas would make no
-                    // sense (as the TX would still revert due to lack of gas).
-                    //
-                    // We don't care about the reason here, as we known that transaction is correct
-                    // as it succeeded earlier
-                    lowest_gas_limit = mid_gas_limit;
-                }
-            };
-            // new midpoint
-            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-        }
-
-        trace!(target : "node", "Estimated Gas for call {:?}", highest_gas_limit);
-
-        Ok(highest_gas_limit)
+        Ok(u128::from(estimated_gas))
     }
 
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
@@ -4448,92 +4384,5 @@ fn execution_error(exit: InstructionResult) -> Option<String> {
         SuccessOrHalt::Halt(reason) => Some(reason.to_string()),
         SuccessOrHalt::FatalExternalError => Some("fatal external error".to_string()),
         SuccessOrHalt::Internal(_) => Some("internal EVM error".to_string()),
-    }
-}
-
-/// Determines the minimum gas needed for a transaction depending on the transaction kind.
-fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> u128 {
-    match request.kind() {
-        Some(TxKind::Call(_)) => {
-            MIN_TRANSACTION_GAS
-                + request.inner().authorization_list.as_ref().map_or(0, |auths_list| {
-                    auths_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
-                })
-        }
-        Some(TxKind::Create) => MIN_CREATE_GAS,
-        // Tighten the gas limit upwards if we don't know the tx kind to avoid deployments failing.
-        None => MIN_CREATE_GAS,
-    }
-}
-
-/// Keeps result of a call to revm EVM used for gas estimation
-enum GasEstimationCallResult {
-    Success(u128),
-    OutOfGas,
-    Revert(Option<Bytes>),
-    EvmError(InstructionResult),
-}
-
-/// Converts the result of a call to revm EVM into a [`GasEstimationCallResult`].
-///
-/// Expected to stay up to date with: <https://github.com/bluealloy/revm/blob/main/crates/interpreter/src/instruction_result.rs>
-impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEstimationCallResult {
-    type Error = BlockchainError;
-
-    fn try_from(res: Result<(InstructionResult, Option<Output>, u128, State)>) -> Result<Self> {
-        match res {
-            // Exceptional case: init used too much gas, treated as out of gas error
-            Err(BlockchainError::InvalidTransaction(InvalidTransactionError::GasTooHigh(_))) => {
-                Ok(Self::OutOfGas)
-            }
-            // Tempo intrinsic gas errors come through as Message variants
-            Err(BlockchainError::Message(ref msg))
-                if msg.contains("insufficient gas for intrinsic cost") =>
-            {
-                Ok(Self::OutOfGas)
-            }
-            Err(err) => Err(err),
-            Ok((exit, output, gas, _)) => match exit {
-                return_ok!() => Ok(Self::Success(gas)),
-
-                // Revert opcodes:
-                InstructionResult::Revert => {
-                    Ok(Self::Revert(Some(output.map(|o| o.into_data()).unwrap_or_default())))
-                }
-                InstructionResult::CallTooDeep
-                | InstructionResult::OutOfFunds
-                | InstructionResult::CreateInitCodeStartingEF00
-                | InstructionResult::InvalidEOFInitCode
-                | InstructionResult::InvalidExtDelegateCallTarget => Ok(Self::EvmError(exit)),
-
-                // Out of gas errors:
-                InstructionResult::OutOfGas
-                | InstructionResult::MemoryOOG
-                | InstructionResult::MemoryLimitOOG
-                | InstructionResult::PrecompileOOG
-                | InstructionResult::InvalidOperandOOG
-                | InstructionResult::ReentrancySentryOOG => Ok(Self::OutOfGas),
-
-                // Other errors:
-                InstructionResult::OpcodeNotFound
-                | InstructionResult::CallNotAllowedInsideStatic
-                | InstructionResult::StateChangeDuringStaticCall
-                | InstructionResult::InvalidFEOpcode
-                | InstructionResult::InvalidJump
-                | InstructionResult::NotActivated
-                | InstructionResult::StackUnderflow
-                | InstructionResult::StackOverflow
-                | InstructionResult::OutOfOffset
-                | InstructionResult::CreateCollision
-                | InstructionResult::OverflowPayment
-                | InstructionResult::PrecompileError
-                | InstructionResult::NonceOverflow
-                | InstructionResult::CreateContractSizeLimit
-                | InstructionResult::CreateContractStartingWithEF
-                | InstructionResult::CreateInitCodeSizeLimit
-                | InstructionResult::InvalidImmediateEncoding
-                | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
-            },
-        }
     }
 }

@@ -4,7 +4,7 @@ use super::Backend;
 use crate::eth::error::BlockchainError;
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_network::Network;
-use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
+use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx, OpTxError};
 use foundry_evm::backend::DatabaseError;
 use op_revm::{OpHaltReason, OpTransaction};
 use revm::{
@@ -33,6 +33,29 @@ impl<N: Network> Backend<N> {
         I: Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        let result =
+            self.transact_op_raw_with_inspector_ref(db, evm_env, inspector, OpTx(tx_env))?;
+        Ok(ResultAndState {
+            result: result.result.map_haltreason(|h| match h {
+                OpHaltReason::Base(eth) => eth,
+                _ => HaltReason::PrecompileError,
+            }),
+            state: result.state,
+        })
+    }
+
+    pub(super) fn transact_op_raw_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: OpTx,
+    ) -> Result<ResultAndState<OpHaltReason>, EVMError<DatabaseError, OpTxError>>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
         let op_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork().into()),
             evm_env.block_env.clone(),
@@ -43,19 +66,12 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut());
-        let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
+        evm.transact(tx_env).map_err(|e| match e {
             EVMError::Database(db) => EVMError::Database(db),
             EVMError::Header(h) => EVMError::Header(h),
             EVMError::Custom(s) => EVMError::Custom(s),
             EVMError::CustomAny(err) => EVMError::CustomAny(err),
             EVMError::Transaction(t) => EVMError::Transaction(t),
-        })?;
-        Ok(ResultAndState {
-            result: result.result.map_haltreason(|h| match h {
-                OpHaltReason::Base(eth) => eth,
-                _ => HaltReason::PrecompileError,
-            }),
-            state: result.state,
         })
     }
 }

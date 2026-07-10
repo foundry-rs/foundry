@@ -12,13 +12,17 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
-use alloy_evm::Evm;
+use alloy_evm::{
+    Evm,
+    call::{ESTIMATE_GAS_ERROR_RATIO, estimate_gas_limit_with},
+};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
+use eyre::WrapErr;
 use foundry_evm_core::{
     EvmEnv, FoundryBlock, FoundryTransaction,
     backend::{
@@ -575,6 +579,57 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env.set_signed_authorization(authorization_list);
         tx_env.set_tx_type(4);
         self.call_with_env(evm_env, tx_env)
+    }
+
+    /// Estimates the gas limit for a previously successful raw call.
+    pub fn estimate_gas_raw(
+        &self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        result: &RawCallResult<FEN>,
+    ) -> eyre::Result<u64> {
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        self.estimate_gas_with_env(evm_env, tx_env, result.gas_used, result.gas_refunded)
+    }
+
+    /// Estimates the gas limit for a previously successful raw EIP-7702 call.
+    pub fn estimate_gas_raw_with_authorization(
+        &self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        authorization_list: &[SignedAuthorization],
+        result: &RawCallResult<FEN>,
+    ) -> eyre::Result<u64> {
+        let (evm_env, mut tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        tx_env.set_signed_authorization(authorization_list.to_vec());
+        tx_env.set_tx_type(4);
+        self.estimate_gas_with_env(evm_env, tx_env, result.gas_used, result.gas_refunded)
+    }
+
+    fn estimate_gas_with_env(
+        &self,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+        gas_used: u64,
+        gas_refunded: u64,
+    ) -> eyre::Result<u64> {
+        estimate_gas_limit_with(
+            tx_env,
+            gas_used,
+            gas_refunded,
+            ESTIMATE_GAS_ERROR_RATIO,
+            |mut tx_env| {
+                let mut evm_env = evm_env.clone();
+                let mut stack = self.inspector().clone();
+                let mut backend = CowBackend::new_borrowed(self.backend());
+                backend.inspect_raw(&mut evm_env, &mut tx_env, &mut stack)
+            },
+        )
+        .wrap_err("EVM error")
     }
 
     /// Performs a raw call to an account on the current state of the VM.

@@ -591,6 +591,7 @@ foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "c
 
 ## alloy-evm
 # alloy-evm = { git = "https://github.com/paradigmxyz/evm.git", rev = "04d8e4a" }
+alloy-evm = { path = "../evm/crates/evm" }
 
 ## op-revm / op-alloy / alloy-op-evm
 ## Pinned to foundry-rs forks until upstream optimism bumps to revm 40.

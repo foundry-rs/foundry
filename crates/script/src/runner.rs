@@ -1,7 +1,6 @@
 use super::{ScriptConfig, ScriptResult};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_evm::revm::context::Transaction;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256, map::AddressHashMap};
 use eyre::Result;
@@ -10,13 +9,10 @@ use foundry_common::TransactionMaybeSigned;
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
-    core::{
-        FoundryTransaction,
-        evm::{FoundryEvmNetwork, TransactionRequestFor},
-    },
+    core::evm::{FoundryEvmNetwork, TransactionRequestFor},
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
-    revm::interpreter::{InstructionResult, return_ok},
+    revm::interpreter::return_ok,
     traces::{TraceKind, Traces},
 };
 use std::collections::VecDeque;
@@ -385,7 +381,14 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         //
         // Otherwise don't re-execute, or some usecases might be broken: https://github.com/foundry-rs/foundry/issues/3921
         if commit {
-            gas_used = self.search_optimal_gas_usage(&res, from, to, &calldata, value)?;
+            gas_used = self.search_optimal_gas_usage(
+                &res,
+                from,
+                to,
+                &calldata,
+                value,
+                authorization_list.as_deref(),
+            )?;
             res = if let Some(authorization_list) = authorization_list {
                 self.executor.transact_raw_with_authorization(
                     from,
@@ -434,60 +437,35 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         })
     }
 
-    /// The executor will return the _exact_ gas value this transaction consumed, setting this value
-    /// as gas limit will result in `OutOfGas` so to come up with a better estimate we search over a
-    /// possible range we pick a higher gas limit 3x of a succeeded call should be safe.
+    /// The executor returns the exact gas consumed, which can be lower than the gas limit required
+    /// for the transaction to succeed. Re-execute the call to estimate a safe gas limit.
     ///
     /// This might result in executing the same script multiple times. Depending on the user's goal,
     /// it might be problematic when using `ffi`.
     fn search_optimal_gas_usage(
-        &mut self,
+        &self,
         res: &RawCallResult<FEN>,
         from: Address,
         to: Address,
         calldata: &Bytes,
         value: U256,
+        authorization_list: Option<&[SignedAuthorization]>,
     ) -> Result<u64> {
-        let mut gas_used = res.gas_used;
-        if matches!(res.exit_reason, Some(return_ok!())) {
-            // Store the current gas limit and reset it later.
-            let init_gas_limit = self.executor.tx_env().gas_limit();
-
-            let mut highest_gas_limit = gas_used * 3;
-            let mut lowest_gas_limit = gas_used;
-            let mut last_highest_gas_limit = highest_gas_limit;
-            while (highest_gas_limit - lowest_gas_limit) > 1 {
-                let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-                self.executor.tx_env_mut().set_gas_limit(mid_gas_limit);
-                let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
-                match res.exit_reason {
-                    Some(
-                        InstructionResult::Revert
-                        | InstructionResult::OutOfGas
-                        | InstructionResult::OutOfFunds,
-                    ) => {
-                        lowest_gas_limit = mid_gas_limit;
-                    }
-                    _ => {
-                        highest_gas_limit = mid_gas_limit;
-                        // if last two successful estimations only vary by 10%, we consider this to
-                        // sufficiently accurate
-                        const ACCURACY: u64 = 10;
-                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY
-                            / last_highest_gas_limit
-                            < 1
-                        {
-                            // update the gas
-                            gas_used = highest_gas_limit;
-                            break;
-                        }
-                        last_highest_gas_limit = highest_gas_limit;
-                    }
-                }
-            }
-            // Reset gas limit in the executor.
-            self.executor.tx_env_mut().set_gas_limit(init_gas_limit);
+        if !matches!(res.exit_reason, Some(return_ok!())) {
+            return Ok(res.gas_used);
         }
-        Ok(gas_used)
+
+        if let Some(authorization_list) = authorization_list {
+            self.executor.estimate_gas_raw_with_authorization(
+                from,
+                to,
+                calldata.clone(),
+                value,
+                authorization_list,
+                res,
+            )
+        } else {
+            self.executor.estimate_gas_raw(from, to, calldata.clone(), value, res)
+        }
     }
 }
