@@ -716,6 +716,64 @@ function mint(address recipient_, uint256 _amount) external override;
     );
 });
 
+// If two inherited params normalize to the same underscore-trimmed name, fuzzy matching must not
+// let the first inherited param steal the exact current param's docs.
+forgetest_init!(inheritdoc_does_not_fuzzy_match_ambiguous_inherited_params, |prj, cmd| {
+    prj.add_source(
+        "I.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface I {
+    /// @notice Updates values.
+    /// @param amount Docs for first param.
+    /// @param _amount Docs for second param.
+    function update(uint256 amount, uint256 _amount) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function update(uint256 other, uint256 _amount) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+### update
+
+Updates values.
+
+```solidity
+function update(uint256 other, uint256 _amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| other | `uint256` |  |
+| _amount | `uint256` | Docs for second param. |
+...
+"#]],
+    );
+});
+
 // Test that overload matching uses canonical HIR/ABI parameter types so that
 // `Base.batch(uint[])` is correctly matched by `Child.batch(uint256[])`.
 forgetest_init!(inheritdoc_overload_matches_uint_array_alias, |prj, cmd| {

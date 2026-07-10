@@ -658,7 +658,11 @@ fn render_function_section(
             );
         }
         for (name, desc) in &inherited.params {
-            let name = inherited_param_name_for_current_function(name, &f.header.parameters);
+            let name = inherited_param_name_for_current_function(
+                name,
+                &f.header.parameters,
+                &inherited.params,
+            );
             if !c.params.iter().any(|(n, _)| n == &name) {
                 c.params.push((name, sanitize(desc)));
             }
@@ -682,6 +686,7 @@ fn render_function_section(
 fn inherited_param_name_for_current_function(
     inherited_name: &str,
     params: &ParameterList<'_>,
+    inherited_params: &[(String, String)],
 ) -> String {
     if params
         .iter()
@@ -692,6 +697,16 @@ fn inherited_param_name_for_current_function(
 
     let normalized_inherited = inherited_name.trim_matches('_');
     if normalized_inherited.is_empty() {
+        return inherited_name.to_string();
+    }
+
+    if inherited_params
+        .iter()
+        .filter(|(name, _)| name.trim_matches('_') == normalized_inherited)
+        .take(2)
+        .count()
+        != 1
+    {
         return inherited_name.to_string();
     }
 
