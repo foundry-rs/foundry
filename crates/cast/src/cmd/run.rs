@@ -1,11 +1,15 @@
 use crate::{
     debug::handle_traces,
+    rpc_trace::{
+        call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
+    },
+    traces::TraceKind,
     utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, Network, TransactionResponse};
+use alloy_network::{BlockResponse, Network, ReceiptResponse, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{AddressHashMap, AddressSet},
@@ -13,7 +17,7 @@ use alloy_primitives::{
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockTransactions,
-    trace::geth::{GethDebugTracingOptions, PreStateConfig},
+    trace::geth::{CallConfig, GethDebugTracingOptions, GethTrace, PreStateConfig},
 };
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -42,7 +46,7 @@ use foundry_evm::{
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceRequirements, Traces},
+    traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
 use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
@@ -90,6 +94,23 @@ pub struct RunArgs {
     /// or response can't be used, cast silently falls back to replaying the block.
     #[arg(long, default_value_t = false)]
     prestate_tracer: bool,
+
+    /// Fetch the transaction's trace from the node via `debug_traceTransaction` (callTracer) and
+    /// render it, instead of re-executing the transaction locally.
+    ///
+    /// This skips the block replay entirely, so it is fast and reflects exactly what happened
+    /// on-chain, including chain-specific EVM behavior a local replay may not reproduce, but it
+    /// requires the node to expose the `debug_` namespace. The result is a call-tree view:
+    /// nested calls, value, gas, emitted logs and revert data. It does not provide the
+    /// opcode-level detail of a local run, so the local-execution-only flags (`--debug`,
+    /// `--decode-internal`, `--trace-printer`, `--quick`, `--prestate-tracer`, `--evm-version`)
+    /// do not apply.
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with_all = ["debug", "decode_internal", "trace_printer", "quick", "prestate_tracer", "evm_version"]
+    )]
+    debug_trace_transaction: bool,
 
     /// Label addresses in the trace.
     ///
@@ -173,6 +194,100 @@ impl RunArgs {
             .await
             .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
+
+        // Fetch the trace from the node via `debug_traceTransaction` (callTracer) instead of
+        // re-executing the transaction locally. The node already holds the transaction's exact
+        // pre-state and EVM rules, so this needs no block replay and no local executor; it also
+        // handles system transactions, so this path comes before the system transaction guard.
+        if self.debug_trace_transaction {
+            let tx_block_number = tx
+                .block_number()
+                .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+
+            let geth_trace = provider
+                .debug_trace_transaction(
+                    tx_hash,
+                    GethDebugTracingOptions::call_tracer(CallConfig::default().with_log()),
+                )
+                .await
+                .map_err(|err| -> eyre::Report {
+                    // Two RPC rejections deserve an actionable hint instead of the raw transport
+                    // error, and they need different fixes: a disabled `debug` namespace, and
+                    // missing historical state, hit whenever the transaction's block has been
+                    // pruned by a full node.
+                    if is_method_not_found_error(&err) {
+                        eyre::eyre!(
+                            "the RPC endpoint does not support `debug_traceTransaction` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or drop `--debug-trace-transaction` to re-execute the transaction locally"
+                        )
+                    } else if is_missing_state_error(&err) {
+                        eyre::eyre!(
+                            "the RPC endpoint does not have the historical state for the transaction's block; use an archive endpoint"
+                        )
+                    } else {
+                        err.into()
+                    }
+                })?;
+            let GethTrace::CallTracer(frame) = geth_trace else {
+                eyre::bail!(
+                    "`debug_traceTransaction` did not return a callTracer frame; the RPC endpoint \
+                     may not support the `callTracer`"
+                );
+            };
+
+            let receipt = provider
+                .get_transaction_receipt(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx receipt not found: {:?}", tx_hash))?;
+
+            let success = receipt.status();
+            let gas_used = receipt.gas_used();
+            let root_create_address = Transaction::to(&tx).is_none().then(|| {
+                receipt.contract_address().unwrap_or_else(|| tx.from().create(tx.nonce()))
+            });
+            let arena = SparsedTraceArena {
+                arena: call_frame_to_arena_with_root_address(&frame, root_create_address),
+                ignored: Default::default(),
+            };
+            let result = TraceResult {
+                success,
+                traces: Some(vec![(TraceKind::Execution, arena)]),
+                gas_used,
+            };
+
+            // Local-artifact labeling matches deployed runtime bytecode against the project
+            // artifacts. There is no local executor on this path, so fetch the code over RPC
+            // for the addresses in the trace, at the transaction's block. Skip the extra
+            // round-trips unless local artifacts were requested.
+            let contracts_bytecode = if with_local_artifacts {
+                fetch_transaction_contracts_bytecode_via_rpc(
+                    &provider,
+                    &result,
+                    tx_hash,
+                    tx_block_number.into(),
+                )
+                .await?
+            } else {
+                Default::default()
+            };
+
+            let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
+            handle_traces(
+                result,
+                &config,
+                chain,
+                &contracts_bytecode,
+                label,
+                with_local_artifacts,
+                false,
+                false,
+                disable_labels,
+                self.trace_depth,
+                None,
+            )
+            .await?;
+
+            return Ok(());
+        }
 
         // check if the tx is a system transaction
         if !self.replay_system_txes
@@ -476,6 +591,60 @@ pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
     Ok(contracts_bytecode)
 }
 
+/// Fetches bytecode for a mined transaction at its exact transaction index.
+///
+/// The prestate tracer provides the code that existed immediately before the transaction, which
+/// avoids reading end-of-block state for contracts changed or removed by later transactions. Any
+/// address absent from the prestate (for example, a contract created by this transaction) falls
+/// back to `eth_getCode` at the transaction's block.
+async fn fetch_transaction_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
+    provider: &P,
+    result: &TraceResult,
+    tx_hash: B256,
+    block: BlockId,
+) -> Result<AddressHashMap<Bytes>> {
+    let mut contracts_bytecode = AddressHashMap::default();
+    let prestate_config = PreStateConfig { disable_storage: Some(true), ..Default::default() };
+    match provider
+        .debug_trace_transaction(tx_hash, GethDebugTracingOptions::prestate_tracer(prestate_config))
+        .await
+    {
+        Ok(trace) => match trace.try_into_pre_state_frame() {
+            Ok(prestate) => {
+                for (&address, account) in prestate.pre_state() {
+                    if let Some(code) = account.code.clone().filter(|code| !code.is_empty()) {
+                        contracts_bytecode.insert(address, code);
+                    }
+                }
+            }
+            Err(err) => {
+                let _ = sh_warn!("Failed to parse transaction prestate for local artifacts: {err}");
+            }
+        },
+        Err(err) => {
+            let _ = sh_warn!("Failed to fetch transaction prestate for local artifacts: {err}");
+        }
+    }
+
+    if let Some(ref traces) = result.traces {
+        for address in gather_trace_addresses(traces) {
+            if contracts_bytecode.contains_key(&address) {
+                continue;
+            }
+            match provider.get_code_at(address).block_id(block).await {
+                Ok(code) if !code.is_empty() => {
+                    contracts_bytecode.insert(address, code);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    let _ = sh_warn!("Failed to fetch code for {address}: {err}");
+                }
+            }
+        }
+    }
+    Ok(contracts_bytecode)
+}
+
 fn gather_trace_addresses(traces: &Traces) -> impl Iterator<Item = Address> {
     let mut addresses = AddressSet::default();
     for (_, trace) in traces {
@@ -514,6 +683,46 @@ impl figment::Provider for RunArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_trace_transaction_rejects_local_execution_flags() {
+        for flag in
+            ["--debug", "--decode-internal", "--trace-printer", "--quick", "--prestate-tracer"]
+        {
+            let result = RunArgs::try_parse_from([
+                "foundry-cli",
+                "--debug-trace-transaction",
+                "0x0000000000000000000000000000000000000000000000000000000000000000",
+                flag,
+            ]);
+            assert!(result.is_err(), "--debug-trace-transaction must reject {flag}");
+        }
+        // --evm-version takes a value, so it is checked separately from the boolean flags above.
+        let result = RunArgs::try_parse_from([
+            "foundry-cli",
+            "--debug-trace-transaction",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "--evm-version",
+            "shanghai",
+        ]);
+        assert!(result.is_err(), "--debug-trace-transaction must reject --evm-version");
+    }
+
+    #[test]
+    fn debug_trace_transaction_accepts_label_and_render_flags() {
+        let args = RunArgs::try_parse_from([
+            "foundry-cli",
+            "--debug-trace-transaction",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "--label",
+            "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
+            "--disable-labels",
+            "--trace-depth",
+            "2",
+            "--with-local-artifacts",
+        ]);
+        assert!(args.is_ok(), "--debug-trace-transaction must accept label/rendering flags");
+    }
 
     #[test]
     fn parent_beacon_block_root_is_required_for_cancun() {

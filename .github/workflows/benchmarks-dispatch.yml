@@ -39,8 +39,13 @@ jobs:
           script: |
             const usage = [
               '**Usage:** `derek bench <subcommand> [args]` (also `decofe bench ...`).\n',
-              '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization]`',
-              '- `bench symex [compare-ref=REF] [timeout=N]`',
+              '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization]`\n',
+              '- `bench symex [compare-ref=REF] [timeout=N]`\n',
+              '- `bench test [compare-ref=REF] [timeout=N] [isolate=true|false]`\n',
+              '- `bench build [compare-ref=REF] [timeout=N] [cache=true|false]`\n',
+              '- `bench fuzz [compare-ref=REF] [timeout=N]`\n',
+              '- `bench coverage [compare-ref=REF] [timeout=N]`\n',
+              '- `bench all [compare-ref=REF] [timeout=N]`',
             ].join('');
             const actor = context.payload.comment.user.login;
             const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
@@ -82,15 +87,9 @@ jobs:
             const subcommand = subMatch ? subMatch[1].toLowerCase() : '';
             const rawArgs = (subMatch ? afterBench.slice(subMatch[0].length) : afterBench).trim();
 
-            // Only `invariant` and `symex` are live; build/all are reserved.
-            const supported = new Set(['invariant', 'symex']);
-            const planned = new Set(['build', 'all']);
+            const supported = new Set(['invariant', 'symex', 'test', 'build', 'fuzz', 'coverage', 'all']);
             if (!subcommand) {
               await failWithComment('Missing bench subcommand.');
-              return;
-            }
-            if (planned.has(subcommand)) {
-              await failWithComment(`\`bench ${subcommand}\` is not available yet.`);
               return;
             }
             if (!supported.has(subcommand)) {
@@ -137,6 +136,62 @@ jobs:
                 }
               }
               return { unknown, invalid };
+            };
+
+            const parseFoundryBenchArgs = (opts, boolArgs = new Set()) => {
+              const { unknown, invalid } = parseArgs(
+                opts,
+                new Set(['compare-ref']),
+                new Set(['timeout']),
+                Object.fromEntries(Array.from(boolArgs).map((key) => [key, new Set(['true', 'false'])])),
+              );
+
+              const safeRef = /^[A-Za-z0-9._/-]{1,128}$/;
+              if (!safeRef.test(opts['compare-ref'])) {
+                invalid.push("`compare-ref` may only contain letters, numbers, '.', '_', '-', and '/'");
+              }
+              const timeout = Number(opts.timeout);
+              if (!Number.isInteger(timeout) || timeout < 60 || timeout > 1800) {
+                invalid.push('`timeout` must be between 60 and 1800 seconds');
+              }
+              return { unknown, invalid };
+            };
+
+            const buildFoundryBenchPayload = (opts, benchmarks) => ({
+              repository: repoFullName,
+              event: 'foundry-bench',
+              data: {
+                subcommand,
+                benchmarks,
+                pr_number: String(context.issue.number),
+                head_repo: pr.head.repo.full_name,
+                actor,
+                foundry_git_ref: pr.head.sha,
+                compare_foundry_git_ref: opts['compare-ref'],
+                timeout_seconds: opts.timeout,
+              },
+            });
+
+            const foundryBenchSummary = (opts, benchmarks, extra = []) => [
+              `subcommand: \`${subcommand}\``,
+              `PR SHA: \`${pr.head.sha.slice(0, 12)}\``,
+              `compare-ref: \`${opts['compare-ref']}\``,
+              `timeout: \`${opts.timeout}s\``,
+              `benchmarks: \`${benchmarks}\``,
+              ...extra,
+            ].join(', ');
+
+            const foundryBenchmarksBySubcommand = {
+              symex: 'forge_symbolic_test',
+              fuzz: 'forge_fuzz_test',
+              coverage: 'forge_coverage',
+              all: [
+                'forge_isolate_test',
+                'forge_build_no_cache',
+                'forge_fuzz_test',
+                'forge_coverage',
+                'forge_symbolic_test',
+              ].join(','),
             };
 
             let payload;
@@ -208,57 +263,46 @@ jobs:
               ].join(', ');
             }
 
-            if (subcommand === 'symex') {
+            if (subcommand !== 'invariant') {
               const opts = {
                 'compare-ref': 'master',
                 timeout: '600',
               };
-              const { unknown, invalid } = parseArgs(
-                opts,
-                new Set(['compare-ref']),
-                new Set(['timeout']),
-                {},
-              );
 
-              const safeRef = /^[A-Za-z0-9._/-]{1,128}$/;
-              if (!safeRef.test(opts['compare-ref'])) {
-                invalid.push("`compare-ref` may only contain letters, numbers, '.', '_', '-', and '/'");
+              const boolArgs = new Set();
+              if (subcommand === 'test') {
+                opts.isolate = 'true';
+                boolArgs.add('isolate');
               }
-              const timeout = Number(opts.timeout);
-              if (!Number.isInteger(timeout) || timeout < 60 || timeout > 1800) {
-                invalid.push('`timeout` must be between 60 and 1800 seconds');
+              if (subcommand === 'build') {
+                opts.cache = 'false';
+                boolArgs.add('cache');
+              }
+
+              const { unknown, invalid } = parseFoundryBenchArgs(opts, boolArgs);
+
+              let benchmarks = foundryBenchmarksBySubcommand[subcommand];
+              const extra = [];
+              if (subcommand === 'test') {
+                benchmarks = opts.isolate === 'true' ? 'forge_isolate_test' : 'forge_test';
+                extra.push(`isolate: \`${opts.isolate}\``);
+              } else if (subcommand === 'build') {
+                benchmarks = opts.cache === 'true' ? 'forge_build_with_cache' : 'forge_build_no_cache';
+                extra.push(`cache: \`${opts.cache}\``);
               }
 
               const errors = [];
               if (unknown.length) errors.push(`Unknown argument(s): \`${unknown.join('`, `')}\``);
               if (invalid.length) errors.push(`Invalid value(s): ${invalid.join(', ')}`);
               if (errors.length) {
-                await failWithComment(`Invalid \`bench symex\` command\n\n${errors.join('\n')}`);
+                await failWithComment(`Invalid \`bench ${subcommand}\` command\n\n${errors.join('\n')}`);
                 return;
               }
 
               // PR identity + safe knobs only; benchmark targets and pod sizing
               // are owned by the server-side foundry-bench workflow.
-              payload = {
-                repository: repoFullName,
-                event: 'foundry-bench',
-                data: {
-                  subcommand: 'symex',
-                  pr_number: String(context.issue.number),
-                  head_repo: pr.head.repo.full_name,
-                  actor,
-                  foundry_git_ref: pr.head.sha,
-                  compare_foundry_git_ref: opts['compare-ref'],
-                  timeout_seconds: opts.timeout,
-                },
-              };
-
-              summary = [
-                `subcommand: \`symex\``,
-                `PR SHA: \`${pr.head.sha.slice(0, 12)}\``,
-                `compare-ref: \`${opts['compare-ref']}\``,
-                `timeout: \`${opts.timeout}s\``,
-              ].join(', ');
+              payload = buildFoundryBenchPayload(opts, benchmarks);
+              summary = foundryBenchSummary(opts, benchmarks, extra);
             }
 
             core.setOutput('actor', actor);

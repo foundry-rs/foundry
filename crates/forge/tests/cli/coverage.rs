@@ -2704,3 +2704,31 @@ contract CounterTest is DSTest {
     assert!(lcov_content.contains("FN:"), "Coverage should include function data");
     assert!(lcov_content.contains("DA:"), "Coverage should include line hit data");
 });
+
+forgetest_init!(coverage_rejects_mutation_mode_before_compile, |prj, cmd| {
+    prj.add_source(
+        "Broken.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Broken {
+    function broken() public pure returns (uint256) {
+        return;
+    }
+}
+"#,
+    );
+
+    let output = cmd.args(["coverage", "--mutate", "src/Broken.sol"]).assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+
+    assert!(
+        stderr.contains("`--mutate` cannot be combined with: coverage"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Compiler run failed"),
+        "mutation/coverage conflict should be reported before compile errors:\n{stderr}"
+    );
+});

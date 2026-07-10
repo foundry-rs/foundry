@@ -2714,6 +2714,59 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
     assert!(invariant_stdout.contains(&invariant_corpus_path), "{invariant_stdout}");
 });
 
+forgetest_init!(forge_fuzz_run_keeps_invariant_trace_seeding_opt_in, |prj, cmd| {
+    let marker = prj.root().join("unit-trace-seed-ran.txt");
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.corpus.corpus_gzip = false;
+        config.fs_permissions.add(PathPermission::write(prj.root()));
+    });
+    prj.add_test(
+        "ForgeFuzzAutoCorpusSeed.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzAutoCorpusHandler {
+    uint256 public touched;
+
+    function touch(uint256 value) external {
+        touched = value;
+    }
+}
+
+contract ForgeFuzzAutoCorpusSeedTest is Test {
+    ForgeFuzzAutoCorpusHandler handler;
+
+    function setUp() public {
+        handler = new ForgeFuzzAutoCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function test_seedCorpusFromUnitTestTrace() public {
+        vm.writeFile(string.concat(vm.projectRoot(), "/unit-trace-seed-ran.txt"), "ran");
+        handler.touch(0x1234);
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzAutoCorpusSeedTest", "-q"]).assert_success();
+
+    let corpus_root = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("corpus")
+        .join("ForgeFuzzAutoCorpusSeedTest")
+        .join("worker0")
+        .join("corpus");
+    assert!(!has_regular_file(&corpus_root));
+    assert!(!marker.exists());
+});
+
 forgetest_init!(fuzz_branch_frontiers_capture_comparison_for_symbolic_followup, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzFrontier.t.sol",
