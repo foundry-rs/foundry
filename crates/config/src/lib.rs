@@ -7227,6 +7227,58 @@ mod tests {
     }
 
     #[test]
+    fn warns_on_deprecated_keys_in_inactive_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci]
+                deny_warnings = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "deny_warnings" && new == "deny = warnings"
+                )),
+                "Expected deprecated key warning for inactive profile, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_deprecated_profile_names() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.cancun]
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "cancun" && new == "evm_version = Cancun"
+                )),
+                "Expected deprecated profile-name warning, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn warns_on_unknown_keys_in_profile() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
