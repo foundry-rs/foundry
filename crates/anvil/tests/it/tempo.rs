@@ -34,7 +34,7 @@ use foundry_evm::core::tempo::{
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
     active_tempo_precompile_addresses,
 };
-use tempo_alloy::primitives::TempoTxEnvelope;
+use tempo_alloy::{primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
@@ -47,7 +47,7 @@ use tempo_precompiles::{
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
 use tempo_primitives::{
-    AASigned, TempoSignature, TempoTransaction,
+    AASigned, TempoHeader, TempoSignature, TempoTransaction,
     transaction::{Call, KeyAuthorization, PrimitiveSignature, SignatureType},
 };
 
@@ -61,6 +61,14 @@ const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 /// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
 const TIP20_TRANSFER_GAS: u64 = 300_000;
 const T5_PRECOMPILE_GAS: u64 = 10_000_000;
+
+fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
+    let inner: &TempoHeader = header.as_ref();
+    assert_eq!(header.timestamp_millis, inner.timestamp_millis());
+    assert_eq!(inner.general_gas_limit, inner.inner.gas_limit);
+    assert_eq!(inner.shared_gas_limit, 0);
+    assert_eq!(inner.timestamp_millis_part, 0);
+}
 
 #[cfg(feature = "cli")]
 struct ChildGuard(Child);
@@ -85,6 +93,19 @@ fn anvil_binary() -> PathBuf {
         .and_then(|deps| deps.parent())
         .expect("target/debug directory")
         .join("anvil")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_tempo_header_by_number() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.mine_one().await;
+
+    let provider = handle.http_provider();
+    for number in ["0x1", "pending"] {
+        let header: Option<TempoHeaderResponse> =
+            provider.client().request("eth_getHeaderByNumber", (number,)).await.unwrap();
+        assert_tempo_header_fields(&header.unwrap());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
