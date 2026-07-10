@@ -1,6 +1,8 @@
 use crate::{
     debug::handle_traces,
-    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
+    rpc_trace::{
+        call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
+    },
     traces::TraceKind,
     utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
@@ -239,8 +241,11 @@ impl RunArgs {
 
             let success = receipt.status();
             let gas_used = receipt.gas_used();
+            let root_create_address = Transaction::to(&tx).is_none().then(|| {
+                receipt.contract_address().unwrap_or_else(|| tx.from().create(tx.nonce()))
+            });
             let arena = SparsedTraceArena {
-                arena: call_frame_to_arena(&frame),
+                arena: call_frame_to_arena_with_root_address(&frame, root_create_address),
                 ignored: Default::default(),
             };
             let result = TraceResult {
@@ -254,7 +259,13 @@ impl RunArgs {
             // for the addresses in the trace, at the transaction's block. Skip the extra
             // round-trips unless local artifacts were requested.
             let contracts_bytecode = if with_local_artifacts {
-                fetch_contracts_bytecode_via_rpc(&provider, &result, tx_block_number.into()).await?
+                fetch_transaction_contracts_bytecode_via_rpc(
+                    &provider,
+                    &result,
+                    tx_hash,
+                    tx_block_number.into(),
+                )
+                .await?
             } else {
                 Default::default()
             };
@@ -573,6 +584,60 @@ pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
                 Ok(_) => {}
                 Err(err) => {
                     let _ = sh_warn!("Failed to fetch code for {addr}: {err}");
+                }
+            }
+        }
+    }
+    Ok(contracts_bytecode)
+}
+
+/// Fetches bytecode for a mined transaction at its exact transaction index.
+///
+/// The prestate tracer provides the code that existed immediately before the transaction, which
+/// avoids reading end-of-block state for contracts changed or removed by later transactions. Any
+/// address absent from the prestate (for example, a contract created by this transaction) falls
+/// back to `eth_getCode` at the transaction's block.
+async fn fetch_transaction_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
+    provider: &P,
+    result: &TraceResult,
+    tx_hash: B256,
+    block: BlockId,
+) -> Result<AddressHashMap<Bytes>> {
+    let mut contracts_bytecode = AddressHashMap::default();
+    let prestate_config = PreStateConfig { disable_storage: Some(true), ..Default::default() };
+    match provider
+        .debug_trace_transaction(tx_hash, GethDebugTracingOptions::prestate_tracer(prestate_config))
+        .await
+    {
+        Ok(trace) => match trace.try_into_pre_state_frame() {
+            Ok(prestate) => {
+                for (&address, account) in prestate.pre_state() {
+                    if let Some(code) = account.code.clone().filter(|code| !code.is_empty()) {
+                        contracts_bytecode.insert(address, code);
+                    }
+                }
+            }
+            Err(err) => {
+                let _ = sh_warn!("Failed to parse transaction prestate for local artifacts: {err}");
+            }
+        },
+        Err(err) => {
+            let _ = sh_warn!("Failed to fetch transaction prestate for local artifacts: {err}");
+        }
+    }
+
+    if let Some(ref traces) = result.traces {
+        for address in gather_trace_addresses(traces) {
+            if contracts_bytecode.contains_key(&address) {
+                continue;
+            }
+            match provider.get_code_at(address).block_id(block).await {
+                Ok(code) if !code.is_empty() => {
+                    contracts_bytecode.insert(address, code);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    let _ = sh_warn!("Failed to fetch code for {address}: {err}");
                 }
             }
         }

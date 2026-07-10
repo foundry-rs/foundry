@@ -9,7 +9,7 @@
 //! so `cast call --debug-trace-call` and `cast run --debug-trace-transaction` surface the same
 //! actionable hints.
 
-use alloy_primitives::{Bytes, LogData, U256};
+use alloy_primitives::{Address, Bytes, LogData, U256};
 use alloy_rpc_types::trace::geth::{CallFrame, CallLogFrame};
 use alloy_transport::TransportError;
 use foundry_evm::traces::{
@@ -19,10 +19,24 @@ use revm::interpreter::InstructionResult;
 
 /// Builds a [`CallTraceArena`] from a geth `callTracer` [`CallFrame`] tree.
 pub fn call_frame_to_arena(root: &CallFrame) -> CallTraceArena {
+    call_frame_to_arena_with_root_address(root, None)
+}
+
+/// Builds a [`CallTraceArena`] and overrides the root frame's address when the tracer omitted it.
+pub fn call_frame_to_arena_with_root_address(
+    root: &CallFrame,
+    root_address: Option<Address>,
+) -> CallTraceArena {
     let mut arena = CallTraceArena::default();
     let nodes = arena.nodes_mut();
     nodes.clear();
     push_frame(nodes, root, None, 0);
+    if let Some(root_address) = root_address
+        && let Some(root) = nodes.first_mut()
+        && root.trace.address.is_zero()
+    {
+        root.trace.address = root_address;
+    }
     arena
 }
 
@@ -233,6 +247,17 @@ mod tests {
         assert_eq!(trace.selfdestruct_transferred_value, Some(U256::from(9u64)));
         assert_eq!(trace.status, Some(InstructionResult::SelfDestruct));
         assert!(trace.is_selfdestruct());
+    }
+
+    #[test]
+    fn fills_missing_root_create_address() {
+        let created = address!("3333333333333333333333333333333333333333");
+        let frame = CallFrame { typ: "CREATE".to_string(), ..Default::default() };
+
+        let arena = call_frame_to_arena_with_root_address(&frame, Some(created));
+
+        assert_eq!(arena.nodes()[0].trace.address, created);
+        assert_eq!(arena.nodes()[0].trace.kind, CallKind::Create);
     }
 
     /// A nested `callTracer` frame (root CALL -> child STATICCALL) with a log on the root,
