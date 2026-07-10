@@ -416,6 +416,76 @@ async fn test_tempo_precompiles_have_code() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+    let token = IERC20::new(ALPHA_USD, &provider);
+    let supply_before = token.totalSupply().call().await.unwrap();
+
+    provider
+        .raw_request::<_, ()>("anvil_dealTIP20".into(), (recipient, ALPHA_USD, U256::from(100)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(100));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+
+    provider
+        .raw_request::<_, ()>("anvil_dealTIP20".into(), (recipient, ALPHA_USD, U256::from(40)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(40));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_erc20_supports_tip20() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+    let token = IERC20::new(ALPHA_USD, &provider);
+    let supply_before = token.totalSupply().call().await.unwrap();
+
+    provider
+        .raw_request::<_, ()>("anvil_dealERC20".into(), (recipient, ALPHA_USD, U256::from(100)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(100));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+
+    provider
+        .raw_request::<_, ()>("anvil_dealERC20".into(), (recipient, ALPHA_USD, U256::from(40)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(40));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20_rejects_invalid_token() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let result: std::result::Result<(), _> = provider
+        .raw_request("anvil_dealTIP20".into(), (Address::random(), Address::random(), U256::ONE))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20_rejects_non_tempo_node() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let result: std::result::Result<(), _> = provider
+        .raw_request("anvil_dealTIP20".into(), (Address::random(), ALPHA_USD, U256::ONE))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_pre_t5_channel_reserve_has_no_sentinel_code() {
     let (api, _handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T4.into()))).await;
