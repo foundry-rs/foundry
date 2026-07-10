@@ -9,7 +9,7 @@ use crate::{
             self,
             db::SerializableState,
             mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
-            notifications::NewBlockNotifications,
+            notifications::ChainNotifications,
             validate::TransactionValidator,
         },
         error::{
@@ -760,8 +760,9 @@ impl<N: Network> EthApi<N> {
         self.backend.impersonate_signature(signature, address).await
     }
 
-    /// Returns a new block event stream that yields Notifications when a new block was added
-    pub fn new_block_notifications(&self) -> NewBlockNotifications {
+    /// Returns a new block event stream that yields Notifications when a new block was added or
+    /// when logs were removed from the canonical chain due to a reorg
+    pub fn new_block_notifications(&self) -> ChainNotifications {
         self.backend.new_block_notifications()
     }
 
@@ -919,9 +920,15 @@ impl<N: Network> EthApi<N> {
     /// Returns block header with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getHeaderByHash`
-    pub async fn header_by_hash(&self, hash: B256) -> Result<Option<AnyRpcHeader>> {
+    pub async fn header_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByHash");
-        Ok(self.backend.block_by_hash(hash).await?.map(|block| block.header.clone()))
+        Ok(self.backend.block_by_hash(hash).await?.map(|block| {
+            let WithOtherFields { inner: block, other } = block.0;
+            WithOtherFields { inner: block.header, other }
+        }))
     }
 
     /// Returns a _full_ block with given hash.
@@ -1983,6 +1990,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
+            EthRequest::DealTIP20(addr, token_addr, val) => {
+                self.anvil_deal_tip20(addr, token_addr, val).await.to_rpc_result()
+            }
             EthRequest::SetERC20Allowance(owner, spender, token_addr, val) => self
                 .anvil_set_erc20_allowance(owner, spender, token_addr, val)
                 .await
@@ -2336,13 +2346,20 @@ impl EthApi<FoundryNetwork> {
     /// Returns block header with given number.
     ///
     /// Handler for ETH RPC call: `eth_getHeaderByNumber`
-    pub async fn header_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcHeader>> {
+    pub async fn header_by_number(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
         if number == BlockNumber::Pending {
-            return Ok(Some(self.pending_block().await.header.clone()));
+            let WithOtherFields { inner: block, other } = self.pending_block().await.0;
+            return Ok(Some(WithOtherFields { inner: block.header, other }));
         }
 
-        Ok(self.backend.block_by_number(number).await?.map(|block| block.header.clone()))
+        Ok(self.backend.block_by_number(number).await?.map(|block| {
+            let WithOtherFields { inner: block, other } = block.0;
+            WithOtherFields { inner: block.header, other }
+        }))
     }
 
     /// Returns a _full_ block with given number
@@ -2620,7 +2637,8 @@ impl EthApi<FoundryNetwork> {
             return Ok(receipt);
         }
         while let Some(notification) = stream.next().await {
-            if let Some(block) = self.backend.get_block_by_hash(notification.hash)
+            if let Some(new_block) = notification.as_new_block()
+                && let Some(block) = self.backend.get_block_by_hash(new_block.hash)
                 && block.body.transactions.iter().any(|tx| tx.hash() == hash)
                 && let Some(receipt) = self.backend.transaction_receipt(hash).await?
             {
@@ -3535,6 +3553,12 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<()> {
         node_info!("anvil_dealERC20");
 
+        if self.backend.is_tempo()
+            && self.backend.try_set_tip20_balance(address, token_address, balance).await?
+        {
+            return Ok(());
+        }
+
         sol! {
             #[sol(rpc)]
             contract IERC20 {
@@ -3558,6 +3582,21 @@ impl EthApi<FoundryNetwork> {
         )
         .await?;
 
+        Ok(())
+    }
+
+    /// Deals TIP-20 tokens to an address.
+    ///
+    /// Handler for RPC call: `anvil_dealTIP20`.
+    pub async fn anvil_deal_tip20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> Result<()> {
+        node_info!("anvil_dealTIP20");
+        self.ensure_tempo_mode()?;
+        self.backend.set_tip20_balance(address, token_address, balance).await?;
         Ok(())
     }
 
@@ -4067,7 +4106,7 @@ impl EthApi<FoundryNetwork> {
                 .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
 
             loop {
-                let block = tokio::select! {
+                let notification = tokio::select! {
                     biased;
                     // Exit when the subscriber unsubscribes, even while awaiting the next block.
                     _ = tx.closed() => break,
@@ -4075,6 +4114,10 @@ impl EthApi<FoundryNetwork> {
                         Some(block) => block,
                         None => break,
                     },
+                };
+
+                let Some(block) = notification.as_new_block() else {
+                    continue;
                 };
 
                 let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {

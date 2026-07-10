@@ -18,7 +18,7 @@ use crate::{
                 state::{storage_root, trie_accounts},
                 storage::MinedTransactionReceipt,
             },
-            notifications::{NewBlockNotification, NewBlockNotifications},
+            notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
             tempo::AnvilStorageProvider,
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
@@ -117,7 +117,7 @@ use foundry_evm::{
         get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
     },
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 #[cfg(feature = "optimism")]
 use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
@@ -194,9 +194,10 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
-    storage::{StorageActions, StorageCtx},
+    storage::{Handler, StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20_factory::TIP20Factory,
 };
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
@@ -308,8 +309,9 @@ pub struct Backend<N: Network> {
     fees: FeeManager,
     /// Initialised genesis.
     genesis: GenesisConfig,
-    /// Listeners for new blocks that get notified when a new block was imported.
-    new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
+    /// Listeners for new blocks that get notified when a new block was imported or when logs were
+    /// removed from the canonical chain due to a reorg.
+    new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
     active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
     enable_steps_tracing: bool,
@@ -827,8 +829,9 @@ impl<N: Network> Backend<N> {
         inspector
     }
 
-    /// Returns a new block event stream that yields Notifications when a new block was added
-    pub fn new_block_notifications(&self) -> NewBlockNotifications {
+    /// Returns a new block event stream that yields Notifications when a new block was added or
+    /// when logs were removed from the canonical chain due to a reorg
+    pub fn new_block_notifications(&self) -> ChainNotifications {
         let (tx, rx) = unbounded();
         self.new_block_listeners.lock().push(tx);
         trace!(target: "backed", "added new block listener");
@@ -847,7 +850,22 @@ impl<N: Network> Backend<N> {
         // sender half for the set
         self.new_block_listeners.lock().retain(|tx| !tx.is_closed());
 
-        let notification = NewBlockNotification { hash, header: Arc::new(header) };
+        let notification =
+            ChainNotification::Block(NewBlockNotification { hash, header: Arc::new(header) });
+
+        self.new_block_listeners
+            .lock()
+            .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
+    }
+
+    /// Notifies all `new_block_listeners` about the logs that were removed from the canonical
+    /// chain due to a reorg.
+    fn notify_on_removed_logs(&self, logs: Vec<Log>) {
+        // cleanup closed notification streams first, if the channel is closed we can remove the
+        // sender half for the set
+        self.new_block_listeners.lock().retain(|tx| !tx.is_closed());
+
+        let notification = ChainNotification::RemovedLogs(Arc::new(logs));
 
         self.new_block_listeners
             .lock()
@@ -1209,6 +1227,13 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    fn inject_arbitrum_precompile(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
+        let Some(block_number) = self.arbitrum_block_number(evm_env) else { return };
+        precompiles.apply_precompile(&arbitrum::ARB_SYS_ADDRESS, move |_| {
+            Some(arbitrum::arb_sys_precompile(block_number))
+        });
+    }
+
     fn inject_tempo_precompiles<DB, I>(&self, evm: &mut tempo_evm::evm::TempoEvm<DB, I>)
     where
         DB: Database,
@@ -1277,6 +1302,7 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut());
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         Ok(evm.transact(tx_env)?)
     }
 
@@ -1386,6 +1412,7 @@ impl<N: Network> Backend<N> {
         macro_rules! run {
             ($evm:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut());
+                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
                 let pool_result = execute_pool_transactions(
@@ -1642,6 +1669,15 @@ impl<N: Network> Backend<N> {
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
+    }
+
+    fn arbitrum_block_number(&self, evm_env: &EvmEnv) -> Option<u64> {
+        if !arbitrum::is_arbitrum_chain(evm_env.cfg_env.chain_id) {
+            return None;
+        }
+
+        let env_block = evm_env.block_env.number.saturating_to();
+        Some(self.get_fork().map_or(env_block, |fork| fork.block_number().max(env_block)))
     }
 
     pub fn get_code_with_state(
@@ -2709,6 +2745,44 @@ where
                 block_log_index += 1;
             }
         }
+        all_logs
+    }
+
+    /// Returns all logs of the blocks with a number greater than `block_number`, marked as
+    /// removed.
+    ///
+    /// This is used during a reorg to capture the logs of the blocks that are about to be
+    /// unwound before their transactions and receipts are cleared from storage, so they can be
+    /// re-delivered to log subscriptions and filters with `removed: true`.
+    fn removed_logs_since(&self, block_number: u64) -> Vec<Log> {
+        let storage = self.blockchain.storage.read();
+        let mut all_logs = Vec::new();
+
+        for num in (block_number + 1)..=storage.best_number {
+            if let Some(hash) = storage.hashes.get(&num)
+                && let Some(block) = storage.blocks.get(hash)
+            {
+                let mut block_log_index = 0u64;
+                for tx in &block.body.transactions {
+                    if let Some(tx) = storage.transactions.get(&tx.hash()) {
+                        for log in tx.receipt.logs() {
+                            all_logs.push(Log {
+                                inner: log.clone(),
+                                block_hash: Some(*hash),
+                                block_number: Some(num),
+                                block_timestamp: Some(block.header.timestamp()),
+                                transaction_hash: Some(tx.info.transaction_hash),
+                                transaction_index: Some(tx.info.transaction_index),
+                                log_index: Some(block_log_index),
+                                removed: true,
+                            });
+                            block_log_index += 1;
+                        }
+                    }
+                }
+            }
+        }
+
         all_logs
     }
 
@@ -4112,6 +4186,10 @@ where
         };
 
         {
+            // Collect the logs of the blocks that are about to be removed from the canonical
+            // chain, while their transactions and receipts are still in storage
+            let removed_logs = self.removed_logs_since(common_block.header.number());
+
             // Unwind the storage back to the common ancestor first
             let removed_blocks =
                 self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
@@ -4120,6 +4198,12 @@ where
             let removed_hashes: Vec<_> =
                 removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
             self.states.write().remove_block_states(&removed_hashes);
+
+            // Notify all log subscriptions and filters about the removed logs, so they receive
+            // them again marked as removed, before any new chain notifications are emitted
+            if !removed_logs.is_empty() {
+                self.notify_on_removed_logs(removed_logs);
+            }
 
             // Set environment back to common block
             let mut env = self.evm_env.write();
@@ -5050,6 +5134,39 @@ impl Backend<FoundryNetwork> {
                 .mint(admin, user_token, validator_token, amount, admin)
                 .map_err(tempo_db_err)?;
             Ok(())
+        })
+        .await
+    }
+
+    /// Sets an account's balance for a deployed TIP-20 token (Tempo-only).
+    pub async fn set_tip20_balance(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> DatabaseResult<()> {
+        if self.try_set_tip20_balance(address, token_address, balance).await? {
+            return Ok(());
+        }
+
+        Err(tempo_db_err(format!("address {token_address} is not a deployed TIP-20 token")))
+    }
+
+    /// Sets an account's balance if the address is a deployed TIP-20 token (Tempo-only).
+    pub async fn try_set_tip20_balance(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> DatabaseResult<bool> {
+        self.with_tempo_storage(|| {
+            if !TIP20Factory::new().is_tip20(token_address).map_err(tempo_db_err)? {
+                return Ok(false);
+            }
+
+            let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
+            token.balances[address].write(balance).map_err(tempo_db_err)?;
+            Ok(true)
         })
         .await
     }

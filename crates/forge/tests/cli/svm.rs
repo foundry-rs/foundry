@@ -81,3 +81,11 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
 });
+
+forgetest_init!(can_test_with_solc_0_8_36_amsterdam, |prj, cmd| {
+    prj.initialize_default_contracts();
+
+    // Amsterdam is an experimental EVM version in solc 0.8.36.
+    cmd.args(["test", "--use", "0.8.36", "--evm-version", "amsterdam", "--experimental"])
+        .assert_success();
+});

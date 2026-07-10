@@ -28,6 +28,8 @@ pub struct IdentifiedAddress<'a> {
     pub contract: Option<String>,
     /// The ABI of the contract at this address.
     pub abi: Option<Cow<'a, JsonAbi>>,
+    /// Byte offset where ABI-encoded constructor arguments begin in the creation input.
+    pub constructor_args_offset: Option<usize>,
     /// The artifact ID of the contract, if any.
     pub artifact_id: Option<ArtifactId>,
 }
