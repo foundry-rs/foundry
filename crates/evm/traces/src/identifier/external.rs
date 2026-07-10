@@ -145,6 +145,7 @@ impl ExternalIdentifier {
             label: Some(label.clone()),
             contract: Some(label),
             abi,
+            constructor_args_offset: None,
             artifact_id: None,
         }
     }
