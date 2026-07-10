@@ -111,14 +111,14 @@ contract SymbolicIgnored {
 "#,
     );
 
-    let stdout = cmd
+    let stderr = cmd
         .args(["test", "--match-test", "checkWouldFail"])
         .assert_success()
         .get_output()
-        .stdout_lossy();
+        .stderr_lossy();
 
     assert_relevant_lines(
-        &stdout,
+        &stderr,
         foundry_test_utils::str![[r#"
 No tests found
 "#]],

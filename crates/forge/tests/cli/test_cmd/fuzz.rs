@@ -316,6 +316,57 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
     ]]);
 });
 
+forgetest_init!(forge_fuzz_replay_rejects_watch, |_prj, cmd| {
+    let output = cmd.args(["fuzz", "replay", "--watch"]).assert_failure();
+    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("unexpected argument '--watch'"), "{stderr}");
+});
+
+forgetest_init!(forge_fuzz_run_honors_configured_invariant_workers, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 4;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(4).unwrap());
+        config.fuzz.seed = Some(U256::ZERO);
+    });
+    prj.add_test(
+        "ForgeFuzzRunInvariantWorkers.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunInvariantWorkersTarget {
+    uint256 public counter;
+
+    function bump() public {
+        counter++;
+    }
+}
+
+contract ForgeFuzzRunInvariantWorkersTest is Test {
+    ForgeFuzzRunInvariantWorkersTarget target;
+
+    function setUp() public {
+        target = new ForgeFuzzRunInvariantWorkersTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_break() public view {
+        require(target.counter() == 0, "broken");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["fuzz", "run", "--json", "--mt", "invariant_break"]).assert_failure();
+    let json: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let suite = json.as_object().unwrap().values().next().unwrap();
+    let tests = suite["test_results"].as_object().unwrap();
+    let result = tests.values().next().unwrap();
+    let kind = &result["kind"]["Invariant"];
+    assert_eq!(kind["workers"], 4, "{json}");
+});
+
 // `forge fuzz replay` (without `--corpus-dir`) must not start a fresh invariant
 // campaign when there is no persisted failure to replay; it should skip instead.
 forgetest_init!(forge_fuzz_replay_invariant_skips_without_persisted_failure, |prj, cmd| {
@@ -607,16 +658,6 @@ contract ForgeFuzzJunitFailureTest {
     assert!(!stdout.contains("Failing tests:"), "{stdout}");
 });
 
-forgetest_init!(forge_fuzz_rejects_watch, |prj, cmd| {
-    let run = cmd.forge_fuse().args(["fuzz", "run", "--watch"]).assert_failure();
-    let stderr = String::from_utf8(run.get_output().stderr.clone()).unwrap();
-    assert!(stderr.contains("`--watch` is not supported for `forge fuzz run`"), "{stderr}");
-
-    let replay = cmd.forge_fuse().args(["fuzz", "replay", "--watch"]).assert_failure();
-    let stderr = String::from_utf8(replay.get_output().stderr.clone()).unwrap();
-    assert!(stderr.contains("`--watch` is not supported for `forge fuzz replay`"), "{stderr}");
-});
-
 forgetest_init!(forge_fuzz_list_only_shows_runnable_tests, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzList.t.sol",
@@ -644,6 +685,210 @@ test/ForgeFuzzList.t.sol
 
 "#]],
     );
+});
+
+forgetest_init!(forge_fuzz_run_warns_for_invariant_only_flag_on_fuzz_only_match, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunWarnings.t.sol",
+        r#"
+contract ForgeFuzzRunWarningsTest {
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunWarningsTest",
+            "--match-test",
+            "testFuzz",
+            "--runs",
+            "1",
+            "--depth",
+            "5",
+        ])
+        .assert_success();
+    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains(
+            "`--depth` only applies to invariant tests; no matched invariant tests were found."
+        ),
+        "{stderr}"
+    );
+});
+
+forgetest_init!(forge_fuzz_run_warns_for_fuzz_only_flag_on_invariant_only_match, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunInvariantWarnings.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunInvariantWarningsTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function invariant_ok() public pure {}
+
+    function targetTouch(uint256 value) external pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunInvariantWarningsTest",
+            "--match-test",
+            "invariant",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--frontier-dir",
+            "frontier",
+            "--fuzz-input-file",
+            "failure",
+        ])
+        .assert_success();
+    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains(
+            "`--frontier-dir` only applies to fuzz tests; no matched fuzz tests were found."
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "`--fuzz-input-file` only applies to fuzz tests; no matched fuzz tests were found."
+        ),
+        "{stderr}"
+    );
+});
+
+forgetest_init!(forge_fuzz_run_runs_sets_invariant_runs, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunInvariantRuns.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunInvariantRunsTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function invariant_ok() public pure {}
+
+    function targetTouch(uint256 value) external pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunInvariantRunsTest",
+            "--match-test",
+            "invariant",
+            "--runs",
+            "2",
+            "--depth",
+            "1",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] invariant_ok() (runs: 2"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_run_does_not_warn_when_both_engines_match, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunBothEngines.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunBothEnginesTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+
+    function invariant_ok() public pure {}
+
+    function targetTouch(uint256 value) external pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunBothEnginesTest",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "1",
+        ])
+        .assert_success();
+    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
+    assert!(!stderr.contains("only applies"), "{stderr}");
+});
+
+forgetest_init!(forge_fuzz_run_positional_path_still_filters, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunPath.t.sol",
+        r#"
+contract ForgeFuzzRunPathTest {
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "ForgeFuzzRunOtherPath.t.sol",
+        r#"
+contract ForgeFuzzRunOtherPathTest {
+    function testFuzz_other(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(["fuzz", "run", "test/ForgeFuzzRunPath.t.sol", "--list"])
+        .assert_success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("test/ForgeFuzzRunPath.t.sol"), "{stdout}");
+    assert!(stdout.contains("testFuzz_value"), "{stdout}");
+    assert!(!stdout.contains("ForgeFuzzRunOtherPath"), "{stdout}");
 });
 
 forgetest_init!(forge_showmap_skips_symbolic_tests, |prj, cmd| {
@@ -2469,6 +2714,59 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
     assert!(invariant_stdout.contains(&invariant_corpus_path), "{invariant_stdout}");
 });
 
+forgetest_init!(forge_fuzz_run_keeps_invariant_trace_seeding_opt_in, |prj, cmd| {
+    let marker = prj.root().join("unit-trace-seed-ran.txt");
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.corpus.corpus_gzip = false;
+        config.fs_permissions.add(PathPermission::write(prj.root()));
+    });
+    prj.add_test(
+        "ForgeFuzzAutoCorpusSeed.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzAutoCorpusHandler {
+    uint256 public touched;
+
+    function touch(uint256 value) external {
+        touched = value;
+    }
+}
+
+contract ForgeFuzzAutoCorpusSeedTest is Test {
+    ForgeFuzzAutoCorpusHandler handler;
+
+    function setUp() public {
+        handler = new ForgeFuzzAutoCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function test_seedCorpusFromUnitTestTrace() public {
+        vm.writeFile(string.concat(vm.projectRoot(), "/unit-trace-seed-ran.txt"), "ran");
+        handler.touch(0x1234);
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzAutoCorpusSeedTest", "-q"]).assert_success();
+
+    let corpus_root = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("corpus")
+        .join("ForgeFuzzAutoCorpusSeedTest")
+        .join("worker0")
+        .join("corpus");
+    assert!(!has_regular_file(&corpus_root));
+    assert!(!marker.exists());
+});
+
 forgetest_init!(fuzz_branch_frontiers_capture_comparison_for_symbolic_followup, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzFrontier.t.sol",
@@ -3729,7 +4027,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     assert_eq!(persisted_failure.fuzz.seed, Some(U256::from(1)));
     assert_eq!(persisted_failure.fuzz.worker, Some(0));
     let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
-    let fuzz_worker = persisted_failure.fuzz.worker.unwrap().to_string();
 
     cmd.forge_fuse()
         .args([
@@ -3738,8 +4035,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
             "1",
             "--fuzz-run",
             &fuzz_run,
-            "--fuzz-worker",
-            &fuzz_worker,
             "--mt",
             "testFuzz_randomUint_shouldFail",
             "-j1",
@@ -3794,7 +4089,6 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
         serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
     let fuzz_seed = format!("{:#x}", persisted_failure.fuzz.seed.unwrap());
     let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
-    let fuzz_worker = persisted_failure.fuzz.worker.unwrap().to_string();
 
     let assert = cmd
         .forge_fuse()
@@ -3804,8 +4098,6 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
             &fuzz_seed,
             "--fuzz-run",
             &fuzz_run,
-            "--fuzz-worker",
-            &fuzz_worker,
             "--mt",
             "testFuzz_randomUint_shouldFail",
             "-j1",
