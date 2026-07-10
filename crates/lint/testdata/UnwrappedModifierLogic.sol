@@ -252,4 +252,13 @@ contract UnwrappedModifierLogicTest {
             mstore(0x40, m)
         }
     }
+
+    // No lint: `amount` is mutated before the placeholder and read after it.
+    // Extracting the pre-placeholder side into a helper would mutate only the helper's
+    // by-value parameter copy, while the post-placeholder code would see the original value.
+    modifier mutatedParamUsedAfter(uint256 amount) {
+        amount += 1;
+        _;
+        _payMeSubsidizedGasAfter(amount, amount);
+    }
 }

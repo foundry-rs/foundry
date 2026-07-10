@@ -118,7 +118,7 @@ impl UnwrappedModifierLogic {
         &self,
         ctx: &LintContext,
         hir: &'hir hir::Hir<'hir>,
-        func: &hir::Function<'_>,
+        func: &'hir hir::Function<'hir>,
         before: &'hir [hir::Stmt<'hir>],
         after: &'hir [hir::Stmt<'hir>],
     ) -> Option<Suggestion> {
@@ -132,7 +132,9 @@ impl UnwrappedModifierLogic {
         // A local variable declared before the placeholder and referenced after it makes any
         // rewrite unsafe: extracted helpers only receive the modifier's parameters, so moving
         // either side out of the modifier separates the declaration from its use.
-        if has_shared_locals(hir, before, after) {
+        if has_shared_locals(hir, before, after)
+            || (wrap_before && has_written_params_used_after(hir, func.parameters, before, after))
+        {
             return None;
         }
 
@@ -262,6 +264,94 @@ fn has_shared_locals<'hir>(
 
     let mut finder = SharedLocalFinder { hir, locals: &declared };
     after.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
+}
+
+/// Returns `true` if a modifier parameter is written in the `before` segment and referenced in
+/// the `after` segment.
+fn has_written_params_used_after<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    params: &'hir [hir::VariableId],
+    before: &'hir [hir::Stmt<'hir>],
+    after: &'hir [hir::Stmt<'hir>],
+) -> bool {
+    let mut written = Vec::new();
+    let mut finder = ParamWriteFinder { hir, params, written: &mut written };
+    for stmt in before {
+        let _ = finder.visit_stmt(stmt);
+    }
+
+    if written.is_empty() {
+        return false;
+    }
+
+    let mut finder = SharedLocalFinder { hir, locals: &written };
+    after.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
+}
+
+/// Visitor that collects modifier parameters written by an expression.
+struct ParamWriteFinder<'a, 'hir> {
+    hir: &'hir hir::Hir<'hir>,
+    params: &'a [hir::VariableId],
+    written: &'a mut Vec<hir::VariableId>,
+}
+
+impl<'hir> hir::Visit<'hir> for ParamWriteFinder<'_, 'hir> {
+    type BreakValue = ();
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        match &expr.kind {
+            hir::ExprKind::Assign(lhs, _, _) | hir::ExprKind::Delete(lhs) => {
+                collect_written_params(lhs, self.params, self.written);
+            }
+            hir::ExprKind::Unary(op, inner)
+                if matches!(
+                    op.kind,
+                    ast::UnOpKind::PreInc
+                        | ast::UnOpKind::PreDec
+                        | ast::UnOpKind::PostInc
+                        | ast::UnOpKind::PostDec
+                ) =>
+            {
+                collect_written_params(inner, self.params, self.written);
+            }
+            _ => {}
+        }
+
+        self.walk_expr(expr)
+    }
+}
+
+fn collect_written_params(
+    expr: &hir::Expr<'_>,
+    params: &[hir::VariableId],
+    written: &mut Vec<hir::VariableId>,
+) {
+    match &expr.kind {
+        hir::ExprKind::Ident(resolutions) => {
+            for resolution in *resolutions {
+                if let Res::Item(hir::ItemId::Variable(id)) = resolution
+                    && params.contains(id)
+                    && !written.contains(id)
+                {
+                    written.push(*id);
+                }
+            }
+        }
+        hir::ExprKind::Tuple(items) => {
+            for item in items.iter().flatten() {
+                collect_written_params(item, params, written);
+            }
+        }
+        hir::ExprKind::Index(base, _)
+        | hir::ExprKind::Slice(base, _, _)
+        | hir::ExprKind::Member(base, _)
+        | hir::ExprKind::YulMember(base, _) => collect_written_params(base, params, written),
+        _ => {}
+    }
 }
 
 /// Recursively counts placeholder (`_`) statements within a list of statements, descending into
