@@ -105,6 +105,18 @@ impl Cheatcode for mockCall_3Call {
     }
 }
 
+impl Cheatcode for mockCall_4Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { callee, data, returnData, injectCode } = self;
+        if *injectCode {
+            let _ = make_acc_non_empty(callee, ccx)?;
+        }
+
+        mock_call(ccx.state, callee, data, None, returnData, InstructionResult::Return);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for mockCalls_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { callee, data, returnData } = self;
