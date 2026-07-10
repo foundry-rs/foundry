@@ -146,9 +146,6 @@ impl Provider for EvmArgs {
             // need to merge that manually otherwise `from_occurrences` does not work
             let verbosity = shell::verbosity();
             dict.insert("verbosity".to_string(), verbosity.into());
-            let mut tracing = Dict::default();
-            tracing.insert("verbosity".to_string(), verbosity.into());
-            dict.insert("tracing".to_string(), tracing.into());
         }
 
         if self.ffi {

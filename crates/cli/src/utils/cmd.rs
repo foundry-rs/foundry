@@ -197,7 +197,6 @@ pub trait LoadConfig {
 
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::from_provider(figment)?.sanitized();
-        evm_opts.verbosity = config.tracing.verbosity;
 
         if config.networks != Default::default() {
             evm_opts.networks = config.networks;
@@ -379,16 +378,18 @@ mod tests {
     impl LoadConfig for TracingConfigArgs {
         fn figment(&self) -> Figment {
             Config::figment()
+                .merge(("verbosity", 2u8))
                 .merge(("tracing", TracingConfig { verbosity: 4, ..Default::default() }))
         }
     }
 
     #[test]
-    fn tracing_verbosity_is_applied_to_evm_opts() {
+    fn tracing_verbosity_is_independent_from_evm_opts() {
         let (config, evm_opts) = TracingConfigArgs.load_config_and_evm_opts_no_warnings().unwrap();
 
+        assert_eq!(config.verbosity, 2);
         assert_eq!(config.tracing.verbosity, 4);
-        assert_eq!(evm_opts.verbosity, 4);
+        assert_eq!(evm_opts.verbosity, 2);
     }
 
     #[test]

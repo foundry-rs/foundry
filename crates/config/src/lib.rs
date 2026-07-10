@@ -300,8 +300,7 @@ pub struct Config {
     pub optimizer_details: Option<OptimizerDetails>,
     /// Model checker settings.
     pub model_checker: Option<ModelCheckerSettings>,
-    /// Legacy root alias for [`TracingConfig::verbosity`].
-    #[serde(default, skip_serializing)]
+    /// Verbosity to use for global output.
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
@@ -836,13 +835,13 @@ impl Config {
     #[doc(alias = "try_from")]
     pub fn from_provider<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         trace!("load config with provider: {:?}", provider.metadata());
-        Self::from_figment(Figment::from(provider))
+        Self::from_figment(Figment::from(TracingCompatProvider(provider)))
     }
 
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
-        let provider = Figment::from(provider).select(self.profile.clone());
+        let provider = Figment::from(TracingCompatProvider(provider)).select(self.profile.clone());
         let invariant_corpus_random_sequence_weight_configured =
             self.invariant.corpus_random_sequence_weight_configured
                 || provider.contains("invariant.corpus_random_sequence_weight")
@@ -853,7 +852,6 @@ impl Config {
             || provider.contains("invariant.workers")
             || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
             || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
-        let tracing_verbosity_configured = provider.contains("tracing.verbosity");
         let tracing_labels_configured = provider.contains("tracing.labels");
         let figment = self.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
@@ -862,7 +860,7 @@ impl Config {
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
-        config.normalize_tracing_settings(tracing_verbosity_configured, tracing_labels_configured);
+        config.normalize_tracing_settings(tracing_labels_configured);
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -896,14 +894,12 @@ impl Config {
         let invariant_workers_configured = figment
             .extract_inner::<bool>("invariant.workers_configured")
             .unwrap_or_else(|_| figment_value_is_configured(&figment, "invariant.workers"));
-        let tracing_verbosity_configured =
-            figment_value_is_configured(&figment, "tracing.verbosity");
         let tracing_labels_configured = figment_value_is_configured(&figment, "tracing.labels");
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
-        config.normalize_tracing_settings(tracing_verbosity_configured, tracing_labels_configured);
+        config.normalize_tracing_settings(tracing_labels_configured);
         let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
@@ -955,12 +951,6 @@ impl Config {
     }
 
     fn normalize_tracing_figment(mut figment: Figment) -> Figment {
-        if figment.contains("tracing.verbosity")
-            && let Ok(verbosity) = figment.extract_inner::<u8>("tracing.verbosity")
-        {
-            figment = figment.merge(("verbosity", verbosity));
-        }
-
         if figment.contains("tracing.labels")
             && let Ok(tracing_labels) =
                 figment.extract_inner::<AddressHashMap<String>>("tracing.labels")
@@ -980,17 +970,7 @@ impl Config {
         Ok(())
     }
 
-    fn normalize_tracing_settings(
-        &mut self,
-        tracing_verbosity_configured: bool,
-        tracing_labels_configured: bool,
-    ) {
-        if tracing_verbosity_configured {
-            self.verbosity = self.tracing.verbosity;
-        } else {
-            self.tracing.verbosity = self.verbosity;
-        }
-
+    fn normalize_tracing_settings(&mut self, tracing_labels_configured: bool) {
         if tracing_labels_configured {
             self.labels.extend(self.tracing.labels.clone());
         }
@@ -1029,19 +1009,19 @@ impl Config {
 
         // merge environment variables
         figment = figment
-            .merge(
+            .merge(TracingCompatProvider(
                 Env::prefixed("DAPP_")
                     .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
                     .global(),
-            )
-            .merge(
+            ))
+            .merge(TracingCompatProvider(
                 Env::prefixed("DAPP_TEST_")
                     .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
                     .global(),
-            )
+            ))
             .merge(DappEnvCompatProvider)
             .merge(EtherscanEnvProvider::default())
-            .merge(
+            .merge(TracingCompatProvider(
                 Env::prefixed("FOUNDRY_")
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
                     .map(|key| {
@@ -1055,7 +1035,7 @@ impl Config {
                         }
                     })
                     .global(),
-            )
+            ))
             .select(profile.clone());
 
         // only resolve remappings if all providers are requested
@@ -2544,7 +2524,8 @@ impl Config {
         let provider = toml_provider.strict_select(profiles);
 
         // apply any key fixes
-        let provider = &BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
+        let provider =
+            &TracingCompatProvider(BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider)));
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
@@ -2771,16 +2752,13 @@ impl Provider for Config {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         let root = Value::serialize(self.root.clone())?;
-        let verbosity = Value::serialize(self.tracing.verbosity)?;
         let labels = Value::serialize(self.tracing.labels.clone())?;
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
-            entry.insert("verbosity".to_string(), verbosity.clone());
             entry.insert("labels".to_string(), labels.clone());
         }
         if let Some(entry) = data.get_mut(&self.profile) {
             entry.insert("root".to_string(), root);
-            entry.insert("verbosity".to_string(), verbosity);
             entry.insert("labels".to_string(), labels);
         }
         Ok(data)
@@ -4211,7 +4189,6 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
-                    tracing: TracingConfig { verbosity: 3, ..Default::default() },
                     via_ir: true,
                     rpc_storage_caching: StorageCachingConfig {
                         chains: CachedChains::Chains(vec![
@@ -4533,7 +4510,6 @@ mod tests {
                     src: "mysrc".into(),
                     out: "myout".into(),
                     verbosity: 3,
-                    tracing: TracingConfig { verbosity: 3, ..Default::default() },
                     ..Config::default().normalized_optimizer_settings()
                 }
             );
@@ -4546,7 +4522,6 @@ mod tests {
                     src: "other-src".into(),
                     out: "myout".into(),
                     verbosity: 3,
-                    tracing: TracingConfig { verbosity: 3, ..Default::default() },
                     ..Config::default().normalized_optimizer_settings()
                 }
             );
@@ -5844,7 +5819,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tracing_serialization_omits_legacy_aliases() {
+    fn test_tracing_serialization_keeps_global_verbosity() {
         let address = address!("0x0000000000000000000000000000000000000001");
         let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
         let config = Config {
@@ -5854,12 +5829,12 @@ mod tests {
 
         let serialized = toml::Value::try_from(&config).unwrap();
         let table = serialized.as_table().unwrap();
-        assert!(!table.contains_key("verbosity"));
+        assert_eq!(table["verbosity"].as_integer(), Some(0));
         assert!(!table.contains_key("labels"));
         assert_eq!(table["tracing"]["verbosity"].as_integer(), Some(4));
 
         let provided = Figment::from(&config).extract::<Config>().unwrap();
-        assert_eq!(provided.verbosity, 4);
+        assert_eq!(provided.verbosity, 0);
         assert_eq!(provided.labels, labels);
 
         let merged = config.merge_inline_provider(("ffi", true)).unwrap();
@@ -5889,7 +5864,7 @@ mod tests {
             )?;
 
             let config = Config::load().unwrap();
-            assert_eq!(config.verbosity, 4);
+            assert_eq!(config.verbosity, 2);
             assert_eq!(config.tracing.verbosity, 4);
             assert!(config.tracing.disable_labels);
             assert_eq!(config.tracing.trace_depth, Some(3));
@@ -5908,7 +5883,7 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_tracing_section_preserves_legacy_verbosity() {
+    fn test_global_and_tracing_verbosity_are_independent() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
@@ -5923,11 +5898,47 @@ mod tests {
 
             let config = Config::load().unwrap();
             assert_eq!(config.verbosity, 4);
-            assert_eq!(config.tracing.verbosity, 4);
+            assert_eq!(config.tracing.verbosity, 0);
             assert!(config.tracing.disable_labels);
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_label_aliases_preserve_provider_precedence() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = |label: &str| AddressHashMap::from_iter([(address, label.to_string())]);
+        let provider = |global: &str, local: &str| {
+            let figment = Config::merge_toml_provider(
+                Figment::from(Config::default()),
+                Toml::string(global).nested(),
+                Config::DEFAULT_PROFILE,
+            );
+            Config::merge_toml_provider(
+                figment,
+                Toml::string(local).nested(),
+                Config::DEFAULT_PROFILE,
+            )
+        };
+
+        let config = Config::from_provider(provider(
+            r#"[tracing.labels]
+            0x0000000000000000000000000000000000000001 = "global""#,
+            r#"[labels]
+            0x0000000000000000000000000000000000000001 = "local""#,
+        ))
+        .unwrap();
+        assert_eq!(config.tracing.labels, labels("local"));
+
+        let config = Config::from_provider(provider(
+            r#"[labels]
+            0x0000000000000000000000000000000000000001 = "global""#,
+            r#"[tracing.labels]
+            0x0000000000000000000000000000000000000001 = "local""#,
+        ))
+        .unwrap();
+        assert_eq!(config.tracing.labels, labels("local"));
     }
 
     #[test]

@@ -2456,6 +2456,10 @@ forgetest_async!(can_simulate_with_default_sender, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| {
+        config.verbosity = 0;
+        config.tracing.verbosity = 4;
+    });
     prj.add_script(
         "Script.s.sol",
         r#"
@@ -2480,7 +2484,7 @@ contract SimpleScript is Script {
             "#,
     );
 
-    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
+    cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint()]);
     cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]

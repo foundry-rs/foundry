@@ -54,9 +54,7 @@ impl TracingArgs {
     /// Resolves CLI overrides against the configured trace rendering settings.
     pub fn resolve(&self, config: &TracingConfig, verbosity: u8) -> TracingConfig {
         let mut tracing = config.clone();
-        if verbosity > 0 {
-            tracing.verbosity = verbosity;
-        }
+        tracing.verbosity = tracing.verbosity.max(verbosity);
         tracing.labels.extend(self.parsed_labels());
         tracing.disable_labels |= self.disable_labels;
         tracing.compact_labels |= self.compact_labels;
@@ -111,10 +109,11 @@ mod tests {
     }
 
     #[test]
-    fn explicit_verbosity_overrides_config() {
+    fn tracing_verbosity_is_independent_from_global_verbosity() {
         let config = TracingConfig { verbosity: 5, ..Default::default() };
 
-        assert_eq!(TracingArgs::default().resolve(&config, 1).verbosity, 1);
+        assert_eq!(TracingArgs::default().resolve(&config, 1).verbosity, 5);
         assert_eq!(TracingArgs::default().resolve(&config, 0).verbosity, 5);
+        assert_eq!(TracingArgs::default().resolve(&config, 6).verbosity, 6);
     }
 }

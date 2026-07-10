@@ -58,6 +58,7 @@ auto_detect_solc = true
 offline = false
 optimizer = false
 optimizer_runs = 200
+verbosity = 0
 eth_rpc_accept_invalid_certs = false
 eth_rpc_no_proxy = false
 eth_rpc_curl = false
@@ -407,7 +408,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         },
         coverage: Default::default(),
         mutation: Default::default(),
-        tracing: TracingConfig { verbosity: 4, compact_labels: true, ..Default::default() },
+        tracing: TracingConfig { verbosity: 2, compact_labels: true, ..Default::default() },
         ffi: true,
         live_logs: true,
         allow_internal_expect_revert: false,
@@ -498,8 +499,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     };
     prj.write_config(input.clone());
     let config = cmd.config();
-    let expected = Config { verbosity: 0, ..input };
-    similar_asserts::assert_eq!(expected, config);
+    similar_asserts::assert_eq!(input, config);
 });
 
 // tests config gets printed to std out
@@ -1430,6 +1430,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "optimizer_runs": 200,
   "optimizer_details": null,
   "model_checker": null,
+  "verbosity": 0,
   "eth_rpc_url": null,
   "eth_rpc_accept_invalid_certs": false,
   "eth_rpc_no_proxy": false,

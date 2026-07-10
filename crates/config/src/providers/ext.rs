@@ -355,6 +355,57 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     }
 }
 
+/// A provider that maps deprecated root labels into the tracing section before providers merge.
+pub(crate) struct TracingCompatProvider<P>(pub(crate) P);
+
+impl<P: Provider> Provider for TracingCompatProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.0.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = self.0.data()?;
+
+        if let Some(labels) = map.get(&Profile::new("labels")).cloned() {
+            merge_tracing_labels(&labels, map.entry(Profile::new("tracing")).or_default());
+        }
+
+        for (profile, dict) in &mut map {
+            if profile.as_str().as_str() == Config::PROFILE_SECTION {
+                for value in dict.values_mut() {
+                    if let Value::Dict(_, profile) = value {
+                        normalize_tracing_labels(profile);
+                    }
+                }
+            } else if !Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+                normalize_tracing_labels(dict);
+            }
+        }
+
+        Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
+    }
+}
+
+fn normalize_tracing_labels(dict: &mut Dict) {
+    let Some(Value::Dict(_, labels)) = dict.get("labels").cloned() else { return };
+    let tracing = dict.entry("tracing".to_string()).or_insert_with(|| Dict::new().into());
+    if let Value::Dict(_, tracing) = tracing {
+        merge_tracing_labels(&labels, tracing);
+    }
+}
+
+fn merge_tracing_labels(legacy: &Dict, tracing: &mut Dict) {
+    let mut labels = legacy.clone();
+    if let Some(Value::Dict(_, configured)) = tracing.get("labels") {
+        labels.extend(configured.clone());
+    }
+    tracing.insert("labels".to_string(), labels.into());
+}
+
 /// A provider that sets the `src` and `output` path depending on their existence.
 pub(crate) struct DappHardhatDirProvider<'a>(pub(crate) &'a Path);
 

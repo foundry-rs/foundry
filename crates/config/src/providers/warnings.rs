@@ -93,9 +93,8 @@ const RESERVED_KEYS: &[&str] = &["extends"];
 /// Keys kept for backward compatibility that should not trigger unknown key warnings.
 ///
 /// `tempo` and `optimism` are legacy aliases for `network = "tempo"` / `network = "optimism"` —
-/// still accepted on input but no longer serialized in the default config. `verbosity` is the
-/// legacy root alias for `tracing.verbosity`.
-const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism", "verbosity"];
+/// still accepted on input but no longer serialized in the default config.
+const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism"];
 
 const LABELS_KEY: &str = "labels";
 const TRACING_LABELS_KEY: &str = "tracing.labels";

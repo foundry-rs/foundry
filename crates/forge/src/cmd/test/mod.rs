@@ -1876,8 +1876,8 @@ impl TestArgs {
         }
 
         // Enable internal tracing for more informative flamegraph/profile.
-        let tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
-        let decode_internal_enabled = tracing.decode_internal || trace_output.is_some();
+        config.tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        let decode_internal_enabled = config.tracing.decode_internal || trace_output.is_some();
 
         // Choose the internal function tracing mode, if --decode-internal is provided.
         let decode_internal = if decode_internal_enabled {
@@ -2556,11 +2556,12 @@ impl TestArgs {
         let silent = self.gas_report && shell::is_json()
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
-        let tracing = self.tracing.resolve(&config.tracing, verbosity);
+        let tracing = &config.tracing;
+        let trace_verbosity = tracing.verbosity;
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
-        if !self.opcodes.is_empty() && verbosity < 5 {
+        if !self.opcodes.is_empty() && trace_verbosity < 5 {
             sh_eprintln!()?;
             eyre::bail!("Not enough verbosity. Use -vvvvv to show opcodes.");
         }
@@ -2709,7 +2710,7 @@ impl TestArgs {
 
         // Build the trace decoder.
         let mut builder = CallTraceDecoderBuilder::new()
-            .with_tracing_config(&tracing)
+            .with_tracing_config(tracing)
             .with_known_contracts(&known_contracts)
             .with_chain_id(remote_chain.map(|c| c.id()))
             .with_tempo_hardfork(
@@ -2784,8 +2785,12 @@ impl TestArgs {
                 let show_traces = !self.suppress_successful_traces || test_failed;
                 let render_trace_output = should_render_trace_output(silent, show_traces);
                 let should_include_trace = |kind: &TraceKind| match kind {
-                    TraceKind::Execution => (verbosity == 3 && test_failed) || verbosity >= 4,
-                    TraceKind::Setup => (verbosity == 4 && test_failed) || verbosity >= 5,
+                    TraceKind::Execution => {
+                        (trace_verbosity == 3 && test_failed) || trace_verbosity >= 4
+                    }
+                    TraceKind::Setup => {
+                        (trace_verbosity == 4 && test_failed) || trace_verbosity >= 5
+                    }
                     TraceKind::Deployment => false,
                 };
                 let renders_trace = render_trace_output
@@ -2849,7 +2854,7 @@ impl TestArgs {
                             decoder.identify(arena, &mut identifier);
                         }
 
-                        // verbosity:
+                        // Trace verbosity:
                         // - 0..3: nothing
                         // - 3: only display traces for failed tests
                         // - 4: also display the setup trace for failed tests
@@ -2867,7 +2872,7 @@ impl TestArgs {
                             decoded_traces.push(render_trace_arena_inner(
                                 arena,
                                 false,
-                                verbosity > 4,
+                                trace_verbosity > 4,
                             ));
                         }
                     }
@@ -2880,12 +2885,12 @@ impl TestArgs {
                     }
                 }
 
-                // Extract and display backtrace for failed tests when verbosity >= 3.
-                // At verbosity 3-4 backtraces show contract/function names only.
-                // At verbosity 5 backtraces include source file locations.
+                // Extract and display backtrace for failed tests when trace verbosity >= 3.
+                // At trace verbosity 3-4 backtraces show contract/function names only.
+                // At trace verbosity 5 backtraces include source file locations.
                 if !silent
                     && result.status.is_failure()
-                    && verbosity >= 3
+                    && trace_verbosity >= 3
                     && !result.traces.is_empty()
                     && let Some((_, arena)) =
                         result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
