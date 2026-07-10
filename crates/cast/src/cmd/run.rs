@@ -25,7 +25,9 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts, TracingArgs},
     utils::{TraceResult, init_progress},
 };
-use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, provider::ProviderBuilder};
+use foundry_common::{
+    SYSTEM_TRANSACTION_TYPE, is_known_system_sender, provider::ProviderBuilder, shell,
+};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     Config,
@@ -160,7 +162,7 @@ impl RunArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
         self.tracing.labels.append(&mut self.legacy_labels);
-        let tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        let tracing = self.tracing.resolve(&config.tracing, shell::verbosity());
 
         let with_local_artifacts = self.with_local_artifacts;
         let debug = self.debug;
@@ -291,7 +293,7 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
-        let verbosity = evm_opts.verbosity;
+        let verbosity = tracing.verbosity;
         let (block, (mut evm_env, tx_env, fork, chain, networks)) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),

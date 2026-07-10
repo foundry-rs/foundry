@@ -31,7 +31,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     abi::{encode_function_args, get_func},
     provider::{ProviderBuilder, curl_transport::generate_curl_command},
-    sh_println,
+    sh_println, shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
@@ -300,7 +300,7 @@ impl CallArgs {
             wallet,
             ..
         } = self;
-        let tracing = tracing.resolve(&config.tracing, evm_opts.verbosity);
+        let tracing = tracing.resolve(&config.tracing, shell::verbosity());
 
         if let Some(data) = data {
             sig = Some(data);
@@ -441,7 +441,7 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let verbosity = evm_opts.verbosity;
+            let verbosity = tracing.verbosity;
             let (mut evm_env, tx_env, fork, chain, networks) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
 
