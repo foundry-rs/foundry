@@ -575,6 +575,10 @@ pub enum EthRequest {
     )]
     DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
+    /// Modifies the TIP-20 balance of an account.
+    #[serde(rename = "anvil_dealTIP20")]
+    DealTIP20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
     /// Sets the ERC20 allowance for a spender
     #[serde(rename = "anvil_setERC20Allowance")]
     SetERC20Allowance(

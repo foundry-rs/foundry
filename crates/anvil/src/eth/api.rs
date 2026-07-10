@@ -1990,6 +1990,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
+            EthRequest::DealTIP20(addr, token_addr, val) => {
+                self.anvil_deal_tip20(addr, token_addr, val).await.to_rpc_result()
+            }
             EthRequest::SetERC20Allowance(owner, spender, token_addr, val) => self
                 .anvil_set_erc20_allowance(owner, spender, token_addr, val)
                 .await
@@ -3550,6 +3553,12 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<()> {
         node_info!("anvil_dealERC20");
 
+        if self.backend.is_tempo()
+            && self.backend.try_set_tip20_balance(address, token_address, balance).await?
+        {
+            return Ok(());
+        }
+
         sol! {
             #[sol(rpc)]
             contract IERC20 {
@@ -3573,6 +3582,21 @@ impl EthApi<FoundryNetwork> {
         )
         .await?;
 
+        Ok(())
+    }
+
+    /// Deals TIP-20 tokens to an address.
+    ///
+    /// Handler for RPC call: `anvil_dealTIP20`.
+    pub async fn anvil_deal_tip20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> Result<()> {
+        node_info!("anvil_dealTIP20");
+        self.ensure_tempo_mode()?;
+        self.backend.set_tip20_balance(address, token_address, balance).await?;
         Ok(())
     }
 

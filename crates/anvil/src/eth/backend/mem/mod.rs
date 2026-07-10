@@ -194,9 +194,10 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
-    storage::{StorageActions, StorageCtx},
+    storage::{Handler, StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20_factory::TIP20Factory,
 };
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
@@ -5133,6 +5134,39 @@ impl Backend<FoundryNetwork> {
                 .mint(admin, user_token, validator_token, amount, admin)
                 .map_err(tempo_db_err)?;
             Ok(())
+        })
+        .await
+    }
+
+    /// Sets an account's balance for a deployed TIP-20 token (Tempo-only).
+    pub async fn set_tip20_balance(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> DatabaseResult<()> {
+        if self.try_set_tip20_balance(address, token_address, balance).await? {
+            return Ok(());
+        }
+
+        Err(tempo_db_err(format!("address {token_address} is not a deployed TIP-20 token")))
+    }
+
+    /// Sets an account's balance if the address is a deployed TIP-20 token (Tempo-only).
+    pub async fn try_set_tip20_balance(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> DatabaseResult<bool> {
+        self.with_tempo_storage(|| {
+            if !TIP20Factory::new().is_tip20(token_address).map_err(tempo_db_err)? {
+                return Ok(false);
+            }
+
+            let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
+            token.balances[address].write(balance).map_err(tempo_db_err)?;
+            Ok(true)
         })
         .await
     }
