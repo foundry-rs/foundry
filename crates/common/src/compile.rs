@@ -41,6 +41,26 @@ use std::{
 /// A Solar compiler instance, to grant syntactic and semantic analysis capabilities.
 pub type Analysis = Arc<solar::sema::Compiler>;
 
+const ABI_SOLC_ENV: &str = "FOUNDRY_ABI_SOLC";
+
+fn replace_abi_compiler(project: &mut Project) {
+    if std::env::var_os(ABI_SOLC_ENV).is_some() {
+        return;
+    }
+
+    let Some(solar) = std::env::current_exe().ok().and_then(|exe| solar_path(&exe)) else {
+        return;
+    };
+
+    let Some(SolcCompiler::Specific(solc)) = &mut project.compiler.solc else { return };
+    solc.solc = solar;
+}
+
+fn solar_path(exe: &Path) -> Option<PathBuf> {
+    let solar = exe.parent()?.join(format!("solar{}", std::env::consts::EXE_SUFFIX));
+    solar.is_file().then_some(solar)
+}
+
 /// Builder type to configure how to compile a project.
 ///
 /// This is merely a wrapper for [`Project::compile()`] which also prints to stdout depending on its
@@ -660,13 +680,11 @@ where
 }
 
 /// Compiles the project requesting only ABI output.
-pub fn compile_abi_project<C: Compiler<CompilerContract = Contract>>(
-    project: &mut Project<C>,
+pub fn compile_abi_project(
+    project: &mut Project,
     compiler: ProjectCompiler,
-) -> Result<ProjectCompileOutput<C>>
-where
-    DynamicTestLinkingPreprocessor: Preprocessor<C>,
-{
+) -> Result<ProjectCompileOutput> {
+    replace_abi_compiler(project);
     project.update_output_selection(|selection| {
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
         *selection = OutputSelection::common_output_selection(["abi".to_string()]);
@@ -895,5 +913,16 @@ mod tests {
             ContractSizeLimits::with_runtime_limit(50_000),
             ContractSizeLimits::new(50_000, 100_000)
         );
+    }
+
+    #[test]
+    fn finds_solar_next_to_executable() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = temp.path().join(format!("forge{}", std::env::consts::EXE_SUFFIX));
+        let solar = temp.path().join(format!("solar{}", std::env::consts::EXE_SUFFIX));
+
+        assert!(solar_path(&exe).is_none());
+        std::fs::File::create(&solar).unwrap();
+        assert_eq!(solar_path(&exe), Some(solar));
     }
 }
