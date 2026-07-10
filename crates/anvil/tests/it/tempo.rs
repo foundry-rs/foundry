@@ -34,7 +34,7 @@ use foundry_evm::core::tempo::{
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
     active_tempo_precompile_addresses,
 };
-use tempo_alloy::primitives::TempoTxEnvelope;
+use tempo_alloy::{primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
     TempoHardfork,
     constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
@@ -47,7 +47,7 @@ use tempo_precompiles::{
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
 use tempo_primitives::{
-    AASigned, TempoSignature, TempoTransaction,
+    AASigned, TempoHeader, TempoSignature, TempoTransaction,
     transaction::{Call, KeyAuthorization, PrimitiveSignature, SignatureType},
 };
 
@@ -61,6 +61,14 @@ const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 /// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
 const TIP20_TRANSFER_GAS: u64 = 300_000;
 const T5_PRECOMPILE_GAS: u64 = 10_000_000;
+
+fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
+    let inner: &TempoHeader = header.as_ref();
+    assert_eq!(header.timestamp_millis, inner.timestamp_millis());
+    assert_eq!(inner.general_gas_limit, inner.inner.gas_limit);
+    assert_eq!(inner.shared_gas_limit, 0);
+    assert_eq!(inner.timestamp_millis_part, 0);
+}
 
 #[cfg(feature = "cli")]
 struct ChildGuard(Child);
@@ -85,6 +93,19 @@ fn anvil_binary() -> PathBuf {
         .and_then(|deps| deps.parent())
         .expect("target/debug directory")
         .join("anvil")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_tempo_header_by_number() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.mine_one().await;
+
+    let provider = handle.http_provider();
+    for number in ["0x1", "pending"] {
+        let header: Option<TempoHeaderResponse> =
+            provider.client().request("eth_getHeaderByNumber", (number,)).await.unwrap();
+        assert_tempo_header_fields(&header.unwrap());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -413,6 +434,76 @@ async fn test_tempo_precompiles_have_code() {
         let code = api.get_code(*addr, None).await.unwrap();
         assert!(!code.is_empty(), "Token {addr} should have code deployed");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+    let token = IERC20::new(ALPHA_USD, &provider);
+    let supply_before = token.totalSupply().call().await.unwrap();
+
+    provider
+        .raw_request::<_, ()>("anvil_dealTIP20".into(), (recipient, ALPHA_USD, U256::from(100)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(100));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+
+    provider
+        .raw_request::<_, ()>("anvil_dealTIP20".into(), (recipient, ALPHA_USD, U256::from(40)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(40));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_erc20_supports_tip20() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+    let token = IERC20::new(ALPHA_USD, &provider);
+    let supply_before = token.totalSupply().call().await.unwrap();
+
+    provider
+        .raw_request::<_, ()>("anvil_dealERC20".into(), (recipient, ALPHA_USD, U256::from(100)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(100));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+
+    provider
+        .raw_request::<_, ()>("anvil_dealERC20".into(), (recipient, ALPHA_USD, U256::from(40)))
+        .await
+        .unwrap();
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(40));
+    assert_eq!(token.totalSupply().call().await.unwrap(), supply_before);
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20_rejects_invalid_token() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let result: std::result::Result<(), _> = provider
+        .raw_request("anvil_dealTIP20".into(), (Address::random(), Address::random(), U256::ONE))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20_rejects_non_tempo_node() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let result: std::result::Result<(), _> = provider
+        .raw_request("anvil_dealTIP20".into(), (Address::random(), ALPHA_USD, U256::ONE))
+        .await;
+
+    assert!(result.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
