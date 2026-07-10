@@ -24,6 +24,7 @@ use tempo_contracts::precompiles::{
     VALIDATOR_CONFIG_V2_ADDRESS,
 };
 
+pub mod arbitrum;
 pub mod celo;
 
 #[cfg(feature = "optimism")]

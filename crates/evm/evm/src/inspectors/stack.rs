@@ -22,7 +22,7 @@ use foundry_evm_core::{
     },
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     Inspector,
@@ -1366,6 +1366,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             }
         }
 
+        if let Some(outcome) = handle_arbitrum_system_call::<FEN>(ecx, call) {
+            return Some(outcome);
+        }
+
         if self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1 {
             match call.scheme {
                 // Isolate CALLs
@@ -1528,6 +1532,58 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 inspector, contract, target, value,
             )
         });
+    }
+}
+
+fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
+    call: &CallInputs,
+) -> Option<CallOutcome> {
+    if call.target_address != arbitrum::ARB_SYS_ADDRESS
+        || call.bytecode_address != arbitrum::ARB_SYS_ADDRESS
+        || !arbitrum::is_arbitrum_chain(ecx.cfg().chain_id)
+    {
+        return None;
+    }
+
+    let input = call.input.bytes(ecx);
+    if input.get(..4) != Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR) {
+        return None;
+    }
+
+    let block_number = ecx.db().active_fork_block_number()?;
+    let Some((gas_cost, output)) = arbitrum::arb_block_number_call(call.gas_limit, block_number)
+    else {
+        return Some(arbitrum_call_outcome(
+            call,
+            InstructionResult::PrecompileOOG,
+            0,
+            Bytes::new(),
+        ));
+    };
+
+    Some(arbitrum_call_outcome(call, InstructionResult::Return, gas_cost, output))
+}
+
+fn arbitrum_call_outcome(
+    call: &CallInputs,
+    result: InstructionResult,
+    gas_used: u64,
+    output: Bytes,
+) -> CallOutcome {
+    let mut gas = Gas::new(call.gas_limit);
+    if result.is_ok() {
+        let _ = gas.record_regular_cost(gas_used);
+    } else {
+        gas.spend_all();
+    }
+
+    CallOutcome {
+        result: InterpreterResult { result, output, gas },
+        memory_offset: call.return_memory_offset.clone(),
+        was_precompile_called: true,
+        precompile_call_logs: vec![],
+        charged_new_account_state_gas: call.charged_new_account_state_gas,
     }
 }
 
