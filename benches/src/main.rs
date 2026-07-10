@@ -2,21 +2,21 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
     BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
-    get_forge_version_details, install_local_version,
-    results::{BenchmarkResults, HyperfineResult},
+    get_forge_version_details, install_local_version, results::BenchmarkResults,
     switch_foundry_version,
 };
 use foundry_common::sh_println;
 use rayon::prelude::*;
 use std::{fs, path::PathBuf, process::Command, sync::Mutex};
 
-const ALL_BENCHMARKS: [&str; 6] = [
+const ALL_BENCHMARKS: [&str; 7] = [
     "forge_test",
     "forge_build_no_cache",
     "forge_build_with_cache",
     "forge_fuzz_test",
     "forge_coverage",
     "forge_isolate_test",
+    "forge_symbolic_test",
 ];
 
 /// Foundry Benchmark Runner
@@ -44,13 +44,15 @@ struct Cli {
     #[clap(long)]
     output_file: Option<String>,
 
-    /// Filename for a flat JSON summary (benchmark/repo -> mean_seconds).
-    /// Resolved relative to --output-dir. Used by the nightly regression comparison script.
+    /// Filename for a JSON summary (benchmark/repo -> wall-time stats and, when
+    /// available, symbolic solver counters). Resolved relative to --output-dir.
+    /// Consumed by the nightly regression comparison script.
     #[clap(long)]
     json_output: Option<PathBuf>,
 
     /// Run only specific benchmarks (comma-separated:
-    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage)
+    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage,
+    /// forge_symbolic_test)
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 
@@ -73,6 +75,20 @@ static FOUNDRY_LOCK: Mutex<()> = Mutex::new(());
 fn switch_version_safe(version: &str) -> Result<()> {
     let _lock = FOUNDRY_LOCK.lock().unwrap();
     switch_foundry_version(version)
+}
+
+fn forge_test_supports_symbolic() -> Result<bool> {
+    let output = Command::new("forge")
+        .args(["test", "--help"])
+        .output()
+        .wrap_err("Failed to run forge test --help")?;
+
+    if !output.status.success() {
+        eyre::bail!("forge test --help failed");
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).contains("--symbolic")
+        || String::from_utf8_lossy(&output.stderr).contains("--symbolic"))
 }
 
 #[allow(unused_must_use)]
@@ -174,47 +190,62 @@ fn main() -> Result<()> {
         let version_details = get_forge_version_details()?;
         results.add_version_details(version, version_details);
 
+        let supports_symbolic_test = if benchmarks.iter().any(|b| b == "forge_symbolic_test") {
+            forge_test_supports_symbolic()?
+        } else {
+            false
+        };
+
         sh_println!("Running benchmark tasks for version {version}...");
 
         // Run all benchmarks sequentially
-        let version_results = benchmark_tasks
-            .iter()
-            .map(|(repo_config, project, benchmark)| -> Result<(String, String, HyperfineResult)> {
-                sh_println!("Running {} on {}/{}", benchmark, repo_config.org, repo_config.repo);
+        let mut version_results = Vec::new();
+        for (repo_config, project, benchmark) in &benchmark_tasks {
+            if benchmark == "forge_symbolic_test" && !supports_symbolic_test {
+                sh_println!(
+                    "Skipping forge_symbolic_test on {}/{} for {version}: active forge does not support --symbolic",
+                    repo_config.org,
+                    repo_config.repo
+                );
+                continue;
+            }
 
-                // Determine runs based on benchmark type
-                let runs = match benchmark.as_str() {
-                    "forge_coverage" => 1, // Coverage runs only once as an exception
-                    _ => RUNS,             // Use default RUNS constant for all other benchmarks
-                };
+            sh_println!("Running {} on {}/{}", benchmark, repo_config.org, repo_config.repo);
 
-                // Run the appropriate benchmark
-                let result = project.run(benchmark, version, runs, cli.verbose);
+            // Determine runs based on benchmark type
+            let runs = match benchmark.as_str() {
+                "forge_coverage" => 1, // Coverage runs only once as an exception
+                _ => RUNS,             // Use default RUNS constant for all other benchmarks
+            };
 
-                match result {
-                    Ok(hyperfine_result) => {
-                        sh_println!(
-                            "  {} on {}/{}: {:.3}s ± {:.3}s",
-                            benchmark,
-                            repo_config.org,
-                            repo_config.repo,
-                            hyperfine_result.mean,
-                            hyperfine_result.stddev.unwrap_or(0.0)
-                        );
-                        Ok((repo_config.name.clone(), benchmark.clone(), hyperfine_result))
-                    }
-                    Err(e) => {
-                        eyre::bail!(
-                            "Benchmark {} failed for {}/{}: {}",
-                            benchmark,
-                            repo_config.org,
-                            repo_config.repo,
-                            e
-                        );
-                    }
+            // Run the appropriate benchmark
+            match project.run(benchmark, version, runs, cli.verbose) {
+                Ok(hyperfine_result) => {
+                    sh_println!(
+                        "  {} on {}/{}: {:.3}s ± {:.3}s",
+                        benchmark,
+                        repo_config.org,
+                        repo_config.repo,
+                        hyperfine_result.mean,
+                        hyperfine_result.stddev.unwrap_or(0.0)
+                    );
+                    version_results.push((
+                        repo_config.name.clone(),
+                        benchmark.clone(),
+                        hyperfine_result,
+                    ));
                 }
-            })
-            .collect::<Result<Vec<_>>>()?;
+                Err(e) => {
+                    eyre::bail!(
+                        "Benchmark {} failed for {}/{}: {}",
+                        benchmark,
+                        repo_config.org,
+                        repo_config.repo,
+                        e
+                    );
+                }
+            }
+        }
 
         // Add all collected results to the main results structure
         for (repo_name, benchmark, hyperfine_result) in version_results {
@@ -231,6 +262,7 @@ fn main() -> Result<()> {
     if let Some(filename) = md_filename {
         sh_println!("📝 Generating report...");
         let markdown = results.generate_markdown(&versions, &repos);
+        fs::create_dir_all(&cli.output_dir).wrap_err("Failed to create output directory")?;
         let output_path = cli.output_dir.join(filename);
         fs::write(&output_path, markdown).wrap_err("Failed to write output file")?;
         sh_println!("✅ Report written to: {}", output_path.display());
@@ -240,6 +272,7 @@ fn main() -> Result<()> {
         let summary = results.generate_json_summary(&versions);
         let json =
             serde_json::to_string_pretty(&summary).wrap_err("Failed to serialize JSON summary")?;
+        fs::create_dir_all(&cli.output_dir).wrap_err("Failed to create output directory")?;
         let json_path = cli.output_dir.join(json_filename);
         fs::write(&json_path, json).wrap_err("Failed to write JSON summary")?;
         sh_println!("✅ JSON summary written to: {}", json_path.display());

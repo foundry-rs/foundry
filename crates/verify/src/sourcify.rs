@@ -113,7 +113,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 resp.verification_id,
                 job_url
             )?;
-            sh_println!("{}\t{}", resp.verification_id, job_url)?;
+            if args.print_submission_result_to_stdout {
+                sh_println!("{}\t{}", resp.verification_id, job_url)?;
+            }
             Ok(Some(VerifyCheckArgs {
                 id: resp.verification_id,
                 etherscan: args.etherscan,

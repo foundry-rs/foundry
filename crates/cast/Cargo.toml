@@ -113,7 +113,7 @@ alloy-serde.workspace = true
 dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
-tempo-chainspec.workspace = true
+tempo-hardfork.workspace = true
 path-slash.workspace = true
 tower.workspace = true
 
@@ -126,7 +126,6 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
-isolate-by-default = ["foundry-config/isolate-by-default"]
 optimism = [
     "dep:op-alloy-flz",
     "dep:op-alloy-consensus",

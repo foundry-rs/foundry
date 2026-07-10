@@ -339,12 +339,14 @@ interface Vm {
     function isDir(string calldata path) external view returns (bool result);
     function isFile(string calldata path) external view returns (bool result);
     function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
+    function isIsolateMode() external view returns (bool result);
     function isPersistent(address account) external view returns (bool persistent);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
     function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
     function lastCallGas() external view returns (Gas memory gas);
+    function lastFrameGas() external view returns (Gas memory gas);
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
     function makePersistent(address account) external;
@@ -359,6 +361,7 @@ interface Vm {
     function mockCall(address callee, uint256 msgValue, bytes calldata data, bytes calldata returnData) external;
     function mockCall(address callee, bytes4 data, bytes calldata returnData) external;
     function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData, bool injectCode) external;
     function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;
     function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;
     function mockFunction(address callee, address target, bytes calldata data) external;
@@ -529,6 +532,8 @@ interface Vm {
     function snapshot() external returns (uint256 snapshotId);
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function snapshotState() external returns (uint256 snapshotId);
     function snapshotValue(string calldata name, uint256 value) external;
     function snapshotValue(string calldata group, string calldata name, uint256 value) external;

@@ -196,7 +196,29 @@ fn render_contract<'ast, 'gcx>(
     deployments: &[Deployment],
 ) -> String {
     let name = c.name.as_str();
-    let comments = collect_comments(docs, name_to_page, page_path);
+
+    // Index the members rendered as headings on this page so `{member}` and
+    // `{Contract-member}` self-references resolve to anchor-only links.
+    let mut local = hir_ext::LocalMembers::new(name);
+    for member in c.body.iter() {
+        match &member.kind {
+            ItemKind::Variable(v) => {
+                if let Some(n) = v.name {
+                    local.insert(n.as_str());
+                }
+            }
+            ItemKind::Function(f) => local.insert(&function_heading(f)),
+            ItemKind::Event(e) => local.insert(e.name.as_str()),
+            ItemKind::Error(e) => local.insert(e.name.as_str()),
+            ItemKind::Struct(s) => local.insert(s.name.as_str()),
+            ItemKind::Enum(e) => local.insert(e.name.as_str()),
+            ItemKind::Udvt(u) => local.insert(u.name.as_str()),
+            _ => {}
+        }
+    }
+    let local = Some(&local);
+
+    let comments = collect_comments(docs, name_to_page, page_path, local);
     let mut out = String::new();
     write_frontmatter(&mut out, name, first_notice(&comments).as_deref());
     writeln!(out, "# {name}").unwrap();
@@ -251,14 +273,14 @@ fn render_contract<'ast, 'gcx>(
                 let vname = v.name.map(|n| n.as_str().to_string()).unwrap_or_default();
                 writeln!(out, "### {vname}").unwrap();
                 writeln!(out).unwrap();
-                let mut c = collect_comments(docs, name_to_page, page_path);
+                let mut c = collect_comments(docs, name_to_page, page_path, local);
                 // Attempt @inheritdoc resolution for public state variables.
                 let inherited = inheritdoc_base(docs).and_then(|base| {
                     hir_id.and_then(|cid| hir_ext::resolve_inheritdoc_var(gcx, cid, &vname, &base))
                 });
                 if let Some(ref base_doc) = inherited {
                     let sanitize =
-                        |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path);
+                        |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
                     if c.notices.is_empty() {
                         let inherited_notices: Vec<String> =
                             base_doc.notices.iter().map(|s| sanitize(s)).collect();
@@ -357,6 +379,7 @@ fn render_contract<'ast, 'gcx>(
                 ctx,
                 name_to_page,
                 page_path,
+                local,
                 inherited.as_ref(),
             );
         }
@@ -368,7 +391,7 @@ fn render_contract<'ast, 'gcx>(
         for (span, e, docs) in &events {
             writeln!(out, "### {}", e.name.as_str()).unwrap();
             writeln!(out).unwrap();
-            let c = collect_comments(docs, name_to_page, page_path);
+            let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &ctx.dedented_snippet(*span));
             write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
@@ -381,7 +404,7 @@ fn render_contract<'ast, 'gcx>(
         for (span, e, docs) in &errors {
             writeln!(out, "### {}", e.name.as_str()).unwrap();
             writeln!(out).unwrap();
-            let c = collect_comments(docs, name_to_page, page_path);
+            let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &ctx.dedented_snippet(*span));
             write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
@@ -394,7 +417,7 @@ fn render_contract<'ast, 'gcx>(
         for (span, s, docs) in &structs {
             writeln!(out, "### {}", s.name.as_str()).unwrap();
             writeln!(out).unwrap();
-            let c = collect_comments(docs, name_to_page, page_path);
+            let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &ctx.dedented_snippet(*span));
             write_struct_properties_table(&mut out, s.fields, &c, ctx);
@@ -407,7 +430,7 @@ fn render_contract<'ast, 'gcx>(
         for (span, e, docs) in &enums {
             writeln!(out, "### {}", e.name.as_str()).unwrap();
             writeln!(out).unwrap();
-            let c = collect_comments(docs, name_to_page, page_path);
+            let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &ctx.dedented_snippet(*span));
             write_enum_variants_table(&mut out, e.variants, &c);
@@ -420,7 +443,7 @@ fn render_contract<'ast, 'gcx>(
         for (span, u, docs) in &udvts {
             writeln!(out, "### {}", u.name.as_str()).unwrap();
             writeln!(out).unwrap();
-            let c = collect_comments(docs, name_to_page, page_path);
+            let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(*span)));
         }
@@ -440,14 +463,14 @@ fn render_free_functions(
     git_url: Option<&str>,
 ) -> String {
     let title = if name.is_empty() { "function" } else { name };
-    let first_comments = collect_comments(overloads[0].2, name_to_page, page_path);
+    let first_comments = collect_comments(overloads[0].2, name_to_page, page_path, None);
     let mut out = String::new();
     write_frontmatter(&mut out, title, first_notice(&first_comments).as_deref());
     writeln!(out, "# {title}").unwrap();
     writeln!(out).unwrap();
     write_git_source(&mut out, git_url);
     for (span, f, docs) in overloads {
-        render_function_section(&mut out, *span, f, docs, ctx, name_to_page, page_path, None);
+        render_function_section(&mut out, *span, f, docs, ctx, name_to_page, page_path, None, None);
     }
     out
 }
@@ -472,7 +495,7 @@ fn render_constants(
         let name = v.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "_".to_string());
         writeln!(out, "## {name}").unwrap();
         writeln!(out).unwrap();
-        let c = collect_comments(docs, name_to_page, page_path);
+        let c = collect_comments(docs, name_to_page, page_path, None);
         write_comment_block(&mut out, &c);
         write_code_block(&mut out, &ctx.dedented_snippet(*span));
     }
@@ -491,7 +514,7 @@ fn render_struct<'ast>(
     git_url: Option<&str>,
 ) -> String {
     let name = s.name.as_str();
-    let c = collect_comments(docs, name_to_page, page_path);
+    let c = collect_comments(docs, name_to_page, page_path, None);
     let mut out = String::new();
     write_frontmatter(&mut out, name, first_notice(&c).as_deref());
     writeln!(out, "# {name}").unwrap();
@@ -513,7 +536,7 @@ fn render_enum<'ast>(
     git_url: Option<&str>,
 ) -> String {
     let name = e.name.as_str();
-    let c = collect_comments(docs, name_to_page, page_path);
+    let c = collect_comments(docs, name_to_page, page_path, None);
     let mut out = String::new();
     write_frontmatter(&mut out, name, first_notice(&c).as_deref());
     writeln!(out, "# {name}").unwrap();
@@ -535,7 +558,7 @@ fn render_udvt<'ast>(
     git_url: Option<&str>,
 ) -> String {
     let name = u.name.as_str();
-    let c = collect_comments(docs, name_to_page, page_path);
+    let c = collect_comments(docs, name_to_page, page_path, None);
     let mut out = String::new();
     write_frontmatter(&mut out, name, first_notice(&c).as_deref());
     writeln!(out, "# {name}").unwrap();
@@ -556,7 +579,7 @@ fn render_error<'ast>(
     git_url: Option<&str>,
 ) -> String {
     let name = e.name.as_str();
-    let c = collect_comments(docs, name_to_page, page_path);
+    let c = collect_comments(docs, name_to_page, page_path, None);
     let mut out = String::new();
     write_frontmatter(&mut out, name, first_notice(&c).as_deref());
     writeln!(out, "# {name}").unwrap();
@@ -578,7 +601,7 @@ fn render_event<'ast>(
     git_url: Option<&str>,
 ) -> String {
     let name = e.name.as_str();
-    let c = collect_comments(docs, name_to_page, page_path);
+    let c = collect_comments(docs, name_to_page, page_path, None);
     let mut out = String::new();
     write_frontmatter(&mut out, name, first_notice(&c).as_deref());
     writeln!(out, "# {name}").unwrap();
@@ -600,6 +623,7 @@ fn render_function_section(
     ctx: &Ctx<'_>,
     name_to_page: &NameToPage,
     page_path: &Path,
+    local: Option<&hir_ext::LocalMembers>,
     inherited: Option<&hir_ext::InheritedDoc>,
 ) {
     let heading = function_heading(f);
@@ -609,10 +633,10 @@ fn render_function_section(
     }
     writeln!(out, "### {heading}").unwrap();
     writeln!(out).unwrap();
-    let mut c = collect_comments(docs, name_to_page, page_path);
+    let mut c = collect_comments(docs, name_to_page, page_path, local);
     // Merge inherited natspec for missing tags.
     if let Some(inherited) = inherited {
-        let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path);
+        let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
         let inherited_notices: Vec<String> =
             inherited.notices.iter().map(|s| sanitize(s)).collect();
         let inherited_devs: Vec<String> = inherited.devs.iter().map(|s| sanitize(s)).collect();
@@ -753,6 +777,7 @@ fn collect_comments(
     docs: &DocComments<'_>,
     name_to_page: &NameToPage,
     page_path: &Path,
+    local: Option<&hir_ext::LocalMembers>,
 ) -> CommentData {
     let mut data = CommentData {
         titles: Vec::new(),
@@ -808,7 +833,7 @@ fn collect_comments(
             }
 
             // Apply inline {Ident} -> markdown link replacement.
-            let content = hir_ext::replace_inline_links(trimmed, name_to_page, page_path);
+            let content = hir_ext::replace_inline_links(trimmed, name_to_page, page_path, local);
 
             if is_continuation && !prev_doc_was_blank {
                 let appended = match last_section {
