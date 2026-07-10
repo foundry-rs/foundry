@@ -1572,10 +1572,10 @@ fn arbitrum_call_outcome(
     output: Bytes,
 ) -> CallOutcome {
     let mut gas = Gas::new(call.gas_limit);
-    if !result.is_ok() {
-        gas.spend_all();
-    } else {
+    if result.is_ok() {
         let _ = gas.record_regular_cost(gas_used);
+    } else {
+        gas.spend_all();
     }
 
     CallOutcome {
