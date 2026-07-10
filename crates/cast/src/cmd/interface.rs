@@ -9,7 +9,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact,
-    compile::{PathOrContractInfo, ProjectCompiler},
+    compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
     find_target_path, fs, shell,
 };
 use foundry_config::load_config;
@@ -142,13 +142,14 @@ pub fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonA
 /// Load the ABI from the artifact of a locally compiled contract.
 fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String)>> {
     let config = load_config()?;
-    let project = config.project()?;
+    let mut project = config.project()?;
+    project.no_artifacts = true;
     let compiler = ProjectCompiler::new().quiet(true);
 
     let contract = PathOrContractInfo::from_str(path_or_contract)?;
 
     let target_path = find_target_path(&project, &contract)?;
-    let output = compiler.files([target_path.clone()]).compile(&project)?;
+    let output = compile_abi_project(&mut project, compiler.files([target_path.clone()]))?;
 
     let contracts_by_artifact = ContractsByArtifact::from(output);
 

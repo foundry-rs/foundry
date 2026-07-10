@@ -819,7 +819,7 @@ mod tests {
         *s = new_source.clone();
 
         let src = new_source.to_repl_source();
-        let mut opts = solar::interface::config::Opts::default();
+        let mut opts = solar::interface::config::CompileOpts::default();
         opts.unstable.typeck = true;
         let sess = solar::interface::Session::builder()
             .opts(opts)

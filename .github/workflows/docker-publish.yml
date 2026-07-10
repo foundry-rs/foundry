@@ -66,11 +66,11 @@ jobs:
       # - anything else: tagged as-is
       - name: Finalize Docker Metadata
         id: docker_tagging
+        env:
+          TAG: ${{ inputs.tag_name }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
         run: |
-          TAG="${{ inputs.tag_name }}"
-          REGISTRY="${{ env.REGISTRY }}"
-          IMAGE="${{ env.IMAGE_NAME }}"
-
           if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="v${BASH_REMATCH[1]}"
             MINOR="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
@@ -86,9 +86,12 @@ jobs:
 
       # Log docker metadata to explicitly know what is being pushed
       - name: Inspect Docker Metadata
+        env:
+          DOCKER_TAGS: ${{ steps.docker_tagging.outputs.docker_tags }}
+          DOCKER_LABELS: ${{ steps.meta.outputs.labels }}
         run: |
-          printf "TAGS -> %s\n" "${{ steps.docker_tagging.outputs.docker_tags }}"
-          printf "LABELS -> %s\n" "${{ steps.meta.outputs.labels }}"
+          printf "TAGS -> %s\n" "$DOCKER_TAGS"
+          printf "LABELS -> %s\n" "$DOCKER_LABELS"
 
       - name: Set up Depot CLI
         uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1

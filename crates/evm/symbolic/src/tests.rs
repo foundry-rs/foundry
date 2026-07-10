@@ -3148,6 +3148,36 @@ fn solver_normalizes_checked_mul_guard_with_context_bound() {
 }
 
 #[test]
+fn solver_normalizes_unsigned_interval_product_contradiction() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let uint16_mask = SymExpr::constant(&mut cx, U256::from(u16::MAX));
+    let amount = SymExpr::binop(&mut cx, SymBinOp::And, calldata.clone(), uint16_mask);
+    let zero = SymExpr::zero(&mut cx);
+    let amount_nonzero = SymBoolExpr::eq(&mut cx, amount.clone(), zero).not(&mut cx);
+    let reserve = SymExpr::constant(&mut cx, U256::from(10_000));
+    let amount_below_reserve =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, amount.clone(), reserve.clone());
+    let uint16_bound = SymExpr::constant(&mut cx, U256::from(65_536));
+    let calldata_uint16 = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, calldata, uint16_bound);
+    let remaining = SymExpr::binop(&mut cx, SymBinOp::Sub, reserve, amount);
+    let scale = SymExpr::constant(&mut cx, U256::from(10_000));
+    let scaled_remaining = SymExpr::binop(&mut cx, SymBinOp::Mul, remaining, scale);
+    let adjusted0 = SymExpr::constant(&mut cx, U256::from(100_009_984));
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scaled_remaining, adjusted0);
+    let intended_min = SymExpr::constant(&mut cx, U256::from(10_000_000_000_000_000u64));
+    let product_at_least_intended =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, product, intended_min).not(&mut cx);
+    let constraints =
+        vec![amount_nonzero, product_at_least_intended, calldata_uint16, amount_below_reserve];
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &constraints),
+        vec![SymBoolExpr::constant(&mut cx, false)]
+    );
+}
+
+#[test]
 fn solver_normalizes_mask_equality_with_context_bound() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");

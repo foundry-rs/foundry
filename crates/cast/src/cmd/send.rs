@@ -390,6 +390,11 @@ impl SendTxArgs {
                     .await?;
             }
 
+            if chain.id() != browser.chain_id() {
+                sh_warn!("Switching browser wallet to chain {}", chain)?;
+                browser.switch_chain(chain.id()).await?;
+            }
+
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
             let cast = CastTxSender::new(&provider);
