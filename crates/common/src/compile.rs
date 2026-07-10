@@ -3,12 +3,15 @@
 use crate::{
     TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
+use alloy_json_abi::JsonAbi;
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
-    artifacts::{BytecodeObject, Contract, Source, remappings::Remapping},
+    artifacts::{
+        BytecodeObject, Contract, Source, output_selection::OutputSelection, remappings::Remapping,
+    },
     compilers::{
         Compiler,
         solc::{Solc, SolcCompiler},
@@ -20,8 +23,13 @@ use foundry_compilers::{
     solc::SolcSettings,
 };
 use num_format::{Locale, ToFormattedString};
+use solar::{
+    ast::{Arena, ContractKind, ItemKind},
+    interface::{Session, source_map::FileName},
+    parse::Parser,
+};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
     path::{Path, PathBuf},
@@ -57,6 +65,9 @@ pub struct ProjectCompiler {
     /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
     ignore_eip_3860: bool,
 
+    /// Contract size limits used when reporting compiled contract sizes.
+    size_limits: ContractSizeLimits,
+
     /// Extra files to include, that are not necessarily in the project's source directory.
     files: Vec<PathBuf>,
 
@@ -82,6 +93,7 @@ impl ProjectCompiler {
             quiet: Some(crate::shell::is_quiet()),
             bail: None,
             ignore_eip_3860: false,
+            size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
             dynamic_test_linking: false,
         }
@@ -89,14 +101,14 @@ impl ProjectCompiler {
 
     /// Sets whether to print contract names.
     #[inline]
-    pub fn print_names(mut self, yes: bool) -> Self {
+    pub const fn print_names(mut self, yes: bool) -> Self {
         self.print_names = Some(yes);
         self
     }
 
     /// Sets whether to print contract sizes.
     #[inline]
-    pub fn print_sizes(mut self, yes: bool) -> Self {
+    pub const fn print_sizes(mut self, yes: bool) -> Self {
         self.print_sizes = Some(yes);
         self
     }
@@ -104,22 +116,29 @@ impl ProjectCompiler {
     /// Sets whether to print anything at all. Overrides other `print` options.
     #[inline]
     #[doc(alias = "silent")]
-    pub fn quiet(mut self, yes: bool) -> Self {
+    pub const fn quiet(mut self, yes: bool) -> Self {
         self.quiet = Some(yes);
         self
     }
 
     /// Sets whether to bail on compiler errors.
     #[inline]
-    pub fn bail(mut self, yes: bool) -> Self {
+    pub const fn bail(mut self, yes: bool) -> Self {
         self.bail = Some(yes);
         self
     }
 
     /// Sets whether to ignore EIP-3860 initcode size limits.
     #[inline]
-    pub fn ignore_eip_3860(mut self, yes: bool) -> Self {
+    pub const fn ignore_eip_3860(mut self, yes: bool) -> Self {
         self.ignore_eip_3860 = yes;
+        self
+    }
+
+    /// Sets the contract size limits for size reports.
+    #[inline]
+    pub const fn size_limits(mut self, limits: ContractSizeLimits) -> Self {
+        self.size_limits = limits;
         self
     }
 
@@ -132,7 +151,7 @@ impl ProjectCompiler {
 
     /// Sets if tests should be dynamically linked.
     #[inline]
-    pub fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
+    pub const fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
         self.dynamic_test_linking = preprocess;
         self
     }
@@ -163,10 +182,10 @@ impl ProjectCompiler {
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
         self.compile_with(|| {
-            let sources = if !files.is_empty() {
-                Source::read_all(files)?
-            } else {
+            let sources = if files.is_empty() {
                 project.paths.read_input_files()?
+            } else {
+                Source::read_all(files)?
             };
 
             let mut compiler =
@@ -258,7 +277,8 @@ impl ProjectCompiler {
                 sh_println!()?;
             }
 
-            let mut size_report = SizeReport { contracts: BTreeMap::new() };
+            let mut size_report =
+                SizeReport { contracts: BTreeMap::new(), limits: self.size_limits };
 
             let mut artifacts: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for (id, artifact) in output.artifact_ids().filter(|(id, _)| {
@@ -268,8 +288,40 @@ impl ProjectCompiler {
                 artifacts.entry(id.name.clone()).or_default().push((id.source.clone(), artifact));
             }
 
+            // Internal libraries are inlined into consumers and never deployed; skip them.
+            // Only artifacts whose ABI has no functions can be internal libraries, so restrict the
+            // solar parse to those sources to avoid a second full parse pass.
+            let abs_source = |path: &Path| -> PathBuf {
+                if path.is_absolute() { path.to_path_buf() } else { self.project_root.join(path) }
+            };
+            let source_paths = artifacts
+                .values()
+                .flatten()
+                .filter(|(_, artifact)| {
+                    artifact.abi.as_ref().is_some_and(|abi| abi.functions().next().is_none())
+                })
+                .map(|(path, _)| abs_source(path))
+                .collect::<BTreeSet<_>>();
+            let libraries = collect_libraries(&source_paths);
+
             for (name, artifact_list) in artifacts {
-                for (path, artifact) in &artifact_list {
+                // A library with no functions in its ABI is internal-only; fail open if the ABI is
+                // missing. Filter first so the duplicate-name suffix below reflects kept contracts.
+                let kept = artifact_list
+                    .iter()
+                    .filter(|(path, artifact)| {
+                        let is_library = libraries
+                            .get(&abs_source(path))
+                            .is_some_and(|libs| libs.contains(&name));
+                        let has_no_abi_functions = artifact
+                            .abi
+                            .as_ref()
+                            .is_some_and(|abi| abi.functions().next().is_none());
+                        !(is_library && has_no_abi_functions)
+                    })
+                    .collect::<Vec<_>>();
+
+                for (path, artifact) in &kept {
                     let runtime_size = contract_size(*artifact, false).unwrap_or_default();
                     let init_size = contract_size(*artifact, true).unwrap_or_default();
 
@@ -284,7 +336,7 @@ impl ProjectCompiler {
                         })
                         .unwrap_or(false);
 
-                    let unique_name = if artifact_list.len() > 1 {
+                    let unique_name = if kept.len() > 1 {
                         format!(
                             "{} ({})",
                             name,
@@ -303,16 +355,26 @@ impl ProjectCompiler {
 
             sh_println!("{size_report}")?;
 
+            let runtime_eip = if size_report.limits.runtime == CONTRACT_RUNTIME_SIZE_LIMIT {
+                "EIP-170: "
+            } else {
+                ""
+            };
             eyre::ensure!(
                 !size_report.exceeds_runtime_size_limit(),
-                "some contracts exceed the runtime size limit \
-                 (EIP-170: {CONTRACT_RUNTIME_SIZE_LIMIT} bytes)"
+                "some contracts exceed the runtime size limit ({runtime_eip}{} bytes)",
+                size_report.limits.runtime
             );
             // Check size limits only if not ignoring EIP-3860
+            let initcode_eip = if size_report.limits.initcode == CONTRACT_INITCODE_SIZE_LIMIT {
+                "EIP-3860: "
+            } else {
+                ""
+            };
             eyre::ensure!(
                 self.ignore_eip_3860 || !size_report.exceeds_initcode_size_limit(),
-                "some contracts exceed the initcode size limit \
-                 (EIP-3860: {CONTRACT_INITCODE_SIZE_LIMIT} bytes)"
+                "some contracts exceed the initcode size limit ({initcode_eip}{} bytes)",
+                size_report.limits.initcode
             );
         }
 
@@ -326,10 +388,62 @@ const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
 // https://eips.ethereum.org/EIPS/eip-3860
 const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
+const CONTRACT_RUNTIME_SIZE_WARN_THRESHOLD: usize = 18_000;
+const CONTRACT_INITCODE_SIZE_WARN_THRESHOLD: usize = 36_000;
+
+/// Runtime and initcode byte-size limits for compiled contract size reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContractSizeLimits {
+    /// Maximum deployed runtime bytecode size.
+    pub runtime: usize,
+    /// Maximum initcode bytecode size.
+    pub initcode: usize,
+}
+
+impl ContractSizeLimits {
+    /// Creates a new set of contract size limits.
+    pub const fn new(runtime: usize, initcode: usize) -> Self {
+        Self { runtime, initcode }
+    }
+
+    /// Creates limits from a runtime code-size limit, using the EIP-3860 2x initcode ratio.
+    pub const fn with_runtime_limit(runtime: usize) -> Self {
+        Self { runtime, initcode: runtime.saturating_mul(2) }
+    }
+
+    const fn runtime_warning_threshold(self) -> usize {
+        scaled_threshold(
+            self.runtime,
+            CONTRACT_RUNTIME_SIZE_WARN_THRESHOLD,
+            CONTRACT_RUNTIME_SIZE_LIMIT,
+        )
+    }
+
+    const fn initcode_warning_threshold(self) -> usize {
+        scaled_threshold(
+            self.initcode,
+            CONTRACT_INITCODE_SIZE_WARN_THRESHOLD,
+            CONTRACT_INITCODE_SIZE_LIMIT,
+        )
+    }
+}
+
+impl Default for ContractSizeLimits {
+    fn default() -> Self {
+        Self::new(CONTRACT_RUNTIME_SIZE_LIMIT, CONTRACT_INITCODE_SIZE_LIMIT)
+    }
+}
+
+const fn scaled_threshold(limit: usize, threshold: usize, default_limit: usize) -> usize {
+    limit.saturating_mul(threshold) / default_limit
+}
+
 /// Contracts with info about their size
 pub struct SizeReport {
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
+    /// Size limits used to calculate margins and failures.
+    pub limits: ContractSizeLimits,
 }
 
 impl SizeReport {
@@ -355,12 +469,12 @@ impl SizeReport {
 
     /// Returns true if any contract exceeds the runtime size limit, excluding dev contracts.
     pub fn exceeds_runtime_size_limit(&self) -> bool {
-        self.max_runtime_size() > CONTRACT_RUNTIME_SIZE_LIMIT
+        self.max_runtime_size() > self.limits.runtime
     }
 
     /// Returns true if any contract exceeds the initcode size limit, excluding dev contracts.
     pub fn exceeds_initcode_size_limit(&self) -> bool {
-        self.max_init_size() > CONTRACT_INITCODE_SIZE_LIMIT
+        self.max_init_size() > self.limits.initcode
     }
 }
 
@@ -387,8 +501,8 @@ impl SizeReport {
                     serde_json::json!({
                         "runtime_size": contract.runtime_size,
                         "init_size": contract.init_size,
-                        "runtime_margin": CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize,
-                        "init_margin": CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize,
+                        "runtime_margin": self.limits.runtime as isize - contract.runtime_size as isize,
+                        "init_margin": self.limits.initcode as isize - contract.init_size as isize,
                     }),
                 )
             })
@@ -418,21 +532,26 @@ impl SizeReport {
             .contracts
             .iter()
             .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0));
+        let runtime_warning_threshold = self.limits.runtime_warning_threshold();
+        let initcode_warning_threshold = self.limits.initcode_warning_threshold();
         for (name, contract) in contracts {
-            let runtime_margin =
-                CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize;
-            let init_margin = CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize;
+            let runtime_margin = self.limits.runtime as isize - contract.runtime_size as isize;
+            let init_margin = self.limits.initcode as isize - contract.init_size as isize;
 
-            let runtime_color = match contract.runtime_size {
-                ..18_000 => Color::Reset,
-                18_000..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
-                _ => Color::Red,
+            let runtime_color = if contract.runtime_size < runtime_warning_threshold {
+                Color::Reset
+            } else if contract.runtime_size <= self.limits.runtime {
+                Color::Yellow
+            } else {
+                Color::Red
             };
 
-            let init_color = match contract.init_size {
-                ..36_000 => Color::Reset,
-                36_000..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
-                _ => Color::Red,
+            let init_color = if contract.init_size < initcode_warning_threshold {
+                Color::Reset
+            } else if contract.init_size <= self.limits.initcode {
+                Color::Yellow
+            } else {
+                Color::Red
             };
 
             let locale = &Locale::en;
@@ -447,6 +566,44 @@ impl SizeReport {
 
         table
     }
+}
+
+/// Parses each source file with solar and returns the library names declared in it.
+///
+/// Files that fail to parse are skipped, so a missing entry means "unknown", not "no libraries".
+fn collect_libraries(sources: &BTreeSet<PathBuf>) -> HashMap<PathBuf, HashSet<String>> {
+    let mut result: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let sess = Session::builder().with_silent_emitter(None).build();
+    let _ = sess.enter(|| -> solar::interface::Result<()> {
+        for path in sources {
+            let arena = Arena::new();
+            let mut parser = match Parser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::from(path.clone()),
+                || std::fs::read_to_string(path),
+            ) {
+                Ok(parser) => parser,
+                Err(_) => continue,
+            };
+            let Ok(ast) = parser.parse_file() else { continue };
+            let libs = ast
+                .items
+                .iter()
+                .filter_map(|item| match &item.kind {
+                    ItemKind::Contract(c) if c.kind == ContractKind::Library => {
+                        Some(c.name.as_str().to_string())
+                    }
+                    _ => None,
+                })
+                .collect::<HashSet<_>>();
+            if !libs.is_empty() {
+                result.insert(path.clone(), libs);
+            }
+        }
+        Ok(())
+    });
+    result
 }
 
 /// Returns the deployed or init size of the contract.
@@ -487,7 +644,8 @@ pub struct ContractInfo {
 
 /// Compiles target file path.
 ///
-/// If `quiet` no solc related output will be emitted to stdout.
+/// If `quiet` is set, the compilation reporter's progress/status output is suppressed.
+/// (When not suppressed, that output is emitted to stderr; see `with_compilation_reporter`.)
 ///
 /// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
@@ -499,6 +657,39 @@ where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
 {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
+}
+
+/// Compiles the project requesting only ABI output.
+pub fn compile_abi_project<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+    compiler: ProjectCompiler,
+) -> Result<ProjectCompileOutput<C>>
+where
+    DynamicTestLinkingPreprocessor: Preprocessor<C>,
+{
+    project.update_output_selection(|selection| {
+        // Request ABI so compilers populate `contracts` without producing bytecode outputs.
+        *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+    });
+    compiler.compile(project)
+}
+
+/// Compiles the target contract requesting only ABI output and returns its ABI.
+pub fn compile_target_abi(
+    project: &mut Project<MultiCompiler>,
+    target_path: &Path,
+    target_name: &str,
+) -> Result<JsonAbi> {
+    let target_path = dunce::canonicalize(target_path)?;
+    let output = compile_abi_project(
+        project,
+        ProjectCompiler::new().quiet(true).files([target_path.clone()]),
+    )?;
+
+    let artifact = output
+        .find(&target_path, target_name)
+        .ok_or_eyre("failed to find target artifact when compiling for abi")?;
+    artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
 }
 
 /// Creates a [Project] from an Etherscan source.
@@ -554,6 +745,11 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
 }
 
 /// Configures the reporter and runs the given closure.
+///
+/// In TTY mode, [`SpinnerReporter`] paints the progress to stderr. The non-TTY fallback
+/// still writes to stdout via `BasicStdoutReporter`; migrating that path to stderr is
+/// part of the per-command stdout migration tracked in `docs/dev/output-channels.md`
+/// (it would shift many existing snapshot tests at once).
 pub fn with_compilation_reporter<O>(
     quiet: bool,
     project_root: Option<PathBuf>,
@@ -563,7 +759,7 @@ pub fn with_compilation_reporter<O>(
     let reporter = if quiet || shell::is_json() {
         Report::new(NoReporter::default())
     } else {
-        if std::io::stdout().is_terminal() {
+        if std::io::stderr().is_terminal() {
             Report::new(SpinnerReporter::spawn(project_root))
         } else {
             Report::new(BasicStdoutReporter::default())
@@ -591,7 +787,7 @@ impl PathOrContractInfo {
     /// Returns the path to the contract file if provided.
     pub fn path(&self) -> Option<PathBuf> {
         match self {
-            Self::Path(path) => Some(path.to_path_buf()),
+            Self::Path(path) => Some(path.clone()),
             Self::ContractInfo(info) => info.path.as_ref().map(PathBuf::from),
         }
     }
@@ -658,6 +854,46 @@ mod tests {
                 path: None,
                 name: "Counter".to_string()
             })
+        );
+    }
+
+    #[test]
+    fn size_report_uses_configured_limits() {
+        let mut contracts = BTreeMap::new();
+        contracts.insert(
+            "LargeContract".to_string(),
+            ContractInfo { runtime_size: 30_000, init_size: 60_000, is_dev_contract: false },
+        );
+
+        let default_report =
+            SizeReport { contracts: contracts.clone(), limits: ContractSizeLimits::default() };
+        assert!(default_report.exceeds_runtime_size_limit());
+        assert!(default_report.exceeds_initcode_size_limit());
+
+        let custom_report =
+            SizeReport { contracts, limits: ContractSizeLimits::new(131_072, 262_144) };
+        assert!(!custom_report.exceeds_runtime_size_limit());
+        assert!(!custom_report.exceeds_initcode_size_limit());
+        let output: serde_json::Value =
+            serde_json::from_str(&custom_report.format_json_output()).unwrap();
+        assert_eq!(
+            output,
+            serde_json::json!({
+                "LargeContract": {
+                    "runtime_size": 30000,
+                    "init_size": 60000,
+                    "runtime_margin": 101072,
+                    "init_margin": 202144,
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn contract_size_limits_derive_initcode_limit_from_runtime_limit() {
+        assert_eq!(
+            ContractSizeLimits::with_runtime_limit(50_000),
+            ContractSizeLimits::new(50_000, 100_000)
         );
     }
 }

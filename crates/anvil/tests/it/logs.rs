@@ -7,9 +7,11 @@ use crate::{
 use alloy_network::EthereumWallet;
 use alloy_primitives::{B256, map::B256HashSet};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, Filter};
+use alloy_rpc_types::{BlockNumberOrTag, Filter, Log};
 use anvil::{NodeConfig, spawn};
+use anvil_core::types::ReorgOptions;
 use futures::StreamExt;
+use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_past_events() {
@@ -130,7 +132,7 @@ async fn get_all_events() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
-        .flat_map(|receipt| receipt.unwrap().inner.inner.inner.receipt.logs)
+        .flat_map(|receipt| receipt.unwrap().inner.inner.inner.receipt.logs.clone())
         .collect::<Vec<_>>();
 
     assert_eq!(receipt_logs.len(), logs.len());
@@ -194,4 +196,76 @@ async fn watch_events() {
             .hash;
         assert_eq!(log.1.block_hash.unwrap(), hash);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_filter_changes_reorg_removed() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let account = wallet.address();
+    let signer: EthereumWallet = wallet.into();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let contract =
+        SimpleStorage::deploy(provider.clone(), "initial value".to_string()).await.unwrap();
+
+    // install a log filter for the contract
+    let filter = Filter::new().address(*contract.address());
+    let filter_id: String = provider.client().request("eth_newFilter", (filter,)).await.unwrap();
+
+    let _ = contract
+        .setValue("hi".to_string())
+        .from(account)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let changes: Vec<Log> =
+        provider.client().request("eth_getFilterChanges", (filter_id.clone(),)).await.unwrap();
+    assert_eq!(changes.len(), 1);
+    let log = changes.into_iter().next().unwrap();
+    assert!(!log.removed);
+
+    // reorg out the block containing the `setValue` transaction
+    api.anvil_reorg(ReorgOptions { depth: 1, tx_block_pairs: vec![] }).await.unwrap();
+
+    // the filter yields the log of the reorged out block again, marked as removed
+    let changes: Vec<Log> =
+        provider.client().request("eth_getFilterChanges", (filter_id,)).await.unwrap();
+    let mut expected = log.clone();
+    expected.removed = true;
+    assert_eq!(changes, vec![expected]);
+
+    // eth_getLogs only returns the log emitted in the constructor, which is still canonical
+    let logs = provider
+        .get_logs(
+            &Filter::new().address(*contract.address()).from_block(BlockNumberOrTag::Earliest),
+        )
+        .await
+        .unwrap();
+    assert_eq!(logs.len(), 1);
+    assert!(!logs[0].removed);
+    assert_ne!(logs[0].transaction_hash, log.transaction_hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_logs_unknown_block_hash_returns_error() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let unknown_hash =
+        B256::from_str("0x0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap();
+    let filter = Filter::new().at_block_hash(unknown_hash);
+
+    let err = provider.get_logs(&filter).await.unwrap_err();
+    assert!(
+        err.to_string().contains("unknown block"),
+        "expected `unknown block` in error, got: {err}"
+    );
 }

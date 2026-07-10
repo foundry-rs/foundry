@@ -3,6 +3,7 @@ mod anvil;
 mod anvil_api;
 mod api;
 mod beacon_api;
+mod eip2935;
 mod eip4844;
 mod eip7702;
 mod fork;
@@ -10,6 +11,7 @@ mod gas;
 mod genesis;
 mod ipc;
 mod logs;
+#[cfg(feature = "optimism")]
 mod optimism;
 mod otterscan;
 mod proof;
@@ -17,7 +19,9 @@ mod pubsub;
 mod revert;
 mod sign;
 mod simulate;
+#[cfg(feature = "cmd")]
 mod state;
+mod tempo;
 mod traces;
 mod transaction;
 mod txpool;

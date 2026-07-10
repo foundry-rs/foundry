@@ -1,6 +1,9 @@
 use crate::prj::{TestCommand, TestProject, clone_remote, setup_forge};
 use foundry_compilers::PathStyle;
-use std::process::Command;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 /// External test builder
 #[derive(Clone, Debug)]
@@ -11,9 +14,11 @@ pub struct ExtTester {
     pub rev: &'static str,
     pub style: PathStyle,
     pub fork_block: Option<u64>,
+    pub fuzz_runs: u32,
     pub args: Vec<String>,
     pub envs: Vec<(String, String)>,
     pub install_commands: Vec<Vec<String>>,
+    pub python_packages: Vec<String>,
     pub verbosity: String,
 }
 
@@ -26,22 +31,30 @@ impl ExtTester {
             rev,
             style: PathStyle::Dapptools,
             fork_block: None,
+            fuzz_runs: 32,
             args: vec![],
             envs: vec![],
             install_commands: vec![],
+            python_packages: vec![],
             verbosity: "-vvv".to_string(),
         }
     }
 
     /// Sets the path style.
-    pub fn style(mut self, style: PathStyle) -> Self {
+    pub const fn style(mut self, style: PathStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Sets the fork block.
-    pub fn fork_block(mut self, fork_block: u64) -> Self {
+    pub const fn fork_block(mut self, fork_block: u64) -> Self {
         self.fork_block = Some(fork_block);
+        self
+    }
+
+    /// Sets the number of fuzz runs.
+    pub const fn fuzz_runs(mut self, fuzz_runs: u32) -> Self {
+        self.fuzz_runs = fuzz_runs;
         self
     }
 
@@ -93,22 +106,14 @@ impl ExtTester {
         self
     }
 
+    /// Adds a Python package to install in a fixture-local virtual environment.
+    pub fn python_package(mut self, package: impl Into<String>) -> Self {
+        self.python_packages.push(package.into());
+        self
+    }
+
     pub fn setup_forge_prj(&self, recursive: bool) -> (TestProject, TestCommand) {
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
-
-        // Export vyper and forge in test command - workaround for snekmate venom tests.
-        if let Some(vyper) = &prj.inner.project().compiler.vyper {
-            let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
-            let forge_bin = prj.forge_path();
-            let forge_dir = forge_bin.parent().expect("forge path should have a parent");
-
-            let existing_path = std::env::var_os("PATH").unwrap_or_default();
-            let mut new_paths = vec![vyper_dir.to_path_buf(), forge_dir.to_path_buf()];
-            new_paths.extend(std::env::split_paths(&existing_path));
-
-            let joined_path = std::env::join_paths(new_paths).expect("failed to join PATH");
-            test_cmd.env("PATH", joined_path);
-        }
 
         // Wipe the default structure.
         prj.wipe();
@@ -124,9 +129,7 @@ impl ExtTester {
             git.current_dir(root).args(["log", "-n", "1"]);
             test_debug!("$ {git:?}");
             let output = git.output().unwrap();
-            if !output.status.success() {
-                panic!("git log failed: {output:?}");
-            }
+            assert!(output.status.success(), "git log failed: {output:?}");
             let stdout = String::from_utf8(output.stdout).unwrap();
             let commit = stdout.lines().next().unwrap().split_whitespace().nth(1).unwrap();
             panic!("pin to latest commit: {commit}");
@@ -135,12 +138,53 @@ impl ExtTester {
             git.current_dir(root).args(["checkout", self.rev]);
             test_debug!("$ {git:?}");
             let status = git.status().unwrap();
-            if !status.success() {
-                panic!("git checkout failed: {status}");
-            }
+            assert!(status.success(), "git checkout failed: {status}")
         }
 
+        // Export fixture-local Python packages, vyper, and forge in the test command.
+        let mut new_paths = Vec::new();
+        if let Some(python_bin_dir) = self.install_python_packages(root) {
+            new_paths.push(python_bin_dir);
+        }
+        if let Some(vyper) = &prj.inner.project().compiler.vyper {
+            let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
+            new_paths.push(vyper_dir.to_path_buf());
+        }
+        let forge_bin = prj.foundry_bin_path("forge");
+        let forge_dir = forge_bin.parent().expect("forge path should have a parent");
+        new_paths.push(forge_dir.to_path_buf());
+        let existing_path = std::env::var_os("PATH").unwrap_or_default();
+        new_paths.extend(std::env::split_paths(&existing_path));
+
+        let joined_path = std::env::join_paths(new_paths).expect("failed to join PATH");
+        test_cmd.env("PATH", joined_path);
+
         (prj, test_cmd)
+    }
+
+    fn install_python_packages(&self, root: &str) -> Option<PathBuf> {
+        if self.python_packages.is_empty() {
+            return None;
+        }
+
+        let venv = Path::new(root).join(".foundry-ext-venv");
+        let mut venv_cmd = Command::new("python3");
+        venv_cmd.args(["-m", "venv"]).arg(&venv);
+        test_debug!("cd {root}; {venv_cmd:?}");
+        let status = venv_cmd.current_dir(root).status().expect("failed to create Python venv");
+        assert!(status.success(), "python venv creation failed: {status}");
+
+        let bin_dir = venv.join(if cfg!(windows) { "Scripts" } else { "bin" });
+        let pip = bin_dir.join(if cfg!(windows) { "pip.exe" } else { "pip" });
+        for package in &self.python_packages {
+            let mut pip_cmd = Command::new(&pip);
+            pip_cmd.args(["install", "--disable-pip-version-check"]).arg(package).current_dir(root);
+            test_debug!("cd {root}; {pip_cmd:?}");
+            let status = pip_cmd.status().expect("failed to install Python package");
+            assert!(status.success(), "Python package install failed: {status}");
+        }
+
+        Some(bin_dir)
     }
 
     pub fn run_install_commands(&self, root: &str) {
@@ -172,7 +216,11 @@ impl ExtTester {
         // Run the tests.
         test_cmd.arg("test");
         test_cmd.args(&self.args);
-        test_cmd.args(["--fuzz-runs=32", "--ffi", &self.verbosity]);
+        test_cmd.args([
+            format!("--fuzz-runs={}", self.fuzz_runs),
+            "--ffi".to_string(),
+            self.verbosity.clone(),
+        ]);
 
         test_cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
         if let Some(fork_block) = self.fork_block {

@@ -2,13 +2,13 @@
 
 use alloy_evm::precompiles::{Precompile, PrecompileInput};
 use alloy_primitives::{
-    Address, Bytes,
+    Address, B256, Bytes,
     map::{AddressHashSet, foldhash::HashMap},
 };
 use parking_lot::RwLock;
 use revm::precompile::{
-    PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult, secp256k1::ec_recover_run,
-    utilities::right_pad,
+    PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult, call_eth_precompile,
+    secp256k1::ec_recover_run, utilities::right_pad,
 };
 use std::{borrow::Cow, sync::Arc};
 
@@ -83,6 +83,30 @@ impl CheatsManager {
     pub fn has_recover_overrides(&self) -> bool {
         !self.state.read().signature_overrides.is_empty()
     }
+
+    /// Sets the `prevrandao` value to use for the next mined block.
+    ///
+    /// This is a one-shot override that is consumed by the next block and applies to that block
+    /// only.
+    pub fn set_next_block_prevrandao(&self, prevrandao: B256) {
+        trace!(target: "cheats", %prevrandao, "set next block prevrandao");
+        self.state.write().next_block_prevrandao.replace(prevrandao);
+    }
+
+    /// Takes the manually set `prevrandao` value for the next block, if any.
+    ///
+    /// This consumes the override so it only applies to a single block.
+    pub fn take_next_block_prevrandao(&self) -> Option<B256> {
+        self.state.write().next_block_prevrandao.take()
+    }
+
+    /// Clears any manually set `prevrandao` value for the next block.
+    ///
+    /// Used on reset/revert so a set-but-unmined override does not leak into a later block,
+    /// mirroring how the next-block timestamp override is cleared by `TimeManager::reset`.
+    pub fn clear_next_block_prevrandao(&self) {
+        self.state.write().next_block_prevrandao.take();
+    }
 }
 
 /// Container type for all the state variables
@@ -94,10 +118,13 @@ pub struct CheatsState {
     pub auto_impersonate_accounts: bool,
     /// Overrides for ecrecover: Signature => Address
     pub signature_overrides: HashMap<Bytes, Address>,
+    /// The `prevrandao` value to use for the next mined block, if manually set via
+    /// `anvil_setNextBlockPrevRandao`.
+    pub next_block_prevrandao: Option<B256>,
 }
 
 impl CheatEcrecover {
-    pub fn new(cheats: Arc<CheatsManager>) -> Self {
+    pub const fn new(cheats: Arc<CheatsManager>) -> Self {
         Self { cheats }
     }
 }
@@ -105,12 +132,12 @@ impl CheatEcrecover {
 impl Precompile for CheatEcrecover {
     fn call(&self, input: PrecompileInput<'_>) -> PrecompileResult {
         if !self.cheats.has_recover_overrides() {
-            return ec_recover_run(input.data, input.gas);
+            return Ok(call_eth_precompile(ec_recover_run, input.data, input.gas, input.reservoir));
         }
 
         const ECRECOVER_BASE: u64 = 3_000;
         if input.gas < ECRECOVER_BASE {
-            return Err(PrecompileError::OutOfGas);
+            return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, input.reservoir));
         }
         let padded = right_pad::<128>(input.data);
         let v = padded[63];
@@ -121,16 +148,20 @@ impl Precompile for CheatEcrecover {
         if let Some(addr) = self.cheats.get_recover_override(&sig_bytes_wrapped) {
             let mut out = [0u8; 32];
             out[12..].copy_from_slice(addr.as_slice());
-            return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::copy_from_slice(&out)));
+            return Ok(PrecompileOutput::new(
+                ECRECOVER_BASE,
+                Bytes::copy_from_slice(&out),
+                input.reservoir,
+            ));
         }
-        ec_recover_run(input.data, input.gas)
+        Ok(call_eth_precompile(ec_recover_run, input.data, input.gas, input.reservoir))
     }
 
     fn precompile_id(&self) -> &PrecompileId {
         &PRECOMPILE_ID_CHEAT_ECRECOVER
     }
 
-    fn is_pure(&self) -> bool {
+    fn supports_caching(&self) -> bool {
         false
     }
 }

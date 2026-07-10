@@ -56,7 +56,7 @@ pub(crate) struct TomlFileProvider {
 }
 
 impl TomlFileProvider {
-    pub(crate) fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
+    pub(crate) const fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
         Self { env_var, env_val: OnceCell::new(), default, cache: OnceCell::new() }
     }
 
@@ -732,13 +732,32 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut data = self.provider.data()?;
+        let invariant_corpus_random_sequence_weight_configured = self.profile == "invariant"
+            && data
+                .get(&self.profile)
+                .is_some_and(|inner| inner.contains_key("corpus_random_sequence_weight"));
+        let mark_invariant_corpus_random_sequence_weight_configured =
+            |inner: &mut Dict| -> Result<(), Error> {
+                if invariant_corpus_random_sequence_weight_configured {
+                    inner.insert(
+                        "corpus_random_sequence_weight_configured".to_string(),
+                        Value::serialize(true)?,
+                    );
+                }
+                Ok(())
+            };
+
         if let Some(fallback) = data.remove(&self.fallback) {
             let mut inner = data.remove(&self.profile).unwrap_or_default();
             for (k, v) in fallback {
                 inner.entry(k).or_insert(v);
             }
+            mark_invariant_corpus_random_sequence_weight_configured(&mut inner)?;
             Ok(self.profile.collect(inner))
         } else {
+            if let Some(inner) = data.get_mut(&self.profile) {
+                mark_invariant_corpus_random_sequence_weight_configured(inner)?;
+            }
             Ok(data)
         }
     }

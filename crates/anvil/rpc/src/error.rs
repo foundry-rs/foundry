@@ -94,7 +94,7 @@ pub enum ErrorCode {
 
 impl ErrorCode {
     /// Returns the error code as `i64`
-    pub fn code(&self) -> i64 {
+    pub const fn code(&self) -> i64 {
         match *self {
             Self::ParseError => -32700,
             Self::InvalidRequest => -32600,

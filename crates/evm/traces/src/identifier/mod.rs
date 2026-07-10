@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Address, Bytes, map::HashMap};
+use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::ArtifactId;
 use foundry_config::{Chain, Config};
@@ -28,6 +28,8 @@ pub struct IdentifiedAddress<'a> {
     pub contract: Option<String>,
     /// The ABI of the contract at this address.
     pub abi: Option<Cow<'a, JsonAbi>>,
+    /// Byte offset where ABI-encoded constructor arguments begin in the creation input.
+    pub constructor_args_offset: Option<usize>,
     /// The artifact ID of the contract, if any.
     pub artifact_id: Option<ArtifactId>,
 }
@@ -88,7 +90,7 @@ impl<'a> TraceIdentifiers<'a> {
     pub fn with_local_and_bytecodes(
         mut self,
         known_contracts: &'a ContractsByArtifact,
-        contracts_bytecode: &'a HashMap<Address, Bytes>,
+        contracts_bytecode: &'a AddressHashMap<Bytes>,
     ) -> Self {
         self.local =
             Some(LocalTraceIdentifier::new(known_contracts).with_bytecodes(contracts_bytecode));
@@ -102,7 +104,7 @@ impl<'a> TraceIdentifiers<'a> {
     }
 
     /// Returns `true` if there are no set identifiers.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.local.is_none() && self.external.is_none()
     }
 }

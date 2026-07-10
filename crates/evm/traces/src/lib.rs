@@ -16,25 +16,23 @@ use foundry_common::{
     shell,
 };
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::{
-    OpcodeFilter,
-    types::{DecodedTraceStep, TraceMemberOrder},
-};
+use revm_inspectors::tracing::{OpcodeFilter, types::DecodedTraceStep};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
 };
 
-use alloy_primitives::map::HashMap;
+use alloy_primitives::{U256, map::HashMap};
+use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
 pub use revm_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
         CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
-        DecodedCallTrace,
+        DecodedCallTrace, TraceMemberOrder,
     },
 };
 
@@ -53,6 +51,7 @@ pub use debug::DebugTraceIdentifier;
 pub mod folded_stack_trace;
 
 pub mod backtrace;
+pub mod speedscope;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
@@ -207,16 +206,116 @@ pub fn render_trace_arena_inner(
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
+    let mut resolved = arena.resolve_arena();
+
+    let mut tempo_changes = None;
+    if with_storage_changes {
+        tempo_changes = tempo_channel_storage_decodes(&resolved);
+
+        let needs_dedup = resolved.as_ref().nodes().iter().any(|node| {
+            node.trace.steps.iter().any(|step| {
+                step.storage_change.is_some()
+                    && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+            })
+        });
+        if needs_dedup {
+            // Remove storage text that is already represented by an opcode line.
+            for node in resolved.to_mut().nodes_mut() {
+                for step in &mut node.trace.steps {
+                    if step.storage_change.is_some()
+                        && matches!(step.decoded.as_deref(), Some(DecodedTraceStep::Line(_)))
+                    {
+                        step.storage_change = None;
+                    }
+                }
+            }
+        }
+    }
+
     let mut w = TraceWriter::new(Vec::<u8>::new())
         .color_cheatcodes(true)
         .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
-    w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
-    String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
+    w.write_arena(resolved.as_ref()).expect("Failed to write traces");
+    let mut rendered =
+        String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
+    if let Some(tempo_changes) = tempo_changes {
+        if !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
+        rendered.push_str(&tempo_changes);
+    }
+
+    rendered
 }
 
-fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+fn tempo_channel_storage_decodes(arena: &CallTraceArena) -> Option<String> {
+    let decoded_changes = arena
+        .nodes()
+        .iter()
+        .filter(|node| node.trace.address == TIP20_CHANNEL_RESERVE_ADDRESS)
+        .flat_map(compact_channel_storage_changes)
+        .collect::<Vec<_>>();
+
+    if decoded_changes.is_empty() {
+        return None;
+    }
+
+    let mut rendered = String::new();
+    rendered.push_str("Decoded TIP20ChannelReserve storage:\n");
+    for (slot, before, after) in decoded_changes {
+        rendered.push_str(&format!(
+            "  @ {}: {} -> {}\n",
+            format_storage_word(slot),
+            format_channel_state(before),
+            format_channel_state(after),
+        ));
+    }
+    Some(rendered)
+}
+
+fn compact_channel_storage_changes(node: &CallTraceNode) -> Vec<(U256, U256, U256)> {
+    let mut changes_map = BTreeMap::new();
+    for step in &node.trace.steps {
+        if let Some(change) = &step.storage_change
+            && change.had_value.is_some()
+        {
+            let (_first, last) = changes_map.entry(change.key).or_insert((&**change, &**change));
+            *last = &**change;
+        }
+    }
+
+    changes_map
+        .into_iter()
+        .filter_map(|(key, (first, last))| {
+            let before = first.had_value.unwrap_or_default();
+            let after = last.value;
+            (before != after).then_some((key, before, after))
+        })
+        .collect()
+}
+
+fn format_channel_state(value: U256) -> String {
+    let (settled, deposit, close_requested_at) = decode_channel_state(value);
+    format!("{{settled: {settled}, deposit: {deposit}, closeRequestedAt: {close_requested_at}}}")
+}
+
+fn decode_channel_state(value: U256) -> (U256, U256, u32) {
+    let mask96 = (U256::from(1) << 96) - U256::from(1);
+    let mask32 = (U256::from(1) << 32) - U256::from(1);
+    let settled: U256 = value & mask96;
+    let deposit: U256 = (value >> 96usize) & mask96;
+    let close_requested_at_word: U256 = (value >> 192usize) & mask32;
+    let close_requested_at = close_requested_at_word.to::<u32>();
+    (settled, deposit, close_requested_at)
+}
+
+fn format_storage_word(value: U256) -> String {
+    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("0x{value:x}") }
+}
+
+const fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
     match choice {
         shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
         shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
@@ -237,7 +336,7 @@ impl TraceKind {
     ///
     /// [`Deployment`]: TraceKind::Deployment
     #[must_use]
-    pub fn is_deployment(self) -> bool {
+    pub const fn is_deployment(self) -> bool {
         matches!(self, Self::Deployment)
     }
 
@@ -245,7 +344,7 @@ impl TraceKind {
     ///
     /// [`Setup`]: TraceKind::Setup
     #[must_use]
-    pub fn is_setup(self) -> bool {
+    pub const fn is_setup(self) -> bool {
         matches!(self, Self::Setup)
     }
 
@@ -253,7 +352,7 @@ impl TraceKind {
     ///
     /// [`Execution`]: TraceKind::Execution
     #[must_use]
-    pub fn is_execution(self) -> bool {
+    pub const fn is_execution(self) -> bool {
         matches!(self, Self::Execution)
     }
 }
@@ -277,7 +376,7 @@ pub fn load_contracts<'a>(
 }
 
 /// Different kinds of internal functions tracing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InternalTraceMode {
     #[default]
     None,
@@ -287,116 +386,375 @@ pub enum InternalTraceMode {
     Full,
 }
 
-impl From<InternalTraceMode> for TraceMode {
-    fn from(mode: InternalTraceMode) -> Self {
-        match mode {
-            InternalTraceMode::None => Self::None,
-            InternalTraceMode::Simple => Self::JumpSimple,
-            InternalTraceMode::Full => Self::Jump,
+/// Opcode step recording granularity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StepRecording {
+    /// No opcode steps.
+    #[default]
+    None,
+    /// Record only JUMP/JUMPDEST steps.
+    Jumps,
+    /// Record all opcode steps.
+    All,
+}
+
+impl StepRecording {
+    const fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::All, _) | (_, Self::All) => Self::All,
+            (Self::Jumps, _) | (_, Self::Jumps) => Self::Jumps,
+            (Self::None, Self::None) => Self::None,
         }
     }
 }
 
-// Different kinds of traces used by different foundry components.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub enum TraceMode {
-    /// Disabled tracing.
-    #[default]
-    None,
-    /// Simple call trace, no steps tracing required.
-    Call,
-    /// Call trace with steps tracing for JUMP and JUMPDEST opcodes.
-    ///
-    /// Does not enable tracking memory or stack snapshots.
-    Steps,
-    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
-    ///
-    /// Used for internal functions identification. Does not track memory snapshots.
-    JumpSimple,
-    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
-    ///
-    /// Same as `JumpSimple`, but tracks memory snapshots as well.
-    Jump,
-    /// Call trace with complete steps tracing.
-    ///
-    /// Used by debugger.
-    Debug,
-    /// Debug trace with storage changes.
-    RecordStateDiff,
+/// Trace data requirements composed across independent feature axes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TraceRequirements {
+    calls: bool,
+    steps: StepRecording,
+    memory_snapshots: bool,
+    stack_snapshots: bool,
+    returndata_snapshots: bool,
+    immediate_bytes: bool,
+    state_diff: bool,
 }
 
-impl TraceMode {
-    pub const fn is_none(self) -> bool {
-        matches!(self, Self::None)
+impl TraceRequirements {
+    pub const fn none() -> Self {
+        Self {
+            calls: false,
+            steps: StepRecording::None,
+            memory_snapshots: false,
+            stack_snapshots: false,
+            returndata_snapshots: false,
+            immediate_bytes: false,
+            state_diff: false,
+        }
     }
 
-    pub const fn is_call(self) -> bool {
-        matches!(self, Self::Call)
+    pub const fn with_calls(mut self, yes: bool) -> Self {
+        self.calls |= yes;
+        self
     }
 
-    pub const fn is_steps(self) -> bool {
-        matches!(self, Self::Steps)
+    pub const fn merge(mut self, other: Self) -> Self {
+        self.calls |= other.calls;
+        self.steps = self.steps.merge(other.steps);
+        self.memory_snapshots |= other.memory_snapshots;
+        self.stack_snapshots |= other.stack_snapshots;
+        self.returndata_snapshots |= other.returndata_snapshots;
+        self.immediate_bytes |= other.immediate_bytes;
+        self.state_diff |= other.state_diff;
+        self
     }
 
-    pub const fn is_jump_simple(self) -> bool {
-        matches!(self, Self::JumpSimple)
+    pub const fn with_steps(mut self, steps: StepRecording) -> Self {
+        self.steps = self.steps.merge(steps);
+        self
     }
 
-    pub const fn is_jump(self) -> bool {
-        matches!(self, Self::Jump)
+    pub const fn with_memory_snapshots(mut self, yes: bool) -> Self {
+        self.memory_snapshots |= yes;
+        self
     }
 
-    pub const fn record_state_diff(self) -> bool {
-        matches!(self, Self::RecordStateDiff)
+    pub const fn with_stack_snapshots(mut self, yes: bool) -> Self {
+        self.stack_snapshots |= yes;
+        self
     }
 
-    pub const fn is_debug(self) -> bool {
-        matches!(self, Self::Debug)
+    pub const fn with_debug(mut self, yes: bool) -> Self {
+        if yes {
+            self.calls = true;
+            self.steps = StepRecording::All;
+            self.memory_snapshots = true;
+            self.stack_snapshots = true;
+            self.returndata_snapshots = true;
+            self.immediate_bytes = true;
+            self.state_diff = true;
+        }
+        self
     }
 
-    pub fn with_debug(self, yes: bool) -> Self {
-        if yes { std::cmp::max(self, Self::Debug) } else { self }
+    pub const fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
+        match mode {
+            InternalTraceMode::None => self,
+            InternalTraceMode::Simple => {
+                self.with_calls(true).with_steps(StepRecording::Jumps).with_stack_snapshots(true)
+            }
+            InternalTraceMode::Full => self
+                .with_calls(true)
+                .with_steps(StepRecording::Jumps)
+                .with_memory_snapshots(true)
+                .with_stack_snapshots(true),
+        }
     }
 
-    pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
-        std::cmp::max(self, mode.into())
+    pub const fn with_all_steps(self, yes: bool) -> Self {
+        if yes { self.with_calls(true).with_steps(StepRecording::All) } else { self }
     }
 
-    pub fn with_state_changes(self, yes: bool) -> Self {
-        if yes { std::cmp::max(self, Self::RecordStateDiff) } else { self }
+    pub const fn with_state_changes(mut self, yes: bool) -> Self {
+        self.state_diff |= yes;
+        if yes {
+            self.calls = true;
+        }
+        self
     }
 
-    pub fn with_verbosity(self, verbosity: u8) -> Self {
+    pub const fn with_verbosity(self, verbosity: u8) -> Self {
         match verbosity {
             0..3 => self,
-            3..=4 => std::cmp::max(self, Self::Call),
-            // Enable step recording for backtraces when verbosity is 5 or higher.
-            // We need to ensure we're recording JUMP AND JUMPDEST steps.
-            _ => std::cmp::min(self, Self::Steps),
+            3..=4 => self.with_calls(true),
+            _ if matches!(self.steps, StepRecording::All) => self.with_calls(true),
+            _ => self.with_state_changes(true),
         }
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
-        if self.is_none() {
-            None
-        } else {
-            TracingInspectorConfig {
-                record_steps: self >= Self::Steps,
-                record_memory_snapshots: self >= Self::Jump,
-                record_stack_snapshots: if self > Self::Steps {
-                    StackSnapshotType::Full
-                } else {
-                    StackSnapshotType::None
-                },
-                record_logs: true,
-                record_state_diff: self.record_state_diff(),
-                record_returndata_snapshots: self.is_debug(),
-                record_opcodes_filter: (self.is_steps() || self.is_jump() || self.is_jump_simple())
-                    .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
-                exclude_precompile_calls: false,
-                record_immediate_bytes: self.is_debug(),
-            }
-            .into()
+        if !self.calls && self.steps == StepRecording::None && !self.state_diff {
+            return None;
         }
+
+        let steps = if self.state_diff { StepRecording::All } else { self.steps };
+        TracingInspectorConfig {
+            record_steps: steps != StepRecording::None,
+            record_memory_snapshots: self.memory_snapshots,
+            record_stack_snapshots: if self.stack_snapshots {
+                StackSnapshotType::Full
+            } else {
+                StackSnapshotType::None
+            },
+            record_logs: true,
+            record_state_diff: self.state_diff,
+            record_returndata_snapshots: self.returndata_snapshots,
+            record_opcodes_filter: match steps {
+                StepRecording::None | StepRecording::All => None,
+                StepRecording::Jumps => {
+                    Some(OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST))
+                }
+            },
+            exclude_precompile_calls: false,
+            record_immediate_bytes: self.immediate_bytes,
+        }
+        .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::Bytes;
+    use revm::interpreter::InstructionResult;
+    use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
+
+    #[test]
+    fn decodes_tip1034_packed_channel_state() {
+        let settled = U256::from(123u64);
+        let deposit = U256::from(456u64);
+        let close_requested_at = U256::from(1_780_495_200u64);
+        let packed = settled | (deposit << 96usize) | (close_requested_at << 192usize);
+
+        assert_eq!(decode_channel_state(packed), (settled, deposit, 1_780_495_200));
+        assert_eq!(
+            format_channel_state(packed),
+            "{settled: 123, deposit: 456, closeRequestedAt: 1780495200}"
+        );
+    }
+
+    #[test]
+    fn tempo_storage_decodes_do_not_insert_extra_blank_line() {
+        let mut arena = CallTraceArena::default();
+        let root = &mut arena.nodes_mut()[0];
+        root.ordering.push(TraceMemberOrder::Step(0));
+        root.trace = CallTrace {
+            address: TIP20_CHANNEL_RESERVE_ADDRESS,
+            success: true,
+            steps: vec![CallTraceStep {
+                pc: 0,
+                op: OpCode::SSTORE,
+                stack: None,
+                push_stack: None,
+                memory: None,
+                returndata: Bytes::new(),
+                gas_remaining: 0,
+                gas_refund_counter: 0,
+                gas_used: 0,
+                gas_cost: 0,
+                storage_change: Some(Box::new(StorageChange {
+                    key: U256::from(1),
+                    value: U256::from(2),
+                    had_value: Some(U256::from(1)),
+                    reason: StorageChangeReason::SSTORE,
+                })),
+                status: Some(InstructionResult::Stop),
+                immediate_bytes: None,
+                decoded: None,
+            }],
+            ..Default::default()
+        };
+
+        let rendered = render_trace_arena_inner(
+            &SparsedTraceArena { arena, ignored: Default::default() },
+            false,
+            true,
+        );
+
+        assert!(rendered.contains("\nDecoded TIP20ChannelReserve storage:\n"));
+        assert!(!rendered.contains("\n\nDecoded TIP20ChannelReserve storage:\n"));
+    }
+
+    #[test]
+    fn verbosity_0_through_2_is_noop() {
+        for v in 0..=2 {
+            assert_eq!(
+                TraceRequirements::none().with_verbosity(v),
+                TraceRequirements::none(),
+                "v={v}"
+            );
+            assert_eq!(
+                TraceRequirements::none().with_calls(true).with_verbosity(v),
+                TraceRequirements::none().with_calls(true),
+                "v={v}"
+            );
+            assert_eq!(
+                TraceRequirements::none().with_debug(true).with_verbosity(v),
+                TraceRequirements::none().with_debug(true),
+                "v={v}"
+            );
+        }
+    }
+
+    #[test]
+    fn verbosity_3_and_4_raises_to_call() {
+        for v in 3..=4 {
+            assert_eq!(
+                TraceRequirements::none().with_verbosity(v),
+                TraceRequirements::none().with_calls(true),
+                "v={v}"
+            );
+            assert_eq!(
+                TraceRequirements::none().with_debug(true).with_verbosity(v),
+                TraceRequirements::none().with_debug(true),
+                "v={v}"
+            );
+            assert_eq!(
+                TraceRequirements::none().with_state_changes(true).with_verbosity(v),
+                TraceRequirements::none().with_state_changes(true),
+                "v={v}"
+            );
+        }
+    }
+
+    #[test]
+    fn verbosity_5_raises_to_record_state_diff() {
+        let state_changes = TraceRequirements::none().with_state_changes(true);
+
+        assert_eq!(TraceRequirements::none().with_verbosity(5), state_changes);
+        assert_eq!(TraceRequirements::none().with_calls(true).with_verbosity(5), state_changes);
+        let cfg = TraceRequirements::none()
+            .with_calls(true)
+            .with_steps(StepRecording::Jumps)
+            .with_verbosity(5)
+            .into_config()
+            .unwrap();
+        assert!(cfg.record_state_diff);
+        assert!(cfg.record_opcodes_filter.is_none());
+        assert_eq!(
+            TraceRequirements::none().with_debug(true).with_verbosity(5),
+            TraceRequirements::none().with_debug(true)
+        );
+        assert_eq!(
+            TraceRequirements::none().with_state_changes(true).with_verbosity(5),
+            state_changes
+        );
+    }
+
+    #[test]
+    fn config_at_verbosity_0_is_none() {
+        assert!(TraceRequirements::none().with_verbosity(0).into_config().is_none());
+    }
+
+    #[test]
+    fn config_at_verbosity_3_records_calls_only() {
+        let cfg = TraceRequirements::none().with_verbosity(3).into_config().unwrap();
+        assert!(!cfg.record_steps, "verbosity 3 should not record steps");
+        assert!(!cfg.record_state_diff, "verbosity 3 should not record state diff");
+        assert!(cfg.record_logs, "verbosity 3 should record logs");
+    }
+
+    #[test]
+    fn config_at_verbosity_5_records_steps_and_state_diff() {
+        let cfg = TraceRequirements::none().with_verbosity(5).into_config().unwrap();
+        assert!(cfg.record_steps, "verbosity 5 must record steps for backtraces");
+        assert!(cfg.record_state_diff, "verbosity 5 must record state diff");
+        assert!(cfg.record_logs, "verbosity 5 must record logs");
+        // RecordStateDiff should NOT enable expensive debug-level features.
+        assert!(!cfg.record_memory_snapshots, "verbosity 5 should not record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::None,
+            "verbosity 5 should not record stack snapshots"
+        );
+        // State diff requires all opcodes to capture SLOAD/SSTORE, so no filter.
+        assert!(
+            cfg.record_opcodes_filter.is_none(),
+            "verbosity 5 needs unfiltered opcodes for state diff"
+        );
+    }
+
+    #[test]
+    fn config_debug_mode_unchanged() {
+        // Debug mode must still enable full recording for the debugger.
+        let cfg = TraceRequirements::none().with_debug(true).into_config().unwrap();
+        assert!(cfg.record_steps);
+        assert!(cfg.record_memory_snapshots, "Debug must record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::Full,
+            "Debug must record full stack snapshots"
+        );
+        assert!(cfg.record_returndata_snapshots, "Debug must record returndata");
+        assert!(cfg.record_immediate_bytes, "Debug must record immediate bytes");
+        assert!(cfg.record_opcodes_filter.is_none(), "Debug must record all opcodes (no filter)");
+        assert!(cfg.record_state_diff, "Debug should record storage accesses for the debugger");
+    }
+
+    #[test]
+    fn requirements_preserve_internal_decode_with_state_diff() {
+        let cfg = TraceRequirements::none()
+            .with_decode_internal(InternalTraceMode::Full)
+            .with_state_changes(true)
+            .into_config()
+            .unwrap();
+
+        assert!(cfg.record_steps, "requirements should record opcode steps");
+        assert!(cfg.record_memory_snapshots, "Full internal decoding needs memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::Full,
+            "internal decoding needs stack snapshots"
+        );
+        assert!(cfg.record_state_diff, "state changes should be recorded");
+        assert!(cfg.record_opcodes_filter.is_none(), "state diff needs unfiltered opcodes");
+    }
+
+    #[test]
+    fn requirements_all_steps_avoid_debug_snapshots() {
+        let cfg =
+            TraceRequirements::none().with_all_steps(true).with_verbosity(5).into_config().unwrap();
+
+        assert!(cfg.record_steps, "all steps must record opcode steps");
+        assert!(cfg.record_opcodes_filter.is_none(), "all steps must record every opcode step");
+        assert!(!cfg.record_memory_snapshots, "all steps should not record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::None,
+            "all steps should not record stack snapshots"
+        );
+        assert!(!cfg.record_returndata_snapshots, "all steps should not record returndata");
+        assert!(!cfg.record_immediate_bytes, "all steps should not record immediate bytes");
+        assert!(!cfg.record_state_diff, "all steps should not record state diffs");
     }
 }

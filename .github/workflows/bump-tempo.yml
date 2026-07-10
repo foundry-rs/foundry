@@ -1,0 +1,39 @@
+name: Bump Tempo Dependencies
+
+permissions: {}
+
+on:
+  schedule:
+    # Run daily at 00:00 UTC
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  bump-tempo:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bump tempo dependencies
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/bump-tempo.sh
+
+      - name: Create or update Pull Request
+        if: steps.bump.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          add-paths: |
+            Cargo.toml
+            Cargo.lock
+          commit-message: "chore(deps): bump tempo dependencies to ${{ steps.bump.outputs.latest_rev_short }}"
+          title: "chore(deps): bump tempo dependencies to ${{ steps.bump.outputs.latest_rev_short }}"
+          body-path: ${{ steps.bump.outputs.changelog }}
+          branch: deps/bump-tempo

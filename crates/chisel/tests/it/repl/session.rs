@@ -2,7 +2,8 @@ use foundry_compilers::PathStyle;
 use foundry_test_utils::TestProject;
 use rexpect::{reader::Options, session::PtySession, spawn_with_options};
 
-const TIMEOUT_SECS: u64 = 3;
+// Some inputs compile and evaluate code before the next prompt is printed; 3s is tight on CI.
+const TIMEOUT_SECS: u64 = 10;
 const PROMPT: &str = "➜ ";
 
 /// Testing session for Chisel.
@@ -68,7 +69,7 @@ impl ChiselSession {
         &self.project
     }
 
-    pub fn is_repl(&self) -> bool {
+    pub const fn is_repl(&self) -> bool {
         self.is_repl
     }
 

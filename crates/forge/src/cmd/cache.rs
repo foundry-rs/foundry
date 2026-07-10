@@ -4,9 +4,9 @@ use clap::{
     builder::{PossibleValuesParser, TypedValueParser},
 };
 use eyre::Result;
+use foundry_common::sh_warn;
 use foundry_config::{Chain, Config, NamedChain, cache};
 use std::{ffi::OsStr, str::FromStr};
-use strum::VariantNames;
 
 /// CLI arguments for `forge cache`.
 #[derive(Debug, Parser)]
@@ -60,13 +60,16 @@ impl CleanArgs {
         for chain_or_all in chains {
             match chain_or_all {
                 ChainOrAll::NamedChain(chain) => {
-                    clean_chain_cache(chain, blocks.to_vec(), etherscan)?
+                    clean_chain_cache(chain, blocks.clone(), etherscan)?
                 }
                 ChainOrAll::All => {
-                    if etherscan {
-                        Config::clean_foundry_etherscan_cache()?;
+                    let warnings = if etherscan {
+                        Config::clean_foundry_etherscan_cache()?
                     } else {
                         Config::clean_foundry_cache()?
+                    };
+                    for warning in warnings {
+                        let _ = sh_warn!("{warning}");
                     }
                 }
             }
@@ -101,7 +104,7 @@ impl LsArgs {
                 ChainOrAll::All => cache = Config::list_foundry_cache()?,
             }
         }
-        sh_print!("{cache}")?;
+        sh_eprint!("{cache}")?;
         Ok(())
     }
 }
@@ -128,16 +131,23 @@ impl FromStr for ChainOrAll {
 
 fn clean_chain_cache(chain: impl Into<Chain>, blocks: Vec<u64>, etherscan: bool) -> Result<()> {
     let chain = chain.into();
+    let mut warnings = Vec::new();
     if blocks.is_empty() {
-        Config::clean_foundry_etherscan_chain_cache(chain)?;
+        warnings.extend(Config::clean_foundry_etherscan_chain_cache(chain)?);
         if etherscan {
+            for warning in warnings {
+                let _ = sh_warn!("{warning}");
+            }
             return Ok(());
         }
-        Config::clean_foundry_chain_cache(chain)?;
+        warnings.extend(Config::clean_foundry_chain_cache(chain)?);
     } else {
         for block in blocks {
-            Config::clean_foundry_block_cache(chain, block)?;
+            warnings.extend(Config::clean_foundry_block_cache(chain, block)?);
         }
+    }
+    for warning in warnings {
+        let _ = sh_warn!("{warning}");
     }
     Ok(())
 }
@@ -173,7 +183,7 @@ impl TypedValueParser for ChainOrAllValueParser {
 }
 
 fn possible_chains() -> PossibleValuesParser {
-    Some(&"all").into_iter().chain(NamedChain::VARIANTS).into()
+    Some(&"all").into_iter().chain(NamedChain::VARIANT_NAMES).into()
 }
 
 #[cfg(test)]

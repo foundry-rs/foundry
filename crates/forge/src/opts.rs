@@ -1,9 +1,9 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs, lint::LintArgs,
-    remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
-    soldeer, test, tree, update,
+    fmt::FmtArgs, fuzz::FuzzArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    lint::LintArgs, remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands,
+    snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -35,6 +35,9 @@ pub enum ForgeSubcommand {
     /// Run the project's tests.
     #[command(visible_alias = "t")]
     Test(test::TestArgs),
+
+    /// Run and manage Forge fuzzing corpora.
+    Fuzz(FuzzArgs),
 
     /// Run a smart contract as a script, building transactions that can be sent onchain.
     Script(ScriptArgs),
@@ -73,11 +76,11 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "re")]
     Remappings(RemappingArgs),
 
-    /// Verify smart contracts on Etherscan.
+    /// Verify smart contracts on Etherscan and Sourcify.
     #[command(visible_alias = "v")]
     VerifyContract(VerifyArgs),
 
-    /// Check verification status on Etherscan.
+    /// Check verification status on the selected verifier.
     #[command(visible_alias = "vc")]
     VerifyCheck(VerifyCheckArgs),
 

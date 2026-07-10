@@ -1,7 +1,7 @@
 //! Contains various tests for `forge test` with precompiles.
 
 use foundry_evm_networks::NetworkConfigs;
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 
 forgetest_init!(precompile_trace_decoding, |prj, cmd| {
     prj.add_test(
@@ -175,6 +175,255 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(precompile_cheatcode_load_is_read_only, |prj, cmd| {
+    prj.add_test(
+        "PrecompileCheatcodeLoad.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+contract PrecompileCheatcodeLoadTest is Test {
+    address constant ECRECOVER = address(0x01);
+    bytes32 constant SLOT = bytes32(uint256(1));
+
+    function test_load_allows_precompile_target() public view {
+        assertEq(vm.load(ECRECOVER, SLOT), bytes32(0));
+    }
+
+    function test_mutation_cheatcodes_reject_precompile_target() public {
+        (bool storeSuccess,) = address(this).call(abi.encodeCall(this.storePrecompileSlot, ()));
+        assertFalse(storeSuccess);
+
+        (bool etchSuccess,) = address(this).call(abi.encodeCall(this.etchPrecompile, ()));
+        assertFalse(etchSuccess);
+    }
+
+    function storePrecompileSlot() external {
+        vm.store(ECRECOVER, SLOT, bytes32(uint256(1)));
+    }
+
+    function etchPrecompile() external {
+        vm.etch(ECRECOVER, hex"00");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--match-contract", "PrecompileCheatcodeLoadTest"]).assert_success();
+});
+
+forgetest_init!(tempo_t5_hardfork_precompile_smoke, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T5".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoT5PrecompileSmoke.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface IAddressRegistry {
+    function isImplicitlyApproved(address precompile) external view returns (bool);
+}
+
+interface ITIP20ChannelReserve {
+    function domainSeparator() external view returns (bytes32);
+}
+
+contract TempoT5PrecompileSmokeTest is Test {
+    address constant ADDRESS_REGISTRY = address(bytes20(hex"FDC0000000000000000000000000000000000000"));
+    address constant FEE_MANAGER = address(bytes20(hex"feec000000000000000000000000000000000000"));
+    address constant STABLECOIN_DEX = address(bytes20(hex"dec0000000000000000000000000000000000000"));
+    address constant TIP20_CHANNEL_RESERVE = address(bytes20(hex"4D50500000000000000000000000000000000000"));
+
+    function test_t5_hardfork_precompile_smoke() public {
+        assertGt(TIP20_CHANNEL_RESERVE.code.length, 0);
+
+        IAddressRegistry registry = IAddressRegistry(ADDRESS_REGISTRY);
+        assertTrue(registry.isImplicitlyApproved(FEE_MANAGER));
+        assertTrue(registry.isImplicitlyApproved(STABLECOIN_DEX));
+        assertTrue(registry.isImplicitlyApproved(TIP20_CHANNEL_RESERVE));
+
+        bytes32 separator = ITIP20ChannelReserve(TIP20_CHANNEL_RESERVE).domainSeparator();
+        assertTrue(separator != bytes32(0));
+    }
+}
+   "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--mt", "test_t5_hardfork_precompile_smoke", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("AddressRegistry::isImplicitlyApproved"), "{stdout}");
+    assert!(stdout.contains("TIP20ChannelReserve::domainSeparator"), "{stdout}");
+});
+
+forgetest_init!(tempo_t6_keychain_helpers_and_decoding, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T6".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoT6KeychainHelpers.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface IAccountKeychain {
+    function isAdminKey(address account, address keyId) external view returns (bool);
+}
+
+interface ISignatureVerifier {
+    function verifyKeychain(address account, bytes32 hash, bytes calldata signature) external view returns (bool);
+    function verifyKeychainAdmin(address account, bytes32 hash, bytes calldata signature) external view returns (bool);
+}
+
+interface ITIP403Registry {
+    function validateReceivePolicy(
+        address token,
+        address sender,
+        address receiver
+    ) external view returns (bool authorized, uint8 blockedReason);
+}
+
+interface IReceivePolicyGuard {
+    function balanceOf(bytes calldata receipt) external view returns (uint256 amount);
+}
+
+interface TempoVm {
+    function signKeychain(uint256 privateKey, address account, bytes32 digest)
+        external
+        pure
+        returns (bytes memory signature);
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest)
+        external
+        pure
+        returns (bytes memory signature);
+    function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
+}
+
+contract TempoT6KeychainHelpersTest is Test {
+    TempoVm constant tempoVm = TempoVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    address constant ACCOUNT_KEYCHAIN = address(bytes20(hex"aaaaaaaa00000000000000000000000000000000"));
+    address constant SIGNATURE_VERIFIER = address(bytes20(hex"5165300000000000000000000000000000000000"));
+    address constant TIP403_REGISTRY = address(bytes20(hex"403c000000000000000000000000000000000000"));
+    address constant RECEIVE_POLICY_GUARD = address(bytes20(hex"b10c000000000000000000000000000000000000"));
+    address constant PATH_USD = address(bytes20(hex"20c0000000000000000000000000000000000000"));
+
+    uint256 constant ROOT_PK = 0xA11CE;
+    uint256 constant ACCESS_PK = 0xB0B;
+
+    IAccountKeychain constant keychain = IAccountKeychain(ACCOUNT_KEYCHAIN);
+    ISignatureVerifier constant verifier = ISignatureVerifier(SIGNATURE_VERIFIER);
+    ITIP403Registry constant registry = ITIP403Registry(TIP403_REGISTRY);
+    IReceivePolicyGuard constant guard = IReceivePolicyGuard(RECEIVE_POLICY_GUARD);
+
+    address root;
+    address accessKey;
+    bytes32 digest;
+
+    function setUp() public {
+        root = vm.addr(ROOT_PK);
+        accessKey = vm.addr(ACCESS_PK);
+        digest = keccak256("tempo t6 forge keychain");
+    }
+
+    function test_sign_keychain_signature_shape_and_missing_key_fails() public {
+        bytes memory signature = tempoVm.signKeychain(ACCESS_PK, root, digest);
+
+        assertEq(signature.length, 86);
+        assertEq(uint8(signature[0]), 4);
+        assertEq(_embeddedAccount(signature), root);
+        assertFalse(verifier.verifyKeychain(root, digest, signature));
+        assertFalse(verifier.verifyKeychain(address(0xbeef), digest, signature));
+    }
+
+    function test_keychain_admin_signature_verifies_root_key_and_rejects_non_admin() public {
+        bytes32 adminDigest = _adminDigest("admin");
+        bytes memory rootSignature = tempoVm.signKeychainAdmin(ROOT_PK, root, adminDigest);
+        bytes memory nonAdminSignature = tempoVm.signKeychainAdmin(ACCESS_PK, root, adminDigest);
+
+        assertTrue(keychain.isAdminKey(root, root));
+        assertFalse(keychain.isAdminKey(root, accessKey));
+        assertTrue(verifier.verifyKeychainAdmin(root, adminDigest, rootSignature));
+        assertFalse(verifier.verifyKeychainAdmin(root, adminDigest, nonAdminSignature));
+        assertFalse(verifier.verifyKeychainAdmin(address(0xbeef), adminDigest, rootSignature));
+    }
+
+    function test_expect_helpers_match_signature_verifier_calls() public {
+        bytes memory signature = tempoVm.signKeychain(ACCESS_PK, root, digest);
+        tempoVm.expectKeychainVerified(root, digest, signature);
+        verifier.verifyKeychain(root, digest, signature);
+
+        bytes32 adminDigest = _adminDigest("expect-admin");
+        bytes memory rootSignature = tempoVm.signKeychainAdmin(ROOT_PK, root, adminDigest);
+        tempoVm.expectKeychainAdminVerified(root, adminDigest, rootSignature);
+        verifier.verifyKeychainAdmin(root, adminDigest, rootSignature);
+    }
+
+    function test_malformed_keychain_signature_reverts() public {
+        vm.expectRevert();
+        verifier.verifyKeychain(root, digest, hex"04");
+    }
+
+    function test_receive_policy_interfaces_are_callable() public {
+        (bool authorized, uint8 blockedReason) = registry.validateReceivePolicy(PATH_USD, root, address(0xbeef));
+        assertTrue(authorized);
+        assertEq(blockedReason, 0);
+
+        bytes memory receipt = abi.encode(
+            uint8(1),
+            PATH_USD,
+            address(0),
+            root,
+            address(0xbeef),
+            uint64(block.timestamp),
+            uint64(1),
+            uint8(1),
+            uint8(0),
+            bytes32("forge")
+        );
+        assertEq(guard.balanceOf(receipt), 0);
+    }
+
+    function _adminDigest(string memory label) internal view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, address(this), root, label));
+    }
+
+    function _embeddedAccount(bytes memory signature) internal pure returns (address account) {
+        assembly {
+            account := shr(96, mload(add(signature, 0x21)))
+        }
+    }
+}
+   "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--mc", "TempoT6KeychainHelpersTest", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("AccountKeychain::isAdminKey"), "{stdout}");
+    assert!(stdout.contains("SignatureVerifier::verifyKeychain"), "{stdout}");
+    assert!(stdout.contains("SignatureVerifier::verifyKeychainAdmin"), "{stdout}");
+    assert!(stdout.contains("TIP403Registry::validateReceivePolicy"), "{stdout}");
+    assert!(stdout.contains("ReceivePolicyGuard::balanceOf"), "{stdout}");
+});
+
 // tests transfer using celo precompile.
 // <https://github.com/foundry-rs/foundry/issues/11622>
 forgetest_init!(celo_transfer, |prj, cmd| {
@@ -232,3 +481,39 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+forgetest_init!(
+    #[ignore]
+    arbitrum_fork_arbsys_arb_block_number,
+    |prj, cmd| {
+        prj.add_test(
+            "ArbitrumArbSys.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+interface ArbSys {
+    function arbBlockNumber() external view returns (uint256);
+}
+
+contract ArbitrumArbSysTest is Test {
+    function test_arbitrum_fork_arbsys_arb_block_number() public {
+        vm.createSelectFork("https://arbitrum-one.public.blastapi.io", 75219831);
+
+        assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219831);
+        assertLt(block.number, 75219831);
+
+        (bool success,) = address(0x64).staticcall{gas: 2}(
+            abi.encodeWithSelector(ArbSys.arbBlockNumber.selector)
+        );
+        assertFalse(success);
+
+        vm.rollFork(75219832);
+        assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219832);
+    }
+}
+   "#,
+        );
+
+        cmd.args(["test", "--mt", "test_arbitrum_fork_arbsys_arb_block_number"]).assert_success();
+    }
+);

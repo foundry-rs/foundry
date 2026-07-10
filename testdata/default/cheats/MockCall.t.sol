@@ -158,6 +158,35 @@ contract MockCallTest is Test {
         assertEq(mock.pay{value: 50}(1), 100);
     }
 
+    function testMockCallWithValueTransfersBalance() public {
+        Mock mock = new Mock();
+        uint256 value = 10;
+        vm.deal(address(this), value);
+
+        vm.mockCall(address(mock), value, abi.encodeWithSelector(mock.pay.selector), abi.encode(10));
+
+        assertEq(address(mock).balance, 0);
+        assertEq(mock.pay{value: value}(1), 10);
+        assertEq(address(mock).balance, value);
+        assertEq(address(this).balance, 0);
+    }
+
+    function testMockCallWithValueTransfersPrankedSenderBalance() public {
+        Mock mock = new Mock();
+        address sender = address(0xBEEF);
+        uint256 value = 10;
+        vm.deal(address(this), 0);
+        vm.deal(sender, value);
+
+        vm.mockCall(address(mock), value, abi.encodeWithSelector(mock.pay.selector), abi.encode(10));
+
+        vm.prank(sender);
+        assertEq(mock.pay{value: value}(1), 10);
+        assertEq(address(mock).balance, value);
+        assertEq(address(this).balance, 0);
+        assertEq(sender.balance, 0);
+    }
+
     function testMockCallWithValueCalldataPrecedence() public {
         Mock mock = new Mock();
 
@@ -176,6 +205,53 @@ contract MockCallTest is Test {
         vm.mockCall(address(mock), mock.noReturnValue.selector, abi.encode());
 
         assertEq(mock.add(1, 2), 10);
+        mock.noReturnValue();
+    }
+
+    // Ref: https://github.com/foundry-rs/foundry/issues/10703
+    function testMockCallEmptyAccountNoCodeInjection() public {
+        Mock mock = Mock(address(100));
+
+        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10), false);
+
+        // Mocked calls that return data succeed while the account remains codeless.
+        assertEq(mock.add(1, 2), 10);
+        assertEq(address(mock).code.length, 0);
+
+        // Unmocked calls to the empty account revert in the caller.
+        vm.expectRevert();
+        this.exposedCallNumberA(mock);
+    }
+
+    function testMockCallNoCodeInjectionNoReturnValue() public {
+        Mock mock = Mock(address(100));
+
+        vm.mockCall(address(mock), abi.encodeWithSelector(mock.noReturnValue.selector), abi.encode(), false);
+
+        // Mocked calls to functions without return values still revert in the caller due to the
+        // `extcodesize` check on the codeless account.
+        vm.expectRevert();
+        this.exposedCallNoReturnValue(mock);
+    }
+
+    function testMockCallEmptyAccountInjectCode() public {
+        Mock mock = Mock(address(100));
+
+        // `injectCode = true` behaves like the other overloads: code is injected into the empty
+        // account so that mocked calls to functions without return values succeed as well.
+        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10), true);
+        vm.mockCall(address(mock), abi.encodeWithSelector(mock.noReturnValue.selector), abi.encode(), true);
+
+        assertEq(mock.add(1, 2), 10);
+        mock.noReturnValue();
+        assertEq(address(mock).code.length, 1);
+    }
+
+    function exposedCallNumberA(Mock mock) external view returns (uint256) {
+        return mock.numberA();
+    }
+
+    function exposedCallNoReturnValue(Mock mock) external {
         mock.noReturnValue();
     }
 }
@@ -279,17 +355,25 @@ contract MockCallRevertTest is Test {
 
     function testMockCallRevertWithValue() public {
         Mock mock = new Mock();
+        uint256 value = 10;
+        vm.deal(address(this), value);
 
-        vm.mockCallRevert(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(address(mock), value, abi.encodeWithSelector(mock.pay.selector), ERROR_MESSAGE);
 
         assertEq(mock.pay(1), 1);
         assertEq(mock.pay(2), 2);
 
-        try mock.pay{value: 10}(1) {
+        uint256 initSenderBalance = address(this).balance;
+        uint256 initTargetBalance = address(mock).balance;
+
+        try mock.pay{value: value}(1) {
             revert();
         } catch (bytes memory err) {
             require(keccak256(err) == keccak256(ERROR_MESSAGE));
         }
+
+        assertEq(address(this).balance, initSenderBalance);
+        assertEq(address(mock).balance, initTargetBalance);
     }
 
     function testMockCallResetsMockCallRevert() public {

@@ -32,11 +32,13 @@ pub mod retry;
 pub mod selectors;
 pub mod serde_helpers;
 pub mod slot_identifier;
+pub mod tempo;
 pub mod term;
 pub mod traits;
 pub mod transactions;
 mod utils;
 pub mod version;
+pub mod wallet;
 
 pub use compile::Analysis;
 pub use constants::*;

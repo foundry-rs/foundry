@@ -1,13 +1,31 @@
+use alloy_json_abi::Function;
 use clap::Parser;
-use foundry_common::TestFilter;
+use foundry_common::{TestFilter, TestFunctionKind};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{Config, filter::GlobMatcher};
+use serde::{Deserialize, Serialize};
 use std::{fmt, path::Path};
+
+/// A failed test persisted for `forge test --rerun`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RerunFailure {
+    /// The test suite identifier (`path:contract_name`).
+    pub contract: String,
+    /// The test signature or invariant predicate name.
+    pub test: String,
+}
+
+/// Persisted `forge test --rerun` failures.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RerunFailures {
+    pub version: u8,
+    pub failures: Vec<RerunFailure>,
+}
 
 /// The filter to use during testing.
 ///
 /// See also `FileFilter`.
-#[derive(Clone, Parser)]
+#[derive(Clone, Default, Parser)]
 #[command(next_help_heading = "Test filtering")]
 pub struct FilterArgs {
     /// Only run test functions matching the specified regex pattern.
@@ -46,7 +64,7 @@ pub struct FilterArgs {
 
 impl FilterArgs {
     /// Returns true if the filter is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.test_pattern.is_none()
             && self.test_pattern_inverse.is_none()
             && self.contract_pattern.is_none()
@@ -78,7 +96,11 @@ impl FilterArgs {
         if self.coverage_pattern_inverse.is_none() {
             self.coverage_pattern_inverse = config.coverage_pattern_inverse.clone().map(Into::into);
         }
-        ProjectPathsAwareFilter { args_filter: self, paths: config.project_paths() }
+        ProjectPathsAwareFilter {
+            args_filter: self,
+            paths: config.project_paths(),
+            rerun_failures: None,
+        }
     }
 }
 
@@ -172,27 +194,68 @@ impl fmt::Display for FilterArgs {
 pub struct ProjectPathsAwareFilter {
     args_filter: FilterArgs,
     paths: ProjectPathsConfig,
+    rerun_failures: Option<Vec<RerunFailure>>,
 }
 
 impl ProjectPathsAwareFilter {
     /// Returns true if the filter is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.args_filter.is_empty()
     }
 
     /// Returns the CLI arguments.
-    pub fn args(&self) -> &FilterArgs {
+    pub const fn args(&self) -> &FilterArgs {
         &self.args_filter
     }
 
     /// Returns the CLI arguments mutably.
-    pub fn args_mut(&mut self) -> &mut FilterArgs {
+    pub const fn args_mut(&mut self) -> &mut FilterArgs {
         &mut self.args_filter
     }
 
     /// Returns the project paths.
-    pub fn paths(&self) -> &ProjectPathsConfig {
+    pub const fn paths(&self) -> &ProjectPathsConfig {
         &self.paths
+    }
+
+    /// Sets exact contract/test pairs persisted by `forge test --rerun`.
+    pub fn set_rerun_failures(&mut self, failures: Vec<RerunFailure>) {
+        self.rerun_failures = Some(failures);
+    }
+
+    fn matches_rerun_contract(&self, failure_contract: &str, contract_id: &str) -> bool {
+        if failure_contract == contract_id {
+            return true;
+        }
+
+        let Some((failure_path, failure_name)) = failure_contract.rsplit_once(':') else {
+            return false;
+        };
+        let Some((contract_path, contract_name)) = contract_id.rsplit_once(':') else {
+            return false;
+        };
+        if failure_name != contract_name {
+            return false;
+        }
+
+        let normalize = |path: &str| {
+            let path = Path::new(path);
+            if let Ok(path) = path.strip_prefix(&self.paths.root) {
+                return path.to_path_buf();
+            }
+
+            if path.is_absolute()
+                && let Ok(root) = dunce::canonicalize(&self.paths.root)
+                && let Ok(path) = dunce::canonicalize(path)
+                && let Ok(path) = path.strip_prefix(root)
+            {
+                return path.to_path_buf();
+            }
+
+            path.to_path_buf()
+        };
+
+        normalize(failure_path) == normalize(contract_path)
     }
 }
 
@@ -219,6 +282,27 @@ impl TestFilter for ProjectPathsAwareFilter {
         // we don't want to test files that belong to a library
         path = path.strip_prefix(&self.paths.root).unwrap_or(path);
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
+    }
+
+    fn matches_test_function_kind_in_contract(
+        &self,
+        contract_id: &str,
+        func: &Function,
+        kind: TestFunctionKind,
+    ) -> bool {
+        if let Some(failures) = &self.rerun_failures {
+            if !kind.is_any_test() || !self.args_filter.matches_test(&func.signature()) {
+                return false;
+            }
+            let signature = func.signature();
+            let name = signature.split('(').next().unwrap_or(&signature);
+            failures.iter().any(|failure| {
+                self.matches_rerun_contract(&failure.contract, contract_id)
+                    && (failure.test == signature || failure.test == name)
+            })
+        } else {
+            kind.is_any_test() && self.args_filter.matches_test(&func.signature())
+        }
     }
 }
 

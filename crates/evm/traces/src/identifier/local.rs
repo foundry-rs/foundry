@@ -1,7 +1,7 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Address, Bytes, map::HashMap};
+use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_common::contracts::{ContractsByArtifact, bytecode_diff_score};
 use foundry_compilers::ArtifactId;
 use revm_inspectors::tracing::types::CallTraceNode;
@@ -14,7 +14,7 @@ pub struct LocalTraceIdentifier<'a> {
     /// Vector of pairs of artifact ID and the runtime code length of the given artifact.
     ordered_ids: Vec<(&'a ArtifactId, usize)>,
     /// The contracts bytecode.
-    contracts_bytecode: Option<&'a HashMap<Address, Bytes>>,
+    contracts_bytecode: Option<&'a AddressHashMap<Bytes>>,
 }
 
 impl<'a> LocalTraceIdentifier<'a> {
@@ -29,14 +29,14 @@ impl<'a> LocalTraceIdentifier<'a> {
         Self { known_contracts, ordered_ids, contracts_bytecode: None }
     }
 
-    pub fn with_bytecodes(mut self, contracts_bytecode: &'a HashMap<Address, Bytes>) -> Self {
+    pub const fn with_bytecodes(mut self, contracts_bytecode: &'a AddressHashMap<Bytes>) -> Self {
         self.contracts_bytecode = Some(contracts_bytecode);
         self
     }
 
     /// Returns the known contracts.
     #[inline]
-    pub fn contracts(&self) -> &'a ContractsByArtifact {
+    pub const fn contracts(&self) -> &'a ContractsByArtifact {
         self.known_contracts
     }
 
@@ -45,7 +45,7 @@ impl<'a> LocalTraceIdentifier<'a> {
         &self,
         runtime_code: &[u8],
         creation_code: &[u8],
-    ) -> Option<(&'a ArtifactId, &'a JsonAbi)> {
+    ) -> Option<(&'a ArtifactId, &'a JsonAbi, Option<usize>)> {
         let len = runtime_code.len();
 
         let mut min_score = f64::MAX;
@@ -62,6 +62,7 @@ impl<'a> LocalTraceIdentifier<'a> {
 
             if let Some(bytecode) = contract_bytecode {
                 let mut current_bytecode = current_bytecode;
+                let mut constructor_args_offset = None;
                 if is_creation && current_bytecode.len() > bytecode.len() {
                     // Try to decode ctor args with contract abi.
                     if let Some(constructor) = contract.abi.constructor() {
@@ -69,7 +70,8 @@ impl<'a> LocalTraceIdentifier<'a> {
                         if constructor.abi_decode_input(constructor_args).is_ok() {
                             // If we can decode args with current abi then remove args from
                             // code to compare.
-                            current_bytecode = &current_bytecode[..bytecode.len()]
+                            current_bytecode = &current_bytecode[..bytecode.len()];
+                            constructor_args_offset = Some(bytecode.len());
                         }
                     }
                 }
@@ -77,38 +79,40 @@ impl<'a> LocalTraceIdentifier<'a> {
                 let score = bytecode_diff_score(&bytecode, current_bytecode);
                 if score == 0.0 {
                     trace!(target: "evm::traces::local", "found exact match");
-                    return Some((id, &contract.abi));
+                    return Some((id, &contract.abi, constructor_args_offset));
                 }
                 if score < *min_score {
                     *min_score = score;
-                    min_score_id = Some((id, &contract.abi));
+                    min_score_id = Some((id, &contract.abi, constructor_args_offset));
                 }
             }
             None
         };
 
-        // Check `[len * 0.9, ..., len * 1.1]`.
-        let max_len = (len * 11) / 10;
+        if !creation_code.is_empty() {
+            // Check `[len * 0.9, ..., len * 1.1]`.
+            let max_len = (len * 11) / 10;
 
-        // Start at artifacts with the same code length: `len..len*1.1`.
-        let same_length_idx = self.find_index(len);
-        for idx in same_length_idx..self.ordered_ids.len() {
-            let (id, len) = self.ordered_ids[idx];
-            if len > max_len {
-                break;
+            // Start at artifacts with the same code length: `len..len*1.1`.
+            let same_length_idx = self.find_index(len);
+            for idx in same_length_idx..self.ordered_ids.len() {
+                let (id, len) = self.ordered_ids[idx];
+                if len > max_len {
+                    break;
+                }
+                if let found @ Some(_) = check(id, true, &mut min_score) {
+                    return found;
+                }
             }
-            if let found @ Some(_) = check(id, true, &mut min_score) {
-                return found;
-            }
-        }
 
-        // Iterate over the remaining artifacts with less code length: `len*0.9..len`.
-        let min_len = (len * 9) / 10;
-        let idx = self.find_index(min_len);
-        for i in idx..same_length_idx {
-            let (id, _) = self.ordered_ids[i];
-            if let found @ Some(_) = check(id, true, &mut min_score) {
-                return found;
+            // Iterate over the remaining artifacts with less code length: `len*0.9..len`.
+            let min_len = (len * 9) / 10;
+            let idx = self.find_index(min_len);
+            for i in idx..same_length_idx {
+                let (id, _) = self.ordered_ids[i];
+                if let found @ Some(_) = check(id, true, &mut min_score) {
+                    return found;
+                }
             }
         }
 
@@ -175,7 +179,8 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                         (code.as_ref(), &[] as &[u8])
                     }
                 };
-                let (id, abi) = self.identify_code(runtime_code, creation_code)?;
+                let (id, abi, constructor_args_offset) =
+                    self.identify_code(runtime_code, creation_code)?;
                 trace!(target: "evm::traces::local", id=%id.identifier(), "identified");
 
                 Some(IdentifiedAddress {
@@ -183,6 +188,7 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                     contract: Some(id.identifier()),
                     label: Some(id.name.clone()),
                     abi: Some(Cow::Borrowed(abi)),
+                    constructor_args_offset,
                     artifact_id: Some(id.clone()),
                 })
             })

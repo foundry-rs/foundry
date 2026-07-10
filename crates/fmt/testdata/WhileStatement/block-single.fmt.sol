@@ -33,19 +33,86 @@ contract WhileStatement {
 
         while (condition) doIt();
 
+        while (condition) {
+            doIt();
+            doIt();
+        }
+
+        while (condition) {
+            if (condition) {
+                doIt();
+                doIt();
+            }
+        }
+
         while (condition) doIt();
 
         while ( // comment1
             condition
-        ) doIt();
+        ) {
+            doIt();
+        }
 
         while (
             condition // comment2
-        ) doIt();
+        ) {
+            doIt();
+        }
 
         while (
             someLongVariableName < 10 && someLongVariableName < 11
                 && someLongVariableName < 12
         ) doIt();
+
+        while (condition) {
+            doIt();
+            doIt();
+        }
+
+        while ( /* cmt */
+            cond
+        ) {
+            doIt();
+            doIt();
+        }
+
+        while (cond) {
+            while ( /* cmt */
+                cond
+            ) {
+                doIt();
+                doIt();
+            }
+        }
+
+        while (
+            cond /* cmt */
+        ) {
+            doIt();
+            doIt();
+        }
+
+        while (cond) {
+            while (
+                cond /* cmt */
+            ) {
+                doIt();
+                doIt();
+            }
+        }
+
+        while (cond) {
+            /* cmt */
+            doIt();
+            doIt();
+        }
+
+        while (cond) {
+            while (cond) {
+                /* cmt */
+                doIt();
+                doIt();
+            }
+        }
     }
 }

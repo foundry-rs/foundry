@@ -1,6 +1,7 @@
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
-use foundry_evm_core::constants::MAGIC_ASSUME;
+use foundry_evm_core::{constants::MAGIC_ASSUME, evm::FoundryEvmNetwork};
+use revm::context::{ContextTr, JournalTr};
 use spec::Vm::{
     PotentialRevert, assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
 };
@@ -44,42 +45,42 @@ impl AcceptableRevertParameters {
 }
 
 impl Cheatcode for assumeCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { condition } = self;
         if *condition { Ok(Default::default()) } else { Err(Error::from(MAGIC_ASSUME)) }
     }
 }
 
 impl Cheatcode for assumeNoRevert_0Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth, vec![])
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        assume_no_revert(ccx.state, ccx.ecx.journal().depth(), vec![])
     }
 }
 
 impl Cheatcode for assumeNoRevert_1Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { potentialRevert } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journaled_state.depth,
+            ccx.ecx.journal().depth(),
             vec![AcceptableRevertParameters::from(potentialRevert)],
         )
     }
 }
 
 impl Cheatcode for assumeNoRevert_2Call {
-    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { potentialReverts } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journaled_state.depth,
+            ccx.ecx.journal().depth(),
             potentialReverts.iter().map(AcceptableRevertParameters::from).collect(),
         )
     }
 }
 
-fn assume_no_revert(
-    state: &mut Cheatcodes,
+fn assume_no_revert<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     depth: usize,
     parameters: Vec<AcceptableRevertParameters>,
 ) -> Result {

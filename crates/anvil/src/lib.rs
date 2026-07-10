@@ -3,6 +3,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
 use crate::{
     error::{NodeError, NodeResult},
     eth::{
@@ -19,16 +22,15 @@ use crate::{
     shutdown::Signal,
     tasks::TaskManager,
 };
-use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 pub use foundry_evm::hardfork::EthereumHardfork;
+use foundry_primitives::FoundryNetwork;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
-use revm::primitives::hardfork::SpecId;
 use server::try_spawn_ipc;
 use std::{
     net::SocketAddr,
@@ -111,7 +113,7 @@ extern crate tracing;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
+pub async fn spawn(config: NodeConfig) -> (EthApi<FoundryNetwork>, NodeHandle) {
     try_spawn(config).await.expect("failed to spawn node")
 }
 
@@ -135,11 +137,17 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
-    let backend = Arc::new(config.setup().await?);
+    let backend = config.setup::<FoundryNetwork>().await?;
+
+    if let Some(state) = config.init_state.clone() {
+        backend.load_state(state).await.wrap_err("failed to load init state")?;
+    }
+
+    let backend = Arc::new(backend);
 
     if config.enable_auto_impersonate {
         backend.auto_impersonate_account(true);
@@ -184,7 +192,8 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         _ => Miner::new(mode),
     };
 
-    let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
+    let dev_signer: Box<dyn EthSigner<foundry_primitives::FoundryNetwork>> =
+        Box::new(DevSigner::new(signer_accounts));
     let mut signers = vec![dev_signer];
     if let Some(genesis) = genesis {
         let genesis_signers = genesis
@@ -200,11 +209,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
-        match backend.spec_id() {
-            SpecId::OSAKA => BlobParams::osaka(),
-            SpecId::PRAGUE => BlobParams::prague(),
-            _ => BlobParams::cancun(),
-        },
+        backend.blob_params(),
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),
@@ -280,9 +285,9 @@ pub struct NodeHandle {
     /// The address of the running rpc server.
     addresses: Vec<SocketAddr>,
     /// Join handle for the Node Service.
-    pub node_service: JoinHandle<Result<(), NodeError>>,
+    node_service: JoinHandle<Result<(), NodeError>>,
     /// Join handles (one per socket) for the Anvil server.
-    pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
+    servers: Vec<JoinHandle<Result<(), NodeError>>>,
     /// The future that joins the ipc server, if any.
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
@@ -297,12 +302,19 @@ impl Drop for NodeHandle {
         if let Some(signal) = self._signal.take() {
             let _ = signal.fire();
         }
+        self.node_service.abort();
+        for server in &self.servers {
+            server.abort();
+        }
+        if let Some(ipc_task) = &self.ipc_task {
+            ipc_task.abort();
+        }
     }
 }
 
 impl NodeHandle {
     /// The [NodeConfig] the node was launched with.
-    pub fn config(&self) -> &NodeConfig {
+    pub const fn config(&self) -> &NodeConfig {
         &self.config
     }
 
@@ -379,7 +391,7 @@ impl NodeHandle {
     }
 
     /// Native token balance of every genesis account in the genesis block.
-    pub fn genesis_balance(&self) -> U256 {
+    pub const fn genesis_balance(&self) -> U256 {
         self.config.genesis_balance
     }
 
@@ -389,14 +401,14 @@ impl NodeHandle {
     }
 
     /// Returns the shutdown signal.
-    pub fn shutdown_signal(&self) -> &Option<Signal> {
+    pub const fn shutdown_signal(&self) -> &Option<Signal> {
         &self._signal
     }
 
     /// Returns mutable access to the shutdown signal.
     ///
     /// This can be used to extract the Signal.
-    pub fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
+    pub const fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
         &mut self._signal
     }
 
@@ -415,7 +427,7 @@ impl NodeHandle {
     ///
     /// # }
     /// ```
-    pub fn task_manager(&self) -> &TaskManager {
+    pub const fn task_manager(&self) -> &TaskManager {
         &self.task_manager
     }
 }
@@ -430,9 +442,8 @@ impl Future for NodeHandle {
         if let Some(mut ipc) = pin.ipc_task.take() {
             if let Poll::Ready(res) = ipc.poll_unpin(cx) {
                 return Poll::Ready(res.map(|()| Ok(())));
-            } else {
-                pin.ipc_task = Some(ipc);
             }
+            pin.ipc_task = Some(ipc);
         }
 
         // poll the node service task
@@ -458,15 +469,15 @@ pub fn init_tracing() -> LoggingManager {
     let manager = LoggingManager::default();
 
     let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")
-        && !rust_log_val.contains("=")
+        && !rust_log_val.contains('=')
     {
         // Mutate the given filter to include `node` logs if it is not already present.
         // This prevents the unexpected behaviour of not seeing any node logs if a RUST_LOG
         // is already present that doesn't set it.
-        let rust_log_val = if !rust_log_val.contains("node") {
-            format!("{rust_log_val},node=info")
-        } else {
+        let rust_log_val = if rust_log_val.contains("node") {
             rust_log_val
+        } else {
+            format!("{rust_log_val},node=info")
         };
 
         let env_filter: EnvFilter =

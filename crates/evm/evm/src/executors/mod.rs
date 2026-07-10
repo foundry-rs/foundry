@@ -6,13 +6,13 @@
 // `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
 // the concrete `Executor` type.
 
-use crate::{
-    Env,
-    inspectors::{
-        Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
-    },
+use crate::inspectors::{
+    Cheatcodes, CmpOperands, EdgeCoverage, EdgeIndexMap, InspectorData, InspectorStack,
+    cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
+use alloy_evm::Evm;
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
@@ -20,28 +20,41 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
-    EvmEnv,
-    backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
+    EvmEnv, FoundryBlock, FoundryTransaction,
+    backend::{
+        Backend, BackendError, BackendResult, CowBackend, DatabaseError, DatabaseExt,
+        GLOBAL_FAIL_SLOT,
+    },
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
+    eip2935::{
+        HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, history_storage_slot, history_storage_value,
+        history_window_start,
+    },
+    evm::{
+        EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor,
+        IntoInstructionResult, SpecFor, TxEnvFor,
+    },
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use foundry_evm_fuzz::ObservedCall;
+use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
-    context::{BlockEnv, TxEnv},
+    context::{Block, Transaction},
     context_interface::{
         result::{ExecutionResult, Output, ResultAndState},
         transaction::SignedAuthorization,
     },
-    database::{DatabaseCommit, DatabaseRef},
+    database::{Database, DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
     primitives::hardfork::SpecId,
 };
+use sancov::SancovGuard;
 use std::{
     borrow::Cow,
     sync::{
@@ -61,8 +74,20 @@ pub mod invariant;
 pub use invariant::InvariantExecutor;
 
 mod corpus;
+mod corpus_io;
+mod sancov;
+mod showmap;
 mod trace;
 
+pub use corpus::{DynamicTargetCtx, StatelessReplayTarget, persist_corpus_seed};
+pub use corpus_io::{
+    CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
+};
+pub use showmap::{
+    InvariantReplayOptions, MinimizationReplayInput, ReplayFailure, ReplayObservation,
+    ShowmapDomain, ShowmapOpts, ShowmapReplayTarget, ShowmapStats, replay_corpus_to_showmap,
+    replay_sequence_for_minimization,
+};
 pub use trace::TracingExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
@@ -89,7 +114,7 @@ sol! {
 ///   deployment
 /// - `setup`: a special case of `transact`, used to set up the environment for a test
 #[derive(Clone, Debug)]
-pub struct Executor {
+pub struct Executor<FEN: FoundryEvmNetwork> {
     /// The underlying `revm::Database` that contains the EVM storage.
     ///
     /// Wrapped in `Arc` for efficient cloning during parallel fuzzing. Use [`Arc::make_mut`]
@@ -98,24 +123,27 @@ pub struct Executor {
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
-    backend: Arc<Backend>,
-    /// The EVM environment.
-    env: Env,
+    backend: Arc<Backend<FEN>>,
+    /// The EVM environment (block and cfg).
+    evm_env: EvmEnvFor<FEN>,
+    /// The transaction environment.
+    tx_env: TxEnvFor<FEN>,
     /// The Revm inspector stack.
-    inspector: InspectorStack,
+    inspector: InspectorStack<FEN>,
     /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
 }
 
-impl Executor {
+impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// Creates a new `Executor` with the given arguments.
     #[inline]
     pub fn new(
-        mut backend: Backend,
-        env: Env,
-        inspector: InspectorStack,
+        mut backend: Backend<FEN>,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+        inspector: InspectorStack<FEN>,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
@@ -132,19 +160,41 @@ impl Executor {
             },
         );
 
-        Self { backend: Arc::new(backend), env, inspector, gas_limit, legacy_assertions }
-    }
+        if !backend.is_in_forking_mode() && evm_env.cfg_env.spec.into() >= SpecId::PRAGUE {
+            let mut account =
+                backend.basic_ref(HISTORY_STORAGE_ADDRESS).unwrap_or_default().unwrap_or_default();
+            account.code_hash = keccak256(&HISTORY_STORAGE_CODE);
+            account.code = Some(Bytecode::new_raw(HISTORY_STORAGE_CODE.clone()));
+            backend.insert_account_info(HISTORY_STORAGE_ADDRESS, account);
 
-    fn clone_with_backend(&self, backend: Backend) -> Self {
-        let env = Env::new_with_spec_id(
-            self.env.evm_env.cfg_env.clone(),
-            self.env.evm_env.block_env.clone(),
-            self.env.tx.clone(),
-            self.spec_id(),
-        );
+            let current_block = evm_env.block_env.number();
+            let mut block_number = history_window_start(current_block);
+            while block_number < current_block {
+                let block_hash =
+                    backend.block_hash(block_number.saturating_to()).unwrap_or_default();
+                let slot = history_storage_slot(block_number);
+                let value = history_storage_value(block_hash);
+                let _ = backend.insert_account_storage(HISTORY_STORAGE_ADDRESS, slot, value);
+                block_number += U256::from(1);
+            }
+        }
+
         Self {
             backend: Arc::new(backend),
-            env,
+            evm_env,
+            tx_env,
+            inspector,
+            gas_limit,
+            legacy_assertions,
+        }
+    }
+
+    fn clone_with_backend(&self, backend: Backend<FEN>) -> Self {
+        let evm_env = self.evm_env.clone();
+        Self {
+            backend: Arc::new(backend),
+            evm_env,
+            tx_env: self.tx_env.clone(),
             inspector: self.inspector().clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
@@ -152,7 +202,7 @@ impl Executor {
     }
 
     /// Returns a reference to the EVM backend.
-    pub fn backend(&self) -> &Backend {
+    pub fn backend(&self) -> &Backend<FEN> {
         &self.backend
     }
 
@@ -160,62 +210,72 @@ impl Executor {
     ///
     /// Uses copy-on-write semantics: if other clones of this executor share the backend,
     /// this will clone the backend first.
-    pub fn backend_mut(&mut self) -> &mut Backend {
+    pub fn backend_mut(&mut self) -> &mut Backend<FEN> {
         Arc::make_mut(&mut self.backend)
     }
 
-    /// Returns a reference to the EVM environment.
-    pub fn env(&self) -> &Env {
-        &self.env
+    /// Returns a reference to the EVM environment (block and cfg).
+    pub const fn evm_env(&self) -> &EvmEnvFor<FEN> {
+        &self.evm_env
     }
 
-    /// Returns a mutable reference to the EVM environment.
-    pub fn env_mut(&mut self) -> &mut Env {
-        &mut self.env
+    /// Returns a mutable reference to the EVM environment (block and cfg).
+    pub const fn evm_env_mut(&mut self) -> &mut EvmEnvFor<FEN> {
+        &mut self.evm_env
+    }
+
+    /// Returns a reference to the transaction environment.
+    pub const fn tx_env(&self) -> &TxEnvFor<FEN> {
+        &self.tx_env
+    }
+
+    /// Returns a mutable reference to the transaction environment.
+    pub const fn tx_env_mut(&mut self) -> &mut TxEnvFor<FEN> {
+        &mut self.tx_env
     }
 
     /// Returns a reference to the EVM inspector.
-    pub fn inspector(&self) -> &InspectorStack {
+    pub const fn inspector(&self) -> &InspectorStack<FEN> {
         &self.inspector
     }
 
     /// Returns a mutable reference to the EVM inspector.
-    pub fn inspector_mut(&mut self) -> &mut InspectorStack {
+    pub const fn inspector_mut(&mut self) -> &mut InspectorStack<FEN> {
         &mut self.inspector
     }
 
-    /// Returns the EVM spec ID.
-    pub fn spec_id(&self) -> SpecId {
-        self.env.evm_env.cfg_env.spec
+    /// Returns the EVM spec.
+    pub const fn spec_id(&self) -> SpecFor<FEN> {
+        self.evm_env.cfg_env.spec
     }
 
-    /// Sets the EVM spec ID.
-    pub fn set_spec_id(&mut self, spec_id: SpecId) {
-        self.env.evm_env.cfg_env.spec = spec_id;
+    /// Sets the EVM spec and updates spec-dependent gas parameters.
+    pub fn set_spec_id(&mut self, spec_id: SpecFor<FEN>) {
+        self.evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
     }
 
     /// Returns the gas limit for calls and deployments.
     ///
     /// This is different from the gas limit imposed by the passed in environment, as those limits
     /// are used by the EVM for certain opcodes like `gaslimit`.
-    pub fn gas_limit(&self) -> u64 {
+    pub const fn gas_limit(&self) -> u64 {
         self.gas_limit
     }
 
     /// Sets the gas limit for calls and deployments.
-    pub fn set_gas_limit(&mut self, gas_limit: u64) {
+    pub const fn set_gas_limit(&mut self, gas_limit: u64) {
         self.gas_limit = gas_limit;
     }
 
     /// Returns whether `failed()` should be called on the test contract to determine if the test
     /// failed.
-    pub fn legacy_assertions(&self) -> bool {
+    pub const fn legacy_assertions(&self) -> bool {
         self.legacy_assertions
     }
 
     /// Sets whether `failed()` should be called on the test contract to determine if the test
     /// failed.
-    pub fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
+    pub const fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
         self.legacy_assertions = legacy_assertions;
     }
 
@@ -263,7 +323,7 @@ impl Executor {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
-        self.env_mut().tx.nonce = nonce;
+        self.tx_env_mut().set_nonce(nonce);
         Ok(())
     }
 
@@ -302,14 +362,44 @@ impl Executor {
         Ok(())
     }
 
+    /// Apply prestate trace data to the executor's backend.
+    ///
+    /// This is used to set up the EVM state based on the prestate trace from
+    /// `debug_traceTransaction`, which provides all accounts and storage slots
+    /// that will be accessed during transaction execution.
+    pub fn apply_prestate_trace(
+        &mut self,
+        prestate: std::collections::BTreeMap<Address, alloy_rpc_types::trace::geth::AccountState>,
+    ) -> eyre::Result<()> {
+        let backend = self.backend_mut();
+        for (address, account_state) in prestate {
+            let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
+            let info = revm::state::AccountInfo {
+                nonce: account_state.nonce.unwrap_or_default(),
+                balance: account_state.balance.unwrap_or_default(),
+                code_hash: keccak256(code.original_byte_slice()),
+                code: Some(code),
+                account_id: Default::default(),
+            };
+            backend.insert_account_info(address, info);
+
+            for (slot, value) in account_state.storage {
+                let slot = U256::from_be_bytes(slot.0);
+                let value = U256::from_be_bytes(value.0);
+                backend.insert_account_storage(address, slot, value)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, mode: TraceMode) -> &mut Self {
-        self.inspector_mut().tracing(mode);
+    pub fn set_trace_requirements(&mut self, requirements: TraceRequirements) -> &mut Self {
+        self.inspector_mut().tracing_requirements(requirements);
         self
     }
 
@@ -339,9 +429,9 @@ impl Executor {
         code: Bytes,
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<DeployResult, EvmError> {
-        let env = self.build_test_env(from, TxKind::Create, code, value);
-        self.deploy_with_env(env, rd)
+    ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Create, code, value);
+        self.deploy_with_env(evm_env, tx_env, rd)
     }
 
     /// Deploys a contract using the given `env` and commits the new state to the underlying
@@ -349,21 +439,22 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// Panics if `env.tx.kind` is not `TxKind::Create(_)`.
+    /// Panics if `tx_env.kind` is not `TxKind::Create(_)`.
     #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
-        env: Env,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
         rd: Option<&RevertDecoder>,
-    ) -> Result<DeployResult, EvmError> {
+    ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
         assert!(
-            matches!(env.tx.kind, TxKind::Create),
+            matches!(tx_env.kind(), TxKind::Create),
             "Expected create transaction, got {:?}",
-            env.tx.kind
+            tx_env.kind()
         );
-        trace!(sender=%env.tx.caller, "deploying contract");
+        trace!(sender=%tx_env.caller(), "deploying contract");
 
-        let mut result = self.transact_with_env(env)?;
+        let mut result = self.transact_with_env(evm_env, tx_env)?;
         result = result.into_result(rd)?;
         let Some(Output::Create(_, Some(address))) = result.out else {
             panic!("Deployment succeeded, but no address was returned: {result:#?}");
@@ -390,7 +481,7 @@ impl Executor {
         from: Option<Address>,
         to: Address,
         rd: Option<&RevertDecoder>,
-    ) -> Result<RawCallResult, EvmError> {
+    ) -> Result<RawCallResult<FEN>, EvmError<FEN>> {
         trace!(?from, ?to, "setting up contract");
 
         let from = from.unwrap_or(CALLER);
@@ -400,9 +491,9 @@ impl Executor {
         res = res.into_result(rd)?;
 
         // record any changes made to the block's environment during setup
-        self.env_mut().evm_env.block_env = res.env.evm_env.block_env.clone();
+        self.evm_env_mut().block_env = res.evm_env.block_env.clone();
         // and also the chainid, which can be set manually
-        self.env_mut().evm_env.cfg_env.chain_id = res.env.evm_env.cfg_env.chain_id;
+        self.evm_env_mut().cfg_env.chain_id = res.evm_env.cfg_env.chain_id;
 
         let success =
             self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
@@ -422,7 +513,7 @@ impl Executor {
         args: &[DynSolValue],
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
+    ) -> Result<CallResult<DynSolValue, FEN>, EvmError<FEN>> {
         let calldata = Bytes::from(func.abi_encode_input(args)?);
         let result = self.call_raw(from, to, calldata, value)?;
         result.into_decoded_result(func, rd)
@@ -436,7 +527,7 @@ impl Executor {
         args: &C,
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult<C::Return>, EvmError> {
+    ) -> Result<CallResult<C::Return, FEN>, EvmError<FEN>> {
         let calldata = Bytes::from(args.abi_encode());
         let mut raw = self.call_raw(from, to, calldata, value)?;
         raw = raw.into_result(rd)?;
@@ -452,7 +543,7 @@ impl Executor {
         args: &[DynSolValue],
         value: U256,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
+    ) -> Result<CallResult<DynSolValue, FEN>, EvmError<FEN>> {
         let calldata = Bytes::from(func.abi_encode_input(args)?);
         let result = self.transact_raw(from, to, calldata, value)?;
         result.into_decoded_result(func, rd)
@@ -465,9 +556,9 @@ impl Executor {
         to: Address,
         calldata: Bytes,
         value: U256,
-    ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
-        self.call_with_env(env)
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        self.call_with_env(evm_env, tx_env)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -479,11 +570,11 @@ impl Executor {
         calldata: Bytes,
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
-    ) -> eyre::Result<RawCallResult> {
-        let mut env = self.build_test_env(from, to.into(), calldata, value);
-        env.tx.set_signed_authorization(authorization_list);
-        env.tx.tx_type = 4;
-        self.call_with_env(env)
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let (evm_env, mut tx_env) = self.build_test_env(from, to.into(), calldata, value);
+        tx_env.set_signed_authorization(authorization_list);
+        tx_env.set_tx_type(4);
+        self.call_with_env(evm_env, tx_env)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
@@ -493,9 +584,9 @@ impl Executor {
         to: Address,
         calldata: Bytes,
         value: U256,
-    ) -> eyre::Result<RawCallResult> {
-        let env = self.build_test_env(from, TxKind::Call(to), calldata, value);
-        self.transact_with_env(env)
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        self.transact_with_env(evm_env, tx_env)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -507,32 +598,109 @@ impl Executor {
         calldata: Bytes,
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
-    ) -> eyre::Result<RawCallResult> {
-        let mut env = self.build_test_env(from, TxKind::Call(to), calldata, value);
-        env.tx.set_signed_authorization(authorization_list);
-        env.tx.tx_type = 4;
-        self.transact_with_env(env)
+    ) -> eyre::Result<RawCallResult<FEN>> {
+        let (evm_env, mut tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        tx_env.set_signed_authorization(authorization_list);
+        tx_env.set_tx_type(4);
+        self.transact_with_env(evm_env, tx_env)
     }
 
-    /// Execute the transaction configured in `env.tx`.
+    /// Applies the EIP-4788 beacon roots system call (Cancun+).
+    /// <https://eips.ethereum.org/EIPS/eip-4788>
+    pub fn apply_beacon_root(
+        &mut self,
+        parent_beacon_block_root: alloy_primitives::B256,
+    ) -> eyre::Result<()> {
+        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let mut evm_env = self.evm_env.clone();
+        let inspector = self.inspector().clone();
+        let mut state = {
+            let mut backend = CowBackend::new_borrowed(self.backend());
+            let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
+                &mut backend,
+                evm_env.clone(),
+                inspector,
+            );
+            let result =
+                evm.transact_system_call(SYSTEM_ADDRESS, BEACON_ROOTS_ADDRESS, calldata)?;
+            evm_env = evm.finish().1;
+            result.state
+        };
+        state.retain(|address, _| *address == BEACON_ROOTS_ADDRESS);
+
+        self.backend_mut().commit(state);
+        self.inspector_mut().set_block(evm_env.block_env);
+
+        Ok(())
+    }
+
+    /// Execute the transaction configured in `tx_env`.
     ///
     /// The state after the call is **not** persisted.
     #[instrument(name = "call", level = "debug", skip_all)]
-    pub fn call_with_env(&self, mut env: Env) -> eyre::Result<RawCallResult> {
+    pub fn call_with_env(
+        &self,
+        mut evm_env: EvmEnvFor<FEN>,
+        mut tx_env: TxEnvFor<FEN>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
+        let sancov_edges = stack.inner.sancov_edges;
+        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
+        let sancov_active = sancov_edges || sancov_trace_cmp;
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut env, stack.as_inspector())?;
-        convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())
+        let result = {
+            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
+        };
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let mut result = convert_executed_result(
+            evm_env,
+            tx_env,
+            stack,
+            result,
+            &backend,
+            has_state_snapshot_failure,
+        )?;
+        if sancov_edges {
+            SancovGuard::append_edges_into(&mut result);
+        }
+        if sancov_trace_cmp {
+            SancovGuard::drain_cmp_into(&mut result);
+        }
+        Ok(result)
     }
 
-    /// Execute the transaction configured in `env.tx`.
+    /// Execute the transaction configured in `tx_env`.
     #[instrument(name = "transact", level = "debug", skip_all)]
-    pub fn transact_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
+    pub fn transact_with_env(
+        &mut self,
+        mut evm_env: EvmEnvFor<FEN>,
+        mut tx_env: TxEnvFor<FEN>,
+    ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
+        let sancov_edges = stack.inner.sancov_edges;
+        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
+        let sancov_active = sancov_edges || sancov_trace_cmp;
         let backend = self.backend_mut();
-        let result = backend.inspect(&mut env, stack.as_inspector())?;
-        let mut result =
-            convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())?;
+        let result = {
+            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
+        };
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let mut result = convert_executed_result(
+            evm_env,
+            tx_env,
+            stack,
+            result,
+            &*backend,
+            has_state_snapshot_failure,
+        )?;
+        if sancov_edges {
+            SancovGuard::append_edges_into(&mut result);
+        }
+        if sancov_trace_cmp {
+            SancovGuard::drain_cmp_into(&mut result);
+        }
         self.commit(&mut result);
         Ok(result)
     }
@@ -542,7 +710,7 @@ impl Executor {
     ///
     /// This should not be exposed to the user, as it should be called only by `transact*`.
     #[instrument(name = "commit", level = "debug", skip_all)]
-    fn commit(&mut self, result: &mut RawCallResult) {
+    fn commit(&mut self, result: &mut RawCallResult<FEN>) {
         // Persist changes to db.
         self.backend_mut().commit(result.state_changeset.clone());
 
@@ -561,7 +729,8 @@ impl Executor {
         }
 
         // Persist the changed environment.
-        self.inspector_mut().set_env(&result.env);
+        self.inspector_mut().set_block(result.evm_env.block_env.clone());
+        self.inspector_mut().set_gas_price(result.tx_env.gas_price());
     }
 
     /// Returns `true` if a test can be considered successful.
@@ -571,7 +740,7 @@ impl Executor {
     pub fn is_raw_call_mut_success(
         &self,
         address: Address,
-        call_result: &mut RawCallResult,
+        call_result: &mut RawCallResult<FEN>,
         should_fail: bool,
     ) -> bool {
         self.is_raw_call_success(
@@ -589,7 +758,7 @@ impl Executor {
         &self,
         address: Address,
         state_changeset: Cow<'_, StateChangeset>,
-        call_result: &RawCallResult,
+        call_result: &RawCallResult<FEN>,
         should_fail: bool,
     ) -> bool {
         if call_result.has_state_snapshot_failure {
@@ -597,6 +766,21 @@ impl Executor {
             return should_fail;
         }
         self.is_success(address, call_result.reverted, state_changeset, should_fail)
+    }
+
+    /// Like [`Self::is_raw_call_mut_success`] but uses [`Self::is_success_handler_gate`] under
+    /// the hood. Intended for invariant view-call success checks during a campaign where the
+    /// committed `GLOBAL_FAIL_SLOT` may be stale poison from a previously-recorded handler bug.
+    pub fn is_raw_call_mut_success_handler_gate(
+        &self,
+        address: Address,
+        call_result: &mut RawCallResult<FEN>,
+    ) -> bool {
+        if call_result.has_state_snapshot_failure {
+            return false;
+        }
+        let state_changeset = std::mem::take(&mut call_result.state_changeset);
+        self.is_success_handler_gate(address, call_result.reverted, Cow::Owned(state_changeset))
     }
 
     /// Returns `true` if a test can be considered successful.
@@ -627,8 +811,22 @@ impl Executor {
         state_changeset: Cow<'_, StateChangeset>,
         should_fail: bool,
     ) -> bool {
-        let success = self.is_success_raw(address, reverted, state_changeset);
+        let success = self.is_success_raw(address, reverted, state_changeset, false);
         should_fail ^ success
+    }
+
+    /// Like [`Self::is_success`] but ignores the *committed* `GLOBAL_FAIL_SLOT` and only treats
+    /// the slot as failed when this call's in-flight changeset writes it. Used by the invariant
+    /// runner's per-call handler-success gate, where a `1` already in committed storage is just
+    /// stale poison from a previously-recorded handler bug (separately tracked) and must not
+    /// suppress later `assert_invariants` / `afterInvariant` evaluations.
+    pub fn is_success_handler_gate(
+        &self,
+        address: Address,
+        reverted: bool,
+        state_changeset: Cow<'_, StateChangeset>,
+    ) -> bool {
+        self.is_success_raw(address, reverted, state_changeset, true)
     }
 
     #[instrument(name = "is_success", level = "debug", skip_all)]
@@ -637,6 +835,7 @@ impl Executor {
         address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
+        pending_global_failure_only: bool,
     ) -> bool {
         // The call reverted.
         if reverted {
@@ -648,16 +847,16 @@ impl Executor {
             return false;
         }
 
-        // Check the global failure slot.
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
-            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
-            && !failed_slot.present_value().is_zero()
-        {
-            return false;
-        }
-        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
-            && !failed_slot.is_zero()
-        {
+        // Check the global failure slot. Callers that already track recorded handler bugs
+        // out-of-band can pass `pending_global_failure_only = true` to ignore the committed
+        // slot (which would otherwise stay `1` for the rest of the run after a non-reverting
+        // `vm.assert*` under `assertions_revert = false`).
+        let global_failed = if pending_global_failure_only {
+            Self::has_pending_global_failure(&state_changeset)
+        } else {
+            self.has_global_failure(&state_changeset)
+        };
+        if global_failed {
             return false;
         }
 
@@ -699,40 +898,64 @@ impl Executor {
         }
     }
 
+    /// Returns whether the in-flight state changeset for the current call sets the global
+    /// assertion failure flag.
+    pub fn has_pending_global_failure(state_changeset: &StateChangeset) -> bool {
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
+            && !failed_slot.present_value().is_zero()
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Returns whether the global assertion failure flag is set either in the in-flight state
+    /// changeset or in the committed backend state.
+    pub fn has_global_failure(&self, state_changeset: &StateChangeset) -> bool {
+        if Self::has_pending_global_failure(state_changeset) {
+            return true;
+        }
+
+        self.backend()
+            .storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            .is_ok_and(|failed_slot| !failed_slot.is_zero())
+    }
+
     /// Creates the environment to use when executing a transaction in a test context
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
     /// the cheatcode state in between calls.
-    fn build_test_env(&self, caller: Address, kind: TxKind, data: Bytes, value: U256) -> Env {
-        Env {
-            evm_env: EvmEnv {
-                cfg_env: {
-                    let mut cfg = self.env().evm_env.cfg_env.clone();
-                    cfg.spec = self.spec_id();
-                    cfg
-                },
-                // We always set the gas price to 0 so we can execute the transaction regardless of
-                // network conditions - the actual gas price is kept in `self.block` and is applied
-                // by the cheatcode handler if it is enabled
-                block_env: BlockEnv {
-                    basefee: 0,
-                    gas_limit: self.gas_limit,
-                    ..self.env().evm_env.block_env.clone()
-                },
-            },
-            tx: TxEnv {
-                caller,
-                kind,
-                data,
-                value,
-                // As above, we set the gas price to 0.
-                gas_price: 0,
-                gas_priority_fee: None,
-                gas_limit: self.gas_limit,
-                chain_id: Some(self.env().evm_env.cfg_env.chain_id),
-                ..self.env().tx.clone()
-            },
-        }
+    fn build_test_env(
+        &self,
+        caller: Address,
+        kind: TxKind,
+        data: Bytes,
+        value: U256,
+    ) -> (EvmEnvFor<FEN>, TxEnvFor<FEN>) {
+        let mut cfg_env = self.evm_env.cfg_env.clone();
+        cfg_env.spec = self.spec_id();
+
+        // We always set the gas price to 0 so we can execute the transaction regardless of
+        // network conditions - the actual gas price is kept in `self.block` and is applied
+        // by the cheatcode handler if it is enabled
+        let mut block_env = self.evm_env.block_env.clone();
+        block_env.set_basefee(0);
+        block_env.set_gas_limit(self.gas_limit);
+
+        let mut tx_env = self.tx_env.clone();
+        tx_env.set_caller(caller);
+        tx_env.set_kind(kind);
+        tx_env.set_data(data);
+        tx_env.set_value(value);
+        // As above, we set the gas price to 0.
+        tx_env.set_gas_price(0);
+        tx_env.set_gas_priority_fee(None);
+        tx_env.set_gas_limit(self.gas_limit);
+        tx_env.set_chain_id(Some(self.evm_env.cfg_env.chain_id));
+
+        (EvmEnv { cfg_env, block_env }, tx_env)
     }
 
     pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
@@ -749,15 +972,15 @@ impl Executor {
 /// Represents the context after an execution error occurred.
 #[derive(Debug, thiserror::Error)]
 #[error("execution reverted: {reason} (gas: {})", raw.gas_used)]
-pub struct ExecutionErr {
+pub struct ExecutionErr<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The raw result of the call.
-    pub raw: RawCallResult,
+    pub raw: RawCallResult<FEN>,
     /// The revert reason.
     pub reason: String,
 }
 
-impl std::ops::Deref for ExecutionErr {
-    type Target = RawCallResult;
+impl<FEN: FoundryEvmNetwork> std::ops::Deref for ExecutionErr<FEN> {
+    type Target = RawCallResult<FEN>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -765,7 +988,7 @@ impl std::ops::Deref for ExecutionErr {
     }
 }
 
-impl std::ops::DerefMut for ExecutionErr {
+impl<FEN: FoundryEvmNetwork> std::ops::DerefMut for ExecutionErr<FEN> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.raw
@@ -773,10 +996,10 @@ impl std::ops::DerefMut for ExecutionErr {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EvmError {
+pub enum EvmError<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Error which occurred during execution of a transaction.
     #[error(transparent)]
-    Execution(#[from] Box<ExecutionErr>),
+    Execution(Box<ExecutionErr<FEN>>),
     /// Error which occurred during ABI encoding/decoding.
     #[error(transparent)]
     Abi(#[from] alloy_dyn_abi::Error),
@@ -792,13 +1015,13 @@ pub enum EvmError {
     ),
 }
 
-impl From<ExecutionErr> for EvmError {
-    fn from(err: ExecutionErr) -> Self {
+impl<FEN: FoundryEvmNetwork> From<ExecutionErr<FEN>> for EvmError<FEN> {
+    fn from(err: ExecutionErr<FEN>) -> Self {
         Self::Execution(Box::new(err))
     }
 }
 
-impl From<alloy_sol_types::Error> for EvmError {
+impl<FEN: FoundryEvmNetwork> From<alloy_sol_types::Error> for EvmError<FEN> {
     fn from(err: alloy_sol_types::Error) -> Self {
         Self::Abi(err.into())
     }
@@ -806,15 +1029,15 @@ impl From<alloy_sol_types::Error> for EvmError {
 
 /// The result of a deployment.
 #[derive(Debug)]
-pub struct DeployResult {
+pub struct DeployResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The raw result of the deployment.
-    pub raw: RawCallResult,
+    pub raw: RawCallResult<FEN>,
     /// The address of the deployed contract
     pub address: Address,
 }
 
-impl std::ops::Deref for DeployResult {
-    type Target = RawCallResult;
+impl<FEN: FoundryEvmNetwork> std::ops::Deref for DeployResult<FEN> {
+    type Target = RawCallResult<FEN>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -822,22 +1045,22 @@ impl std::ops::Deref for DeployResult {
     }
 }
 
-impl std::ops::DerefMut for DeployResult {
+impl<FEN: FoundryEvmNetwork> std::ops::DerefMut for DeployResult<FEN> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.raw
     }
 }
 
-impl From<DeployResult> for RawCallResult {
-    fn from(d: DeployResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for RawCallResult<FEN> {
+    fn from(d: DeployResult<FEN>) -> Self {
         d.raw
     }
 }
 
 /// The result of a raw call.
 #[derive(Debug)]
-pub struct RawCallResult {
+pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The status of the call
     pub exit_reason: Option<InstructionResult>,
     /// Whether the call reverted or not
@@ -861,18 +1084,31 @@ pub struct RawCallResult {
     pub labels: AddressHashMap<String>,
     /// The traces of the call
     pub traces: Option<SparsedTraceArena>,
+    /// Runtime bytecodes for contracts seen in the trace, used by debug source mapping.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     /// The line coverage info collected during the call
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
-    pub edge_coverage: Option<Vec<u8>>,
+    pub edge_coverage: Option<EdgeCoverage>,
+    /// EVM comparison operands collected during the call.
+    pub evm_cmp_values: Option<Vec<CmpOperands>>,
+    /// Observed sub-calls collected during the call.
+    pub observed_calls: Vec<ObservedCall>,
+    /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
+    /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
+    pub sancov_coverage: Option<Vec<u8>>,
+    /// Comparison operands captured via sancov trace-cmp callbacks.
+    pub sancov_cmp_values: Option<Vec<foundry_evm_sancov::CmpSample>>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<BroadcastableTransactions>,
+    pub transactions: Option<BroadcastableTransactions<FEN::Network>>,
     /// The changeset of the state.
     pub state_changeset: StateChangeset,
-    /// The `revm::Env` after the call
-    pub env: Env,
+    /// The `EvmEnv` after the call
+    pub evm_env: EvmEnvFor<FEN>,
+    /// The `TxEnv` after the call
+    pub tx_env: TxEnvFor<FEN>,
     /// The cheatcode states after execution
-    pub cheatcodes: Option<Box<Cheatcodes>>,
+    pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
@@ -880,7 +1116,7 @@ pub struct RawCallResult {
     pub reverter: Option<Address>,
 }
 
-impl Default for RawCallResult {
+impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
     fn default() -> Self {
         Self {
             exit_reason: None,
@@ -893,11 +1129,17 @@ impl Default for RawCallResult {
             logs: Vec::new(),
             labels: HashMap::default(),
             traces: None,
+            debug_bytecodes: HashMap::default(),
             line_coverage: None,
             edge_coverage: None,
+            evm_cmp_values: None,
+            observed_calls: Vec::new(),
+            sancov_coverage: None,
+            sancov_cmp_values: None,
             transactions: None,
             state_changeset: HashMap::default(),
-            env: Env::default(),
+            evm_env: EvmEnv::default(),
+            tx_env: TxEnvFor::<FEN>::default(),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
@@ -906,9 +1148,9 @@ impl Default for RawCallResult {
     }
 }
 
-impl RawCallResult {
+impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     /// Unpacks an EVM result.
-    pub fn from_evm_result(r: Result<Self, EvmError>) -> eyre::Result<(Self, Option<String>)> {
+    pub fn from_evm_result(r: Result<Self, EvmError<FEN>>) -> eyre::Result<(Self, Option<String>)> {
         match r {
             Ok(r) => Ok((r, None)),
             Err(EvmError::Execution(e)) => Ok((e.raw, Some(e.reason))),
@@ -917,8 +1159,10 @@ impl RawCallResult {
     }
 
     /// Converts the result of the call into an `EvmError`.
-    pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError {
-        if let Some(reason) = SkipReason::decode(&self.result) {
+    pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError<FEN> {
+        if self.reverter == Some(CHEATCODE_ADDRESS)
+            && let Some(reason) = SkipReason::decode(&self.result)
+        {
             return EvmError::Skip(reason);
         }
         let reason = rd.unwrap_or_default().decode(&self.result, self.exit_reason);
@@ -926,12 +1170,12 @@ impl RawCallResult {
     }
 
     /// Converts the result of the call into an `ExecutionErr`.
-    pub fn into_execution_error(self, reason: String) -> ExecutionErr {
+    pub const fn into_execution_error(self, reason: String) -> ExecutionErr<FEN> {
         ExecutionErr { raw: self, reason }
     }
 
     /// Returns an `EvmError` if the call failed, otherwise returns `self`.
-    pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError> {
+    pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError<FEN>> {
         if let Some(reason) = self.exit_reason
             && reason.is_ok()
         {
@@ -946,76 +1190,149 @@ impl RawCallResult {
         mut self,
         func: &Function,
         rd: Option<&RevertDecoder>,
-    ) -> Result<CallResult, EvmError> {
+    ) -> Result<CallResult<DynSolValue, FEN>, EvmError<FEN>> {
         self = self.into_result(rd)?;
         let mut result = func.abi_decode_output(&self.result)?;
-        let decoded_result = if result.len() == 1 {
-            result.pop().unwrap()
-        } else {
-            // combine results into a tuple
-            DynSolValue::Tuple(result)
-        };
+        let decoded_result =
+            if result.len() == 1 { result.pop().unwrap() } else { DynSolValue::Tuple(result) };
         Ok(CallResult { raw: self, decoded_result })
     }
 
     /// Returns the transactions generated from this call.
-    pub fn transactions(&self) -> Option<&BroadcastableTransactions> {
+    pub fn transactions(&self) -> Option<&BroadcastableTransactions<FEN::Network>> {
         self.cheatcodes.as_ref().map(|c| &c.broadcastable_transactions)
     }
 
     /// Update provided history map with edge coverage info collected during this call.
-    /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
-    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
+    pub fn merge_edge_coverage(
+        &mut self,
+        history_map: &mut Vec<u8>,
+        edge_indices: &mut EdgeIndexMap,
+    ) -> (bool, bool) {
         let mut new_coverage = false;
         let mut is_edge = false;
         if let Some(x) = &mut self.edge_coverage {
-            // Iterate over the current map and the history map together and update
-            // the history map, if we discover some new coverage, report true
-            for (curr, hist) in std::iter::zip(x, history_map) {
-                // If we got a hitcount of at least 1
-                if *curr > 0 {
-                    // Convert hitcount into bucket count
-                    let bucket = match *curr {
-                        0 => 0,
-                        1 => 1,
-                        2 => 2,
-                        3 => 4,
-                        4..=7 => 8,
-                        8..=15 => 16,
-                        16..=31 => 32,
-                        32..=127 => 64,
-                        128..=255 => 128,
-                    };
+            match x {
+                EdgeCoverage::Hash(x) => {
+                    if history_map.len() < x.len() {
+                        history_map.resize(x.len(), 0);
+                    }
+                    // Iterate over the current map and the history map together and update
+                    // the history map, if we discover some new coverage, report true
+                    for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
+                        Self::merge_edge_count(*curr, hist, &mut new_coverage, &mut is_edge);
 
-                    // If the old record for this edge pair is lower, update
-                    if *hist < bucket {
+                        // Hash reuses its map; collision-free drains hits.
+                        *curr = 0;
+                    }
+                }
+                EdgeCoverage::CollisionFree(hits) => {
+                    for hit in hits.drain(..) {
+                        let edge_index = edge_indices.edge_index(hit.edge);
+                        if history_map.len() <= edge_index {
+                            history_map.resize(edge_index + 1, 0);
+                        }
+                        Self::merge_edge_count(
+                            hit.count,
+                            &mut history_map[edge_index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                    }
+                }
+            }
+        }
+        (new_coverage, is_edge)
+    }
+
+    const fn merge_edge_count(
+        curr: u8,
+        hist: &mut u8,
+        new_coverage: &mut bool,
+        is_edge: &mut bool,
+    ) {
+        let Some(bucket) = Self::bin_count(curr) else {
+            return;
+        };
+
+        // If the old record for this edge pair is lower, update
+        if *hist < bucket {
+            if *hist == 0 {
+                // Counts as an edge the first time we see it, otherwise it's a feature.
+                *is_edge = true;
+            }
+            *hist = bucket;
+            *new_coverage = true;
+        }
+    }
+
+    /// Convert a hitcount into an AFL-style bucket.
+    /// <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
+    const fn bin_count(count: u8) -> Option<u8> {
+        match count {
+            0 => None,
+            1 => Some(1),
+            2 => Some(2),
+            3 => Some(4),
+            4..=7 => Some(8),
+            8..=15 => Some(16),
+            16..=31 => Some(32),
+            32..=127 => Some(64),
+            128..=255 => Some(128),
+        }
+    }
+
+    /// Update provided history map with sancov coverage info collected during this call.
+    /// Uses AFL-style hitcount binning.
+    pub fn merge_sancov_coverage(&mut self, history_map: &mut Vec<u8>) -> (bool, bool) {
+        let mut new_coverage = false;
+        let mut is_edge = false;
+        if let Some(x) = &mut self.sancov_coverage {
+            if history_map.len() < x.len() {
+                history_map.resize(x.len(), 0);
+            }
+            for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
+                if *curr > 0 {
+                    if let Some(bucket) = Self::bin_count(*curr)
+                        && *hist < bucket
+                    {
                         if *hist == 0 {
-                            // Counts as an edge the first time we see it, otherwise it's a feature.
                             is_edge = true;
                         }
                         *hist = bucket;
                         new_coverage = true;
                     }
-
-                    // Zero out the current map for next iteration.
                     *curr = 0;
                 }
             }
         }
         (new_coverage, is_edge)
     }
+
+    /// Merge both EVM and sancov coverage into their respective history maps.
+    /// Returns `(new_coverage, is_edge)` — true if either domain produced new coverage.
+    pub fn merge_all_coverage(
+        &mut self,
+        evm_history: &mut Vec<u8>,
+        evm_edge_indices: &mut EdgeIndexMap,
+        sancov_history: &mut Vec<u8>,
+    ) -> (bool, bool) {
+        let (new_evm, edge_evm) = self.merge_edge_coverage(evm_history, evm_edge_indices);
+        let (new_san, edge_san) = self.merge_sancov_coverage(sancov_history);
+        (new_evm || new_san, edge_evm || edge_san)
+    }
 }
 
 /// The result of a call.
-pub struct CallResult<T = DynSolValue> {
+pub struct CallResult<T = DynSolValue, FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The raw result of the call.
-    pub raw: RawCallResult,
+    pub raw: RawCallResult<FEN>,
     /// The decoded result of the call.
     pub decoded_result: T,
 }
 
-impl std::ops::Deref for CallResult {
-    type Target = RawCallResult;
+impl<T, FEN: FoundryEvmNetwork> std::ops::Deref for CallResult<T, FEN> {
+    type Target = RawCallResult<FEN>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -1023,7 +1340,7 @@ impl std::ops::Deref for CallResult {
     }
 }
 
-impl std::ops::DerefMut for CallResult {
+impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.raw
@@ -1031,37 +1348,40 @@ impl std::ops::DerefMut for CallResult {
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
-fn convert_executed_result(
-    env: Env,
-    inspector: InspectorStack,
-    ResultAndState { result, state: state_changeset }: ResultAndState,
+fn convert_executed_result<FEN: FoundryEvmNetwork>(
+    evm_env: EvmEnvFor<FEN>,
+    tx_env: TxEnvFor<FEN>,
+    mut inspector: InspectorStack<FEN>,
+    ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
+    db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
-) -> eyre::Result<RawCallResult> {
+) -> eyre::Result<RawCallResult<FEN>> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
-        ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
-            (reason.into(), gas_refunded, gas_used, Some(output), logs)
+        ExecutionResult::Success { reason, gas, output, logs } => {
+            (reason.into(), gas.final_refunded(), gas.tx_gas_used(), Some(output), logs)
         }
-        ExecutionResult::Revert { gas_used, output } => {
-            // Need to fetch the unused gas
-            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)), vec![])
+        ExecutionResult::Revert { gas, output, logs } => {
+            (InstructionResult::Revert, 0_u64, gas.tx_gas_used(), Some(Output::Call(output)), logs)
         }
-        ExecutionResult::Halt { reason, gas_used } => {
-            (reason.into(), 0_u64, gas_used, None, vec![])
+        ExecutionResult::Halt { reason, gas, logs } => {
+            (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
-    let gas = revm::interpreter::gas::calculate_initial_tx_gas(
-        env.evm_env.cfg_env.spec,
-        &env.tx.data,
-        env.tx.kind.is_create(),
-        env.tx.access_list.len().try_into()?,
-        0,
-        0,
+    let gas = revm::interpreter::gas::calculate_initial_tx_gas_for_tx(
+        &tx_env,
+        evm_env.cfg_env.spec.into(),
     );
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),
         _ => Bytes::new(),
     };
+    let observed_calls = inspector
+        .inner
+        .fuzzer
+        .as_mut()
+        .map(|fuzzer| fuzzer.take_observed_calls())
+        .unwrap_or_default();
 
     let InspectorData {
         mut logs,
@@ -1069,10 +1389,12 @@ fn convert_executed_result(
         traces,
         line_coverage,
         edge_coverage,
+        evm_cmp_values,
         cheatcodes,
         chisel_state,
         reverter,
     } = inspector.collect();
+    let debug_bytecodes = collect_debug_bytecodes(traces.as_ref(), db);
 
     if logs.is_empty() {
         logs = exec_logs;
@@ -1090,20 +1412,52 @@ fn convert_executed_result(
         result,
         gas_used,
         gas_refunded,
-        stipend: gas.initial_gas,
+        stipend: gas.initial_total_gas(),
         logs,
         labels,
         traces,
+        debug_bytecodes,
         line_coverage,
         edge_coverage,
+        evm_cmp_values,
+        observed_calls,
+        sancov_coverage: None,
+        sancov_cmp_values: None,
         transactions,
         state_changeset,
-        env,
+        evm_env,
+        tx_env,
         cheatcodes,
         out,
         chisel_state,
         reverter,
     })
+}
+
+fn collect_debug_bytecodes(
+    traces: Option<&SparsedTraceArena>,
+    db: &dyn DatabaseRef<Error = DatabaseError>,
+) -> AddressHashMap<Bytes> {
+    let mut bytecodes = HashMap::default();
+    let Some(traces) = traces else { return bytecodes };
+
+    for node in traces.arena.nodes() {
+        let address = node.trace.address;
+        if bytecodes.contains_key(&address) {
+            continue;
+        }
+
+        let Ok(Some(account)) = db.basic_ref(address) else { continue };
+        let code: Option<Bytecode> =
+            account.code.or_else(|| db.code_by_hash_ref(account.code_hash).ok());
+        let code: Bytes = code.map(|code| code.original_bytes()).unwrap_or_default();
+
+        if !code.is_empty() {
+            bytecodes.insert(address, code);
+        }
+    }
+
+    bytecodes
 }
 
 /// Timer for a fuzz test.
@@ -1118,7 +1472,7 @@ impl FuzzTestTimer {
     }
 
     /// Whether the fuzz test timer is enabled.
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         self.inner.is_some()
     }
 
@@ -1158,5 +1512,225 @@ impl EarlyExit {
     /// Whether tests should stop and exit early.
     pub fn should_stop(&self) -> bool {
         self.inner.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inspectors::{EdgeCovHit, EdgeKey};
+    use alloy_primitives::B256;
+    use foundry_cheatcodes::{
+        CheatsConfig,
+        Vm::{blobhashesCall, revertToStateCall, snapshotStateCall},
+    };
+    use foundry_config::Config;
+    use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
+    use revm::context::{Cfg, TxEnv};
+
+    fn dense_call(edge: EdgeKey) -> RawCallResult {
+        RawCallResult {
+            edge_coverage: Some(EdgeCoverage::CollisionFree(vec![EdgeCovHit { edge, count: 1 }])),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn collision_free_edge_merge_uses_stable_indices() {
+        let first =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+        let second =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(20) };
+        let mut history = Vec::new();
+        let mut edge_indices = EdgeIndexMap::default();
+
+        assert_eq!(
+            dense_call(first).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [1]);
+
+        assert_eq!(
+            dense_call(second).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [1, 1]);
+
+        assert_eq!(
+            dense_call(first).merge_edge_coverage(&mut history, &mut edge_indices),
+            (false, false)
+        );
+        assert_eq!(history, [1, 1]);
+    }
+
+    #[test]
+    fn collision_free_edge_merge_handles_sparse_observation_indices() {
+        let first =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+        let second =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(20) };
+        let mut edge_indices = EdgeIndexMap::default();
+        edge_indices.edge_index(first);
+        edge_indices.edge_index(second);
+        let mut history = Vec::new();
+
+        assert_eq!(
+            dense_call(second).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [0, 1]);
+    }
+
+    #[test]
+    fn cheatcode_skip_payload_is_classified_as_skip() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(b"FOUNDRY::SKIPwith reason"),
+            reverter: Some(CHEATCODE_ADDRESS),
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Skip(_)));
+    }
+
+    #[test]
+    fn forged_skip_payload_from_non_cheatcode_is_execution_error() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(MAGIC_SKIP),
+            reverter: Some(CALLER),
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Execution(_)));
+    }
+
+    #[test]
+    fn skip_payload_without_reverter_is_execution_error() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(MAGIC_SKIP),
+            reverter: None,
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Execution(_)));
+    }
+
+    #[test]
+    fn set_spec_id_updates_spec_dependent_cfg_state() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+
+        executor.evm_env_mut().cfg_env.set_spec_and_mainnet_gas_params(SpecId::HOMESTEAD);
+        assert_eq!(
+            executor.evm_env().cfg_env.gas_params(),
+            &revm::context_interface::cfg::GasParams::new_spec(SpecId::HOMESTEAD),
+        );
+        assert!(!executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+
+        executor.set_spec_id(SpecId::AMSTERDAM);
+
+        assert_eq!(executor.spec_id(), SpecId::AMSTERDAM);
+        assert_eq!(
+            executor.evm_env().cfg_env.gas_params(),
+            &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
+        );
+        assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn beacon_root_system_call_does_not_persist_system_address() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().spec_id(SpecId::CANCUN).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let before = executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap();
+
+        executor.apply_beacon_root(B256::repeat_byte(0x11)).unwrap();
+
+        assert_eq!(
+            executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap(),
+            before,
+            "EIP-4788 system calls must not persist the system caller account",
+        );
+    }
+
+    /// Regression test for `pre_override_blob_hashes` restoration.
+    ///
+    /// Exercises the `None` arm of `sync_tx_after_env_override_restore` with
+    /// *non-empty* native blob hashes, the case that cannot be reached from
+    /// Solidity because no cheatcode sets `tx.blob_hashes` without also setting
+    /// `env_overrides.blob_hashes`.
+    ///
+    /// Steps:
+    /// 1. Seed `tx.blob_hashes = original` directly (no cheatcode -> override stays `None`).
+    /// 2. `vm.snapshotState()` -> `inner_snapshot_state` captures `pre_override_blob_hashes =
+    ///    Some(original)`.
+    /// 3. `vm.blobhashes(new)` -> sets override (`Some`) AND real tx hashes.
+    /// 4. `vm.revertToState(id)` -> restores override to `None`,
+    ///    `sync_tx_after_env_override_restore` must restore `tx.blob_hashes = original`.
+    #[test]
+    fn pre_override_blob_hashes_restored_on_revert_to_state() {
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &Config::default(),
+            EvmOpts::default(),
+            None,
+            None,
+            None,
+            false,
+        ));
+
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .spec_id(SpecId::CANCUN)
+            .build(EvmEnv::default(), TxEnv::default(), backend);
+
+        let original: Vec<B256> = vec![B256::repeat_byte(0x11), B256::repeat_byte(0x22)];
+        executor.tx_env_mut().set_blob_hashes(original.clone());
+
+        let snap_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                snapshotStateCall {}.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("snapshotState failed");
+        assert!(!snap_result.reverted, "snapshotState reverted unexpectedly");
+        let snapshot_id = U256::from_be_slice(&snap_result.result[..32]);
+
+        let new_hashes = vec![B256::repeat_byte(0x33)];
+        let blob_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                blobhashesCall { hashes: new_hashes }.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("blobhashes failed");
+        assert!(!blob_result.reverted, "blobhashes reverted unexpectedly");
+
+        let revert_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                revertToStateCall { snapshotId: snapshot_id }.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("revertToState failed");
+        assert!(!revert_result.reverted, "revertToState reverted unexpectedly");
+
+        assert_eq!(
+            revert_result.tx_env.blob_hashes, original,
+            "pre_override_blob_hashes must be restored to original non-empty hashes, not []",
+        );
     }
 }

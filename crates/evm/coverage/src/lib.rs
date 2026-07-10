@@ -147,19 +147,41 @@ impl CoverageReport {
         Ok(())
     }
 
-    /// Retains all the coverage items specified by `predicate`.
+    /// Returns the coverage items hit by a [`HitMap`] without mutating this report.
+    pub fn hit_items_for_hit_map<'a>(
+        &'a self,
+        contract_id: &ContractId,
+        hit_map: &HitMap,
+        is_deployed_code: bool,
+    ) -> Vec<(&'a CoverageItem, u32)> {
+        let Some(anchors) = self.anchors.get(contract_id) else { return Vec::new() };
+        let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
+
+        let mut hits_by_item = BTreeMap::<u32, u32>::new();
+        for anchor in anchors {
+            if let Some(hits) = hit_map.get(anchor.instruction) {
+                *hits_by_item.entry(anchor.item_id).or_default() += hits.get();
+            }
+        }
+
+        let Some(items) = self.analyses.get(&contract_id.version) else { return Vec::new() };
+        hits_by_item
+            .into_iter()
+            .filter_map(|(item_id, hits)| {
+                let item = items.get(item_id)?;
+                Some((item, hits))
+            })
+            .collect()
+    }
+
+    /// Retains all the sources specified by `predicate`.
     ///
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
     pub fn retain_sources(&mut self, mut predicate: impl FnMut(&Path) -> bool) {
-        self.analyses.retain(|version, analysis| {
-            analysis.all_items_mut().retain(|item| {
-                self.source_paths
-                    .get(&(version.clone(), item.loc.source_id))
-                    .map(|path| predicate(path))
-                    .unwrap_or(false)
-            });
-            !analysis.all_items().is_empty()
+        self.source_paths.retain(|_, path| predicate(path));
+        self.source_paths_to_ids.retain(|(version, _), source_id| {
+            self.source_paths.contains_key(&(version.clone(), *source_id))
         });
     }
 }
@@ -225,7 +247,7 @@ impl HitMap {
 
     /// Returns the bytecode.
     #[inline]
-    pub fn bytecode(&self) -> &Bytes {
+    pub const fn bytecode(&self) -> &Bytes {
         &self.bytecode
     }
 
@@ -480,7 +502,7 @@ impl fmt::Display for SourceLocation {
 
 impl SourceLocation {
     /// Returns the byte range as usize.
-    pub fn bytes(&self) -> Range<usize> {
+    pub const fn bytes(&self) -> Range<usize> {
         self.bytes.start as usize..self.bytes.end as usize
     }
 
@@ -530,7 +552,7 @@ impl CoverageSummary {
     }
 
     /// Adds another coverage summary to this one.
-    pub fn merge(&mut self, other: &Self) {
+    pub const fn merge(&mut self, other: &Self) {
         let Self {
             line_count,
             line_hits,
@@ -552,7 +574,7 @@ impl CoverageSummary {
     }
 
     /// Adds a coverage item to this summary.
-    pub fn add_item(&mut self, item: &CoverageItem) {
+    pub const fn add_item(&mut self, item: &CoverageItem) {
         match item.kind {
             CoverageItemKind::Line => {
                 self.line_count += 1;

@@ -278,6 +278,77 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 "#]]);
 });
 
+forgetest_async!(create_rejects_invalid_eip1559_fees_before_access_list, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let stderr = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--access-list",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "2",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("Error: max priority fee per gas (2) cannot exceed max fee per gas (1)"),
+        "{stderr}"
+    );
+});
+
+forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // explicitly byte code hash for consistent checks
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+            "--tempo.expires",
+            "30",
+        ])
+        .assert_success();
+    let output = assert.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("Transaction expires at unix timestamp "),
+        "expected create to print resolved tempo expiry, got:\n{stderr}",
+    );
+    assert!(stdout.contains("Deployed to:"), "{stdout}");
+});
+
 // tests that we can deploy the template contract
 forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -493,6 +564,45 @@ abstract contract AbstractCounter {
     .assert_failure()
     .stderr_eq(str![[r#"
 Error: no bytecode found in bin object for AbstractCounter
+
+"#]]);
+});
+
+// Tests that `forge create` fails when the deployment transaction reverts
+// <https://github.com/foundry-rs/foundry/issues/13954>
+forgetest_async!(flaky_should_fail_on_reverted_deployment, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    prj.add_source(
+        "RevertingContract.sol",
+        r#"
+contract RevertingContract {
+    constructor() {
+        revert("deployment failed");
+    }
+}
+    "#,
+    );
+
+    // Use --gas-limit to bypass eth_estimateGas, which would reject the tx early.
+    // This simulates chains that mine reverted txs (e.g. when gas is manually specified).
+    cmd.args([
+        "create",
+        "./src/RevertingContract.sol:RevertingContract",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        pk.as_str(),
+        "--broadcast",
+        "--gas-limit",
+        "1000000",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: deployment transaction failed (receipt status 0): [..]
 
 "#]]);
 });

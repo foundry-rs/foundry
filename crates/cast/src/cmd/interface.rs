@@ -9,7 +9,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact,
-    compile::{PathOrContractInfo, ProjectCompiler},
+    compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
     find_target_path, fs, shell,
 };
 use foundry_config::load_config;
@@ -80,32 +80,44 @@ impl InterfaceArgs {
         };
 
         // Build config for to_sol conversion.
-        let config = if flatten { Some(ToSolConfig::new().one_contract(true)) } else { None };
+        let config = flatten.then(|| ToSolConfig::new().one_contract(true));
 
         // Retrieve interfaces from the array of ABIs.
         let interfaces = get_interfaces(abis, config)?;
 
-        // Print result or write to file.
-        let res = if shell::is_json() {
-            // Format as JSON.
-            interfaces.iter().map(|iface| &iface.json_abi).format("\n").to_string()
-        } else {
-            // Format as Solidity.
-            format!(
-                "// SPDX-License-Identifier: UNLICENSED\n\
-                 pragma solidity {pragma};\n\n\
-                 {}",
-                interfaces.iter().map(|iface| &iface.source).format("\n")
-            )
-        };
-
         if let Some(loc) = output_location {
+            let res = if shell::is_json() {
+                let abis = interfaces
+                    .iter()
+                    .map(|iface| serde_json::from_str::<Value>(&iface.json_abi))
+                    .collect::<Result<Vec<_>, _>>()?;
+                serde_json::to_string_pretty(&abis)?
+            } else {
+                format!(
+                    "// SPDX-License-Identifier: UNLICENSED\n\
+                     pragma solidity {pragma};\n\n\
+                     {}",
+                    interfaces.iter().map(|iface| &iface.source).format("\n")
+                )
+            };
             if let Some(parent) = loc.parent() {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&loc, res)?;
-            sh_println!("Saved interface at {}", loc.display())?;
+            sh_status!("Saved interface at {}", loc.display())?;
+        } else if shell::is_json() {
+            let abis = interfaces
+                .iter()
+                .map(|iface| serde_json::from_str::<serde_json::Value>(&iface.json_abi))
+                .collect::<Result<Vec<_>, _>>()?;
+            foundry_cli::json::print_json_object(abis)?;
         } else {
+            let res = format!(
+                "// SPDX-License-Identifier: UNLICENSED\n\
+                 pragma solidity {pragma};\n\n\
+                 {}",
+                interfaces.iter().map(|iface| &iface.source).format("\n")
+            );
             sh_print!("{res}")?;
         }
 
@@ -130,13 +142,14 @@ pub fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonA
 /// Load the ABI from the artifact of a locally compiled contract.
 fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String)>> {
     let config = load_config()?;
-    let project = config.project()?;
+    let mut project = config.project()?;
+    project.no_artifacts = true;
     let compiler = ProjectCompiler::new().quiet(true);
 
     let contract = PathOrContractInfo::from_str(path_or_contract)?;
 
     let target_path = find_target_path(&project, &contract)?;
-    let output = compiler.files([target_path.clone()]).compile(&project)?;
+    let output = compile_abi_project(&mut project, compiler.files([target_path.clone()]))?;
 
     let contracts_by_artifact = ContractsByArtifact::from(output);
 

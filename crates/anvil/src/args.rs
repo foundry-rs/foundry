@@ -5,9 +5,9 @@ use foundry_cli::utils;
 
 /// Run the `anvil` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Anvil>();
+
+    setup()?;
 
     let mut args = Anvil::parse();
     args.global.init()?;

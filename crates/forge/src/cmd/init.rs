@@ -5,14 +5,9 @@ use foundry_cli::utils::Git;
 use foundry_common::fs;
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use std::path::{Path, PathBuf};
 use yansi::Paint;
-
-/// Supported networks for `forge init --network <NETWORK>`
-#[derive(Clone, Debug, clap::ValueEnum)]
-pub enum Networks {
-    Tempo,
-}
 
 /// CLI arguments for `forge init`.
 #[derive(Clone, Debug, Default, Parser)]
@@ -48,8 +43,8 @@ pub struct InitArgs {
     pub vyper: bool,
 
     /// Initialize a project template for the specified network in Foundry.
-    #[arg(long, short, conflicts_with_all = &["vyper", "template"])]
-    pub network: Option<Networks>,
+    #[arg(long, short, num_args = 1, value_name = "NETWORK", conflicts_with_all = &["vyper", "template"])]
+    pub network: Option<NetworkVariant>,
 
     /// Use the parent git repository instead of initializing a new one.
     /// Only valid if the target is in a git repository.
@@ -59,6 +54,13 @@ pub struct InitArgs {
     /// Do not create example contracts (Counter.sol, Counter.t.sol, Counter.s.sol).
     #[arg(long, conflicts_with = "template")]
     pub empty: bool,
+
+    /// Do not create an initial commit.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge init` no longer commits by
+    /// default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
 
     #[command(flatten)]
     pub install: DependencyInstallOpts,
@@ -78,10 +80,11 @@ impl InitArgs {
             vyper,
             network,
             empty,
+            no_commit: _,
         } = self;
         let DependencyInstallOpts { shallow, no_git, commit, .. } = install;
 
-        let tempo = matches!(network, Some(Networks::Tempo));
+        let tempo = matches!(network, Some(NetworkVariant::Tempo));
 
         // create the root dir if it does not exist
         if !root.exists() {
@@ -101,7 +104,7 @@ impl InitArgs {
             } else {
                 "https://github.com/".to_string() + &template
             };
-            sh_println!("Initializing {} from {}...", root.display(), template)?;
+            sh_status!("Initializing {} from {}...", root.display(), template)?;
             // initialize the git repository
             git.init()?;
 
@@ -143,7 +146,7 @@ impl InitArgs {
                 git.ensure_clean()?;
             }
 
-            sh_println!("Initializing {}...", root.display())?;
+            sh_status!("Initializing {}...", root.display())?;
 
             // make the dirs
             let src = root.join("src");
@@ -236,6 +239,9 @@ impl InitArgs {
             // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
             let mut config = Config::load_with_root(&root)?;
+            if tempo {
+                config.networks = NetworkConfigs::with_tempo();
+            }
             if !dest.exists() {
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
@@ -274,7 +280,7 @@ impl InitArgs {
             }
         }
 
-        sh_println!("{}", "    Initialized forge project".green())?;
+        sh_status!("{}", "    Initialized forge project".green())?;
         Ok(())
     }
 }

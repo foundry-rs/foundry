@@ -11,7 +11,7 @@ use svm::Platform;
 /// 3. svm bumped in foundry-compilers
 /// 4. foundry-compilers update with any breaking changes
 /// 5. upgrade the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 30);
+const LATEST_SOLC: Version = Version::new(0, 8, 36);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),* $(,)?) => {$(
@@ -80,4 +80,12 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
+});
+
+forgetest_init!(can_test_with_solc_0_8_36_amsterdam, |prj, cmd| {
+    prj.initialize_default_contracts();
+
+    // Amsterdam is an experimental EVM version in solc 0.8.36.
+    cmd.args(["test", "--use", "0.8.36", "--evm-version", "amsterdam", "--experimental"])
+        .assert_success();
 });

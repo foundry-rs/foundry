@@ -23,12 +23,12 @@ pub struct Retry {
 
 impl Retry {
     /// Creates a new `Retry` instance.
-    pub fn new(retries: u32, delay: Duration) -> Self {
+    pub const fn new(retries: u32, delay: Duration) -> Self {
         Self { retries, delay }
     }
 
     /// Creates a new `Retry` instance with no delay between retries.
-    pub fn new_no_delay(retries: u32) -> Self {
+    pub const fn new_no_delay(retries: u32) -> Self {
         Self::new(retries, Duration::ZERO)
     }
 
