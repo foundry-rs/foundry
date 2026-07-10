@@ -7072,6 +7072,30 @@ mod tests {
     }
 
     #[test]
+    fn warns_on_deprecated_profile_names() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.cancun]
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "cancun" && new == "evm_version = Cancun"
+                )),
+                "Expected deprecated profile-name warning, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn warns_on_unknown_keys_in_profile() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(

@@ -152,9 +152,9 @@ impl<P: Provider> WarningsProvider<P> {
 
         let deprecated_profile_keys = profiles
             .clone()
-            .flat_map(BTreeMap::values)
-            .filter_map(Value::as_dict)
-            .flat_map(BTreeMap::keys)
+            .flat_map(|dict| {
+                dict.keys().chain(dict.values().filter_map(Value::as_dict).flat_map(BTreeMap::keys))
+            })
             .collect::<BTreeSet<_>>();
         out.extend(deprecated_profile_keys.into_iter().filter_map(deprecated_key_warning));
 
