@@ -243,6 +243,11 @@ fn call_config_from_tracer_config(
 
 pub type State = foundry_evm::utils::StateChangeset;
 
+struct BlockTransactionData {
+    transactions: Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>,
+    transaction_infos: Vec<TransactionInfo>,
+}
+
 /// A block request, which includes the Pool Transactions if it's Pending
 pub enum BlockRequest<T> {
     Pending(Vec<Arc<PoolTransaction<T>>>),
@@ -2912,9 +2917,9 @@ where
         number: u64,
         state_root: B256,
         block_result: BlockExecutionResult<FoundryReceiptEnvelope>,
-        transactions: Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>,
-        transaction_infos: Vec<TransactionInfo>,
+        transaction_data: BlockTransactionData,
     ) -> BlockInfo<N> {
+        let BlockTransactionData { transactions, transaction_infos } = transaction_data;
         let spec_id = *evm_env.spec_id();
         let is_shanghai = spec_id >= SpecId::SHANGHAI;
         let is_cancun = spec_id >= SpecId::CANCUN;
@@ -3043,8 +3048,10 @@ where
                     block_number,
                     state_root,
                     block_result,
-                    pool_result.txs,
-                    pool_result.tx_info,
+                    BlockTransactionData {
+                        transactions: pool_result.txs,
+                        transaction_infos: pool_result.tx_info,
+                    },
                 );
 
                 // update the new blockhash in the db itself
@@ -3239,8 +3246,10 @@ where
             block_number,
             state_root,
             block_result,
-            pool_result.txs,
-            pool_result.tx_info,
+            BlockTransactionData {
+                transactions: pool_result.txs,
+                transaction_infos: pool_result.tx_info,
+            },
         );
 
         f(Box::new(cache_db), block_info)

@@ -7,6 +7,7 @@ use tempo_primitives::TempoHeader;
 /// Consensus header used by Foundry's multi-network tooling.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum FoundryHeader {
     /// Tempo consensus header.
     Tempo(TempoHeader),
@@ -22,7 +23,7 @@ impl Default for FoundryHeader {
 
 impl FoundryHeader {
     /// Creates a header for the selected network.
-    pub fn new(inner: Header, is_tempo: bool) -> Self {
+    pub const fn new(inner: Header, is_tempo: bool) -> Self {
         if is_tempo {
             Self::Tempo(TempoHeader {
                 general_gas_limit: inner.gas_limit,
@@ -52,7 +53,7 @@ impl FoundryHeader {
         }
     }
 
-    fn inner_mut(&mut self) -> &mut Header {
+    const fn inner_mut(&mut self) -> &mut Header {
         match self {
             Self::Tempo(header) => &mut header.inner,
             Self::Ethereum(header) => header,
