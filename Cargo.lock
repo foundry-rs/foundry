@@ -10136,6 +10136,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e33493cf6d996e9242db4f2002caef48ec9aa8c4f3fff3b18aed10ef3942eec7"
 dependencies = [
  "bitvec",
+ "paste",
  "phf 0.13.1",
  "revm-primitives 41.0.0",
  "serde",
@@ -11617,7 +11618,7 @@ dependencies = [
  "tokio",
  "toml_edit",
  "uuid 1.23.4",
- "zip",
+ "zip 4.6.1",
  "zip-extract",
 ]
 
@@ -11836,9 +11837,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs"
-version = "0.5.25"
+version = "0.5.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4572dd9845e37ca0293acb5fe591a7f61b51f1b7b62d3dc6fb8e99e2664f3755"
+checksum = "719335a19e8e3a37111f6bc98934f23b352c90ba4c212093de468040045cba6c"
 dependencies = [
  "const-hex",
  "dirs",
@@ -11846,18 +11847,18 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",
  "url",
- "zip",
+ "zip 8.6.0",
 ]
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.5.25"
+version = "0.5.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74224f62f19c1309caa071de7c1c9c1ad1d7551d2f881af4046f3d71880c820a"
+checksum = "4fad35f683c073d486fac669d71433752a8bfff3b19e49f2bc089fd6b0c158dd"
 dependencies = [
  "const-hex",
  "semver 1.0.28",
@@ -12893,6 +12894,12 @@ dependencies = [
  "tokio",
  "turnkey_api_key_stamper",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
 
 [[package]]
 name = "typeid"
@@ -14140,6 +14147,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "8.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap 2.14.0",
+ "memchr",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
 name = "zip-extract"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14147,7 +14168,7 @@ checksum = "7fa5b9958fd0b5b685af54f2c3fa21fca05fe295ebaf3e77b6d24d96c4174037"
 dependencies = [
  "log",
  "thiserror 2.0.18",
- "zip",
+ "zip 4.6.1",
 ]
 
 [[package]]
