@@ -5,8 +5,9 @@ use crate::{
 };
 use solar::{
     ast,
-    sema::hir::{self, Res},
+    sema::hir::{self, Res, Visit as _},
 };
+use std::ops::ControlFlow;
 
 declare_forge_lint!(
     UNWRAPPED_MODIFIER_LOGIC,
@@ -113,18 +114,25 @@ impl UnwrappedModifierLogic {
         res
     }
 
-    fn get_snippet<'a>(
+    fn get_snippet<'hir>(
         &self,
         ctx: &LintContext,
-        hir: &hir::Hir<'_>,
+        hir: &'hir hir::Hir<'hir>,
         func: &hir::Function<'_>,
-        before: &'a [hir::Stmt<'a>],
-        after: &'a [hir::Stmt<'a>],
+        before: &'hir [hir::Stmt<'hir>],
+        after: &'hir [hir::Stmt<'hir>],
     ) -> Option<Suggestion> {
         let wrap_before = !before.is_empty() && self.stmts_require_wrapping(hir, before);
         let wrap_after = !after.is_empty() && self.stmts_require_wrapping(hir, after);
 
         if !(wrap_before || wrap_after) {
+            return None;
+        }
+
+        // A local variable declared before the placeholder and referenced after it makes any
+        // rewrite unsafe: extracted helpers only receive the modifier's parameters, so moving
+        // either side out of the modifier separates the declaration from its use.
+        if has_shared_locals(hir, before, after) {
             return None;
         }
 
@@ -152,18 +160,27 @@ impl UnwrappedModifierLogic {
         let body_indent = " ".repeat(ctx.get_span_indentation(
             before.first().or(after.first()).map(|stmt| stmt.span).unwrap_or(func.span),
         ));
-        let body = match (wrap_before, wrap_after) {
-            (true, true) => format!(
-                "{body_indent}_{modifier_name}Before({param_list});\n{body_indent}_;\n{body_indent}_{modifier_name}After({param_list});"
-            ),
-            (true, false) => {
-                format!("{body_indent}_{modifier_name}({param_list});\n{body_indent}_;")
+        // Statements on a side that doesn't require wrapping are preserved verbatim in the new
+        // modifier body, so the rewrite never drops them.
+        let mut body_lines = Vec::new();
+        if wrap_before {
+            let suffix = if wrap_after { "Before" } else { "" };
+            body_lines.push(format!("{body_indent}_{modifier_name}{suffix}({param_list});"));
+        } else {
+            for stmt in before {
+                body_lines.push(format!("{body_indent}{}", ctx.span_to_snippet(stmt.span)?));
             }
-            (false, true) => {
-                format!("{body_indent}_;\n{body_indent}_{modifier_name}({param_list});")
+        }
+        body_lines.push(format!("{body_indent}_;"));
+        if wrap_after {
+            let suffix = if wrap_before { "After" } else { "" };
+            body_lines.push(format!("{body_indent}_{modifier_name}{suffix}({param_list});"));
+        } else {
+            for stmt in after {
+                body_lines.push(format!("{body_indent}{}", ctx.span_to_snippet(stmt.span)?));
             }
-            _ => unreachable!(),
-        };
+        }
+        let body = body_lines.join("\n");
 
         let mod_indent = " ".repeat(ctx.get_span_indentation(func.span));
         let mut replacement =
@@ -172,19 +189,18 @@ impl UnwrappedModifierLogic {
         let build_func = |stmts: &[hir::Stmt<'_>], suffix: &str| {
             let body_stmts = stmts
                 .iter()
-                .filter_map(|s| ctx.span_to_snippet(s.span))
-                .map(|code| format!("\n{body_indent}{code}"))
-                .collect::<String>();
-            format!(
+                .map(|s| ctx.span_to_snippet(s.span).map(|code| format!("\n{body_indent}{code}")))
+                .collect::<Option<String>>()?;
+            Some(format!(
                 "\n\n{mod_indent}function _{modifier_name}{suffix}({param_decls}) internal {{{body_stmts}\n{mod_indent}}}"
-            )
+            ))
         };
 
         if wrap_before {
-            replacement.push_str(&build_func(before, if wrap_after { "Before" } else { "" }));
+            replacement.push_str(&build_func(before, if wrap_after { "Before" } else { "" })?);
         }
         if wrap_after {
-            replacement.push_str(&build_func(after, if wrap_before { "After" } else { "" }));
+            replacement.push_str(&build_func(after, if wrap_before { "After" } else { "" })?);
         }
 
         Some(
@@ -195,6 +211,57 @@ impl UnwrappedModifierLogic {
             .with_desc("wrap modifier logic to reduce code size"),
         )
     }
+}
+
+/// Visitor that breaks on the first reference to any of the tracked local variables.
+struct SharedLocalFinder<'a, 'hir> {
+    hir: &'hir hir::Hir<'hir>,
+    locals: &'a [hir::VariableId],
+}
+
+impl<'hir> hir::Visit<'hir> for SharedLocalFinder<'_, 'hir> {
+    type BreakValue = ();
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let hir::ExprKind::Ident(resolutions) = &expr.kind
+            && resolutions.iter().any(
+                |r| matches!(r, Res::Item(hir::ItemId::Variable(id)) if self.locals.contains(id)),
+            )
+        {
+            return ControlFlow::Break(());
+        }
+        self.walk_expr(expr)
+    }
+}
+
+/// Returns `true` if a local variable declared in the `before` segment is referenced in the
+/// `after` segment.
+///
+/// Only top-level declarations need to be tracked: declarations nested inside blocks, loops, or
+/// `try` clauses are scoped to them and cannot be referenced after the placeholder.
+fn has_shared_locals<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    before: &'hir [hir::Stmt<'hir>],
+    after: &'hir [hir::Stmt<'hir>],
+) -> bool {
+    let mut declared = Vec::new();
+    for stmt in before {
+        match &stmt.kind {
+            hir::StmtKind::DeclSingle(id) => declared.push(*id),
+            hir::StmtKind::DeclMulti(ids, _) => declared.extend(ids.iter().copied().flatten()),
+            _ => {}
+        }
+    }
+    if declared.is_empty() {
+        return false;
+    }
+
+    let mut finder = SharedLocalFinder { hir, locals: &declared };
+    after.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
 }
 
 /// Recursively counts placeholder (`_`) statements within a list of statements, descending into
