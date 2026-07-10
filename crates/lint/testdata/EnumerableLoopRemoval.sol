@@ -101,10 +101,23 @@ contract EnumerableLoopRemoval {
     using CustomSet for CustomSet.Bag;
     using Helpers for EnumerableSet.AddressSet;
 
+    struct SetPair {
+        EnumerableSet.AddressSet first;
+        EnumerableSet.AddressSet second;
+    }
+
     EnumerableSet.AddressSet internal holders;
     EnumerableSet.AddressSet internal others;
     EnumerableSet.UintSet internal ids;
     CustomSet.Bag internal bag;
+    SetPair internal pair;
+    mapping(uint256 => EnumerableSet.AddressSet) internal keyed;
+    address internal pending;
+    uint256 internal cursor;
+
+    function hasMoreToVisit() internal view returns (bool) {
+        return cursor < holders.length();
+    }
 
     function removeWhileIteratingFor() public {
         // `remove` shrinks the set while `at(i)` walks it: elements are skipped.
@@ -198,6 +211,335 @@ contract EnumerableLoopRemoval {
     function removeOutsideLoop(address value) public {
         holders.remove(value);
     }
+
+    // The alias may stand on the side of the read as well as on the side of the removal.
+    function removeThroughStorageAlias() public {
+        EnumerableSet.AddressSet storage alias_ = holders;
+        for (uint256 i = 0; i < alias_.length(); i++) {
+            holders.remove(alias_.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    function removeThroughStorageAliasWhileIteratingTheState() public {
+        EnumerableSet.AddressSet storage alias_ = holders;
+        for (uint256 i = 0; i < holders.length(); i++) {
+            alias_.remove(holders.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    // The loop ends on the removal, so the shrunk set is never read again.
+    function removeAndBreak(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            if (holders.at(i) == target) {
+                holders.remove(target);
+                break;
+            }
+        }
+    }
+
+    function removeAndReturn(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            if (holders.at(i) == target) {
+                holders.remove(target);
+                return;
+            }
+        }
+    }
+
+    // The `break` ends the inner loop, and the outer one reads the set again.
+    function removeAndBreakInnerLoop() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            for (uint256 j = 0; j < 1; j++) {
+                holders.remove(pending); //~WARN: EnumerableSet
+                break;
+            }
+            pending = holders.at(i);
+        }
+    }
+
+    // A `continue` comes round again, so the removal still corrupts the iteration.
+    function removeAndContinue(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            if (holders.at(i) == target) {
+                holders.remove(target); //~WARN: EnumerableSet
+                continue;
+            }
+        }
+    }
+
+    // Each inner loop reads the set anew: the collecting one has ended before the removing one
+    // starts, and the outer loop reads nothing itself.
+    function collectThenRemoveInsideOuterLoop() public {
+        for (uint256 round = 0; round < 1; round++) {
+            address[] memory pendingRemovals = new address[](holders.length());
+            for (uint256 i = 0; i < holders.length(); i++) {
+                pendingRemovals[i] = holders.at(i);
+            }
+            for (uint256 i = 0; i < pendingRemovals.length; i++) {
+                holders.remove(pendingRemovals[i]);
+            }
+        }
+    }
+
+    // Two fields of one struct are two sets, and so are two literal keys of one mapping.
+    function removeFromAnotherStructField() public {
+        for (uint256 i = 0; i < pair.first.length(); i++) {
+            pair.second.remove(pair.first.at(i));
+        }
+    }
+
+    function removeAtAnotherMappingKey() public {
+        for (uint256 i = 0; i < keyed[1].length(); i++) {
+            keyed[2].remove(keyed[1].at(i));
+        }
+    }
+
+    // A key that varies cannot be read, so it may name the iterated set.
+    function removeAtVaryingMappingKey(uint256 key) public {
+        for (uint256 i = 0; i < keyed[1].length(); i++) {
+            keyed[key].remove(keyed[1].at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    // The qualified form, written with named arguments.
+    function removeNamedArgumentsOnOtherSet() public {
+        for (uint256 i = 0; i < others.length(); i++) {
+            EnumerableSet.remove({
+                value: EnumerableSet.at({index: i, set: others}),
+                set: holders
+            });
+        }
+    }
+
+    function removeNamedArgumentsOnSameSet() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            EnumerableSet.remove({ //~WARN: EnumerableSet
+                value: EnumerableSet.at({index: i, set: holders}),
+                set: holders
+            });
+        }
+    }
+
+    // A named literal index drains at a fixed position, in the method form too.
+    function removeMethodFormNamedLiteralIndex() public {
+        while (holders.length() > 0) {
+            holders.remove(holders.at({index: 0}));
+        }
+    }
+
+    function removeMethodFormNamedVaryingIndex() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            holders.remove(holders.at({index: i})); //~WARN: EnumerableSet
+        }
+    }
+
+    // The `at` sits in a nested loop but reads at the outer loop's index. The nested loop
+    // removes nothing of its own, so only the outer loop can be reported.
+    function removeAtOuterIndexFromInnerLoop() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            for (uint256 j = 0; j < 1; j++) {
+                pending = holders.at(i);
+            }
+            holders.remove(pending); //~WARN: EnumerableSet
+        }
+    }
+
+    // The inner loop walks the set at its own index and ends before the outer one removes, and
+    // the outer loop reads nothing itself.
+    function removeAfterInnerLoopWalksAtItsOwnIndex() public {
+        for (uint256 round = 0; round < 1; round++) {
+            for (uint256 j = 0; j < holders.length(); j++) {
+                pending = holders.at(j);
+            }
+            holders.remove(pending);
+        }
+    }
+
+    // A nested `while` walks the set at its own index, declared just before it, and the outer
+    // loop removes only after that loop ends: collect-then-remove with a `while`, which is safe.
+    // The index is the while's own even though a `while` declares it outside itself, because the
+    // outer loop does not advance it.
+    function removeAfterInnerWhileWalksAtItsOwnIndex() public {
+        for (uint256 round = 0; round < 1; round++) {
+            uint256 j = 0;
+            while (j < holders.length()) {
+                pending = holders.at(j);
+                j++;
+            }
+            holders.remove(pending);
+        }
+    }
+
+    // A nested loop that reads `holders.at(i)` at the OUTER loop's index while also reassigning
+    // that index does not take ownership of it: the outer loop still iterates `holders` at `i`,
+    // so the removal in the outer body corrupts it. The outer loop's own index is never a nested
+    // loop's to claim, even when the nested loop writes it.
+    function removeReassigningOuterIndexInInnerLoop() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            for (uint256 j = 0; j < 1; j++) {
+                pending = holders.at(i);
+                i = i;
+            }
+            holders.remove(pending); //~WARN: EnumerableSet
+        }
+    }
+
+    // The same corruption when the outer loop is a `while`: its index `i`, tested in the
+    // condition and advanced in the body, is the loop's own even though a `while` declares it
+    // outside itself, so a nested loop reassigning `i` does not take it over.
+    function removeReassigningOuterWhileIndexInInnerLoop() public {
+        uint256 i = 0;
+        while (i < holders.length()) {
+            for (uint256 j = 0; j < 1; j++) {
+                pending = holders.at(i);
+                i = i;
+            }
+            holders.remove(pending); //~WARN: EnumerableSet
+            i++;
+        }
+    }
+
+    // The nested loop both reads and advances the outer index, and the outer loop removes each
+    // turn: the index is still the outer loop's, reassigned but not declared inside the body, so
+    // the removal corrupts the walk. The condition never has to name the index for this to hold.
+    function removeWhereInnerLoopAdvancesOuterIndex() public {
+        uint256 i = 0;
+        while (i < holders.length()) {
+            for (uint256 k = 0; k < 1; k++) {
+                pending = holders.at(i);
+                i++;
+            }
+            holders.remove(pending); //~WARN: EnumerableSet
+        }
+    }
+
+    // A nested loop walks a cursor passed in as a parameter, and the outer loop removes after it:
+    // the cursor is the nested loop's, tested and advanced inside it, even though a parameter is
+    // declared outside the outer body. Collect-then-remove, so clean.
+    function removeAfterInnerLoopWalksParamCursor(uint256 start) public {
+        for (uint256 round = 0; round < 1; round++) {
+            while (start < holders.length()) {
+                pending = holders.at(start);
+                start++;
+            }
+            holders.remove(pending);
+        }
+    }
+
+    // A hoisted cursor reset each turn is not the outer loop's cadence: a reset does not progress
+    // across turns, so the nested loop that advances and tests it owns it.
+    function removeAfterInnerLoopReseedsHoistedCursor() public {
+        uint256 j;
+        for (uint256 round = 0; round < 1; round++) {
+            j = 0;
+            while (j < holders.length()) {
+                pending = holders.at(j);
+                j++;
+            }
+            holders.remove(pending);
+        }
+    }
+
+    // A plain `if` in the outer body that merely tests a nested loop's cursor is not a
+    // termination guard, so it does not make the cursor the outer loop's cadence: the nested
+    // loop iterates on `j`, removes after, and stays clean.
+    function removeAfterInnerLoopThenTestCursor() public {
+        uint256 j;
+        for (uint256 round = 0; round < 1; round++) {
+            for (j = 0; j < holders.length(); j++) {
+                pending = holders.at(j);
+            }
+            if (j == holders.length()) {
+                pending = pending;
+            }
+            holders.remove(pending);
+        }
+    }
+
+    // A documented limit: the outer loop's condition is an opaque predicate that hides `cursor`,
+    // advanced only inside a nested loop that iterates on `k`. `cursor` names neither a condition
+    // nor a direct progression of the outer loop, so this corruption goes unreported. Reading
+    // `hasMoreToVisit`'s body would take an interprocedural pass this detector does not run.
+    function removeWithOpaqueConditionCursorIsMissed() public {
+        while (hasMoreToVisit()) {
+            for (uint256 k = 0; k < 1; k++) {
+                pending = holders.at(cursor);
+                cursor++;
+            }
+            holders.remove(pending);
+        }
+    }
+
+    uint256 internal constant FIRST = 0;
+
+    // A fixed index is a safe drain wherever its value is settled at compile time: a named
+    // `constant` or a cast of a literal reads position zero, which swap-and-pop keeps refilling,
+    // just as the bare literal `at(0)` does.
+    function removeAtNamedConstantIndex() public {
+        while (holders.length() > 0) {
+            holders.remove(holders.at(FIRST));
+        }
+    }
+
+    function removeAtCastLiteralIndex() public {
+        while (holders.length() > 0) {
+            holders.remove(holders.at(uint256(0)));
+        }
+    }
+
+    // Constant arithmetic is not folded, so a fixed index written as an expression is treated as
+    // varying and reported: a conservative report on a drain that is in fact safe.
+    function removeAtConstantArithmeticIndex() public {
+        while (holders.length() > 0) {
+            holders.remove(holders.at(0 + 0)); //~WARN: EnumerableSet
+        }
+    }
+
+    // The function binds the reference again, so its initializer no longer says which set it
+    // names: it may be any of them.
+    function removeThroughReassignedStorageAlias() public {
+        EnumerableSet.AddressSet storage alias_ = others;
+        alias_ = holders;
+        for (uint256 i = 0; i < holders.length(); i++) {
+            holders.remove(alias_.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    // The same unreadable reference, read against a set the loop does not remove from. Matching it
+    // against every set reports a removal that is in fact safe, rather than missing an unsafe one.
+    function removeAnotherSetThroughReassignedStorageAlias() public {
+        EnumerableSet.AddressSet storage alias_ = others;
+        alias_ = holders;
+        for (uint256 i = 0; i < holders.length(); i++) {
+            others.remove(alias_.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    // Both clauses of the `try` leave the function, so the shrunk set is never read again.
+    function removeAndReturnFromEveryTryClause() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            address value = holders.at(i);
+            try this.probe() {
+                holders.remove(value);
+                return;
+            } catch {
+                return;
+            }
+        }
+    }
+
+    // The `catch` falls through, so the loop comes round again on the shrunk set.
+    function removeAndFallThroughACatch() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            address value = holders.at(i);
+            try this.probe() {
+                holders.remove(value); //~WARN: EnumerableSet
+                return;
+            } catch {}
+        }
+    }
+
+    function probe() external {}
 
     function customSetIsNotEnumerableSet() public {
         // Same `at`/`remove` names on a non-EnumerableSet type: out of scope.
