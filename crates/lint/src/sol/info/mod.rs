@@ -54,6 +54,9 @@ use event_fields::EVENT_FIELDS;
 mod unused_error;
 use unused_error::UNUSED_ERROR;
 
+mod function_init_state;
+use function_init_state::FUNCTION_INIT_STATE;
+
 mod internal_function_used_once;
 use internal_function_used_once::INTERNAL_FUNCTION_USED_ONCE;
 
@@ -86,6 +89,7 @@ register_lints!(
     (MissingInheritance, project, (MISSING_INHERITANCE)),
     (EventFields, early, (EVENT_FIELDS)),
     (UnusedError, project, (UNUSED_ERROR)),
+    (FunctionInitState, late, (FUNCTION_INIT_STATE)),
     (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE)),
     (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY)),
     (IncorrectUsingFor, late, (INCORRECT_USING_FOR)),
