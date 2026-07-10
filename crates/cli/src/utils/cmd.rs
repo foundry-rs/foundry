@@ -197,6 +197,7 @@ pub trait LoadConfig {
 
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::from_provider(figment)?.sanitized();
+        evm_opts.verbosity = config.tracing.verbosity;
 
         if config.networks != Default::default() {
             evm_opts.networks = config.networks;
@@ -369,8 +370,26 @@ pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::TracingConfig;
     use std::fs;
     use tempfile::tempdir;
+
+    struct TracingConfigArgs;
+
+    impl LoadConfig for TracingConfigArgs {
+        fn figment(&self) -> Figment {
+            Config::figment()
+                .merge(("tracing", TracingConfig { verbosity: 4, ..Default::default() }))
+        }
+    }
+
+    #[test]
+    fn tracing_verbosity_is_applied_to_evm_opts() {
+        let (config, evm_opts) = TracingConfigArgs.load_config_and_evm_opts_no_warnings().unwrap();
+
+        assert_eq!(config.tracing.verbosity, 4);
+        assert_eq!(evm_opts.verbosity, 4);
+    }
 
     #[test]
     fn test_cache_signatures_from_abis() {
