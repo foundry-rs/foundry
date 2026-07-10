@@ -920,9 +920,15 @@ impl<N: Network> EthApi<N> {
     /// Returns block header with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getHeaderByHash`
-    pub async fn header_by_hash(&self, hash: B256) -> Result<Option<AnyRpcHeader>> {
+    pub async fn header_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByHash");
-        Ok(self.backend.block_by_hash(hash).await?.map(|block| block.header.clone()))
+        Ok(self.backend.block_by_hash(hash).await?.map(|block| {
+            let WithOtherFields { inner: block, other } = block.0;
+            WithOtherFields { inner: block.header, other }
+        }))
     }
 
     /// Returns a _full_ block with given hash.
@@ -2337,13 +2343,20 @@ impl EthApi<FoundryNetwork> {
     /// Returns block header with given number.
     ///
     /// Handler for ETH RPC call: `eth_getHeaderByNumber`
-    pub async fn header_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcHeader>> {
+    pub async fn header_by_number(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
         if number == BlockNumber::Pending {
-            return Ok(Some(self.pending_block().await.header.clone()));
+            let WithOtherFields { inner: block, other } = self.pending_block().await.0;
+            return Ok(Some(WithOtherFields { inner: block.header, other }));
         }
 
-        Ok(self.backend.block_by_number(number).await?.map(|block| block.header.clone()))
+        Ok(self.backend.block_by_number(number).await?.map(|block| {
+            let WithOtherFields { inner: block, other } = block.0;
+            WithOtherFields { inner: block.header, other }
+        }))
     }
 
     /// Returns a _full_ block with given number
