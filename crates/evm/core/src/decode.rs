@@ -133,6 +133,16 @@ impl RevertDecoder {
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+        self.maybe_decode_known(err).or_else(|| Self::maybe_decode_fallback(err, status))
+    }
+
+    /// Tries to decode the given revert bytes as one of the errors known to this decoder:
+    /// Solidity's `Error(string)` and `Panic(uint256)`, `Vm`'s custom errors, custom errors
+    /// registered with this decoder, or a plain string.
+    ///
+    /// Unlike [`maybe_decode`](Self::maybe_decode), this returns `None` for unrecognized custom
+    /// errors instead of falling back to a generic `custom error <selector>` representation.
+    pub fn maybe_decode_known(&self, err: &[u8]) -> Option<String> {
         // Solidity's `Error(string)` (handled separately in order to strip revert: prefix)
         if let Some(ContractError(Revert(revert))) = RevertReason::decode(err) {
             return Some(revert.reason);
@@ -143,29 +153,29 @@ impl RevertDecoder {
             return Some(e.to_string());
         }
 
-        let string_decoded = decode_as_non_empty_string(err);
-
-        if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() {
-            // Custom errors.
-            if let Some(errors) = self.errors.get(selector) {
-                for error in errors {
-                    // If we don't decode, don't return an error, try to decode as a string
-                    // later.
-                    if let Ok(decoded) = error.abi_decode_input(data) {
-                        return Some(format!(
-                            "{}({})",
-                            error.name,
-                            decoded.iter().map(foundry_common::fmt::format_token).format(", ")
-                        ));
-                    }
+        // Custom errors.
+        if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>()
+            && let Some(errors) = self.errors.get(selector)
+        {
+            for error in errors {
+                // If we don't decode, don't return an error, try to decode as a string later.
+                if let Ok(decoded) = error.abi_decode_input(data) {
+                    return Some(format!(
+                        "{}({})",
+                        error.name,
+                        decoded.iter().map(foundry_common::fmt::format_token).format(", ")
+                    ));
                 }
             }
+        }
 
-            if string_decoded.is_some() {
-                return string_decoded;
-            }
+        decode_as_non_empty_string(err)
+    }
 
-            // Generic custom error.
+    /// Formats revert bytes that could not be decoded as a known error.
+    fn maybe_decode_fallback(err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+        // Generic custom error.
+        if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() {
             return Some({
                 let mut s = format!("custom error {}", hex::encode_prefixed(selector));
                 if !data.is_empty() {
@@ -177,10 +187,6 @@ impl RevertDecoder {
                 }
                 s
             });
-        }
-
-        if string_decoded.is_some() {
-            return string_decoded;
         }
 
         if let Some(status) = status
