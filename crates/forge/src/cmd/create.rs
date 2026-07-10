@@ -22,7 +22,10 @@ use foundry_common::{
     FoundryTransactionBuilder,
     compile::{self},
     fmt::parse_tokens,
-    provider::ProviderBuilder,
+    provider::{
+        ProviderBuilder,
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+    },
     shell,
     tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
@@ -30,7 +33,7 @@ use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
 };
 use foundry_config::{
-    Config,
+    Config, Eip1559FeeEstimatePreset,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -256,6 +259,7 @@ impl CreateArgs {
                 resolved_lane,
                 expires_at,
                 resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else if self.unlocked {
@@ -275,6 +279,7 @@ impl CreateArgs {
                 resolved_lane,
                 expires_at,
                 resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else if let Some(ak) = access_key {
@@ -298,6 +303,7 @@ impl CreateArgs {
                 resolved_lane,
                 expires_at,
                 resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else {
@@ -324,6 +330,7 @@ impl CreateArgs {
                 resolved_lane,
                 expires_at,
                 resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         }
@@ -365,6 +372,7 @@ impl CreateArgs {
             force: false,
             skip_is_verified_check: true,
             watch: true,
+            print_submission_result_to_stdout: false,
             retry: self.retry,
             libraries: self.build.libraries.clone(),
             root: None,
@@ -419,6 +427,7 @@ impl CreateArgs {
         resolved_lane: Option<ResolvedLane>,
         expires_at: Option<u64>,
         resolve_unknown_fee_token_symbol: bool,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -495,15 +504,22 @@ impl CreateArgs {
             }
         } else {
             if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
-                let mut estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
-                if browser_signer.is_some()
-                    && self.tx.priority_gas_price.is_none()
-                    && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
-                    && suggested_tip > estimate.max_priority_fee_per_gas
-                {
-                    estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
-                    estimate.max_priority_fee_per_gas = suggested_tip;
-                }
+                let estimate = estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+
+                // Only honor the browser-suggested tip when the user has not pinned
+                // a priority fee; `resolve_broadcast_eip1559_fees` ignores a lower tip.
+                let browser_suggested_tip =
+                    if browser_signer.is_some() && self.tx.priority_gas_price.is_none() {
+                        provider.get_max_priority_fee_per_gas().await.ok()
+                    } else {
+                        None
+                    };
+
+                // User `--gas-price`/`--priority-gas-price` overrides are applied
+                // below only for unset fields; pass `None` to avoid double-applying.
+                let estimate =
+                    resolve_broadcast_eip1559_fees(estimate, None, None, browser_suggested_tip)?;
+
                 if self.tx.priority_gas_price.is_none() {
                     deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
                 }
@@ -706,6 +722,7 @@ impl CreateArgs {
             force: false,
             skip_is_verified_check: true,
             watch: true,
+            print_submission_result_to_stdout: false,
             retry: self.retry,
             libraries: self.build.libraries.clone(),
             root: None,

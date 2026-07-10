@@ -1,20 +1,24 @@
 use crate::{
-    cmd::test::{FilterArgs, FuzzMinimizeReplaySession, TestArgs},
+    cmd::test::{CampaignArgs, FilterArgs, FuzzMinimizeReplaySession, ShowmapDomainArg, TestArgs},
     multi_runner::{FuzzMinimizeEdgeIndices, FuzzMinimizeObservation, ShowmapConfig},
     result::TestOutcome,
 };
-use alloy_dyn_abi::JsonAbiExt;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::Selector;
+use alloy_primitives::{Address, B256, Function as SolFunction, I256, Selector, U256};
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use eyre::{Context, Result, bail};
-use foundry_cli::opts::{BuildOpts, EvmArgs, GlobalArgs};
+use flate2::{Compression, write::GzEncoder};
+use foundry_cli::{
+    opts::{BuildOpts, EvmArgs, GlobalArgs},
+    utils::LoadConfig,
+};
 use foundry_common::{
     fmt::format_tokens_raw,
     fs, sh_println, sh_status,
     shell::{OutputMode, Shell},
 };
-use foundry_config::Config;
+use foundry_config::{Config, filter::GlobMatcher};
 use foundry_evm::{
     executors::{CorpusDirEntry, ReplayObservation, ShowmapDomain, read_corpus_tree},
     fuzz::BasicTxDetails,
@@ -22,10 +26,15 @@ use foundry_evm::{
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
+    fs::OpenOptions,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
+    pin::Pin,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tempfile::{Builder as TempDirBuilder, TempDir};
+
+type FuzzOutcomeFuture = Pin<Box<dyn Future<Output = Result<TestOutcome>>>>;
 
 /// Run and manage Forge fuzzing corpora.
 #[derive(Clone, Debug, Parser)]
@@ -35,21 +44,26 @@ pub struct FuzzArgs {
 }
 
 impl FuzzArgs {
-    pub async fn run(self) -> Result<TestOutcome> {
+    pub fn run(self) -> FuzzOutcomeFuture {
         match self.command {
-            FuzzSubcommands::Run(mut args) => {
-                args.enable_fuzz_only();
-                args.run().await
+            FuzzSubcommands::Run(args) => {
+                let mut test = TestArgs::from_fuzz_run(args);
+                test.enable_fuzz_only_with_auto_fuzz_corpus();
+                Box::pin(test.run())
             }
-            FuzzSubcommands::Replay(args) => args.run().await,
-            FuzzSubcommands::Show(args) => {
+            FuzzSubcommands::Replay(args) => Box::pin(args.run()),
+            FuzzSubcommands::Show(args) => Box::pin(async move {
                 args.run()?;
                 Ok(TestOutcome::empty(None, true))
-            }
-            FuzzSubcommands::Cmin(args) => {
+            }),
+            FuzzSubcommands::Cmin(args) => Box::pin(async move {
                 args.run().await?;
                 Ok(TestOutcome::empty(None, true))
-            }
+            }),
+            FuzzSubcommands::Tmin(args) => Box::pin(async move {
+                args.run().await?;
+                Ok(TestOutcome::empty(None, true))
+            }),
         }
     }
 
@@ -57,74 +71,166 @@ impl FuzzArgs {
         match &self.command {
             FuzzSubcommands::Run(args) => args.junit,
             FuzzSubcommands::Replay(args) => args.is_junit(),
-            FuzzSubcommands::Show(_) | FuzzSubcommands::Cmin(_) => false,
-        }
-    }
-
-    pub fn reject_unsupported_flags(&self) -> Result<()> {
-        match &self.command {
-            FuzzSubcommands::Run(args) if args.is_watch() => {
-                bail!("`--watch` is not supported for `forge fuzz run`")
-            }
-            FuzzSubcommands::Replay(args) if args.is_watch() => {
-                bail!("`--watch` is not supported for `forge fuzz replay`")
-            }
-            _ => Ok(()),
+            FuzzSubcommands::Show(_) | FuzzSubcommands::Cmin(_) | FuzzSubcommands::Tmin(_) => false,
         }
     }
 }
 
 #[derive(Clone, Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum FuzzSubcommands {
     /// Run only fuzz and invariant tests.
-    Run(TestArgs),
+    Run(FuzzRunArgs),
     /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
     Replay(FuzzReplayArgs),
     /// Print persisted corpus entries.
     Show(FuzzShowArgs),
     /// Minimize a corpus by keeping entries that contribute new coverage.
     Cmin(FuzzCminArgs),
-    // TODO(@mablr): add corpus test case minimization subcommand `tmin`.
+    /// Minimize one corpus entry while preserving its failure or coverage.
+    Tmin(FuzzTminArgs),
+}
+
+/// Run only fuzz and invariant tests.
+#[derive(Clone, Debug, Parser)]
+pub struct FuzzRunArgs {
+    #[command(flatten)]
+    pub(crate) global: GlobalArgs,
+
+    /// The contract file you want to test, it's a shortcut for --match-path.
+    #[arg(value_hint = ValueHint::FilePath)]
+    pub(crate) path: Option<GlobMatcher>,
+
+    #[command(flatten)]
+    pub(crate) filter: FilterArgs,
+
+    #[command(flatten)]
+    pub(crate) campaign: CampaignArgs,
+
+    #[command(flatten)]
+    pub(crate) evm: EvmArgs,
+
+    #[command(flatten)]
+    pub(crate) build: BuildOpts,
+
+    /// Output test results as JUnit XML report.
+    #[arg(long, conflicts_with_all = ["quiet", "json", "gas_report", "list", "show_progress"], help_heading = "Display options")]
+    pub(crate) junit: bool,
+
+    /// Exit with code 0 even if a test fails.
+    #[arg(long, env = "FORGE_ALLOW_FAILURE")]
+    pub(crate) allow_failure: bool,
+
+    /// Stop running tests after the first failure.
+    #[arg(long)]
+    pub(crate) fail_fast: bool,
+
+    /// Re-run recorded test failures from last run.
+    /// If no failure recorded then regular test run is performed.
+    #[arg(long)]
+    pub(crate) rerun: bool,
+
+    /// Show test execution progress.
+    #[arg(long, conflicts_with_all = ["quiet", "json"], help_heading = "Display options")]
+    pub(crate) show_progress: bool,
+
+    /// The Etherscan (or equivalent) API key.
+    #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    pub(crate) etherscan_api_key: Option<String>,
+
+    /// List fuzz and invariant tests instead of running them.
+    #[arg(long, short, conflicts_with_all = ["show_progress"], help_heading = "Display options")]
+    pub(crate) list: bool,
+
+    /// Print a gas report.
+    #[arg(long, env = "FORGE_GAS_REPORT")]
+    pub(crate) gas_report: bool,
+
+    /// Replay the persisted corpus and emit AFL-`afl-showmap`-style coverage
+    /// files at the given output directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Showmap replay",
+        conflicts_with_all = ["rerun", "fuzz_input_file", "gas_report"],
+    )]
+    pub(crate) showmap_out: Option<PathBuf>,
+
+    /// Emit one showmap file per corpus entry (default: one aggregated file per test).
+    #[arg(long, help_heading = "Showmap replay", requires = "showmap_out")]
+    pub(crate) showmap_per_input: bool,
+
+    /// Coverage domain(s) to dump.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ShowmapDomainArg::Evm,
+        help_heading = "Showmap replay",
+        requires = "showmap_out",
+    )]
+    pub(crate) showmap_domain: ShowmapDomainArg,
+
+    /// Approach name (used as a subdirectory of `--showmap-out`).
+    #[arg(
+        long,
+        default_value = "replay",
+        help_heading = "Showmap replay",
+        requires = "showmap_out"
+    )]
+    pub(crate) showmap_approach: String,
+
+    /// Trial identifier embedded in each showmap filename.
+    #[arg(long, help_heading = "Showmap replay", requires = "showmap_out")]
+    pub(crate) showmap_trial: Option<String>,
+
+    /// Override the corpus directory to replay.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Showmap replay",
+        requires = "showmap_out",
+    )]
+    pub(crate) showmap_corpus_dir: Option<PathBuf>,
+
+    /// File to rerun fuzz failures from.
+    #[arg(long)]
+    pub(crate) fuzz_input_file: Option<String>,
 }
 
 /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzReplayArgs {
     #[command(flatten)]
-    test: TestArgs,
-    /// Replay corpus entries from this directory instead of persisted fuzz failures.
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
-    corpus_dir: Option<PathBuf>,
+    run: FuzzRunArgs,
 }
 
 impl FuzzReplayArgs {
-    async fn run(mut self) -> Result<TestOutcome> {
-        self.test.enable_fuzz_only();
-        if self.corpus_dir.is_none() {
-            self.test.enable_fuzz_failure_replay();
-            return self.test.run().await;
+    async fn run(self) -> Result<TestOutcome> {
+        let corpus_dir = self.run.campaign.corpus_dir.clone();
+        let mut test = TestArgs::from_fuzz_run(self.run);
+        if corpus_dir.is_none() {
+            test.enable_fuzz_failure_replay();
+            return test.run().await;
         }
 
         let replay_id =
             SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
-        self.test.set_showmap_override(ShowmapConfig {
+        test.set_showmap_override(ShowmapConfig {
             out_dir: std::env::temp_dir().join(format!("forge-fuzz-replay-{replay_id}")),
             approach: "replay".to_string(),
             trial: "replay".to_string(),
             per_input: false,
             domain: ShowmapDomain::Evm,
-            corpus_dir: self.corpus_dir.clone(),
+            corpus_dir,
             emit_files: false,
         });
-        self.test.run().await
+        test.run().await
     }
 
     const fn is_junit(&self) -> bool {
-        self.test.junit
-    }
-
-    const fn is_watch(&self) -> bool {
-        self.test.is_watch()
+        self.run.junit
     }
 }
 
@@ -160,8 +266,13 @@ impl FuzzShowArgs {
                     sh_println!("{} ({} txs)", entry.path.display(), entry.sequence.len())?;
                     for (idx, tx) in entry.sequence.iter().enumerate() {
                         if let Some(decoded) = &tx.decoded {
+                            let ambiguity = if decoded.ambiguous_contracts.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" ambiguous=[{}]", decoded.ambiguous_contracts.join(","))
+                            };
                             sh_println!(
-                                "  {idx}: {} sender={} target={} value={}",
+                                "  {idx}: {} sender={} target={} value={}{}",
                                 decoded.call,
                                 tx.raw.sender,
                                 tx.raw.call_details.target,
@@ -169,7 +280,8 @@ impl FuzzShowArgs {
                                     .call_details
                                     .value
                                     .map(|v| v.to_string())
-                                    .unwrap_or_else(|| "0".to_string())
+                                    .unwrap_or_else(|| "0".to_string()),
+                                ambiguity
                             )?;
                         } else {
                             sh_println!(
@@ -257,7 +369,6 @@ impl FuzzCminArgs {
         let mut unmatched_txs = 0usize;
         let mut rejected_txs = 0usize;
         let mut failed_entries = 0usize;
-        let mut successful_replays = 0usize;
         let mut failed_replays = 0usize;
         let mut replayed = 0usize;
         let mut cumulative = BTreeMap::<String, ReplayObservation>::new();
@@ -299,7 +410,6 @@ impl FuzzCminArgs {
             }
             if entry_replayed > 0 {
                 replayed += entry_replayed;
-                successful_replays += entry_replayed;
             } else if entry_failed {
                 skipped_entries += 1;
                 failed_entries += 1;
@@ -370,9 +480,8 @@ impl FuzzCminArgs {
                 );
             }
             bail!(
-                "replayed 0 transactions from {corpus}; {successful_replays} successful replayed \
-                 transactions, {unreadable} unreadable entries, {empty} empty entries, \
-                 {rejected_txs} rejected transactions"
+                "replayed 0 transactions from {corpus}; {unreadable} unreadable entries, {empty} \
+                 empty entries"
             );
         }
 
@@ -390,6 +499,315 @@ struct CminSummary {
     skipped: usize,
 }
 
+/// Minimize one corpus entry while preserving its failure or coverage.
+#[derive(Clone, Debug, Parser)]
+pub struct FuzzTminArgs {
+    #[command(flatten)]
+    test: FuzzMinimizeTestArgs,
+    /// Input corpus file or directory.
+    #[arg(value_name = "INPUT", value_hint = ValueHint::AnyPath)]
+    input: PathBuf,
+    /// Output corpus file or directory.
+    #[arg(long = "corpus-out", value_name = "PATH", value_hint = ValueHint::AnyPath)]
+    out: PathBuf,
+    /// Maximum candidate replays to attempt per corpus entry.
+    #[arg(long, default_value_t = 5000, value_name = "N")]
+    max_attempts: usize,
+}
+
+impl FuzzTminArgs {
+    async fn run(self) -> Result<()> {
+        if self.max_attempts == 0 {
+            bail!("--max-attempts must be greater than 0");
+        }
+        if self.input.is_dir() { self.run_dir().await } else { self.run_file().await }
+    }
+
+    async fn run_file(self) -> Result<()> {
+        validate_tmin_output_path(&self.out)?;
+
+        let mut sequence = read_single_sequence(&self.input)?;
+        if sequence.is_empty() {
+            bail!("corpus entry {} is empty", self.input.display());
+        }
+
+        let before_txs = sequence.len();
+        let decoder_args = self.test.clone();
+        let session = self.test.prepare_session(input_corpus_root(&self.input)).await?;
+        let decoder = decoder_args.decoder();
+        let attempts =
+            minimize_entry(&session, &decoder, &self.input, &mut sequence, self.max_attempts)?;
+        write_sequence_create_new(&self.out, &sequence)?;
+
+        sh_println!(
+            "minimized entry: {before_txs} txs -> {} txs in {}",
+            sequence.len(),
+            self.out.display()
+        )?;
+        sh_status!("attempted {attempts} candidate replays")?;
+        Ok(())
+    }
+
+    async fn run_dir(self) -> Result<()> {
+        if cmin_out_exists(&self.out) {
+            bail!("output corpus directory already exists: {}", self.out.display());
+        }
+
+        let entries = read_corpus_entries(&self.input)?;
+        let staging_out = temporary_cmin_out(&self.out)?;
+        let decoder_args = self.test.clone();
+        let session = self.test.prepare_session(&self.input).await?;
+        let decoder = decoder_args.decoder();
+        let mut total_entries = 0usize;
+        let mut before_txs = 0usize;
+        let mut after_txs = 0usize;
+        let mut attempts = 0usize;
+        let mut skipped_entries = 0usize;
+
+        for entry in entries {
+            let sequence = entry
+                .read_tx_seq()
+                .with_context(|| format!("failed to read corpus entry {}", entry.path.display()));
+            let Ok(mut sequence) = sequence else {
+                skipped_entries += 1;
+                continue;
+            };
+            if sequence.is_empty() {
+                skipped_entries += 1;
+                continue;
+            }
+            before_txs += sequence.len();
+            attempts +=
+                minimize_entry(&session, &decoder, &entry.path, &mut sequence, self.max_attempts)?;
+            after_txs += sequence.len();
+
+            let relative = entry.path.strip_prefix(&self.input).with_context(|| {
+                format!(
+                    "corpus entry {} is not under {}",
+                    entry.path.display(),
+                    self.input.display()
+                )
+            })?;
+            write_sequence_create_new(&staging_out.path().join(relative), &sequence)?;
+            total_entries += 1;
+        }
+        if total_entries == 0 {
+            bail!("no readable non-empty corpus entries found under {}", self.input.display());
+        }
+
+        let staging_path = staging_out.keep();
+        if cmin_out_exists(&self.out) {
+            bail!(
+                "output corpus directory already exists: {}; minimized corpus remains staged at {}",
+                self.out.display(),
+                staging_path.display()
+            );
+        }
+        std::fs::rename(&staging_path, &self.out).with_context(|| {
+            format!(
+                "failed to rename minimized corpus {} to {}",
+                staging_path.display(),
+                self.out.display()
+            )
+        })?;
+
+        sh_println!(
+            "minimized corpus: {total_entries} entries, {before_txs} txs -> {after_txs} txs in {}",
+            self.out.display()
+        )?;
+        sh_status!("attempted {attempts} candidate replays")?;
+        if skipped_entries > 0 {
+            sh_status!("skipped {skipped_entries} entries that could not be read or were empty")?;
+        }
+        Ok(())
+    }
+}
+
+fn minimize_entry(
+    session: &FuzzMinimizeReplaySession,
+    decoder: &CorpusDecoder,
+    input: &Path,
+    sequence: &mut Vec<BasicTxDetails>,
+    max_attempts: usize,
+) -> Result<usize> {
+    let evm_edge_indices = FuzzMinimizeEdgeIndices::default();
+    let baseline = replay_baseline(session, evm_edge_indices.clone(), sequence.clone())
+        .with_context(|| format!("failed to replay baseline corpus entry {}", input.display()))?;
+    if baseline.requirements.is_empty() {
+        bail!(
+            "replayed 0 transactions from {}; check that --mc/--mt and replay-critical options match the corpus entry",
+            input.display()
+        );
+    }
+    if !baseline.has_failure && !baseline.has_coverage {
+        bail!("baseline replay for {} produced no failure or edge coverage", input.display());
+    }
+
+    let mut ctx = MinimizeContext::new(session, evm_edge_indices, baseline, max_attempts);
+    minimize_sequence(&mut ctx, sequence, decoder)?;
+    Ok(ctx.attempts)
+}
+
+struct ReplayBaseline {
+    requirements: BTreeMap<String, ReplayObservation>,
+    has_failure: bool,
+    has_coverage: bool,
+}
+
+fn replay_baseline(
+    session: &FuzzMinimizeReplaySession,
+    evm_edge_indices: FuzzMinimizeEdgeIndices,
+    sequence: Vec<BasicTxDetails>,
+) -> Result<ReplayBaseline> {
+    let observations = replay_candidate(session, evm_edge_indices, sequence)?;
+    let mut requirements = BTreeMap::new();
+    let mut has_failure = false;
+    let mut has_coverage = false;
+    for FuzzMinimizeObservation { target, observation } in observations {
+        let observation_has_failure = observation.failure.is_some();
+        let observation_has_coverage = has_edges(&observation);
+        if observation.replayed == 0 && !observation_has_failure && !observation_has_coverage {
+            continue;
+        }
+        has_failure |= observation_has_failure;
+        has_coverage |= observation_has_coverage;
+        requirements.insert(target, observation);
+    }
+    Ok(ReplayBaseline { requirements, has_failure, has_coverage })
+}
+
+struct MinimizeContext<'a> {
+    session: &'a FuzzMinimizeReplaySession,
+    evm_edge_indices: FuzzMinimizeEdgeIndices,
+    baseline: ReplayBaseline,
+    max_attempts: usize,
+    attempts: usize,
+}
+
+impl<'a> MinimizeContext<'a> {
+    const fn new(
+        session: &'a FuzzMinimizeReplaySession,
+        evm_edge_indices: FuzzMinimizeEdgeIndices,
+        baseline: ReplayBaseline,
+        max_attempts: usize,
+    ) -> Self {
+        Self { session, evm_edge_indices, baseline, max_attempts, attempts: 0 }
+    }
+
+    const fn at_budget(&self) -> bool {
+        self.attempts >= self.max_attempts
+    }
+
+    const fn remaining_attempts(&self) -> usize {
+        self.max_attempts.saturating_sub(self.attempts)
+    }
+
+    fn accepts(&mut self, candidate: &[BasicTxDetails]) -> Result<bool> {
+        if self.at_budget() {
+            return Ok(false);
+        }
+        self.attempts += 1;
+        let observations =
+            replay_candidate(self.session, self.evm_edge_indices.clone(), candidate.to_vec())?;
+        let observations = observations
+            .into_iter()
+            .map(|obs| (obs.target, obs.observation))
+            .collect::<BTreeMap<_, _>>();
+
+        if has_new_active_targets(&observations, &self.baseline.requirements) {
+            return Ok(false);
+        }
+
+        for (target, baseline) in &self.baseline.requirements {
+            let Some(candidate) = observations.get(target) else {
+                return Ok(false);
+            };
+            if let Some(failure) = &baseline.failure {
+                if candidate.failure.as_ref() != Some(failure) {
+                    return Ok(false);
+                }
+            } else if candidate.failure.is_some() || !same_edge_hit_sets(candidate, baseline) {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+}
+
+fn has_new_active_targets(
+    observations: &BTreeMap<String, ReplayObservation>,
+    baseline: &BTreeMap<String, ReplayObservation>,
+) -> bool {
+    observations.iter().any(|(target, observation)| {
+        !baseline.contains_key(target)
+            && (observation.failure.is_some() || observation.replayed > 0 || has_edges(observation))
+    })
+}
+
+fn minimize_sequence(
+    ctx: &mut MinimizeContext<'_>,
+    sequence: &mut Vec<BasicTxDetails>,
+    decoder: &CorpusDecoder,
+) -> Result<()> {
+    let mut idx = 0;
+    while idx < sequence.len() && !ctx.at_budget() {
+        let removed = sequence.remove(idx);
+        if ctx.accepts(sequence)? {
+            continue;
+        }
+        sequence.insert(idx, removed);
+        idx += 1;
+    }
+
+    let mut idx = 0;
+    while idx < sequence.len() && !ctx.at_budget() {
+        let restore = sequence[idx].clone();
+        cleanup_metadata(&mut sequence[idx]);
+        if !ctx.accepts(sequence)? {
+            sequence[idx] = restore;
+        }
+        idx += 1;
+    }
+
+    let mut tx_idx = 0;
+    while tx_idx < sequence.len() && !ctx.at_budget() {
+        loop {
+            let candidates = abi_calldata_candidates(
+                sequence[tx_idx].call_details.calldata.as_ref(),
+                decoder,
+                ctx.remaining_attempts(),
+            );
+            if candidates.is_empty() {
+                break;
+            };
+
+            let mut accepted = false;
+            for calldata in candidates {
+                if calldata.len() > sequence[tx_idx].call_details.calldata.len() {
+                    continue;
+                }
+                let restore =
+                    std::mem::replace(&mut sequence[tx_idx].call_details.calldata, calldata.into());
+                if ctx.accepts(sequence)? {
+                    accepted = true;
+                    break;
+                }
+                sequence[tx_idx].call_details.calldata = restore;
+                if ctx.at_budget() {
+                    break;
+                }
+            }
+            if !accepted || ctx.at_budget() {
+                break;
+            }
+        }
+        tx_idx += 1;
+    }
+
+    Ok(())
+}
+
 fn temporary_cmin_out(out: &Path) -> Result<TempDir> {
     let parent =
         out.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
@@ -399,6 +817,284 @@ fn temporary_cmin_out(out: &Path) -> Result<TempDir> {
     TempDirBuilder::new().prefix(&prefix).tempdir_in(parent).with_context(|| {
         format!("failed to create temporary output directory for {}", out.display())
     })
+}
+
+fn input_corpus_root(input: &Path) -> &Path {
+    input.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."))
+}
+
+fn read_single_sequence(path: &Path) -> Result<Vec<BasicTxDetails>> {
+    let entries = read_corpus_tree(path)?;
+    let [entry] = entries.as_slice() else {
+        bail!("expected one corpus entry at {}, found {}", path.display(), entries.len());
+    };
+    entry
+        .read_tx_seq()
+        .with_context(|| format!("failed to read corpus entry {}", entry.path.display()))
+}
+
+fn validate_tmin_output_path(path: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(path).is_ok() {
+        bail!("output corpus file already exists: {}", path.display());
+    }
+    Ok(())
+}
+
+fn write_sequence_create_new(path: &Path, sequence: &[BasicTxDetails]) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("failed to create output corpus file {}", path.display()))?;
+    if is_gzip_path(path) {
+        let writer = BufWriter::new(file);
+        let mut encoder = GzEncoder::new(writer, Compression::default());
+        serde_json::to_writer(&mut encoder, &sequence)
+            .with_context(|| format!("failed to write output corpus file {}", path.display()))?;
+        let mut writer = encoder
+            .finish()
+            .with_context(|| format!("failed to finish output corpus file {}", path.display()))?;
+        writer
+            .flush()
+            .with_context(|| format!("failed to flush output corpus file {}", path.display()))?;
+    } else {
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(&mut writer, &sequence)
+            .with_context(|| format!("failed to write output corpus file {}", path.display()))?;
+        writer
+            .flush()
+            .with_context(|| format!("failed to flush output corpus file {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn is_gzip_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
+}
+
+fn has_edges(observation: &ReplayObservation) -> bool {
+    observation.evm_edges.iter().any(|&edge| edge != 0)
+        || observation.sancov_edges.iter().any(|&edge| edge != 0)
+}
+
+fn same_edge_hit_sets(candidate: &ReplayObservation, baseline: &ReplayObservation) -> bool {
+    same_edge_hit_set(&candidate.evm_edges, &baseline.evm_edges)
+        && same_edge_hit_set(&candidate.sancov_edges, &baseline.sancov_edges)
+}
+
+fn same_edge_hit_set(candidate: &[u8], baseline: &[u8]) -> bool {
+    let len = candidate.len().max(baseline.len());
+    (0..len).all(|idx| {
+        let candidate_hit = candidate.get(idx).copied().unwrap_or_default() != 0;
+        let baseline_hit = baseline.get(idx).copied().unwrap_or_default() != 0;
+        candidate_hit == baseline_hit
+    })
+}
+
+fn cleanup_metadata(tx: &mut BasicTxDetails) {
+    if tx.warp == Some(U256::ZERO) {
+        tx.warp = None;
+    }
+    if tx.roll == Some(U256::ZERO) {
+        tx.roll = None;
+    }
+    if tx.call_details.value == Some(U256::ZERO) {
+        tx.call_details.value = None;
+    }
+}
+
+fn abi_calldata_candidates(calldata: &[u8], decoder: &CorpusDecoder, limit: usize) -> Vec<Vec<u8>> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let Some((function, args)) = decoder.unique_decodable_function(calldata) else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::new();
+    for arg_idx in 0..args.len() {
+        for value in value_candidates(&args[arg_idx], limit.saturating_sub(candidates.len())) {
+            let mut candidate_args = args.clone();
+            candidate_args[arg_idx] = value;
+            let Ok(encoded) = function.abi_encode_input(&candidate_args) else {
+                continue;
+            };
+            if encoded.as_slice() != calldata && !candidates.contains(&encoded) {
+                candidates.push(encoded);
+                if candidates.len() >= limit {
+                    return candidates;
+                }
+            }
+        }
+    }
+    candidates
+}
+
+fn value_candidates(value: &DynSolValue, limit: usize) -> Vec<DynSolValue> {
+    let mut candidates = Vec::new();
+    push_scalar_value_candidates(value, &mut candidates, limit);
+    push_compound_value_candidates(value, &mut candidates, limit);
+    candidates.into_iter().filter(|candidate| candidate != value).collect()
+}
+
+fn push_candidate(candidates: &mut Vec<DynSolValue>, limit: usize, candidate: DynSolValue) -> bool {
+    if candidates.len() >= limit {
+        return false;
+    }
+    candidates.push(candidate);
+    true
+}
+
+fn push_scalar_value_candidates(
+    value: &DynSolValue,
+    candidates: &mut Vec<DynSolValue>,
+    limit: usize,
+) {
+    match value {
+        DynSolValue::Bool(_) => {
+            push_candidate(candidates, limit, DynSolValue::Bool(false));
+        }
+        DynSolValue::Uint(value, bits) => {
+            if *value != U256::ZERO {
+                push_candidate(candidates, limit, DynSolValue::Uint(U256::ZERO, *bits));
+            }
+            if *value > U256::from(1) {
+                push_candidate(candidates, limit, DynSolValue::Uint(U256::from(1), *bits));
+            }
+        }
+        DynSolValue::Int(value, bits) => {
+            if *value != I256::ZERO {
+                push_candidate(candidates, limit, DynSolValue::Int(I256::ZERO, *bits));
+            }
+            if *value != I256::ZERO
+                && *value != I256::from_raw(U256::from(1))
+                && *value != I256::MINUS_ONE
+            {
+                push_candidate(
+                    candidates,
+                    limit,
+                    DynSolValue::Int(I256::from_raw(U256::from(1)), *bits),
+                );
+            }
+            if *value != I256::ZERO
+                && *value != I256::from_raw(U256::from(1))
+                && *value != I256::MINUS_ONE
+            {
+                push_candidate(candidates, limit, DynSolValue::Int(I256::MINUS_ONE, *bits));
+            }
+        }
+        DynSolValue::Address(_) => {
+            push_candidate(candidates, limit, DynSolValue::Address(Address::ZERO));
+        }
+        DynSolValue::FixedBytes(_, size) => {
+            push_candidate(candidates, limit, DynSolValue::FixedBytes(B256::ZERO, *size));
+        }
+        DynSolValue::Function(_) => {
+            push_candidate(candidates, limit, DynSolValue::Function(SolFunction::ZERO));
+        }
+        DynSolValue::Bytes(bytes) => {
+            push_candidate(candidates, limit, DynSolValue::Bytes(Vec::new()));
+            if bytes.len() > 1 {
+                push_candidate(
+                    candidates,
+                    limit,
+                    DynSolValue::Bytes(bytes[..bytes.len() / 2].to_vec()),
+                );
+            }
+        }
+        DynSolValue::String(string) => {
+            push_candidate(candidates, limit, DynSolValue::String(String::new()));
+            if string.len() > 1 {
+                let mut half = string.len() / 2;
+                while half > 0 && !string.is_char_boundary(half) {
+                    half -= 1;
+                }
+                push_candidate(candidates, limit, DynSolValue::String(string[..half].to_string()));
+            }
+        }
+        DynSolValue::Array(_)
+        | DynSolValue::FixedArray(_)
+        | DynSolValue::Tuple(_)
+        | DynSolValue::CustomStruct { .. } => {}
+    }
+}
+
+fn push_compound_value_candidates(
+    value: &DynSolValue,
+    candidates: &mut Vec<DynSolValue>,
+    limit: usize,
+) {
+    match value {
+        DynSolValue::Array(values) => {
+            push_candidate(candidates, limit, DynSolValue::Array(Vec::new()));
+            if values.len() > 1 {
+                push_candidate(
+                    candidates,
+                    limit,
+                    DynSolValue::Array(values[..values.len() / 2].to_vec()),
+                );
+            }
+            push_child_value_candidates(values, candidates, limit, |values| {
+                DynSolValue::Array(values.to_vec())
+            });
+        }
+        DynSolValue::FixedArray(values) => {
+            push_child_value_candidates(values, candidates, limit, |values| {
+                DynSolValue::FixedArray(values.to_vec())
+            });
+        }
+        DynSolValue::Tuple(values) => {
+            push_child_value_candidates(values, candidates, limit, |values| {
+                DynSolValue::Tuple(values.to_vec())
+            });
+        }
+        DynSolValue::CustomStruct { name, prop_names, tuple } => {
+            push_child_value_candidates(tuple, candidates, limit, |values| {
+                DynSolValue::CustomStruct {
+                    name: name.clone(),
+                    prop_names: prop_names.clone(),
+                    tuple: values.to_vec(),
+                }
+            });
+        }
+        DynSolValue::Bool(_)
+        | DynSolValue::Uint(_, _)
+        | DynSolValue::Int(_, _)
+        | DynSolValue::Address(_)
+        | DynSolValue::FixedBytes(_, _)
+        | DynSolValue::Function(_)
+        | DynSolValue::Bytes(_)
+        | DynSolValue::String(_) => {}
+    }
+}
+
+fn push_child_value_candidates(
+    values: &[DynSolValue],
+    candidates: &mut Vec<DynSolValue>,
+    limit: usize,
+    rebuild: impl Fn(&[DynSolValue]) -> DynSolValue,
+) {
+    for idx in 0..values.len() {
+        if candidates.len() >= limit {
+            return;
+        }
+        for child in value_candidates(&values[idx], limit.saturating_sub(candidates.len())) {
+            let mut values = values.to_vec();
+            values[idx] = child;
+            candidates.push(rebuild(&values));
+            if candidates.len() >= limit {
+                return;
+            }
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -417,7 +1113,10 @@ struct DisplayTxDetails {
 
 #[derive(Serialize)]
 struct DecodedCall {
-    contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    contract: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ambiguous_contracts: Vec<String>,
     signature: String,
     args: Vec<String>,
     call: String,
@@ -470,46 +1169,66 @@ impl CorpusDecoder {
 
     fn decode(&self, tx: &BasicTxDetails) -> Option<DecodedCall> {
         let calldata = tx.call_details.calldata.as_ref();
-        let function = self.unique_decodable_function(calldata)?;
-        let decoded_args = function.abi_decode_input(&calldata[4..]).ok()?;
-        let args = format_tokens_raw(&decoded_args).collect::<Vec<_>>();
+        if calldata.len() < 4 {
+            return None;
+        }
 
         let selector = Selector::from_slice(&calldata[..4]);
-        self.functions.get(&selector).and_then(|functions| {
-            let indexed = functions.iter().find(|indexed| &indexed.function == function)?;
-            let signature = indexed.function.signature();
+        let functions = self.functions.get(&selector)?;
+        let (function, decoded_args) = self.unique_decodable_function(calldata)?;
+        let args = format_tokens_raw(&decoded_args).collect::<Vec<_>>();
+        let signature = function.signature();
+
+        let mut contracts = functions
+            .iter()
+            .filter(|indexed| indexed.function.signature() == signature.as_str())
+            .map(|indexed| indexed.contract.clone())
+            .collect::<Vec<_>>();
+        contracts.sort();
+        contracts.dedup();
+
+        let function_call = format!("{}({})", function.name, args.join(", "));
+        if contracts.len() == 1 {
+            let contract = contracts.pop()?;
             Some(DecodedCall {
-                call: format!(
-                    "{}.{}({})",
-                    indexed.contract,
-                    indexed.function.name,
-                    args.join(", ")
-                ),
-                contract: indexed.contract.clone(),
+                call: format!("{contract}.{function_call}"),
+                contract: Some(contract),
+                ambiguous_contracts: Vec::new(),
                 signature,
                 args,
             })
-        })
+        } else {
+            Some(DecodedCall {
+                call: function_call,
+                contract: None,
+                ambiguous_contracts: contracts,
+                signature,
+                args,
+            })
+        }
     }
 
-    fn unique_decodable_function(&self, calldata: &[u8]) -> Option<&Function> {
+    fn unique_decodable_function(&self, calldata: &[u8]) -> Option<(&Function, Vec<DynSolValue>)> {
         if calldata.len() < 4 {
             return None;
         }
 
         let selector = Selector::from_slice(&calldata[..4]);
         let mut unique = None;
-        for function in self.functions.get(&selector)?.iter().filter_map(|indexed| {
-            indexed.function.abi_decode_input(&calldata[4..]).ok()?;
-            Some(&indexed.function)
-        }) {
-            match unique {
-                Some(existing) if existing == function => {}
+        for (function, decoded_args) in
+            self.functions.get(&selector)?.iter().filter_map(|indexed| {
+                let decoded_args = indexed.function.abi_decode_input(&calldata[4..]).ok()?;
+                Some((&indexed.function, decoded_args))
+            })
+        {
+            let signature = function.signature();
+            match &unique {
+                Some((existing, _, _)) if existing == &signature => {}
                 Some(_) => return None,
-                None => unique = Some(function),
+                None => unique = Some((signature, function, decoded_args)),
             }
         }
-        unique
+        unique.map(|(_, function, decoded_args)| (function, decoded_args))
     }
 }
 
@@ -561,6 +1280,14 @@ impl FuzzMinimizeTestArgs {
         test.set_fuzz_minimize_replay_options(self.global, self.evm, self.build, self.filter);
         test.enable_fuzz_only();
         prepare_minimize_session(&mut test, corpus_dir).await
+    }
+
+    fn decoder(&self) -> CorpusDecoder {
+        self.build
+            .load_config_no_warnings()
+            .ok()
+            .map(|config| CorpusDecoder::from_artifacts(&config.out))
+            .unwrap_or_default()
     }
 }
 
@@ -622,6 +1349,42 @@ fn merge_new_edge_vec(cumulative: &mut Vec<u8>, candidate: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+    use foundry_evm::executors::ReplayFailure;
+
+    #[test]
+    fn fuzz_args_clap_shape_is_valid() {
+        FuzzArgs::command().debug_assert();
+    }
+
+    #[test]
+    fn fuzz_run_rejects_fuzz_worker() {
+        assert!(FuzzArgs::try_parse_from(["foundry-cli", "run", "--fuzz-worker", "1"]).is_err());
+    }
+
+    #[test]
+    fn fuzz_run_rejects_fuzz_run() {
+        assert!(FuzzArgs::try_parse_from(["foundry-cli", "run", "--fuzz-run", "1"]).is_err());
+    }
+
+    fn decoder_with_functions(functions: Vec<Function>) -> CorpusDecoder {
+        let mut decoder = CorpusDecoder::default();
+        for function in functions {
+            decoder
+                .functions
+                .entry(function.selector())
+                .or_default()
+                .push(IndexedFunction { contract: "Target".to_string(), function });
+        }
+        decoder
+    }
+
+    fn candidate_args(function: &Function, candidates: Vec<Vec<u8>>) -> Vec<Vec<DynSolValue>> {
+        candidates
+            .into_iter()
+            .map(|calldata| function.abi_decode_input(&calldata[4..]).unwrap())
+            .collect()
+    }
 
     #[test]
     fn merge_new_edges_keeps_sancov_hit_count_bucket_increases() {
@@ -630,5 +1393,248 @@ mod tests {
 
         assert!(merge_new_edges(&mut cumulative, &candidate));
         assert_eq!(cumulative.sancov_edges, vec![0, 8]);
+    }
+
+    #[test]
+    fn same_edge_hit_sets_allow_hit_count_bucket_changes() {
+        let baseline = ReplayObservation { evm_edges: vec![0, 8], ..Default::default() };
+        let candidate = ReplayObservation { evm_edges: vec![0, 1], ..Default::default() };
+
+        assert!(same_edge_hit_sets(&candidate, &baseline));
+    }
+
+    #[test]
+    fn same_edge_hit_sets_treat_missing_trailing_buckets_as_zero() {
+        let baseline = ReplayObservation { sancov_edges: vec![0, 0], ..Default::default() };
+        let candidate = ReplayObservation { sancov_edges: vec![0], ..Default::default() };
+
+        assert!(same_edge_hit_sets(&candidate, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_activity() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            ("B".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_failures() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            (
+                "B".to_string(),
+                ReplayObservation {
+                    failure: Some(ReplayFailure::AfterInvariant),
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_rejects_candidate_only_replayed_transactions() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            ("B".to_string(), ReplayObservation { replayed: 1, ..Default::default() }),
+        ]);
+
+        assert!(has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn has_new_active_targets_allows_inactive_candidate_only_targets() {
+        let baseline = BTreeMap::from([(
+            "A".to_string(),
+            ReplayObservation { evm_edges: vec![1], ..Default::default() },
+        )]);
+        let observations = BTreeMap::from([
+            ("A".to_string(), ReplayObservation { evm_edges: vec![1], ..Default::default() }),
+            ("B".to_string(), ReplayObservation::default()),
+        ]);
+
+        assert!(!has_new_active_targets(&observations, &baseline));
+    }
+
+    #[test]
+    fn abi_calldata_candidates_simplify_scalar_values() {
+        let function = Function::parse("target(uint256,int256,bool,address)").unwrap();
+        let decoder = decoder_with_functions(vec![function.clone()]);
+        let calldata = function
+            .abi_encode_input(&[
+                DynSolValue::Uint(U256::from(42), 256),
+                DynSolValue::Int(I256::from_raw(U256::from(42)), 256),
+                DynSolValue::Bool(true),
+                DynSolValue::Address(Address::from([0x11; 20])),
+            ])
+            .unwrap();
+
+        let candidates =
+            candidate_args(&function, abi_calldata_candidates(&calldata, &decoder, usize::MAX));
+
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Uint(U256::ZERO, 256)));
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Uint(U256::from(1), 256)));
+        assert!(candidates.iter().any(|args| args[1] == DynSolValue::Int(I256::ZERO, 256)));
+        assert!(
+            candidates
+                .iter()
+                .any(|args| { args[1] == DynSolValue::Int(I256::from_raw(U256::from(1)), 256) })
+        );
+        assert!(candidates.iter().any(|args| args[1] == DynSolValue::Int(I256::MINUS_ONE, 256)));
+        assert!(candidates.iter().any(|args| args[2] == DynSolValue::Bool(false)));
+        assert!(candidates.iter().any(|args| args[3] == DynSolValue::Address(Address::ZERO)));
+    }
+
+    #[test]
+    fn abi_calldata_candidates_do_not_oscillate_signed_one_values() {
+        let function = Function::parse("target(int256)").unwrap();
+        let decoder = decoder_with_functions(vec![function.clone()]);
+        let one = DynSolValue::Int(I256::from_raw(U256::from(1)), 256);
+        let minus_one = DynSolValue::Int(I256::MINUS_ONE, 256);
+
+        let one_calldata = function.abi_encode_input(&[one]).unwrap();
+        let one_candidates =
+            candidate_args(&function, abi_calldata_candidates(&one_calldata, &decoder, usize::MAX));
+        assert_eq!(one_candidates, vec![vec![DynSolValue::Int(I256::ZERO, 256)]]);
+
+        let minus_one_calldata = function.abi_encode_input(&[minus_one]).unwrap();
+        let minus_one_candidates = candidate_args(
+            &function,
+            abi_calldata_candidates(&minus_one_calldata, &decoder, usize::MAX),
+        );
+        assert_eq!(minus_one_candidates, vec![vec![DynSolValue::Int(I256::ZERO, 256)]]);
+    }
+
+    #[test]
+    fn abi_calldata_candidates_shrink_dynamic_values() {
+        let function = Function::parse("target(bytes,string,uint256[])").unwrap();
+        let decoder = decoder_with_functions(vec![function.clone()]);
+        let calldata = function
+            .abi_encode_input(&[
+                DynSolValue::Bytes(vec![1, 2, 3, 4]),
+                DynSolValue::String("abcdef".to_string()),
+                DynSolValue::Array(vec![
+                    DynSolValue::Uint(U256::from(10), 256),
+                    DynSolValue::Uint(U256::from(11), 256),
+                    DynSolValue::Uint(U256::from(12), 256),
+                    DynSolValue::Uint(U256::from(13), 256),
+                ]),
+            ])
+            .unwrap();
+
+        let candidates =
+            candidate_args(&function, abi_calldata_candidates(&calldata, &decoder, usize::MAX));
+
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Bytes(Vec::new())));
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Bytes(vec![1, 2])));
+        assert!(candidates.iter().any(|args| args[1] == DynSolValue::String(String::new())));
+        assert!(candidates.iter().any(|args| args[1] == DynSolValue::String("abc".to_string())));
+        assert!(candidates.iter().any(|args| args[2] == DynSolValue::Array(Vec::new())));
+        assert!(candidates.iter().any(|args| {
+            args[2]
+                == DynSolValue::Array(vec![
+                    DynSolValue::Uint(U256::from(10), 256),
+                    DynSolValue::Uint(U256::from(11), 256),
+                ])
+        }));
+    }
+
+    #[test]
+    fn abi_calldata_candidates_simplify_tuple_children() {
+        let function = Function::parse("target((uint256,bool,address))").unwrap();
+        let decoder = decoder_with_functions(vec![function.clone()]);
+        let calldata = function
+            .abi_encode_input(&[DynSolValue::Tuple(vec![
+                DynSolValue::Uint(U256::from(42), 256),
+                DynSolValue::Bool(true),
+                DynSolValue::Address(Address::from([0x11; 20])),
+            ])])
+            .unwrap();
+
+        let candidates =
+            candidate_args(&function, abi_calldata_candidates(&calldata, &decoder, usize::MAX));
+
+        assert!(candidates.iter().any(|args| {
+            args[0]
+                == DynSolValue::Tuple(vec![
+                    DynSolValue::Uint(U256::ZERO, 256),
+                    DynSolValue::Bool(true),
+                    DynSolValue::Address(Address::from([0x11; 20])),
+                ])
+        }));
+        assert!(candidates.iter().any(|args| {
+            args[0]
+                == DynSolValue::Tuple(vec![
+                    DynSolValue::Uint(U256::from(42), 256),
+                    DynSolValue::Bool(false),
+                    DynSolValue::Address(Address::from([0x11; 20])),
+                ])
+        }));
+        assert!(candidates.iter().any(|args| {
+            args[0]
+                == DynSolValue::Tuple(vec![
+                    DynSolValue::Uint(U256::from(42), 256),
+                    DynSolValue::Bool(true),
+                    DynSolValue::Address(Address::ZERO),
+                ])
+        }));
+    }
+
+    #[test]
+    fn abi_calldata_candidates_skip_ambiguous_or_undecodable_calldata() {
+        let function = Function::parse("target(uint256)").unwrap();
+        let other = Function::parse("other(uint256)").unwrap();
+        let calldata =
+            function.abi_encode_input(&[DynSolValue::Uint(U256::from(42), 256)]).unwrap();
+
+        let mut ambiguous = CorpusDecoder::default();
+        ambiguous.functions.entry(function.selector()).or_default().extend([
+            IndexedFunction { contract: "Target".to_string(), function: function.clone() },
+            IndexedFunction { contract: "Other".to_string(), function: other },
+        ]);
+        assert!(abi_calldata_candidates(&calldata, &ambiguous, usize::MAX).is_empty());
+
+        let decoder = decoder_with_functions(vec![function]);
+        assert!(
+            abi_calldata_candidates(&calldata[..calldata.len() - 1], &decoder, usize::MAX)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn abi_calldata_candidates_accept_same_signature_with_metadata_differences() {
+        let function =
+            Function::parse("function target(uint256 value) external returns (uint256)").unwrap();
+        let same_signature = Function::parse("function target(uint256 value) view").unwrap();
+        let calldata =
+            function.abi_encode_input(&[DynSolValue::Uint(U256::from(42), 256)]).unwrap();
+
+        let mut decoder = CorpusDecoder::default();
+        decoder.functions.entry(function.selector()).or_default().extend([
+            IndexedFunction { contract: "WithReturn".to_string(), function: function.clone() },
+            IndexedFunction { contract: "NoReturn".to_string(), function: same_signature },
+        ]);
+
+        let candidates =
+            candidate_args(&function, abi_calldata_candidates(&calldata, &decoder, usize::MAX));
+
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Uint(U256::ZERO, 256)));
     }
 }

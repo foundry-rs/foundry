@@ -32,7 +32,7 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_evm_networks::NetworkVariant;
-use foundry_primitives::{FoundryTxEnvelope, PaymentLaneClassification};
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope, PaymentLaneClassification};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
@@ -946,7 +946,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(NetworkVariant::Tempo) => {
                     SimpleCast::decode_raw_transaction::<TempoNetwork>(&tx)?
                 }
-                _ => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
+                Some(NetworkVariant::Ethereum) => {
+                    SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?
+                }
+                // Without an explicit `--network` override, decode with the Foundry envelope,
+                // which dispatches on the EIP-2718 type byte for the transaction types compiled
+                // into `FoundryNetwork`, including Tempo txs (`0x76`).
+                None => SimpleCast::decode_raw_transaction::<FoundryNetwork>(&tx)?,
             };
             print_json_object(decoded_tx)?;
         }
@@ -960,6 +966,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Tip20Token { command } => command.run().await?,
         CastSubcommand::ReceivePolicy { command } => command.run().await?,
         CastSubcommand::Tip403 { command } => command.run().await?,
+        CastSubcommand::StorageCredits { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
         CastSubcommand::KeyAuthorization { command } => command.run().await?,
         CastSubcommand::Tempo { command } => command.run().await?,

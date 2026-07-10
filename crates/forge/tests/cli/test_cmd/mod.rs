@@ -12,6 +12,7 @@ use foundry_test_utils::{
 use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
 
+mod brutalize;
 mod core;
 mod fuzz;
 mod invariant;
@@ -205,17 +206,15 @@ contract Dummy {}
 ",
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
-...
-No tests found in project! Forge looks for functions that start with `test`
+    cmd.arg("test").assert_success().stderr_eq(str![[r#"
+Warning: No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
 
     cmd.forge_fuse();
     dummy_test_filter(&mut cmd);
-    cmd.assert_success().stdout_eq(str![[r#"
-...
-No tests found in project! Forge looks for functions that start with `test`
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: No tests found in project! Forge looks for functions that start with `test`
 
 "#]]);
 });
@@ -3929,6 +3928,138 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+// Tests that test traces display opcodes when verbosity level is 5
+forgetest_init!(should_show_opcodes, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.args([
+        "test",
+        "--mt",
+        "test_Increment",
+        "-vvvvv",
+        "--opcodes",
+        "SLOAD,MLOAD",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [..] CounterTest::setUp()
+    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [..] CounterTest::test_Increment()
+    ├─ [..] SLOAD 0x1f → (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f01)
+    ├─ [..] MLOAD
+    ├─ [..] MLOAD
+    ├─ [..] Counter::increment()
+    │   ├─ [..] SLOAD 0x0 → (0x0)
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    ├─ [..] SLOAD
+    ├─ [..] MLOAD
+    ├─ [..] MLOAD
+    ├─ [..] Counter::number() [staticcall]
+    │   ├─ [..] SLOAD 0x0 → (0x1)
+    │   ├─ [..] MLOAD
+    │   ├─ [..] MLOAD
+    │   └─ ← [Return] 1
+    ├─ [..] MLOAD
+    ├─ [..] MLOAD
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// Tests that --opcodes properly errors (fails early) with wrong opcode names
+forgetest_init!(opcodes_invalid_name, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--opcodes", "BOGUS"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+error: invalid value 'BOGUS' for '--opcodes <OPCODES>': invalid opcode: BOGUS
+
+For more information, try '--help'.
+
+"#]]);
+});
+
+// Tests that --opcodes errors when not provided with -vvvvv
+forgetest_init!(opcodes_not_enough_verbosity, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.args(["test", "--mt", "test_Increment", "-vvv", "--opcodes", "ADD"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+Error: Not enough verbosity. Use -vvvvv to show opcodes.
+
+"#]]);
+});
+
+forgetest_init!(opcodes_conflict_with_non_trace_outputs, |prj, cmd| {
+    prj.initialize_default_contracts();
+    for flag in ["--json", "--junit", "--list", "--debug"] {
+        let output =
+            cmd.forge_fuse().args(["test", "-vvvvv", "--opcodes", "SLOAD", flag]).assert_failure();
+        let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+        assert!(stderr.contains("--opcodes"), "stderr should mention --opcodes: {stderr}");
+        assert!(stderr.contains(flag), "stderr should mention {flag}: {stderr}");
+        assert!(stderr.contains("cannot be used with"), "stderr should explain conflict: {stderr}");
+    }
+});
+
+// Tests that the test file path is not swallowed by the --opcodes flag
+forgetest_init!(opcodes_path_after_flag, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.args([
+        "test",
+        "--mt",
+        "test_Increment",
+        "-vvvvv",
+        "--opcodes",
+        "SSTORE",
+        "test/Counter.t.sol",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [..] CounterTest::setUp()
+    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [..] CounterTest::test_Increment()
+    ├─ [..] Counter::increment()
+    │   ├─ [..] SSTORE 0x0: 0x0 → 0x1
+    │   └─ ← [Stop]
+    ├─ [..] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
 // Tests that chained errors are properly displayed.
 // <https://github.com/foundry-rs/foundry/issues/9161>
 forgetest!(displays_chained_error, |prj, cmd| {
@@ -4438,6 +4569,65 @@ Selectors successfully uploaded to OpenChain
 Uploading selectors for Counter...
 
 "#]]);
+});
+
+forgetest_init!(selectors_collision_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source(
+        "First.sol",
+        r"
+contract First {
+    function burn(uint256 value) public pure {
+        value;
+    }
+}
+   ",
+    );
+    prj.add_source(
+        "Second.sol",
+        r"
+contract Second {
+    function collate_propagate_storage(bytes16 value) public pure {
+        value;
+    }
+}
+   ",
+    );
+
+    let first_artifact = prj.paths().artifacts.join("First.sol/First.json");
+    let second_artifact = prj.paths().artifacts.join("Second.sol/Second.json");
+
+    let output = cmd.args(["selectors", "collision", "First", "Second"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+
+    assert!(stdout.contains("1 collisions found:"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("42966c68"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("burn(uint256)"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("collate_propagate_storage(bytes16)"), "unexpected stdout:\n{stdout}");
+    assert!(!first_artifact.exists());
+    assert!(!second_artifact.exists());
+});
+
+forgetest_init!(selectors_list_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+}
+   ",
+    );
+
+    let artifact = prj.paths().artifacts.join("Counter.sol/Counter.json");
+    let output = cmd.args(["selectors", "list", "Counter"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+
+    assert!(stdout.contains("Counter"), "unexpected stdout:\n{stdout}");
+    assert!(stdout.contains("setNumber(uint256)"), "unexpected stdout:\n{stdout}");
+    assert!(!artifact.exists());
 });
 
 forgetest_init!(selectors_list_cmd, |prj, cmd| {
