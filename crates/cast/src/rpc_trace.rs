@@ -4,9 +4,14 @@
 //! `callTracer`) be decoded and rendered with the same machinery used for locally executed traces.
 //! `callTracer` does not record opcode-level steps, so [`CallTrace::steps`] is left empty;
 //! everything the call-tree view needs (calls, value, gas, logs, revert reasons) is preserved.
+//!
+//! Also hosts the shared classification of the RPC rejections a `debug_trace*` request can hit,
+//! so `cast call --debug-trace-call` and `cast run --debug-trace-transaction` surface the same
+//! actionable hints.
 
 use alloy_primitives::{Bytes, LogData, U256};
 use alloy_rpc_types::trace::geth::{CallFrame, CallLogFrame};
+use alloy_transport::TransportError;
 use foundry_evm::traces::{
     CallKind, CallLog, CallTrace, CallTraceArena, CallTraceNode, TraceMemberOrder,
 };
@@ -19,6 +24,31 @@ pub fn call_frame_to_arena(root: &CallFrame) -> CallTraceArena {
     nodes.clear();
     push_frame(nodes, root, None, 0);
     arena
+}
+
+/// Returns `true` if `err` is a JSON-RPC method-not-found rejection (code -32601), which is how
+/// nodes without the `debug` namespace reject `debug_trace*` requests.
+pub fn is_method_not_found_error(err: &TransportError) -> bool {
+    err.as_error_resp().is_some_and(|resp| resp.code == -32601)
+}
+
+/// Returns `true` if `err` looks like a missing-historical-state rejection: an archive-depth
+/// error, usually with a generic code (-32000) distinguishable only by message, hit whenever a
+/// `debug_trace*` request targets a block whose state a full node has pruned.
+pub fn is_missing_state_error(err: &TransportError) -> bool {
+    let message = err
+        .as_error_resp()
+        .map(|resp| resp.message.to_ascii_lowercase())
+        .unwrap_or_else(|| err.to_string().to_ascii_lowercase());
+    [
+        "missing trie node",
+        "required historical state",
+        "historical state",
+        "header not found",
+        "missing state",
+    ]
+    .iter()
+    .any(|needle| message.contains(*needle))
 }
 
 /// Pushes `frame` and all of its children into `nodes`, returning the index of the pushed node.
