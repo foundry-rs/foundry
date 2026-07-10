@@ -4,7 +4,7 @@ use crate::{
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Error, Event, Function, JsonAbi};
+use alloy_json_abi::{Constructor, Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
     map::{AddressHashMap, HashMap, HashSet},
@@ -178,6 +178,10 @@ pub struct CallTraceDecoder {
     pub functions: HashMap<Selector, Vec<Function>>,
     /// Functions identified for a specific contract address.
     pub functions_by_address: HashMap<Address, HashMap<Selector, Vec<Function>>>,
+    /// Constructors identified for a specific contract address.
+    pub constructors_by_address: HashMap<Address, Constructor>,
+    /// Creation input offsets where ABI-encoded constructor arguments begin.
+    pub constructor_args_offsets: HashMap<Address, usize>,
     /// All known events.
     ///
     /// Key is: `(topics[0], topics.len() - 1)`.
@@ -303,6 +307,8 @@ impl CallTraceDecoder {
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
             functions_by_address: Default::default(),
+            constructors_by_address: Default::default(),
+            constructor_args_offsets: Default::default(),
             events: console::ds::abi::events()
                 .into_values()
                 // Tempo
@@ -352,6 +358,8 @@ impl CallTraceDecoder {
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
+        self.constructors_by_address.clear();
+        self.constructor_args_offsets.clear();
     }
 
     /// Returns labels for precompiles active in this decoder's chain context.
@@ -484,7 +492,15 @@ impl CallTraceDecoder {
         }
 
         trace!(target: "evm::traces", len=addrs.len(), "collecting address identities");
-        for IdentifiedAddress { address, label, contract, abi, artifact_id: _ } in addrs {
+        for IdentifiedAddress {
+            address,
+            label,
+            contract,
+            abi,
+            constructor_args_offset,
+            artifact_id: _,
+        } in addrs
+        {
             let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
 
             if let Some(contract) = contract {
@@ -497,6 +513,10 @@ impl CallTraceDecoder {
 
             if let Some(abi) = abi {
                 self.collect_abi(&abi, Some(address));
+            }
+
+            if let Some(offset) = constructor_args_offset {
+                self.constructor_args_offsets.entry(address).or_insert(offset);
             }
         }
     }
@@ -512,6 +532,11 @@ impl CallTraceDecoder {
                 self.push_address_function(address, function.clone());
             }
             self.push_function(function.clone());
+        }
+        if let Some(address) = address
+            && let Some(constructor) = abi.constructor()
+        {
+            self.constructors_by_address.entry(address).or_insert_with(|| constructor.clone());
         }
         for event in abi.events() {
             self.push_event(event.clone());
@@ -598,7 +623,11 @@ impl CallTraceDecoder {
             if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
 
         if trace.kind.is_any_create() {
-            return DecodedCallTrace { label, ..Default::default() };
+            return DecodedCallTrace {
+                label,
+                call_data: self.decode_constructor_input(trace),
+                return_data: None,
+            };
         }
 
         if let Some(trace) = precompiles::decode(trace, self.chain_id, self.tempo_hardfork) {
@@ -731,6 +760,29 @@ impl CallTraceDecoder {
         }
 
         DecodedCallData { signature: func.signature(), args: args.unwrap_or_default() }
+    }
+
+    /// Decodes constructor input from a creation trace.
+    fn decode_constructor_input(&self, trace: &CallTrace) -> Option<DecodedCallData> {
+        let constructor = self.constructors_by_address.get(&trace.address)?;
+        let offset = *self.constructor_args_offsets.get(&trace.address)?;
+        let data = trace.data.get(offset..)?;
+        let decoded = constructor.abi_decode_input(data).ok()?;
+        let args = decoded
+            .iter()
+            .zip(&constructor.inputs)
+            .map(|(value, input)| {
+                self.format_param_value(
+                    Some(trace.address),
+                    "constructor",
+                    &input.name,
+                    &input.ty,
+                    value,
+                )
+            })
+            .collect();
+
+        Some(DecodedCallData { signature: constructor_signature(constructor), args })
     }
 
     /// Custom decoding for cheatcode inputs.
@@ -1213,6 +1265,13 @@ fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
 }
 
+fn constructor_signature(constructor: &Constructor) -> String {
+    format!(
+        "constructor({})",
+        constructor.inputs.iter().map(|input| input.selector_type()).format(",")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1274,6 +1333,37 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[tokio::test]
+    async fn test_decode_constructor_input() {
+        let address = Address::repeat_byte(0x12);
+        let constructor = Constructor::parse("constructor(uint256 amount, address owner)").unwrap();
+        let args = constructor
+            .abi_encode_input(&[
+                DynSolValue::Uint(U256::from(42), 256),
+                DynSolValue::Address(Address::repeat_byte(0x34)),
+            ])
+            .unwrap();
+        let mut data = vec![0x60, 0x80, 0x60, 0x40];
+        let offset = data.len();
+        data.extend_from_slice(&args);
+        let trace = CallTrace {
+            address,
+            kind: revm_inspectors::tracing::types::CallKind::Create,
+            data: data.into(),
+            ..Default::default()
+        };
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.constructors_by_address.insert(address, constructor);
+        decoder.constructor_args_offsets.insert(address, offset);
+
+        let decoded = decoder.decode_function(&trace).await;
+        let call_data = decoded.call_data.expect("constructor input should decode");
+
+        assert_eq!(call_data.signature, "constructor(uint256,address)");
+        assert_eq!(call_data.args[0], "42");
+        assert_eq!(call_data.args[1], format!("{}", Address::repeat_byte(0x34)));
     }
 
     #[test]
