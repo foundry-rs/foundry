@@ -1552,20 +1552,34 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     }
 
     let block_number = ecx.db().active_fork_block_number()?;
-    Some(arbitrum_call_outcome(
-        call,
-        InstructionResult::Return,
-        arbitrum::arb_block_number_output(block_number),
-    ))
+    let Some((gas_cost, output)) = arbitrum::arb_block_number_call(call.gas_limit, block_number)
+    else {
+        return Some(arbitrum_call_outcome(
+            call,
+            InstructionResult::PrecompileOOG,
+            0,
+            Bytes::new(),
+        ));
+    };
+
+    Some(arbitrum_call_outcome(call, InstructionResult::Return, gas_cost, output))
 }
 
 fn arbitrum_call_outcome(
     call: &CallInputs,
     result: InstructionResult,
+    gas_used: u64,
     output: Bytes,
 ) -> CallOutcome {
+    let mut gas = Gas::new(call.gas_limit);
+    if !result.is_ok() {
+        gas.spend_all();
+    } else {
+        let _ = gas.record_regular_cost(gas_used);
+    }
+
     CallOutcome {
-        result: InterpreterResult { result, output, gas: Gas::new(call.gas_limit) },
+        result: InterpreterResult { result, output, gas },
         memory_offset: call.return_memory_offset.clone(),
         was_precompile_called: true,
         precompile_call_logs: vec![],

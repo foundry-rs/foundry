@@ -502,6 +502,11 @@ contract ArbitrumArbSysTest is Test {
         assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219831);
         assertLt(block.number, 75219831);
 
+        (bool success,) = address(0x64).staticcall{gas: 2}(
+            abi.encodeWithSelector(ArbSys.arbBlockNumber.selector)
+        );
+        assertFalse(success);
+
         vm.rollFork(75219832);
         assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219832);
     }

@@ -13,6 +13,9 @@ pub const ARB_SYS_ADDRESS: Address = address!("000000000000000000000000000000000
 /// `ArbSys.arbBlockNumber()` selector.
 pub const ARB_BLOCK_NUMBER_SELECTOR: [u8; 4] = hex!("a3b1b31d");
 
+/// Gas charged by Nitro for returning the 32-byte `arbBlockNumber()` result.
+pub const ARB_BLOCK_NUMBER_GAS_COST: u64 = 3;
+
 /// ID for the ArbSys precompile.
 pub static PRECOMPILE_ID_ARB_SYS: PrecompileId = PrecompileId::Custom(Cow::Borrowed("ArbSys"));
 
@@ -24,6 +27,12 @@ pub fn is_arbitrum_chain(chain_id: u64) -> bool {
 /// Returns the ABI-encoded result for `ArbSys.arbBlockNumber()`.
 pub fn arb_block_number_output(block_number: u64) -> Bytes {
     Bytes::copy_from_slice(&U256::from(block_number).to_be_bytes::<32>())
+}
+
+/// Returns the gas cost and ABI-encoded result for `ArbSys.arbBlockNumber()`.
+pub fn arb_block_number_call(gas_limit: u64, block_number: u64) -> Option<(u64, Bytes)> {
+    (gas_limit >= ARB_BLOCK_NUMBER_GAS_COST)
+        .then(|| (ARB_BLOCK_NUMBER_GAS_COST, arb_block_number_output(block_number)))
 }
 
 /// Returns an ArbSys precompile for the provided L2 block number.
@@ -41,5 +50,9 @@ fn arb_sys_precompile_call(input: PrecompileInput<'_>, block_number: u64) -> Pre
         ));
     }
 
-    Ok(PrecompileOutput::new(0, arb_block_number_output(block_number), input.reservoir))
+    let Some((gas_cost, output)) = arb_block_number_call(input.gas, block_number) else {
+        return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, input.reservoir));
+    };
+
+    Ok(PrecompileOutput::new(gas_cost, output, input.reservoir))
 }
