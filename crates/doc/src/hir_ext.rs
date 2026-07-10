@@ -673,6 +673,13 @@ impl LocalMembers {
     fn member_anchor(&self, member: &str) -> Option<String> {
         self.members.contains(member).then(|| slug_anchor_segment(member))
     }
+
+    /// Anchor for a qualified `{Contract-member[-params...]}` reference, if `member` is
+    /// documented on this page.
+    fn xref_member_anchor(&self, part: &str) -> Option<String> {
+        let member = part.split('-').find(|piece| !piece.is_empty())?;
+        self.members.contains(member).then(|| xref_part_anchor(part))
+    }
 }
 
 /// Escape a string for use as a markdown link label.
@@ -720,7 +727,9 @@ pub fn replace_inline_links(
                 if let Some(local) = local {
                     let anchor = match part {
                         None => local.member_anchor(lookup_name),
-                        Some(member) if lookup_name == local.name => Some(xref_part_anchor(member)),
+                        Some(member) if lookup_name == local.name => {
+                            local.xref_member_anchor(member)
+                        }
                         Some(_) => None,
                     };
                     if let Some(anchor) = anchor
@@ -953,6 +962,15 @@ mod tests {
             Some(&local),
         );
         assert_eq!(out, "See `unknownMember`.");
+
+        // Unknown qualified self-reference should not create a broken same-page anchor.
+        let out = replace_inline_links(
+            "See {ECDSA-doesNotExist}.",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "See `ECDSA`.");
     }
 
     #[test]
