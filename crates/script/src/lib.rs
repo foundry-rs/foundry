@@ -61,7 +61,7 @@ use foundry_evm::{
     },
     opts::EvmOpts,
     revm::interpreter::InstructionResult,
-    traces::{TraceRequirements, Traces},
+    traces::{InternalTraceMode, TraceRequirements, Traces},
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
@@ -285,7 +285,7 @@ impl ScriptArgs {
 
     async fn preprocess<FEN: FoundryEvmNetwork>(
         self,
-        config: Config,
+        mut config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let args = self;
@@ -319,6 +319,7 @@ impl ScriptArgs {
         }
 
         tempo.resolve_expires();
+        config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
 
         let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
@@ -868,7 +869,14 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                 stack
                     .logs(self.config.live_logs)
                     .trace_requirements(
-                        TraceRequirements::none().with_calls(true).with_debug(debug),
+                        TraceRequirements::none()
+                            .with_calls(true)
+                            .with_debug(debug)
+                            .with_decode_internal(if self.config.tracing.decode_internal {
+                                InternalTraceMode::Full
+                            } else {
+                                InternalTraceMode::None
+                            }),
                     )
                     .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)

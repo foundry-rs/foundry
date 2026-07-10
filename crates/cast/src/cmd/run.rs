@@ -80,6 +80,10 @@ pub struct RunArgs {
     #[command(flatten)]
     tracing: TracingArgs,
 
+    /// Deprecated short alias for `--labels`.
+    #[arg(short = 'l', value_name = "ADDRESS:LABEL", hide = true)]
+    legacy_labels: Vec<String>,
+
     #[command(flatten)]
     etherscan: EtherscanOpts,
 
@@ -130,10 +134,11 @@ impl RunArgs {
         self.run_with_evm::<EthEvmNetwork>().await
     }
 
-    async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
+    async fn run_with_evm<FEN: FoundryEvmNetwork>(mut self) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
+        self.tracing.labels.append(&mut self.legacy_labels);
         let tracing = self.tracing.resolve(&config.tracing, evm_opts.verbosity);
 
         let with_local_artifacts = self.with_local_artifacts;
@@ -493,6 +498,16 @@ impl figment::Provider for RunArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::address;
+
+    #[test]
+    fn parses_legacy_short_label_alias() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let label = format!("{address}:alice");
+        let args = RunArgs::parse_from(["cast run", "0x00", "-l", &label]);
+
+        assert_eq!(args.legacy_labels, vec![label]);
+    }
 
     #[test]
     fn parent_beacon_block_root_is_required_for_cancun() {

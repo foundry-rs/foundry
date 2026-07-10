@@ -852,13 +852,9 @@ impl Config {
             || provider.contains("invariant.workers")
             || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
             || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
-        let tracing_verbosity_configured =
-            provider.contains("tracing.verbosity") || provider.contains("tracing");
-        let tracing_labels_configured =
-            provider.contains("tracing.labels") || provider.contains("tracing");
-        let figment = Self::normalize_tracing_figment(
-            self.to_figment(FigmentProviders::None).merge(provider),
-        );
+        let tracing_verbosity_configured = provider.contains("tracing.verbosity");
+        let tracing_labels_configured = provider.contains("tracing.labels");
+        let figment = self.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
@@ -891,7 +887,6 @@ impl Config {
         figment: Figment,
         strict_profile: bool,
     ) -> Result<Self, ExtractConfigError> {
-        let figment = Self::normalize_tracing_figment(figment);
         let invariant_corpus_random_sequence_weight_configured = figment
             .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
             .unwrap_or_else(|_| {
@@ -901,9 +896,8 @@ impl Config {
             .extract_inner::<bool>("invariant.workers_configured")
             .unwrap_or_else(|_| figment_value_is_configured(&figment, "invariant.workers"));
         let tracing_verbosity_configured =
-            figment_value_or_parent_is_configured(&figment, "tracing.verbosity", "tracing");
-        let tracing_labels_configured =
-            figment_value_or_parent_is_configured(&figment, "tracing.labels", "tracing");
+            figment_value_is_configured(&figment, "tracing.verbosity");
+        let tracing_labels_configured = figment_value_is_configured(&figment, "tracing.labels");
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
@@ -960,13 +954,13 @@ impl Config {
     }
 
     fn normalize_tracing_figment(mut figment: Figment) -> Figment {
-        if figment_value_or_parent_is_configured(&figment, "tracing.verbosity", "tracing")
+        if figment.contains("tracing.verbosity")
             && let Ok(verbosity) = figment.extract_inner::<u8>("tracing.verbosity")
         {
             figment = figment.merge(("verbosity", verbosity));
         }
 
-        if figment_value_or_parent_is_configured(&figment, "tracing.labels", "tracing")
+        if figment.contains("tracing.labels")
             && let Ok(tracing_labels) =
                 figment.extract_inner::<AddressHashMap<String>>("tracing.labels")
         {
@@ -2658,10 +2652,6 @@ impl FigmentProviders {
 
 fn figment_value_is_configured(figment: &Figment, key: &str) -> bool {
     figment.find_metadata(key).is_some_and(|metadata| metadata.name.as_ref() != "Foundry Config")
-}
-
-fn figment_value_or_parent_is_configured(figment: &Figment, key: &str, parent: &str) -> bool {
-    figment_value_is_configured(figment, key) || figment_value_is_configured(figment, parent)
 }
 
 /// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
@@ -5857,6 +5847,29 @@ mod tests {
             assert_eq!(config.labels, labels);
             assert_eq!(config.tracing.labels, labels);
             assert!(config.warnings.is_empty());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_partial_tracing_section_preserves_legacy_verbosity() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                verbosity = 4
+
+                [tracing]
+                disable_labels = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.verbosity, 4);
+            assert_eq!(config.tracing.verbosity, 4);
+            assert!(config.tracing.disable_labels);
 
             Ok(())
         });

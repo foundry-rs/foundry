@@ -21,7 +21,7 @@ use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::ProviderBuilder,
 };
-use foundry_config::{NamedChain, TracingConfig};
+use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
@@ -346,7 +346,7 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         let chain_id = self.script_config.evm_opts.get_remote_chain_id().await;
         let is_tempo = self.script_config.evm_opts.networks.is_tempo()
             || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
-        let mut tracing = self.tracing_config();
+        let mut tracing = self.script_config.config.tracing.clone();
         tracing.labels.extend(self.execution_result.labeled_addresses.clone());
 
         let mut decoder = CallTraceDecoderBuilder::new()
@@ -381,12 +381,6 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         }
 
         Ok(decoder)
-    }
-
-    fn tracing_config(&self) -> TracingConfig {
-        self.args
-            .tracing
-            .resolve(&self.script_config.config.tracing, self.script_config.evm_opts.verbosity)
     }
 
     /// Collects the return values from the execution result.
@@ -429,12 +423,6 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
-    fn tracing_config(&self) -> TracingConfig {
-        self.args
-            .tracing
-            .resolve(&self.script_config.config.tracing, self.script_config.evm_opts.verbosity)
-    }
-
     pub async fn show_json(&self) -> Result<()> {
         let mut result = self.execution_result.clone();
 
@@ -466,7 +454,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     }
 
     pub async fn show_traces(&self) -> Result<()> {
-        let tracing = self.tracing_config();
+        let tracing = &self.script_config.config.tracing;
         let verbosity = tracing.verbosity;
         let func = &self.execution_data.func;
         let result = &self.execution_result;

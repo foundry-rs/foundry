@@ -1431,6 +1431,12 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "optimizer_details": null,
   "model_checker": null,
   "verbosity": 0,
+  "tracing": {
+    "verbosity": 0,
+    "disable_labels": false,
+    "compact_labels": false,
+    "decode_internal": false
+  },
   "eth_rpc_url": null,
   "eth_rpc_accept_invalid_certs": false,
   "eth_rpc_no_proxy": false,
