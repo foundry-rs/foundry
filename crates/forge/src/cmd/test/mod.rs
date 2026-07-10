@@ -72,7 +72,7 @@ use foundry_evm::{
 };
 use rand::Rng;
 use regex::Regex;
-use revm::context::Transaction;
+use revm::{bytecode::opcode::OpCode, context::Transaction};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -962,6 +962,15 @@ pub struct TestArgs {
     /// If no failure recorded then regular test run is performed.
     #[arg(long)]
     pub rerun: bool,
+
+    /// Print the given opcodes in trace output, with their gas
+    /// cost and the storage slot and value, if available.
+    ///
+    /// Accepts a comma-separated list of opcode names, e.g.
+    /// `--opcodes SLOAD,MLOAD,SSTORE`. Names are in uppercase.
+    /// Requires `-vvvvv` to render.
+    #[arg(long, value_parser = parse_opcode, value_delimiter(','), conflicts_with_all = ["json", "junit", "list", "debug"])]
+    pub opcodes: Vec<OpCode>,
 
     /// Print test summary table.
     #[arg(long, help_heading = "Display options")]
@@ -2565,6 +2574,11 @@ impl TestArgs {
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
+        if !self.opcodes.is_empty() && verbosity < 5 {
+            sh_eprintln!()?;
+            eyre::bail!("Not enough verbosity. Use -vvvvv to show opcodes.");
+        }
+
         if num_filtered == 0 {
             let total_tests = if filter.is_empty() {
                 num_filtered
@@ -2857,6 +2871,7 @@ impl TestArgs {
                         let should_include = should_include_trace(kind);
 
                         if renders_trace && should_include {
+                            decoder.opcodes = self.opcodes.clone();
                             decode_trace_arena(arena, &decoder).await;
 
                             if let Some(trace_depth) = self.trace_depth {
@@ -3432,6 +3447,10 @@ impl Provider for TestArgs {
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
+}
+
+fn parse_opcode(s: &str) -> Result<OpCode, String> {
+    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {
