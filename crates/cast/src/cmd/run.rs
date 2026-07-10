@@ -7,7 +7,7 @@ use crate::{
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, Network, TransactionResponse};
+use alloy_network::{BlockResponse, Network, ReceiptResponse, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{AddressHashMap, AddressSet},
@@ -232,8 +232,13 @@ impl RunArgs {
                 );
             };
 
-            let success = frame.error.is_none() && frame.revert_reason.is_none();
-            let gas_used = frame.gas_used.saturating_to();
+            let receipt = provider
+                .get_transaction_receipt(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx receipt not found: {:?}", tx_hash))?;
+
+            let success = receipt.status();
+            let gas_used = receipt.gas_used();
             let arena = SparsedTraceArena {
                 arena: call_frame_to_arena(&frame),
                 ignored: Default::default(),
