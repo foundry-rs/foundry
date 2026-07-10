@@ -642,6 +642,46 @@ pub(crate) fn clean_block_doc_content(raw: &str) -> String {
 
 // ── inline link replacement ───────────────────────────────────────────────────
 
+/// Members of the contract page currently being rendered.
+///
+/// Used to resolve `{member}` and `{Contract-member}` references lexically:
+/// a name that belongs to the current contract links to its heading anchor on
+/// the same page instead of going through the global name index (which only
+/// contains top-level items and could otherwise resolve to an unrelated page).
+#[derive(Debug)]
+pub struct LocalMembers {
+    /// The current contract's name.
+    name: String,
+    /// Member names with a heading (and thus an anchor) on the current page.
+    members: HashSet<String>,
+}
+
+impl LocalMembers {
+    /// Create an empty member set for the contract `name`.
+    pub fn new(name: &str) -> Self {
+        Self { name: name.to_string(), members: HashSet::new() }
+    }
+
+    /// Record a member that is rendered as a `### member` heading on the page.
+    pub fn insert(&mut self, member: &str) {
+        self.members.insert(member.to_string());
+    }
+
+    /// Anchor for a bare `{member}` reference, if `member` is documented on this page.
+    ///
+    /// Overloads share the base heading slug; the first heading owns it.
+    fn member_anchor(&self, member: &str) -> Option<String> {
+        self.members.contains(member).then(|| slug_anchor_segment(member))
+    }
+
+    /// Anchor for a qualified `{Contract-member[-params...]}` reference, if `member` is
+    /// documented on this page.
+    fn xref_member_anchor(&self, part: &str) -> Option<String> {
+        let member = part.split('-').find(|piece| !piece.is_empty())?;
+        self.members.contains(member).then(|| xref_part_anchor(part))
+    }
+}
+
 /// Escape a string for use as a markdown link label.
 ///
 /// Prevents MDX from treating user-controlled NatSpec label text as JSX or
@@ -654,7 +694,17 @@ fn escape_link_label(s: &str) -> String {
 ///
 /// Matches the legacy pattern: `{[xref-]Ident[-part]}[label]` where `label` defaults
 /// to `Ident`.
-pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page: &Path) -> String {
+///
+/// Resolution prefers lexical proximity: a reference naming a member of the current
+/// contract (`{member}`, or `{Contract-member}` where `Contract` is the current
+/// contract) becomes an anchor-only link within the page; everything else goes
+/// through the global `name_to_page` index.
+pub fn replace_inline_links(
+    text: &str,
+    name_to_page: &NameToPage,
+    current_page: &Path,
+    local: Option<&LocalMembers>,
+) -> String {
     let mut out = String::with_capacity(text.len());
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -670,6 +720,31 @@ pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page:
                 } else {
                     lookup_name
                 };
+
+                // Same-contract references resolve to anchor-only links: a bare
+                // `{member}` documented on this page, or `{Contract-member}` where
+                // `Contract` is the contract being rendered.
+                if let Some(local) = local {
+                    let anchor = match part {
+                        None => local.member_anchor(lookup_name),
+                        Some(member) if lookup_name == local.name => {
+                            local.xref_member_anchor(member)
+                        }
+                        Some(_) => None,
+                    };
+                    if let Some(anchor) = anchor
+                        && !anchor.is_empty()
+                    {
+                        let default_display = match part {
+                            Some(member) => format!("{lookup_name}.{member}"),
+                            None => lookup_name.to_string(),
+                        };
+                        let display = escape_link_label(label.unwrap_or(&default_display));
+                        out.push_str(&format!("[{display}](#{anchor})"));
+                        i += end;
+                        continue;
+                    }
+                }
 
                 if let Some(candidates) = name_to_page.get(lookup_name) {
                     let page = resolve_page(candidates, current_page);
@@ -845,11 +920,85 @@ mod tests {
             "See {xref-ERC721-_safeMint-address-uint256-}.",
             &name_to_page,
             Path::new("src/contract.Child.mdx"),
+            None,
         );
 
         assert_eq!(
             out,
             "See [ERC721._safeMint-address-uint256-](/src/contract.ERC721#_safemint-address-uint256)."
         );
+    }
+
+    #[test]
+    fn same_contract_member_links_anchor_only() {
+        let name_to_page = NameToPage::new();
+        let mut local = LocalMembers::new("ECDSA");
+        local.insert("toEthSignedMessageHash");
+        local.insert("tryRecover");
+
+        // Bare member reference -> anchor-only link.
+        let out = replace_inline_links(
+            "then calling {toEthSignedMessageHash} on it.",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "then calling [toEthSignedMessageHash](#toethsignedmessagehash) on it.");
+
+        // `{Contract-member}` self-reference -> anchor-only link.
+        let out = replace_inline_links(
+            "Overload of {ECDSA-tryRecover} that ...",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "Overload of [ECDSA.tryRecover](#tryrecover) that ...");
+
+        // Unknown member still falls back to inline code.
+        let out = replace_inline_links(
+            "See {unknownMember}.",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "See `unknownMember`.");
+
+        // Unknown qualified self-reference should not create a broken same-page anchor.
+        let out = replace_inline_links(
+            "See {ECDSA-doesNotExist}.",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "See `ECDSA`.");
+    }
+
+    #[test]
+    fn local_member_wins_over_global_name() {
+        // A top-level item elsewhere shares the member's name; lexical
+        // proximity resolves to the same-page anchor, not the other page.
+        let mut name_to_page = NameToPage::new();
+        name_to_page
+            .by_name
+            .insert("transfer".to_string(), vec![PathBuf::from("src/other/contract.transfer.mdx")]);
+        let mut local = LocalMembers::new("Token");
+        local.insert("transfer");
+
+        let out = replace_inline_links(
+            "Calls {transfer}.",
+            &name_to_page,
+            Path::new("src/contract.Token.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "Calls [transfer](#transfer).");
+
+        // Without local context the global index still resolves.
+        let out = replace_inline_links(
+            "Calls {transfer}.",
+            &name_to_page,
+            Path::new("src/contract.Token.mdx"),
+            None,
+        );
+        assert_eq!(out, "Calls [transfer](/src/other/contract.transfer).");
     }
 }
