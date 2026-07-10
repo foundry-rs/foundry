@@ -841,12 +841,17 @@ impl Config {
                 || provider
                     .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
                     .unwrap_or(false);
+        let invariant_workers_configured = self.invariant.workers_configured
+            || provider.contains("invariant.workers")
+            || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
+            || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
         let figment = self.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
+        config.invariant.workers_configured = invariant_workers_configured;
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -877,9 +882,13 @@ impl Config {
             .unwrap_or_else(|_| {
                 figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
             });
+        let invariant_workers_configured = figment
+            .extract_inner::<bool>("invariant.workers_configured")
+            .unwrap_or_else(|_| figment_value_is_configured(&figment, "invariant.workers"));
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
+        config.invariant.workers_configured = invariant_workers_configured;
         let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
@@ -1024,11 +1033,18 @@ impl Config {
                 .unwrap_or_else(|_| {
                     figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
                 });
+        let invariant_workers_configured = self.invariant.workers_configured
+            || figment.extract_inner::<bool>("invariant.workers_configured").unwrap_or_else(|_| {
+                figment.extract_inner::<InvariantWorkers>("invariant.workers").is_ok()
+            });
 
         // normalize defaults
         figment = self.normalize_defaults(figment);
         if invariant_corpus_random_sequence_weight_configured {
             figment = figment.merge(("invariant.corpus_random_sequence_weight_configured", true));
+        }
+        if invariant_workers_configured {
+            figment = figment.merge(("invariant.workers_configured", true));
         }
 
         Figment::from(self).merge(figment).select(profile)
@@ -3054,8 +3070,9 @@ mod tests {
         config.warnings = vec![];
     }
 
-    fn mark_serialized_invariant_corpus_weight(config: &mut Config) {
+    fn mark_serialized_invariant_provenance(config: &mut Config) {
         config.invariant.corpus_random_sequence_weight_configured = true;
+        config.invariant.workers_configured = true;
     }
 
     #[test]
@@ -4790,7 +4807,7 @@ mod tests {
             let mut other = Config::load().unwrap();
             clear_warning(&mut other);
             let mut serialized_default = default;
-            mark_serialized_invariant_corpus_weight(&mut serialized_default);
+            mark_serialized_invariant_provenance(&mut serialized_default);
             assert_eq!(serialized_default, other);
 
             Ok(())
@@ -4860,7 +4877,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
-            mark_serialized_invariant_corpus_weight(&mut loaded);
+            mark_serialized_invariant_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -4911,7 +4928,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
-            mark_serialized_invariant_corpus_weight(&mut loaded);
+            mark_serialized_invariant_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -5109,6 +5126,7 @@ mod tests {
                         ..Default::default()
                     },
                     corpus_random_sequence_weight_configured: true,
+                    workers_configured: true,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
@@ -5136,12 +5154,14 @@ mod tests {
                 FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
             );
             assert!(!loaded.invariant.corpus_random_sequence_weight_configured);
+            assert!(!loaded.invariant.workers_configured);
 
             jail.create_file(
                 "foundry.toml",
                 r#"
                 [invariant]
                 corpus_random_sequence_weight = 10
+                workers = 4
             "#,
             )?;
 
@@ -5151,6 +5171,11 @@ mod tests {
                 FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
             );
             assert!(loaded.invariant.corpus_random_sequence_weight_configured);
+            assert_eq!(
+                loaded.invariant.workers,
+                InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap())
+            );
+            assert!(loaded.invariant.workers_configured);
 
             Ok(())
         });
@@ -7039,6 +7064,58 @@ mod tests {
 
             // Assert that the deprecated flag is correctly interpreted
             assert_eq!(config.deny, DenyLevel::Warnings);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_deprecated_keys_in_inactive_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci]
+                deny_warnings = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "deny_warnings" && new == "deny = warnings"
+                )),
+                "Expected deprecated key warning for inactive profile, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_deprecated_profile_names() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.cancun]
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "cancun" && new == "evm_version = Cancun"
+                )),
+                "Expected deprecated profile-name warning, got: {:?}",
+                cfg.warnings
+            );
             Ok(())
         });
     }

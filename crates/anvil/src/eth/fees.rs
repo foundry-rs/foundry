@@ -16,7 +16,7 @@ use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork
 use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 use crate::eth::{
-    backend::{info::StorageInfo, notifications::NewBlockNotifications},
+    backend::{info::StorageInfo, notifications::ChainNotifications},
     error::BlockchainError,
 };
 
@@ -227,7 +227,7 @@ where
     /// blob parameters for the current spec
     blob_params: BlobParams,
     /// incoming notifications about new blocks
-    new_blocks: NewBlockNotifications,
+    new_blocks: ChainNotifications,
     /// contains all fee history related entries
     cache: FeeHistoryCache,
     /// number of items to consider
@@ -242,7 +242,7 @@ where
 {
     pub const fn new(
         blob_params: BlobParams,
-        new_blocks: NewBlockNotifications,
+        new_blocks: ChainNotifications,
         cache: FeeHistoryCache,
         storage_info: StorageInfo<N>,
     ) -> Self {
@@ -391,7 +391,9 @@ where
 
         while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
             // add the imported block.
-            pin.insert_cache_entry_for_block(notification.hash, notification.header.as_ref());
+            if let Some(block) = notification.as_new_block() {
+                pin.insert_cache_entry_for_block(block.hash, block.header.as_ref());
+            }
         }
 
         Poll::Pending

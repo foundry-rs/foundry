@@ -9,7 +9,7 @@ use crate::{
             self,
             db::SerializableState,
             mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
-            notifications::NewBlockNotifications,
+            notifications::ChainNotifications,
             validate::TransactionValidator,
         },
         error::{
@@ -403,6 +403,18 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Sets the `prevrandao` value of the next block.
+    ///
+    /// This is a one-shot override: it applies to the next mined block only, after which anvil
+    /// resumes deriving `prevrandao` from the parent hash and block number.
+    ///
+    /// Handler for RPC call: `anvil_setNextBlockPrevRandao`
+    pub async fn anvil_set_next_block_prevrandao(&self, prevrandao: B256) -> Result<()> {
+        node_info!("anvil_setNextBlockPrevRandao");
+        self.backend.set_next_block_prevrandao(prevrandao);
+        Ok(())
+    }
+
     /// Retrieves the Anvil node configuration params.
     ///
     /// Handler for RPC call: `anvil_nodeInfo`
@@ -748,8 +760,9 @@ impl<N: Network> EthApi<N> {
         self.backend.impersonate_signature(signature, address).await
     }
 
-    /// Returns a new block event stream that yields Notifications when a new block was added
-    pub fn new_block_notifications(&self) -> NewBlockNotifications {
+    /// Returns a new block event stream that yields Notifications when a new block was added or
+    /// when logs were removed from the canonical chain due to a reorg
+    pub fn new_block_notifications(&self) -> ChainNotifications {
         self.backend.new_block_notifications()
     }
 
@@ -1985,6 +1998,9 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_storage_at(addr, slot, val).await.to_rpc_result()
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
+            EthRequest::SetNextBlockPrevRandao(prevrandao) => {
+                self.anvil_set_next_block_prevrandao(prevrandao).await.to_rpc_result()
+            }
             EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
             EthRequest::SetMinGasPrice(gas) => {
@@ -2539,13 +2555,7 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let (requires, provides) = if let Some((requires, provides)) =
-            tempo_parallel_nonce_markers(&pending_transaction)
-        {
-            (requires, provides)
-        } else {
-            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-        };
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -2598,13 +2608,7 @@ impl EthApi<FoundryNetwork> {
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let on_chain_nonce = self.backend.current_nonce(from).await?;
-        let (requires, provides) = if let Some((requires, provides)) =
-            tempo_parallel_nonce_markers(&pending_transaction)
-        {
-            (requires, provides)
-        } else {
-            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-        };
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -2617,7 +2621,8 @@ impl EthApi<FoundryNetwork> {
             return Ok(receipt);
         }
         while let Some(notification) = stream.next().await {
-            if let Some(block) = self.backend.get_block_by_hash(notification.hash)
+            if let Some(new_block) = notification.as_new_block()
+                && let Some(block) = self.backend.get_block_by_hash(new_block.hash)
                 && block.body.transactions.iter().any(|tx| tx.hash() == hash)
                 && let Some(receipt) = self.backend.transaction_receipt(hash).await?
             {
@@ -3799,13 +3804,7 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let (requires, provides) = if let Some((requires, provides)) =
-            tempo_parallel_nonce_markers(&pending_transaction)
-        {
-            (requires, provides)
-        } else {
-            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-        };
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -4070,7 +4069,7 @@ impl EthApi<FoundryNetwork> {
                 .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
 
             loop {
-                let block = tokio::select! {
+                let notification = tokio::select! {
                     biased;
                     // Exit when the subscriber unsubscribes, even while awaiting the next block.
                     _ = tx.closed() => break,
@@ -4078,6 +4077,10 @@ impl EthApi<FoundryNetwork> {
                         Some(block) => block,
                         None => break,
                     },
+                };
+
+                let Some(block) = notification.as_new_block() else {
+                    continue;
                 };
 
                 let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {
@@ -4322,9 +4325,7 @@ impl EthApi<FoundryNetwork> {
     /// Only supported when running in Tempo mode (`--tempo`).
     pub async fn anvil_set_fee_token(&self, user: Address, token: Address) -> Result<()> {
         node_info!("anvil_setFeeToken");
-        if !self.backend.is_tempo() {
-            return Err(BlockchainError::RpcUnimplemented);
-        }
+        self.ensure_tempo_mode()?;
         self.backend.set_fee_token(user, token).await?;
         Ok(())
     }
@@ -4340,9 +4341,7 @@ impl EthApi<FoundryNetwork> {
         token: Address,
     ) -> Result<()> {
         node_info!("anvil_setValidatorFeeToken");
-        if !self.backend.is_tempo() {
-            return Err(BlockchainError::RpcUnimplemented);
-        }
+        self.ensure_tempo_mode()?;
         self.backend.set_validator_fee_token(validator, token).await?;
         Ok(())
     }
@@ -4359,11 +4358,14 @@ impl EthApi<FoundryNetwork> {
         amount: U256,
     ) -> Result<()> {
         node_info!("anvil_setFeeAmmLiquidity");
-        if !self.backend.is_tempo() {
-            return Err(BlockchainError::RpcUnimplemented);
-        }
+        self.ensure_tempo_mode()?;
         self.backend.set_fee_amm_liquidity(user_token, validator_token, amount).await?;
         Ok(())
+    }
+
+    /// Ensures anvil runs in Tempo mode (`--tempo`), the RPC method is unavailable otherwise.
+    fn ensure_tempo_mode(&self) -> Result<()> {
+        if self.backend.is_tempo() { Ok(()) } else { Err(BlockchainError::RpcUnimplemented) }
     }
 }
 
@@ -4394,6 +4396,19 @@ fn tempo_parallel_nonce_markers(
         .as_ref()
         .has_nonzero_tempo_nonce_key()
         .then(|| (vec![], vec![pending_transaction.hash().to_vec()]))
+}
+
+/// Returns the pool `(requires, provides)` markers for a transaction, accounting for
+/// Tempo's 2D nonce system (see [`tempo_parallel_nonce_markers`]).
+fn nonce_markers(
+    pending_transaction: &PendingTransaction<FoundryTxEnvelope>,
+    nonce: u64,
+    on_chain_nonce: u64,
+    from: Address,
+) -> (Vec<TxMarker>, Vec<TxMarker>) {
+    tempo_parallel_nonce_markers(pending_transaction).unwrap_or_else(|| {
+        (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+    })
 }
 
 fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnvelope>) -> String {

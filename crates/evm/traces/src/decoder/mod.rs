@@ -1,5 +1,5 @@
 use crate::{
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedTraceStep,
     debug::DebugTraceIdentifier,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
@@ -26,7 +26,9 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
+use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
+
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
@@ -197,6 +199,9 @@ pub struct CallTraceDecoder {
     /// The chain ID, used to determine network-specific precompiles.
     pub chain_id: Option<u64>,
 
+    /// Detailed opcodes for analysis.
+    pub opcodes: Vec<OpCode>,
+
     /// The Tempo hardfork, used to determine hardfork-specific precompiles.
     pub tempo_hardfork: Option<TempoHardfork>,
 }
@@ -327,6 +332,8 @@ impl CallTraceDecoder {
             disable_labels: false,
 
             chain_id: None,
+
+            opcodes: Vec::new(),
 
             tempo_hardfork: None,
         }
@@ -532,6 +539,45 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
+            if !self.opcodes.is_empty() {
+                for step in &mut node.trace.steps {
+                    if step.decoded.is_some() {
+                        continue;
+                    }
+                    for opcode in &self.opcodes {
+                        if step.op == *opcode {
+                            let res = match &step.storage_change {
+                                Some(change) if step.op == OpCode::SSTORE => {
+                                    if let Some(had_value) = change.had_value {
+                                        format!(
+                                            "[{}] {} 0x{:x}: 0x{:x} → 0x{:x}",
+                                            step.gas_cost,
+                                            opcode,
+                                            change.key,
+                                            had_value,
+                                            change.value
+                                        )
+                                    } else {
+                                        format!(
+                                            "[{}] {} 0x{:x} → (0x{:x})",
+                                            step.gas_cost, opcode, change.key, change.value
+                                        )
+                                    }
+                                }
+                                Some(change) => format!(
+                                    "[{}] {} 0x{:x} → (0x{:x})",
+                                    step.gas_cost, opcode, change.key, change.value
+                                ),
+                                None => format!("[{}] {}", step.gas_cost, opcode),
+                            };
+
+                            step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
+                            break;
+                        }
+                    }
+                }
+            }
+
             node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
             for log in &mut node.logs {
                 log.decoded =
@@ -564,7 +610,7 @@ impl CallTraceDecoder {
             return DecodedCallTrace {
                 label,
                 call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
-                return_data: self.default_return_data(trace),
+                return_data: self.default_return_data(trace).await,
             };
         }
 
@@ -592,7 +638,7 @@ impl CallTraceDecoder {
                 let return_data = if trace.success {
                     None
                 } else {
-                    let revert_msg = self.revert_decoder.decode(&trace.output, trace.status);
+                    let revert_msg = self.decode_revert(&trace.output, trace.status).await;
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
                         Some(format!(
@@ -624,7 +670,7 @@ impl CallTraceDecoder {
                 return DecodedCallTrace {
                     label,
                     call_data: self.fallback_call_data(trace),
-                    return_data: self.default_return_data(trace),
+                    return_data: self.default_return_data(trace).await,
                 };
             };
 
@@ -641,13 +687,13 @@ impl CallTraceDecoder {
             DecodedCallTrace {
                 label,
                 call_data: Some(call_data),
-                return_data: self.decode_function_output(trace, contract_functions),
+                return_data: self.decode_function_output(trace, contract_functions).await,
             }
         } else {
             DecodedCallTrace {
                 label,
                 call_data: self.fallback_call_data(trace),
-                return_data: self.default_return_data(trace),
+                return_data: self.default_return_data(trace).await,
             }
         }
     }
@@ -830,9 +876,13 @@ impl CallTraceDecoder {
     }
 
     /// Decodes a function's output into the given trace.
-    fn decode_function_output(&self, trace: &CallTrace, funcs: &[Function]) -> Option<String> {
+    async fn decode_function_output(
+        &self,
+        trace: &CallTrace,
+        funcs: &[Function],
+    ) -> Option<String> {
         if !trace.success {
-            return self.default_return_data(trace);
+            return self.default_return_data(trace).await;
         }
 
         if trace.address == CHEATCODE_ADDRESS
@@ -888,15 +938,35 @@ impl CallTraceDecoder {
     }
 
     /// The default decoded return data for a trace.
-    fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
+    async fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
         // For calls with status None or successful status, don't decode revert data
         // This is due to trace.status is derived from the revm_interpreter::InstructionResult in
         // revm-inspectors status will `None` post revm 27, as `InstructionResult::Continue` does
         // not exists anymore.
-        if trace.status.is_none_or(|s| s.is_ok()) {
+        if trace.status.is_none_or(|s| s.is_ok()) || trace.success {
             return None;
         }
-        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, trace.status))
+        Some(self.decode_revert(&trace.output, trace.status).await)
+    }
+
+    /// Decodes revert data into a human-readable representation.
+    ///
+    /// If the revert decoder does not know the custom error, tries identifying the error selector
+    /// with the signatures identifier, like unknown function and event signatures. This resolves
+    /// errors from the local signatures cache populated by `forge build`, or from remote signature
+    /// databases.
+    async fn decode_revert(&self, output: &[u8], status: Option<InstructionResult>) -> String {
+        if let Some(reason) = self.revert_decoder.maybe_decode_known(output) {
+            return reason;
+        }
+        if let Some(identifier) = &self.signature_identifier
+            && let Some((selector, data)) = output.split_first_chunk::<SELECTOR_LEN>()
+            && let Some(error) = identifier.identify_error(Selector::from(*selector)).await
+            && let Ok(decoded) = error.abi_decode_input(data)
+        {
+            return format!("{}({})", error.name, decoded.iter().map(format_token).format(", "));
+        }
+        self.revert_decoder.decode(output, status)
     }
 
     /// Decodes an event.
@@ -1002,9 +1072,19 @@ impl CallTraceDecoder {
             })
             .filter_map(|n| n.trace.data.first_chunk().map(Selector::from))
             .filter(|selector| !self.functions.contains_key(selector));
+        let errors = nodes
+            .iter()
+            .filter(|&n| {
+                // Only consider reverted traces whose output the revert decoder cannot decode.
+                n.trace.status.is_some_and(|s| !s.is_ok())
+                    && !n.trace.success
+                    && self.revert_decoder.maybe_decode_known(&n.trace.output).is_none()
+            })
+            .filter_map(|n| n.trace.output.first_chunk().map(Selector::from));
         let selectors = events
             .map(SelectorKind::Event)
             .chain(functions.map(SelectorKind::Function))
+            .chain(errors.map(SelectorKind::Error))
             .unique()
             .collect::<Vec<_>>();
         let _ = identifier.identify(&selectors).await;

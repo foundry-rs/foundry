@@ -42,12 +42,14 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
   - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
+  - `deprecated-oz-function`: OpenZeppelin deprecated `SafeERC20.safeApprove` (use `safeIncreaseAllowance` / `safeDecreaseAllowance`) and `AccessControl._setupRole` (use `_grantRole`).
   - `empty-block`: Flags regular functions with an empty body; constructors, `receive`/`fallback`, `virtual` functions, functions with modifiers and value-less `payable` functions are exempt.
   - `incorrect-modifier`: Modifiers should not be able to finish without executing `_` or reverting.
   - `missing-events-access-control`: Access control changes should emit events.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
   - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
   - `return-bomb`: External calls with a gas limit should not consume unbounded return data.
+  - `solmate-safe-transfer-lib`: solmate's released `SafeTransferLib` does not check that the token has code, so token operations against a token-less address succeed silently.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
   - `too-many-digits`: Numeric literals with 5+ consecutive zeros are error-prone.
@@ -70,6 +72,9 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
   - `unused-error`: Custom error declarations that are never referenced should be removed.
   - `literal-instead-of-constant`: A literal value repeated inside a contract should be a named constant.
+  - `internal-function-used-once`: Internal functions referenced exactly once can usually be inlined into their caller.
+  - `cyclomatic-complexity`: functions with a cyclomatic complexity above 11 should be split into smaller functions.
+  - `incorrect-using-for`: `using ... for` directives naming a library with no function applicable to the type attach nothing and should be fixed or removed.
   - `modifier-used-only-once`: Modifiers invoked by exactly one function can usually be inlined as checks in that function.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
