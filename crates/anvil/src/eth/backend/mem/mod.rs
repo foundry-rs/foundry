@@ -19,7 +19,7 @@ use crate::{
                 storage::MinedTransactionReceipt,
             },
             notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
-            tempo::AnvilStorageProvider,
+            tempo::{ADMIN, AnvilStorageProvider},
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
         },
@@ -104,6 +104,7 @@ use foundry_evm::{
     core::{
         evm::{EvmEnvFor, TempoEvmNetwork},
         precompiles::EC_RECOVER,
+        tempo::PATH_USD_ADDRESS,
     },
     decode::RevertDecoder,
     hardfork::FoundryHardfork,
@@ -197,6 +198,7 @@ use tempo_precompiles::{
     storage::{StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20_factory::TIP20Factory,
 };
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
@@ -5132,6 +5134,58 @@ impl Backend<FoundryNetwork> {
             fee_manager
                 .mint(admin, user_token, validator_token, amount, admin)
                 .map_err(tempo_db_err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Prepares TIP-20 tokens for local faucet transactions.
+    ///
+    /// The role grants are permanent local deal-RPC state mutations. Validate the complete token
+    /// list before applying any changes so invalid input cannot leave partial issuer grants behind.
+    pub async fn prepare_tip20_funding(
+        &self,
+        token_addresses: &[Address],
+        fee_funding_amount: U256,
+    ) -> DatabaseResult<()> {
+        if token_addresses.is_empty() {
+            return Ok(());
+        }
+
+        self.with_tempo_storage(|| {
+            let factory = TIP20Factory::new();
+            for &token_address in token_addresses {
+                if !factory.is_tip20(token_address).map_err(tempo_db_err)? {
+                    return Err(tempo_db_err(format!(
+                        "address {token_address} is not a deployed TIP-20 token"
+                    )));
+                }
+            }
+
+            // Forked Tempo nodes skip local genesis initialization, so ensure the fixed faucet
+            // admin can pay its mint transaction fees before queuing them.
+            let mut fee_token = TIP20Token::from_address(PATH_USD_ADDRESS).map_err(tempo_db_err)?;
+            fee_token.grant_role_internal(ADMIN, *ISSUER_ROLE).map_err(tempo_db_err)?;
+            let fee_token_balance = fee_token
+                .balance_of(ITIP20::balanceOfCall { account: ADMIN })
+                .map_err(tempo_db_err)?;
+            if fee_token_balance < fee_funding_amount {
+                fee_token
+                    .mint(
+                        ADMIN,
+                        ITIP20::mintCall {
+                            to: ADMIN,
+                            amount: fee_funding_amount - fee_token_balance,
+                        },
+                    )
+                    .map_err(tempo_db_err)?;
+            }
+
+            for &token_address in token_addresses {
+                let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
+                token.grant_role_internal(ADMIN, *ISSUER_ROLE).map_err(tempo_db_err)?;
+            }
+
             Ok(())
         })
         .await

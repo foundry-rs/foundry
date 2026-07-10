@@ -6,7 +6,7 @@
 //! - Native value transfer rejection
 //! - Basic transaction behavior in Tempo mode
 
-use std::num::NonZeroU64;
+use std::{collections::HashSet, num::NonZeroU64};
 #[cfg(feature = "cli")]
 use std::{
     net::TcpListener,
@@ -22,7 +22,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, aliases::U96, keccak256};
-use alloy_provider::{Provider, ext::TxPoolApi};
+use alloy_provider::{PendingTransactionConfig, Provider, ext::TxPoolApi};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
@@ -308,6 +308,7 @@ sol! {
         function transfer(address to, uint256 amount) external returns (bool);
         function mint(address to, uint256 amount) external;
         function grantRole(bytes32 role, address account) external;
+        function hasRole(address account, bytes32 role) external view returns (bool);
         function ISSUER_ROLE() external view returns (bytes32);
         function logoURI() external view returns (string memory);
         function setLogoURI(string memory logoURI) external;
@@ -413,6 +414,227 @@ async fn test_tempo_precompiles_have_code() {
         let code = api.get_code(*addr, None).await.unwrap();
         assert!(!code.is_empty(), "Token {addr} should have code deployed");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fund_address_defaults_to_anvil_tip20_tokens() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+
+    assert!(!api.is_impersonated(TEMPO_ADMIN));
+    assert!(!provider.get_accounts().await.unwrap().contains(&TEMPO_ADMIN));
+
+    let hashes: Vec<B256> =
+        provider.raw_request("tempo_fundAddress".into(), (recipient,)).await.unwrap();
+    assert_eq!(hashes.len(), 4);
+
+    for hash in hashes {
+        let mined_hash = provider
+            .watch_pending_transaction(PendingTransactionConfig::new(hash))
+            .await
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(mined_hash, hash);
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "TIP-20 mint transaction should succeed");
+    }
+
+    for token_address in [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD] {
+        let token = ITIP20T5Rpc::new(token_address, &provider);
+        assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(u64::MAX));
+    }
+
+    assert!(!api.is_impersonated(TEMPO_ADMIN));
+    assert!(!provider.get_accounts().await.unwrap().contains(&TEMPO_ADMIN));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20_accepts_explicit_tokens() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+    let token_addresses = vec![ALPHA_USD, THETA_USD];
+
+    let path = ITIP20T5Rpc::new(PATH_USD, &provider);
+    let admin_balance_before = path.balanceOf(TEMPO_ADMIN).call().await.unwrap();
+    let block_before = provider.get_block_number().await.unwrap();
+    let empty: Vec<B256> = provider
+        .raw_request("anvil_dealTip20".into(), (recipient, Vec::<Address>::new()))
+        .await
+        .unwrap();
+    assert!(empty.is_empty());
+    assert_eq!(provider.get_block_number().await.unwrap(), block_before);
+    assert_eq!(path.balanceOf(TEMPO_ADMIN).call().await.unwrap(), admin_balance_before);
+
+    let hashes: Vec<B256> = provider
+        .raw_request("anvil_dealTip20".into(), (recipient, token_addresses.clone()))
+        .await
+        .unwrap();
+    assert_eq!(hashes.len(), token_addresses.len());
+
+    for (hash, token_address) in hashes.into_iter().zip(token_addresses) {
+        provider
+            .watch_pending_transaction(PendingTransactionConfig::new(hash))
+            .await
+            .unwrap()
+            .await
+            .unwrap();
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "TIP-20 mint transaction should succeed");
+        assert_eq!(receipt.to(), Some(token_address));
+    }
+
+    assert_eq!(
+        ITIP20T5Rpc::new(ALPHA_USD, &provider).balanceOf(recipient).call().await.unwrap(),
+        U256::from(u64::MAX)
+    );
+    assert_eq!(
+        ITIP20T5Rpc::new(THETA_USD, &provider).balanceOf(recipient).call().await.unwrap(),
+        U256::from(u64::MAX)
+    );
+    assert_eq!(
+        ITIP20T5Rpc::new(PATH_USD, &provider).balanceOf(recipient).call().await.unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(
+        ITIP20T5Rpc::new(BETA_USD, &provider).balanceOf(recipient).call().await.unwrap(),
+        U256::ZERO
+    );
+    let admin_balance_after = path.balanceOf(TEMPO_ADMIN).call().await.unwrap();
+    assert!(admin_balance_after <= U256::from(u64::MAX));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_deal_tip20_prepares_custom_tokens_and_rejects_invalid_addresses() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let creator = accounts[0];
+    let token_admin = accounts[1];
+    let recipient = Address::random();
+
+    let factory = ITIP20FactoryT5Rpc::new(TIP20_FACTORY_ADDRESS, &provider);
+    let salt = B256::repeat_byte(0xf1);
+    let custom_token = factory.getTokenAddress(creator, salt).call().await.unwrap();
+    let create = TransactionRequest::default()
+        .from(creator)
+        .to(TIP20_FACTORY_ADDRESS)
+        .with_input(
+            factory
+                .createToken(
+                    "DealUSD".to_string(),
+                    "DealUSD".to_string(),
+                    "USD".to_string(),
+                    PATH_USD,
+                    token_admin,
+                    salt,
+                    "https://example.com/deal-usd.png".to_string(),
+                )
+                .calldata()
+                .clone(),
+        )
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(create))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "custom TIP-20 creation should succeed");
+
+    let token = ITIP20T5Rpc::new(custom_token, &provider);
+    let issuer_role = token.ISSUER_ROLE().call().await.unwrap();
+    assert!(!token.hasRole(TEMPO_ADMIN, issuer_role).call().await.unwrap());
+
+    let invalid_token = address!("0x1000000000000000000000000000000000000001");
+    let invalid: std::result::Result<Vec<B256>, _> = provider
+        .raw_request("anvil_dealTip20".into(), (recipient, vec![custom_token, invalid_token]))
+        .await;
+    assert!(invalid.is_err(), "non-TIP-20 addresses should be rejected");
+    assert!(
+        !token.hasRole(TEMPO_ADMIN, issuer_role).call().await.unwrap(),
+        "invalid input should not leave a partial issuer grant"
+    );
+
+    let hashes: Vec<B256> = provider
+        .raw_request("anvil_dealTip20".into(), (recipient, vec![custom_token]))
+        .await
+        .unwrap();
+    assert_eq!(hashes.len(), 1);
+    provider
+        .watch_pending_transaction(PendingTransactionConfig::new(hashes[0]))
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let receipt = provider.get_transaction_receipt(hashes[0]).await.unwrap().unwrap();
+    assert!(receipt.status(), "custom TIP-20 mint should succeed");
+    assert!(token.hasRole(TEMPO_ADMIN, issuer_role).call().await.unwrap());
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), U256::from(u64::MAX));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fund_address_supports_concurrent_calls() {
+    const CALL_COUNT: usize = 8;
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let recipient = Address::random();
+    let path = ITIP20T5Rpc::new(PATH_USD, &provider);
+
+    assert!(!api.is_impersonated(TEMPO_ADMIN));
+    let responses = futures::future::join_all((0..CALL_COUNT).map(|_| {
+        provider
+            .raw_request::<_, Vec<B256>>("tempo_fundAddress".into(), (recipient, vec![ALPHA_USD]))
+    }))
+    .await;
+
+    let hashes = responses
+        .into_iter()
+        .map(|response| {
+            let hashes = response.unwrap();
+            assert_eq!(hashes.len(), 1);
+            hashes[0]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(hashes.iter().copied().collect::<HashSet<_>>().len(), CALL_COUNT);
+
+    for hash in hashes {
+        provider
+            .watch_pending_transaction(PendingTransactionConfig::new(hash))
+            .await
+            .unwrap()
+            .await
+            .unwrap();
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status(), "concurrent TIP-20 mint transaction should succeed");
+        assert_eq!(receipt.to(), Some(ALPHA_USD));
+    }
+
+    let expected_balance = U256::from(u64::MAX) * U256::from(CALL_COUNT);
+    assert_eq!(
+        ITIP20T5Rpc::new(ALPHA_USD, &provider).balanceOf(recipient).call().await.unwrap(),
+        expected_balance
+    );
+    let admin_balance_after = path.balanceOf(TEMPO_ADMIN).call().await.unwrap();
+    assert!(admin_balance_after <= U256::from(u64::MAX));
+    assert!(!api.is_impersonated(TEMPO_ADMIN));
+    assert!(!provider.get_accounts().await.unwrap().contains(&TEMPO_ADMIN));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fund_address_rejects_non_tempo_nodes() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let result: std::result::Result<Vec<B256>, _> =
+        provider.raw_request("tempo_fundAddress".into(), (Address::random(),)).await;
+
+    assert!(result.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]

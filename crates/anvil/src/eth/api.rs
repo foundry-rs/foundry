@@ -1,5 +1,8 @@
 use super::{
-    backend::mem::{BlockRequest, DatabaseRef, State},
+    backend::{
+        mem::{BlockRequest, DatabaseRef, State},
+        tempo::{ADMIN, DEFAULT_TIP20_FUNDING_AMOUNT, DEFAULT_TIP20_TOKENS},
+    },
     sign::build_impersonated,
 };
 use crate::{
@@ -107,6 +110,8 @@ use revm::{
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
+use tempo_precompiles::tip20::ITIP20;
+use tempo_primitives::subblock::has_sub_block_nonce_key_prefix;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
@@ -114,6 +119,9 @@ use tokio::{
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
+
+/// Gas limit for TIP-20 funding transactions, including random 2D nonce bookkeeping.
+const TIP20_FUNDING_GAS_LIMIT: u64 = 1_000_000;
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
@@ -1984,6 +1992,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
+            EthRequest::DealTip20(addr, tokens) => {
+                self.anvil_deal_tip20(addr, tokens).await.to_rpc_result()
+            }
             EthRequest::SetERC20Allowance(owner, spender, token_addr, val) => self
                 .anvil_set_erc20_allowance(owner, spender, token_addr, val)
                 .await
@@ -3561,6 +3572,52 @@ impl EthApi<FoundryNetwork> {
         .await?;
 
         Ok(())
+    }
+
+    /// Mints TIP-20 tokens to an address.
+    ///
+    /// Handler for RPC calls: `tempo_fundAddress` and `anvil_dealTip20`.
+    pub async fn anvil_deal_tip20(
+        &self,
+        address: Address,
+        token_addresses: Option<Vec<Address>>,
+    ) -> Result<Vec<TxHash>> {
+        node_info!("anvil_dealTip20");
+        self.ensure_tempo_mode()?;
+
+        let token_addresses = token_addresses.as_deref().unwrap_or(&DEFAULT_TIP20_TOKENS);
+        let mut hashes = Vec::with_capacity(token_addresses.len());
+        let amount = U256::from(DEFAULT_TIP20_FUNDING_AMOUNT);
+        self.backend.prepare_tip20_funding(token_addresses, amount).await?;
+
+        for &token_address in token_addresses {
+            let calldata: Bytes = ITIP20::mintCall { to: address, amount }.abi_encode().into();
+            let nonce_key = loop {
+                let key = U256::random();
+                if !key.is_zero() && key != U256::MAX && !has_sub_block_nonce_key_prefix(&key) {
+                    break key;
+                }
+            };
+            let request = TransactionRequest::default()
+                .from(ADMIN)
+                .to(token_address)
+                .with_input(calldata)
+                .with_nonce(0)
+                .with_gas_limit(TIP20_FUNDING_GAS_LIMIT);
+            let mut request = WithOtherFields::new(request);
+            request
+                .other
+                .insert("feeToken".to_string(), serde_json::json!(DEFAULT_TIP20_TOKENS[0]));
+            request.other.insert("nonceKey".to_string(), serde_json::json!(nonce_key));
+
+            // Submit directly as an impersonated transaction instead of mutating Anvil's global
+            // impersonation set. A random 2D nonce lets concurrent faucet calls execute without
+            // contending on the admin's scalar nonce.
+            let hash = self.eth_send_unsigned_transaction(request).await?;
+            hashes.push(hash);
+        }
+
+        Ok(hashes)
     }
 
     /// Sets the ERC20 allowance for a spender

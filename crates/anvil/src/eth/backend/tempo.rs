@@ -36,7 +36,12 @@ use super::db::Db;
 /// Sender address used for genesis initialization.
 const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 /// Admin address used for genesis initialization.
-const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
+pub(crate) const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
+/// Amount of each TIP-20 token minted by Anvil's local funding helpers.
+pub(crate) const DEFAULT_TIP20_FUNDING_AMOUNT: u64 = u64::MAX;
+/// TIP-20 tokens initialized and funded for Anvil's test accounts.
+pub(crate) const DEFAULT_TIP20_TOKENS: [Address; 4] =
+    [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
 
 /// Storage provider adapter for Anvil's Db to work with Tempo precompiles.
 pub struct AnvilStorageProvider<'a> {
@@ -234,12 +239,10 @@ pub fn initialize_tempo_precompiles(
 
     // Mint fee tokens to test accounts
     // u64::MAX per account - safe since u128::MAX can hold ~18 quintillion u64::MAX values
-    let mint_amount = U256::from(u64::MAX);
-    let tokens = [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
-
+    let mint_amount = U256::from(DEFAULT_TIP20_FUNDING_AMOUNT);
     StorageCtx::enter(&mut storage, || -> Result<(), TempoPrecompileError> {
         // Mint fee tokens to test accounts
-        for &token_address in &tokens {
+        for &token_address in &DEFAULT_TIP20_TOKENS {
             let mut token = TIP20Token::from_address(token_address)?;
             for &account in test_accounts {
                 token.mint(ADMIN, ITIP20::mintCall { to: account, amount: mint_amount })?;
@@ -286,7 +289,7 @@ pub fn initialize_tempo_precompiles(
         }
 
         // Mint fee tokens to the FeeManager contract for liquidity operations
-        for &token_address in &tokens {
+        for &token_address in &DEFAULT_TIP20_TOKENS {
             let mut token = TIP20Token::from_address(token_address)?;
             token.mint(
                 ADMIN,
@@ -301,8 +304,8 @@ pub fn initialize_tempo_precompiles(
 
         // Create bidirectional liquidity pools between all fee tokens
         // Pools are directional: user_token -> validator_token
-        for &user_token in &tokens {
-            for &validator_token in &tokens {
+        for &user_token in &DEFAULT_TIP20_TOKENS {
+            for &validator_token in &DEFAULT_TIP20_TOKENS {
                 if user_token != validator_token {
                     fee_manager.mint(
                         ADMIN,

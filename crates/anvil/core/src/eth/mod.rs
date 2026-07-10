@@ -575,6 +575,10 @@ pub enum EthRequest {
     )]
     DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
+    /// Mints TIP-20 tokens to an account using Anvil's Tempo faucet issuer.
+    #[serde(rename = "tempo_fundAddress", alias = "anvil_dealTip20")]
+    DealTip20(Address, #[serde(default)] Option<Vec<Address>>),
+
     /// Sets the ERC20 allowance for a spender
     #[serde(rename = "anvil_setERC20Allowance")]
     SetERC20Allowance(
@@ -1085,6 +1089,17 @@ mod tests {
         let s = r#"{"method": "anvil_autoImpersonateAccount",  "params": [true]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_tempo_fund_address_params() {
+        let s = r#"{"method":"tempo_fundAddress","params":["0x0000000000000000000000000000000000000001"]}"#;
+        let request = serde_json::from_str::<EthRequest>(s).unwrap();
+        assert!(matches!(request, EthRequest::DealTip20(_, None)));
+
+        let s = r#"{"method":"anvil_dealTip20","params":["0x0000000000000000000000000000000000000001",["0x20c0000000000000000000000000000000000000"]]}"#;
+        let request = serde_json::from_str::<EthRequest>(s).unwrap();
+        assert!(matches!(request, EthRequest::DealTip20(_, Some(tokens)) if tokens.len() == 1));
     }
 
     #[test]
