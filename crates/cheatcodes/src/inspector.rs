@@ -433,6 +433,12 @@ impl ArbitraryStorage {
         self.values.keys().copied()
     }
 
+    /// Returns addresses explicitly marked with arbitrary storage and whether nonzero slots are
+    /// overwritten.
+    fn target_overwrite_modes(&self) -> impl Iterator<Item = (Address, bool)> + '_ {
+        self.values.keys().map(|address| (*address, self.overwrites.contains(address)))
+    }
+
     /// Returns addresses that copy storage from arbitrary-storage targets.
     fn copied_targets(&self) -> impl Iterator<Item = Address> + '_ {
         self.copies.keys().copied()
@@ -1336,6 +1342,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Returns addresses explicitly marked with arbitrary storage.
     pub fn arbitrary_storage_targets(&self) -> impl Iterator<Item = Address> + '_ {
         self.arbitrary_storage.as_ref().into_iter().flat_map(ArbitraryStorage::targets)
+    }
+
+    /// Returns addresses explicitly marked with arbitrary storage and whether nonzero slots are
+    /// overwritten.
+    pub fn arbitrary_storage_target_overwrite_modes(
+        &self,
+    ) -> impl Iterator<Item = (Address, bool)> + '_ {
+        self.arbitrary_storage
+            .as_ref()
+            .into_iter()
+            .flat_map(ArbitraryStorage::target_overwrite_modes)
     }
 
     /// Returns addresses that copy storage from arbitrary-storage targets.

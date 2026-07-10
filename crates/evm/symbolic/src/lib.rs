@@ -334,6 +334,8 @@ pub struct SymbolicInvariantRunInput<'a, FEN: FoundryEvmNetwork> {
     pub senders: Vec<Address>,
     /// Maximum number of sequence calls to execute.
     pub depth: usize,
+    /// Concrete invariant check interval. `0` means only check at sequence end.
+    pub check_interval: u32,
     /// Whether ordinary target-call reverts should be reported as failures.
     pub fail_on_revert: bool,
     /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.

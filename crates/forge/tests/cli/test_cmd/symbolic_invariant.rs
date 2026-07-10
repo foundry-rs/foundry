@@ -88,6 +88,7 @@ contract SymbolicInvariantSafeRunsFuzz is Test {
         selectors[0] = target.step.selector;
         targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
         targetContract(address(target));
+        targetSender(address(this));
     }
 
     // Symbolic checks the one-call prefix; invariant fuzzing must still run the two-call case.
@@ -578,7 +579,7 @@ contract SymbolicInvariantInitialState is Test {
     assert_relevant_lines(
         &stdout,
         str![[r#"
-[Sequence] (original: 0, shrunk: 0)
+[Sequence] (original: 1, shrunk: 0)
 "#]],
     );
     assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
@@ -958,6 +959,7 @@ contract SymbolicCreatedStorageInvariant is Test {
         selectors[1] = target.readFresh.selector;
         targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
         targetContract(address(target));
+        targetSender(address(this));
     }
 
     /// forge-config: default.symbolic.invariant_depth = 2

@@ -147,8 +147,8 @@ impl PathState {
             .unwrap_or_else(|| executor.tx_env().gas_price());
         self.gas_price = SymExpr::constant(cx, U256::from(gas_price));
         if let Some(cheats) = executor.inspector().cheatcodes.as_ref() {
-            for target in cheats.arbitrary_storage_targets() {
-                self.world.enable_arbitrary_storage(target);
+            for (target, overwrite) in cheats.arbitrary_storage_target_overwrite_modes() {
+                self.world.enable_arbitrary_storage(target, overwrite);
             }
             for (target, source) in cheats.arbitrary_storage_copied_target_sources() {
                 self.world.enable_arbitrary_storage_copy(source, target);
@@ -346,6 +346,12 @@ impl PathState {
         if self.branch_target == child.branch_target && child.branch_target_reached {
             self.branch_target_reached = true;
         }
+    }
+
+    pub(crate) fn merge_noncommitting_check_constraints(&mut self, check: &Self) {
+        self.constraints = check.constraints.clone();
+        self.next_symbol = self.next_symbol.max(check.next_symbol);
+        self.world.merge_replay_metadata_from(&check.world);
     }
 
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
@@ -1494,7 +1500,7 @@ struct SymbolicWorldSnapshot {
     nonces: HashMap<Address, u64>,
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
-    arbitrary_storage_accounts: HashSet<Address>,
+    arbitrary_storage_accounts: HashMap<Address, bool>,
     arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
@@ -1543,7 +1549,7 @@ pub(crate) struct SymbolicWorld {
     nonces: HashMap<Address, u64>,
     existing_accounts: HashSet<Address>,
     destroyed_accounts: HashSet<Address>,
-    arbitrary_storage_accounts: HashSet<Address>,
+    arbitrary_storage_accounts: HashMap<Address, bool>,
     arbitrary_storage_copies: HashMap<Address, Address>,
     arbitrary_storage_all: bool,
     zero_init_symbolic_storage: bool,
@@ -1625,8 +1631,8 @@ impl SymbolicWorld {
         self.current_transaction_created_accounts.contains(&address)
     }
 
-    pub(crate) fn enable_arbitrary_storage(&mut self, address: Address) {
-        self.arbitrary_storage_accounts.insert(address);
+    pub(crate) fn enable_arbitrary_storage(&mut self, address: Address, overwrite: bool) {
+        self.arbitrary_storage_accounts.insert(address, overwrite);
     }
 
     pub(crate) fn enable_arbitrary_storage_copy(&mut self, source: Address, target: Address) {
@@ -1731,7 +1737,7 @@ impl SymbolicWorld {
         key: &SymExpr,
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
-        if let Some(base) = self.arbitrary_storage_base(cx, address, key, concrete_key) {
+        if let Some(base) = self.arbitrary_storage_base(cx, executor, address, key, concrete_key)? {
             return Ok(base);
         }
         if self.created_accounts.contains(&address) {
@@ -1758,14 +1764,47 @@ impl SymbolicWorld {
         }
     }
 
-    fn arbitrary_storage_base(
+    fn arbitrary_storage_base<FEN: FoundryEvmNetwork>(
+        &mut self,
+        cx: &mut SymCx,
+        executor: &Executor<FEN>,
+        address: Address,
+        key: &SymExpr,
+        concrete_key: Option<U256>,
+    ) -> Result<Option<SymExpr>, SymbolicError> {
+        if let Some(slot) = concrete_key.or_else(|| key.as_const())
+            && !self.arbitrary_storage_all
+        {
+            let overwrite_arbitrary_storage =
+                self.arbitrary_storage_accounts.get(&address).copied();
+            let has_arbitrary_storage = overwrite_arbitrary_storage.is_some();
+            let is_copied_storage =
+                !has_arbitrary_storage && self.arbitrary_storage_copies.contains_key(&address);
+            let preserve_nonzero_slot =
+                overwrite_arbitrary_storage == Some(false) || is_copied_storage;
+            if preserve_nonzero_slot {
+                let concrete = executor
+                    .backend()
+                    .storage_ref(address, slot)
+                    .map_err(|err| SymbolicError::Backend(err.to_string()))?;
+                if !concrete.is_zero() {
+                    return Ok(Some(SymExpr::constant(cx, concrete)));
+                }
+            }
+        }
+
+        Ok(self.unchecked_arbitrary_storage_base(cx, address, key, concrete_key))
+    }
+
+    fn unchecked_arbitrary_storage_base(
         &mut self,
         cx: &mut SymCx,
         address: Address,
         key: &SymExpr,
         concrete_key: Option<U256>,
     ) -> Option<SymExpr> {
-        let has_arbitrary_storage = self.arbitrary_storage_accounts.contains(&address);
+        let overwrite_arbitrary_storage = self.arbitrary_storage_accounts.get(&address).copied();
+        let has_arbitrary_storage = overwrite_arbitrary_storage.is_some();
         let copied_source = (!has_arbitrary_storage)
             .then(|| self.arbitrary_storage_copies.get(&address).copied())
             .flatten();
@@ -1791,6 +1830,17 @@ impl SymbolicWorld {
         let slots = self.replay_storage_slots.entry(symbol).or_default();
         if !slots.iter().any(|existing| existing.address == address && existing.slot == slot) {
             slots.push(SymbolicReplayStorageSlot { address, slot });
+        }
+    }
+
+    fn merge_replay_metadata_from(&mut self, other: &Self) {
+        for (symbol, slots) in &other.replay_storage_slots {
+            for slot in slots {
+                self.record_replay_storage_slot(*symbol, slot.address, slot.slot);
+            }
+        }
+        for (expr, address) in &other.symbolic_address_aliases {
+            self.symbolic_address_aliases.entry(expr.clone()).or_insert(*address);
         }
     }
 
@@ -2221,11 +2271,13 @@ mod tests {
         let mut cx = SymCx::new();
         let key = SymExpr::constant(&mut cx, slot);
         let mut world = SymbolicWorld::default();
-        world.enable_arbitrary_storage(source);
+        world.enable_arbitrary_storage(source, false);
         world.enable_arbitrary_storage_copy(source, copied);
 
-        let source_base = world.arbitrary_storage_base(&mut cx, source, &key, Some(slot)).unwrap();
-        let copied_base = world.arbitrary_storage_base(&mut cx, copied, &key, Some(slot)).unwrap();
+        let source_base =
+            world.unchecked_arbitrary_storage_base(&mut cx, source, &key, Some(slot)).unwrap();
+        let copied_base =
+            world.unchecked_arbitrary_storage_base(&mut cx, copied, &key, Some(slot)).unwrap();
 
         assert_eq!(source_base, copied_base);
         let symbol = source_base.kind().get_var().expect("storage symbol");
@@ -2250,12 +2302,14 @@ mod tests {
         let mut cx = SymCx::new();
         let key = SymExpr::constant(&mut cx, slot);
         let mut world = SymbolicWorld::default();
-        world.enable_arbitrary_storage(source);
+        world.enable_arbitrary_storage(source, false);
         world.enable_arbitrary_storage_copy(source, copied);
-        world.enable_arbitrary_storage(copied);
+        world.enable_arbitrary_storage(copied, false);
 
-        let source_base = world.arbitrary_storage_base(&mut cx, source, &key, Some(slot)).unwrap();
-        let copied_base = world.arbitrary_storage_base(&mut cx, copied, &key, Some(slot)).unwrap();
+        let source_base =
+            world.unchecked_arbitrary_storage_base(&mut cx, source, &key, Some(slot)).unwrap();
+        let copied_base =
+            world.unchecked_arbitrary_storage_base(&mut cx, copied, &key, Some(slot)).unwrap();
 
         assert_ne!(source_base, copied_base);
 
