@@ -167,6 +167,33 @@ async fn tempo_rpc_block_hashes_match_canonical_headers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn tempo_rpc_projects_legacy_ethereum_headers() {
+    let (source_api, _source_handle) = spawn(NodeConfig::test()).await;
+    source_api.mine_one().await;
+    let state = source_api.serialized_state(false).await.unwrap();
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+
+    let stored_header = api.backend.get_block(1).unwrap().header;
+    assert!(stored_header.as_tempo().is_none());
+    let legacy_hash = stored_header.hash_slow();
+
+    let provider = handle.http_provider();
+    let header: TempoHeaderResponse =
+        provider.client().request("eth_getHeaderByNumber", ("0x1",)).await.unwrap();
+    assert_tempo_header_fields(&header);
+    assert_eq!(header.hash, legacy_hash);
+    assert_ne!(header.as_ref().hash_slow(), legacy_hash);
+
+    api.mine_one().await;
+    let child: TempoHeaderResponse =
+        provider.client().request("eth_getHeaderByNumber", ("0x2",)).await.unwrap();
+    assert_eq!(child.parent_hash(), legacy_hash);
+    assert_eq!(child.hash, child.as_ref().hash_slow());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn tempo_raw_header_and_block_use_tempo_rlp() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.mine_one().await;

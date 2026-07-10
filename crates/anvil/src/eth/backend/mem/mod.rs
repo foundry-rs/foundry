@@ -1054,14 +1054,20 @@ impl<N: Network> Backend<N> {
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let number = header.number();
         let withdrawals_root = header.withdrawals_root();
-        let tempo_fields = header.as_tempo().map(|header| {
-            (
-                header.timestamp_millis(),
-                header.general_gas_limit,
-                header.shared_gas_limit,
-                header.timestamp_millis_part,
-            )
-        });
+        let tempo_fields = header
+            .as_tempo()
+            .map(|header| {
+                (
+                    header.timestamp_millis(),
+                    header.general_gas_limit,
+                    header.shared_gas_limit,
+                    header.timestamp_millis_part,
+                )
+            })
+            .or_else(|| {
+                self.is_tempo()
+                    .then(|| (header.timestamp().saturating_mul(1000), header.gas_limit(), 0, 0))
+            });
 
         let block = AlloyBlock {
             header: AlloyHeader {
