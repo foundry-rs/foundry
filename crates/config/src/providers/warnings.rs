@@ -93,8 +93,9 @@ const RESERVED_KEYS: &[&str] = &["extends"];
 /// Keys kept for backward compatibility that should not trigger unknown key warnings.
 ///
 /// `tempo` and `optimism` are legacy aliases for `network = "tempo"` / `network = "optimism"` —
-/// still accepted on input but no longer serialized in the default config.
-const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism"];
+/// still accepted on input but no longer serialized in the default config. `verbosity` is the
+/// legacy root alias for `tracing.verbosity`.
+const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism", "verbosity"];
 
 const LABELS_KEY: &str = "labels";
 const TRACING_LABELS_KEY: &str = "tracing.labels";
@@ -377,13 +378,13 @@ impl<P: Provider> WarningsProvider<P> {
             out.push(Self::deprecated_label_warning("[labels]", "[tracing.labels]"));
         }
 
-        out.extend(
-            profiles
-                .filter_map(|dict| dict.get(self.profile.as_str().as_str()))
-                .filter_map(Value::as_dict)
-                .filter(|dict| dict.contains_key(LABELS_KEY))
-                .map(|_| Self::deprecated_label_warning(LABELS_KEY, TRACING_LABELS_KEY)),
-        );
+        if profiles
+            .flat_map(BTreeMap::values)
+            .filter_map(Value::as_dict)
+            .any(|dict| dict.contains_key(LABELS_KEY))
+        {
+            out.push(Self::deprecated_label_warning(LABELS_KEY, TRACING_LABELS_KEY));
+        }
 
         if let Some(dict) = data.get(&self.profile)
             && dict.contains_key(LABELS_KEY)

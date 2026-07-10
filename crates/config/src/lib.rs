@@ -300,7 +300,8 @@ pub struct Config {
     pub optimizer_details: Option<OptimizerDetails>,
     /// Model checker settings.
     pub model_checker: Option<ModelCheckerSettings>,
-    /// verbosity to use
+    /// Legacy root alias for [`TracingConfig::verbosity`].
+    #[serde(default, skip_serializing)]
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
@@ -554,7 +555,7 @@ pub struct Config {
     /// Whether to enable the tx gas limit checks as imposed by Osaka (EIP-7825).
     pub enable_tx_gas_limit: bool,
 
-    /// Address labels
+    /// Deprecated address-label alias; use [`TracingConfig::labels`].
     #[serde(default, skip_serializing)]
     pub labels: AddressHashMap<String>,
 
@@ -2770,11 +2771,17 @@ impl Provider for Config {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         let root = Value::serialize(self.root.clone())?;
+        let verbosity = Value::serialize(self.tracing.verbosity)?;
+        let labels = Value::serialize(self.tracing.labels.clone())?;
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
+            entry.insert("verbosity".to_string(), verbosity.clone());
+            entry.insert("labels".to_string(), labels.clone());
         }
         if let Some(entry) = data.get_mut(&self.profile) {
             entry.insert("root".to_string(), root);
+            entry.insert("verbosity".to_string(), verbosity);
+            entry.insert("labels".to_string(), labels);
         }
         Ok(data)
     }
@@ -5810,6 +5817,54 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_deprecated_labels_warn_for_inactive_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.ci.labels]
+                0x0000000000000000000000000000000000000001 = "Alice"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.warnings,
+                vec![Warning::DeprecatedKey {
+                    old: "labels".to_string(),
+                    new: "tracing.labels".to_string(),
+                }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_tracing_serialization_omits_legacy_aliases() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
+        let config = Config {
+            tracing: TracingConfig { verbosity: 4, labels: labels.clone(), ..Default::default() },
+            ..Default::default()
+        };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        let table = serialized.as_table().unwrap();
+        assert!(!table.contains_key("verbosity"));
+        assert!(!table.contains_key("labels"));
+        assert_eq!(table["tracing"]["verbosity"].as_integer(), Some(4));
+
+        let provided = Figment::from(&config).extract::<Config>().unwrap();
+        assert_eq!(provided.verbosity, 4);
+        assert_eq!(provided.labels, labels);
+
+        let merged = config.merge_inline_provider(("ffi", true)).unwrap();
+        assert_eq!(merged.tracing.verbosity, 4);
+        assert_eq!(merged.tracing.labels, config.tracing.labels);
     }
 
     #[test]
