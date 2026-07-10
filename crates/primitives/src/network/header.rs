@@ -1,10 +1,14 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_primitives::{Address, B64, B256, Bloom, Bytes, Sealable, U256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Result};
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use tempo_primitives::TempoHeader;
 
 /// Consensus header used by Foundry's multi-network tooling.
+///
+/// The variant order is significant for untagged serde deserialization. [`Self::Tempo`] must stay
+/// first because Ethereum headers ignore unknown fields and would otherwise silently deserialize
+/// Tempo state dumps as [`Self::Ethereum`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
@@ -24,17 +28,18 @@ impl Default for FoundryHeader {
 impl FoundryHeader {
     /// Creates a header for the selected network.
     pub const fn new(inner: Header, is_tempo: bool) -> Self {
-        if is_tempo {
-            Self::Tempo(TempoHeader {
-                general_gas_limit: inner.gas_limit,
-                shared_gas_limit: 0,
-                timestamp_millis_part: 0,
-                inner,
-                consensus_context: None,
-            })
-        } else {
-            Self::Ethereum(inner)
-        }
+        if is_tempo { Self::tempo(inner) } else { Self::Ethereum(inner) }
+    }
+
+    /// Creates a Tempo header from its Ethereum-shaped fields.
+    pub const fn tempo(inner: Header) -> Self {
+        Self::Tempo(TempoHeader {
+            general_gas_limit: inner.gas_limit,
+            shared_gas_limit: 0,
+            timestamp_millis_part: 0,
+            inner,
+            consensus_context: None,
+        })
     }
 
     /// Returns the Tempo header when this is a Tempo block.
@@ -58,6 +63,16 @@ impl FoundryHeader {
             Self::Tempo(header) => &mut header.inner,
             Self::Ethereum(header) => header,
         }
+    }
+
+    /// Sets the transactions root shared by Ethereum and Tempo headers.
+    pub const fn set_transactions_root(&mut self, transactions_root: B256) {
+        self.inner_mut().transactions_root = transactions_root;
+    }
+
+    /// Sets the ommers root shared by Ethereum and Tempo headers.
+    pub const fn set_ommers_hash(&mut self, ommers_hash: B256) {
+        self.inner_mut().ommers_hash = ommers_hash;
     }
 
     /// Consumes the wrapper and returns the inner Ethereum-shaped header.
@@ -103,12 +118,6 @@ impl Deref for FoundryHeader {
     }
 }
 
-impl DerefMut for FoundryHeader {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner_mut()
-    }
-}
-
 impl Encodable for FoundryHeader {
     fn encode(&self, out: &mut dyn BufMut) {
         match self {
@@ -127,6 +136,8 @@ impl Encodable for FoundryHeader {
 
 impl Decodable for FoundryHeader {
     fn decode(buf: &mut &[u8]) -> Result<Self> {
+        // Tempo headers start with scalar gas-limit fields, while Ethereum headers start with a
+        // 32-byte parent hash, so trying Tempo first cannot misclassify a valid Ethereum header.
         let mut tempo_buf = *buf;
         if let Ok(header) = TempoHeader::decode(&mut tempo_buf) {
             *buf = tempo_buf;
@@ -191,11 +202,8 @@ mod tests {
     #[test]
     fn rlp_roundtrip_preserves_network_header() {
         for header in [
-            FoundryHeader::new(Header { number: 1, ..Default::default() }, false),
-            FoundryHeader::new(
-                Header { number: 2, gas_limit: 30_000_000, ..Default::default() },
-                true,
-            ),
+            Header { number: 1, ..Default::default() }.into(),
+            FoundryHeader::tempo(Header { number: 2, gas_limit: 30_000_000, ..Default::default() }),
         ] {
             let encoded = alloy_rlp::encode(&header);
             let decoded = FoundryHeader::decode(&mut encoded.as_ref()).unwrap();
@@ -210,10 +218,8 @@ mod tests {
 
     #[test]
     fn serde_roundtrip_preserves_tempo_fields() {
-        let header = FoundryHeader::new(
-            Header { number: 1, gas_limit: 30_000_000, ..Default::default() },
-            true,
-        );
+        let header =
+            FoundryHeader::tempo(Header { number: 1, gas_limit: 30_000_000, ..Default::default() });
         let value = serde_json::to_value(&header).unwrap();
 
         assert_eq!(value["mainBlockGeneralGasLimit"], "0x1c9c380");

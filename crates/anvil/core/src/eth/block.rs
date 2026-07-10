@@ -36,8 +36,8 @@ where
     let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
     let transactions_root = calculate_transaction_root(&transactions);
 
-    header.transactions_root = transactions_root;
-    header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
+    header.set_transactions_root(transactions_root);
+    header.set_ommers_hash(EMPTY_OMMER_ROOT_HASH);
 
     let body = BlockBody { transactions, ommers: Vec::new(), withdrawals: None };
     Block::new(header, body)
