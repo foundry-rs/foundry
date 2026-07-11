@@ -25,7 +25,7 @@ pub enum Fixture {
 }
 
 impl Fixture {
-    pub fn identify(org: &str, repo: &str) -> Self {
+    pub const fn identify(org: &str, repo: &str) -> Self {
         if org.eq_ignore_ascii_case("vectorized") && repo.eq_ignore_ascii_case("solady") {
             Self::Solady
         } else if org.eq_ignore_ascii_case("sorellalabs") && repo.eq_ignore_ascii_case("angstrom") {
@@ -280,7 +280,7 @@ pub fn parse(stdout: &[u8]) -> Result<ParsedRun> {
     if run.outcomes.is_empty() {
         eyre::bail!("forge symbolic benchmark produced no symbolic test results")
     }
-    run.outcomes.sort_by(|a, b| a.identity().cmp(&b.identity()));
+    run.outcomes.sort_by_key(TestOutcome::identity);
     run.passed =
         run.outcomes.iter().filter(|outcome| outcome.status == OutcomeStatus::Passed).count();
     run.failed =
@@ -376,7 +376,7 @@ fn optional_max(
     Ok(())
 }
 
-pub fn compatibility(run: &ParsedRun) -> SymbolicBenchmarkSummary {
+pub const fn compatibility(run: &ParsedRun) -> SymbolicBenchmarkSummary {
     let m = &run.metrics;
     SymbolicBenchmarkSummary {
         tests: run.outcomes.len(),
@@ -462,7 +462,7 @@ mod tests {
         let stats = serde_json::json!({"paths": 1, "solver_queries": 2});
         let stdout = serde_json::to_vec(&serde_json::json!({"test/FarcasterNativeSymbolic.t.sol:FarcasterNativeSymbolicTest":{"test_results":{
             "check_migrateOnlyMigrator(uint24,address,address,address,uint40)":{
-                "kind":{"Symbolic":stats.clone()},"status":"Success"
+                "kind":{"Symbolic":stats},"status":"Success"
             },
             "check_setMigratorOnlyOwner(uint24,address,address,address,address)":{
                 "kind":{"Symbolic":stats},"status":"Failure",
