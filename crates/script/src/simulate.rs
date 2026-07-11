@@ -22,7 +22,7 @@ use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell};
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
-    traces::{decode_trace_arena, render_trace_arena},
+    traces::{decode_trace_arena, prune_trace_depth, render_trace_arena},
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
@@ -170,7 +170,8 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             })
             .collect::<Vec<_>>();
 
-        if !shell::is_json() && self.script_config.config.tracing.verbosity > 3 {
+        let tracing = &self.script_config.config.tracing;
+        if !shell::is_json() && tracing.verbosity > 3 {
             sh_println!("==========================")?;
             sh_println!("Simulated On-chain Traces:\n")?;
         }
@@ -180,9 +181,12 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             let (tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
-            if tx.is_none() || self.script_config.config.tracing.verbosity > 3 {
+            if tx.is_none() || tracing.verbosity > 3 {
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
+                    if let Some(trace_depth) = tracing.trace_depth {
+                        prune_trace_depth(trace, trace_depth);
+                    }
                     sh_println!("{}", render_trace_arena(trace))?;
                 }
             }

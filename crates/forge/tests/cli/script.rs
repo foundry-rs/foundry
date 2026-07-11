@@ -2459,6 +2459,7 @@ forgetest_async!(can_simulate_with_default_sender, |prj, cmd| {
     prj.update_config(|config| {
         config.verbosity = 0;
         config.tracing.verbosity = 4;
+        config.tracing.trace_depth = Some(0);
     });
     prj.add_script(
         "Script.s.sol",
@@ -2491,14 +2492,6 @@ contract SimpleScript is Script {
 Compiler run successful!
 Traces:
   [..] SimpleScript::run()
-    ├─ [0] VM::startBroadcast()
-    │   └─ ← [Return]
-    ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
-    │   └─ ← [Return] 175 bytes of code
-    ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    │   ├─ [..] A::getValue() [staticcall]
-    │   │   └─ ← [Return] 100
-    │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
 
 
@@ -2512,8 +2505,6 @@ Simulated On-chain Traces:
     └─ ← [Return] 175 bytes of code
 
   [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    ├─ [..] A::getValue() [staticcall]
-    │   └─ ← [Return] 100
     └─ ← [Return] 62 bytes of code
 ...
 "#]]);
