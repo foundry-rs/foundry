@@ -160,8 +160,11 @@ Structs.sol > Structs2 > FooBar:
     assert!(std::fs::read_dir(prj.artifacts()).map(|mut dir| dir.next().is_none()).unwrap_or(true));
     assert!(!prj.cache().exists());
 
-    // Explicit artifact settings retain the compiler-backed path.
+    // Explicit artifact settings do not make this analysis command write compiler output.
     let custom_out = prj.root().join("eip712-out");
+    std::fs::create_dir(&custom_out).unwrap();
+    let sentinel = custom_out.join("sentinel");
+    std::fs::write(&sentinel, b"sentinel").unwrap();
     cmd.forge_fuse()
         .args([
             "eip712",
@@ -170,7 +173,9 @@ Structs.sol > Structs2 > FooBar:
             custom_out.to_string_lossy().as_ref(),
         ])
         .assert_success();
-    assert!(std::fs::read_dir(custom_out).unwrap().next().is_some());
+    assert_eq!(std::fs::read(&sentinel).unwrap(), b"sentinel");
+    assert_eq!(std::fs::read_dir(custom_out).unwrap().count(), 1);
+    assert!(!prj.cache().exists());
 
     cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
