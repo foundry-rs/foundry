@@ -119,6 +119,23 @@ trap 'rm -f "$api_marker" "$install_marker"; rm -rf "$sidecar_home" "$selector_t
 mkdir -p "$selector_tmp/archive"
 touch "$selector_tmp/archive/forge"
 tar -czf "$selector_tmp/foundry.tar.gz" -C "$selector_tmp/archive" forge
+
+optional_path="$selector_tmp/solar"
+check_eq "missing optional binary without hash is allowed" \
+  "0" "$(is_missing_optional_bin solar "" "$optional_path"; echo $?)"
+touch "$optional_path"
+check_eq "present optional binary without hash is rejected" \
+  "1" "$(is_missing_optional_bin solar "" "$optional_path"; echo $?)"
+
+version_tmp="$selector_tmp/version"
+mkdir -p "$version_tmp"
+touch "$version_tmp/solar" "$version_tmp/solar.exe" "$version_tmp/unrelated"
+clear_version_bins "$version_tmp"
+check_eq "version replacement clears stale optional binaries" \
+  "0" "$([ ! -e "$version_tmp/solar" ] && [ ! -e "$version_tmp/solar.exe" ]; echo $?)"
+check_eq "version replacement preserves unrelated files" \
+  "0" "$([ -e "$version_tmp/unrelated" ]; echo $?)"
+
 download() {
   case "$1" in
     *"nightly-$OLDER_SHA"*) cp "$selector_tmp/foundry.tar.gz" "$2" ;;

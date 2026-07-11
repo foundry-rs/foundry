@@ -237,11 +237,15 @@ main() {
 
           path="$version_dir/$bin"
 
-          if [ -z "$expected" ] && is_optional_bin "$bin"; then
-            continue
+          if [ -z "$expected" ]; then
+            if is_missing_optional_bin "$bin" "$expected" "$path"; then
+              continue
+            fi
+            all_match=false
+            break
           fi
 
-          if [ -z "$expected" ] || [ ! -x "$path" ]; then
+          if [ ! -x "$path" ]; then
             all_match=false
             break
           fi
@@ -272,6 +276,7 @@ main() {
       tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
       tmp="$tmp/foundry.zip"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      clear_version_bins "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
       ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
       rm -f "$tmp"
     else
@@ -280,7 +285,7 @@ main() {
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       # Make sure it's a valid tar archive.
       ensure tar tf "$tmp" 1> /dev/null
-      ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+      clear_version_bins "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
       ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
       rm -f "$tmp"
     fi
@@ -319,7 +324,7 @@ main() {
           path="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin"
 
           if [ -z "$expected" ]; then
-            if is_optional_bin "$bin"; then
+            if is_missing_optional_bin "$bin" "$expected" "$path"; then
               continue
             fi
             say "no expected hash for $bin"
@@ -397,6 +402,9 @@ main() {
     # Create foundry custom version directory.
     ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
     for bin in "${BINS[@]}"; do
+      rm -f \
+        "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION/$bin" \
+        "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION/$bin.exe"
       for try_path in target/release/$bin target/release/$bin.exe; do
         if [ -f "$try_path" ]; then
           mv -f "$try_path" "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
@@ -496,7 +504,7 @@ list() {
       say "${VERSION##*/}"
       for bin in "${BINS[@]}"; do
         bin_path="$VERSION/$bin"
-        if is_optional_bin "$bin" && [ ! -x "$bin_path" ]; then
+        if is_optional_bin "$bin" && [ ! -e "$bin_path" ]; then
           continue
         fi
         say "- $(ensure "$bin_path" -V)"
@@ -506,7 +514,7 @@ list() {
   else
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
-      if is_optional_bin "$bin" && [ ! -x "$bin_path" ]; then
+      if is_optional_bin "$bin" && [ ! -e "$bin_path" ]; then
         continue
       fi
       say "- $(ensure "$bin_path" -V)"
@@ -544,7 +552,7 @@ use() {
       # workspace and silently makes the next `--path` activation use the
       # downloaded release binary instead of a fresh local build.
       ensure rm -f "$bin_path"
-      if is_optional_bin "$bin" && [ ! -x "$FOUNDRY_VERSION_DIR/$bin" ]; then
+      if is_optional_bin "$bin" && [ ! -e "$FOUNDRY_VERSION_DIR/$bin" ]; then
         continue
       fi
       ensure cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
@@ -609,6 +617,17 @@ check_cmd() {
 
 is_optional_bin() {
   [ "$1" = "solar" ]
+}
+
+is_missing_optional_bin() {
+  is_optional_bin "$1" && [ -z "$2" ] && [ ! -e "$3" ]
+}
+
+clear_version_bins() {
+  ensure mkdir -p "$1"
+  for bin in "${BINS[@]}"; do
+    rm -f "$1/$bin" "$1/$bin.exe"
+  done
 }
 
 detect_platform_arch() {
