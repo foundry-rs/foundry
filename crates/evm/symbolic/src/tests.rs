@@ -3148,6 +3148,47 @@ fn solver_normalizes_checked_mul_guard_with_context_bound() {
 }
 
 #[test]
+fn solver_normalizes_checked_mul_guard_with_transitive_bound() {
+    let mut cx = SymCx::new();
+    let amount = SymExpr::var(&mut cx, "amount");
+    let rate_1 = SymExpr::var(&mut cx, "rate_1");
+    let rate_2 = SymExpr::var(&mut cx, "rate_2");
+    let guard = checked_mul_guard_word(&mut cx, &amount, &rate_1);
+    let zero = SymExpr::zero(&mut cx);
+    let guard_is_zero = SymBoolExpr::eq(&mut cx, guard, zero);
+    let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+    let amount_bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, amount, uint128_max.clone());
+    let rate_2_bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate_2.clone(), uint128_max);
+    let rates_ordered = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate_1, rate_2);
+    let constraints = vec![amount_bounded, rate_2_bounded, rates_ordered, guard_is_zero];
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &constraints),
+        vec![SymBoolExpr::constant(&mut cx, false)]
+    );
+}
+
+#[test]
+fn solver_bound_propagation_handles_strict_cycle() {
+    let mut cx = SymCx::new();
+    let a = SymExpr::var(&mut cx, "a");
+    let b = SymExpr::var(&mut cx, "b");
+    let guard = checked_mul_guard_word(&mut cx, &a, &b);
+    let zero = SymExpr::zero(&mut cx);
+    let guard_is_zero = SymBoolExpr::eq(&mut cx, guard, zero);
+    let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+    let a_bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, a.clone(), uint128_max);
+    let a_below_b = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, a.clone(), b.clone());
+    let b_below_a = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, b, a);
+    let constraints = vec![a_bounded, a_below_b, b_below_a, guard_is_zero];
+
+    assert_eq!(
+        normalize_constraints_for_solver(&mut cx, &constraints),
+        vec![SymBoolExpr::constant(&mut cx, false)]
+    );
+}
+
+#[test]
 fn solver_normalizes_unsigned_interval_product_contradiction() {
     let mut cx = SymCx::new();
     let calldata = SymExpr::var(&mut cx, "calldata_0");
@@ -3397,6 +3438,60 @@ fn solver_does_not_prune_wrapping_product_inequality() {
             ("spot".to_string(), U256::MAX - U256::from(2)),
             ("art".to_string(), U256::MAX - U256::from(1)),
             ("rate".to_string(), U256::MAX - U256::from(1)),
+        ],
+    );
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
+fn solver_detects_bounded_mul_div_monotonic_contradiction() {
+    let mut cx = SymCx::new();
+    let amount = SymExpr::var(&mut cx, "amount");
+    let rate_1 = SymExpr::var(&mut cx, "rate_1");
+    let rate_2 = SymExpr::var(&mut cx, "rate_2");
+    let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+    let amount_bounded =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, amount.clone(), uint128_max.clone());
+    let rate_2_bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate_2.clone(), uint128_max);
+    let rates_ordered = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate_1.clone(), rate_2.clone());
+
+    let product_1 = SymExpr::binop(&mut cx, SymBinOp::Mul, amount.clone(), rate_1);
+    let product_2 = SymExpr::binop(&mut cx, SymBinOp::Mul, amount, rate_2);
+    let scale_1 = SymExpr::constant(&mut cx, U256::from(1_000_000_000u64));
+    let value_1 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_1, scale_1.clone());
+    let value_2 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_2, scale_1);
+    let scale_2 = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u128));
+    let value_1 = SymExpr::binop(&mut cx, SymBinOp::UDiv, value_1, scale_2.clone());
+    let value_2 = SymExpr::binop(&mut cx, SymBinOp::UDiv, value_2, scale_2);
+    let reversed = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value_2, value_1);
+    let constraints = vec![amount_bounded, rate_2_bounded, rates_ordered, reversed];
+
+    assert!(product_monotonic_unsat(&mut cx, &constraints));
+}
+
+#[test]
+fn solver_does_not_prune_unbounded_mul_div_monotonicity() {
+    let mut cx = SymCx::new();
+    let amount = SymExpr::var(&mut cx, "amount");
+    let rate_1 = SymExpr::var(&mut cx, "rate_1");
+    let rate_2 = SymExpr::var(&mut cx, "rate_2");
+    let rates_ordered = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate_1.clone(), rate_2.clone());
+    let product_1 = SymExpr::binop(&mut cx, SymBinOp::Mul, amount.clone(), rate_1);
+    let product_2 = SymExpr::binop(&mut cx, SymBinOp::Mul, amount, rate_2);
+    let divisor = SymExpr::constant(&mut cx, U256::from(3));
+    let value_1 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_1, divisor.clone());
+    let value_2 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_2, divisor);
+    let reversed = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value_2, value_1);
+    let constraints = vec![rates_ordered, reversed];
+
+    assert!(!product_monotonic_unsat(&mut cx, &constraints));
+
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("amount".to_string(), U256::MAX),
+            ("rate_1".to_string(), U256::from(2)),
+            ("rate_2".to_string(), U256::from(5)),
         ],
     );
     assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
@@ -3981,6 +4076,38 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     assert_eq!(stats.sat_cache_hits, 1);
     assert_eq!(solver.heuristic_witnesses(), 1);
     assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn is_sat_removes_implied_mul_div_monotonic_condition() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("mul-div-monotonic-implied");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let amount = SymExpr::var(&mut cx, "amount");
+    let rate_1 = SymExpr::var(&mut cx, "rate_1");
+    let rate_2 = SymExpr::var(&mut cx, "rate_2");
+    let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+    let amount_bounded =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, amount.clone(), uint128_max.clone());
+    let rate_2_bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate_2.clone(), uint128_max);
+    let rates_ordered = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rate_1.clone(), rate_2.clone());
+    let product_1 = SymExpr::binop(&mut cx, SymBinOp::Mul, amount.clone(), rate_1);
+    let product_2 = SymExpr::binop(&mut cx, SymBinOp::Mul, amount, rate_2);
+    let divisor = SymExpr::constant(&mut cx, U256::from(1_000_000_000u64));
+    let value_1 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_1, divisor.clone());
+    let value_2 = SymExpr::binop(&mut cx, SymBinOp::UDiv, product_2, divisor);
+    let implied = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value_2, value_1).not(&mut cx);
+    let constraints = vec![amount_bounded, rate_2_bounded, rates_ordered, implied];
+
+    assert!(solver.is_sat_branch(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(solver.heuristic_witnesses(), 0);
+    assert_eq!(counted_solver_invocations(&marker), 1);
     let _ = std::fs::remove_file(&marker);
 }
 
