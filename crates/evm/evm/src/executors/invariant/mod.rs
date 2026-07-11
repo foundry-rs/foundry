@@ -9,7 +9,8 @@ use crate::{
 };
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, Selector, U256, keccak256, map::AddressMap,
+    Address, Bytes, FixedBytes, I256, Selector, U256, keccak256,
+    map::{AddressMap, hash_map::Entry as AddressMapEntry},
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -754,8 +755,10 @@ struct InvariantCampaignSeed {
 impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     /// Instantiates an invariant test run.
     fn new(first_input: BasicTxDetails, executor: Executor<FEN>, depth: usize) -> Self {
+        let mut inputs = Vec::with_capacity(depth.saturating_add(1));
+        inputs.push(first_input);
         Self {
-            inputs: vec![first_input],
+            inputs,
             cmp_seq: Vec::with_capacity(depth),
             executor,
             fuzz_runs: Vec::with_capacity(depth),
@@ -899,12 +902,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         corpus_replay_executor.inspector_mut().collect_evm_cmp_log(
             invariant_worker_collects_evm_cmp_log(&self.config, 0, actual_worker_count),
         );
+        let dynamic = self.dynamic_target_ctx();
         let corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
             Some(&corpus_replay_executor),
-            None,
-            Some(&replay_targets),
-            Some(self.dynamic_target_ctx()),
+            ReplayTarget {
+                stateless: None,
+                fuzzed_contracts: Some(&replay_targets),
+                dynamic: Some(&dynamic),
+            },
         )?;
         let corpus_persistence = if actual_worker_count > 1 {
             InvariantCorpusPersistence::Deferred
@@ -1031,7 +1037,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 corpus_entries,
                 &self.executor,
                 ReplayTarget {
-                    fuzzed_function: None,
+                    stateless: None,
                     fuzzed_contracts: Some(&replay_targets),
                     dynamic: Some(&dynamic_target_ctx),
                 },
@@ -1289,6 +1295,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             &state_changeset,
                             handler_target,
                             handler_selector,
+                            assertion_failure,
                             pre_merge_edges_hash,
                         )
                         .map_err(|e| eyre!(e.to_string()))?;
@@ -2117,17 +2124,17 @@ fn collect_data<FEN: FoundryEvmNetwork>(
     run_depth: u32,
     mapping_slots: Option<&AddressMap<foundry_common::mapping_slots::MappingSlots>>,
 ) {
-    // Verify it has no code.
-    let has_code = if let Some(Some(code)) =
-        state_changeset.get(&tx.sender).map(|account| account.info.code.as_ref())
-    {
-        !code.is_empty()
-    } else {
-        false
-    };
-
     // We keep the nonce changes to apply later.
-    let sender_changeset = if has_code { None } else { state_changeset.remove(&tx.sender) };
+    let sender_changeset = match state_changeset.entry(tx.sender) {
+        AddressMapEntry::Occupied(entry) => entry
+            .get()
+            .info
+            .code
+            .as_ref()
+            .is_none_or(|code| code.is_empty())
+            .then(|| entry.remove()),
+        AddressMapEntry::Vacant(_) => None,
+    };
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(
@@ -2200,16 +2207,25 @@ pub fn execute_tx<FEN: FoundryEvmNetwork>(
     let roll = tx.roll.unwrap_or_default();
 
     if warp > 0 || roll > 0 {
+        let needs_cheatcode_block = executor
+            .inspector()
+            .cheatcodes
+            .as_ref()
+            .is_some_and(|cheatcodes| cheatcodes.block.is_none());
+
         // Apply pre-call block adjustments to the executor's env.
-        let ts = executor.evm_env().block_env.timestamp();
-        let num = executor.evm_env().block_env.number();
-        executor.evm_env_mut().block_env.set_timestamp(ts + warp);
-        executor.evm_env_mut().block_env.set_number(num + roll);
+        let block_env = {
+            let block_env = &mut executor.evm_env_mut().block_env;
+            let ts = block_env.timestamp();
+            let num = block_env.number();
+            block_env.set_timestamp(ts + warp);
+            block_env.set_number(num + roll);
+            needs_cheatcode_block.then(|| block_env.clone())
+        };
 
         // Also update the inspector's cheatcodes.block if set.
         // The inspector's block may override the env during interpreter initialization,
         // so we need to add our warp/roll on top of any existing cheatcode-set values.
-        let block_env = executor.evm_env().block_env.clone();
         if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
             if let Some(block) = cheatcodes.block.as_mut() {
                 let bts = block.timestamp();
@@ -2217,7 +2233,7 @@ pub fn execute_tx<FEN: FoundryEvmNetwork>(
                 block.set_timestamp(bts + warp);
                 block.set_number(bnum + roll);
             } else {
-                cheatcodes.block = Some(block_env);
+                cheatcodes.block = Some(block_env.unwrap());
             }
         }
     }

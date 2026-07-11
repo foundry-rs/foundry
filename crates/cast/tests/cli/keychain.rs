@@ -382,7 +382,7 @@ casttest!(key_authorization_inspect_account_mismatch_rejected, |_prj, cmd| {
 
 // On-chain (T6): authorize an admin key, then confirm it via `keychain is-admin --json`.
 casttest!(keychain_authorize_admin_then_is_admin, async |_prj, cmd| {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
@@ -426,7 +426,7 @@ casttest!(keychain_verify_admin_accepts_admin_signature, async |_prj, cmd| {
     use alloy_primitives::{Address, B256, hex};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     use tempo_primitives::transaction::{KeychainSignature, PrimitiveSignature, TempoSignature};
 
     let (_, handle) =
@@ -483,7 +483,7 @@ casttest!(keychain_verify_admin_accepts_admin_signature, async |_prj, cmd| {
 
 // On-chain (T6): `keychain authorize --admin` rejects spending limits before submitting.
 casttest!(keychain_authorize_admin_rejects_limits, async |_prj, cmd| {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
@@ -511,7 +511,7 @@ casttest!(keychain_authorize_admin_rejects_limits, async |_prj, cmd| {
 // admin key, because submitting the mutator as access-key-signed calldata reverts on-chain with
 // `UnauthorizedCaller()` on the pinned Tempo build.
 casttest!(keychain_access_key_cannot_submit_admin_mutator, async |_prj, cmd| {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();

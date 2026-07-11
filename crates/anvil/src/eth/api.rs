@@ -9,7 +9,7 @@ use crate::{
             self,
             db::SerializableState,
             mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
-            notifications::NewBlockNotifications,
+            notifications::ChainNotifications,
             validate::TransactionValidator,
         },
         error::{
@@ -53,6 +53,7 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
+    erc4337::TransactionConditional,
     pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
@@ -60,11 +61,14 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
-        parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
+        opcode::{BlockOpcodeGas, TransactionOpcodeGas},
+        parity::{
+            LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
+        },
     },
     txpool::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
-use alloy_rpc_types_eth::FillTransaction;
+use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, FillTransaction, StateContext};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;
@@ -102,7 +106,7 @@ use revm::{
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
 use std::{sync::Arc, time::Duration};
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
@@ -396,6 +400,18 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_coinbase(&self, address: Address) -> Result<()> {
         node_info!("anvil_setCoinbase");
         self.backend.set_coinbase(address);
+        Ok(())
+    }
+
+    /// Sets the `prevrandao` value of the next block.
+    ///
+    /// This is a one-shot override: it applies to the next mined block only, after which anvil
+    /// resumes deriving `prevrandao` from the parent hash and block number.
+    ///
+    /// Handler for RPC call: `anvil_setNextBlockPrevRandao`
+    pub async fn anvil_set_next_block_prevrandao(&self, prevrandao: B256) -> Result<()> {
+        node_info!("anvil_setNextBlockPrevRandao");
+        self.backend.set_next_block_prevrandao(prevrandao);
         Ok(())
     }
 
@@ -744,8 +760,9 @@ impl<N: Network> EthApi<N> {
         self.backend.impersonate_signature(signature, address).await
     }
 
-    /// Returns a new block event stream that yields Notifications when a new block was added
-    pub fn new_block_notifications(&self) -> NewBlockNotifications {
+    /// Returns a new block event stream that yields Notifications when a new block was added or
+    /// when logs were removed from the canonical chain due to a reorg
+    pub fn new_block_notifications(&self) -> ChainNotifications {
         self.backend.new_block_notifications()
     }
 
@@ -903,9 +920,15 @@ impl<N: Network> EthApi<N> {
     /// Returns block header with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getHeaderByHash`
-    pub async fn header_by_hash(&self, hash: B256) -> Result<Option<AnyRpcHeader>> {
+    pub async fn header_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByHash");
-        Ok(self.backend.block_by_hash(hash).await?.map(|block| block.header.clone()))
+        Ok(self.backend.block_by_hash(hash).await?.map(|block| {
+            let WithOtherFields { inner: block, other } = block.0;
+            WithOtherFields { inner: block.header, other }
+        }))
     }
 
     /// Returns a _full_ block with given hash.
@@ -1260,6 +1283,45 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Executes a transaction and returns requested parity trace results.
+    ///
+    /// Handler for RPC call: `trace_call`
+    pub async fn trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        mut trace_types: HashSet<TraceType>,
+        block_id: Option<BlockId>,
+    ) -> Result<TraceResults>
+    where
+        N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+    {
+        node_info!("trace_call");
+        if trace_types.is_empty() {
+            trace_types.insert(TraceType::Trace);
+        }
+
+        let block_id = block_id.unwrap_or_default();
+        let block_request = match &block_id {
+            BlockId::Number(BlockNumber::Pending) => {
+                let pending_txs = self.pool.ready_transactions().collect();
+                BlockRequest::Pending(pending_txs)
+            }
+            _ => {
+                let number = self.backend.ensure_block_number(Some(block_id)).await?;
+                BlockRequest::Number(number)
+            }
+        };
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
+        )?
+        .or_zero_fees();
+
+        self.backend.trace_call(request, fees, trace_types, block_request, block_id).await
+    }
+
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
@@ -1287,6 +1349,18 @@ impl<N: Network> EthApi<N> {
         self.backend.trace_filter(filter).await
     }
 
+    /// Returns a transaction trace at a given index.
+    ///
+    /// Handler for RPC call: `trace_get`.
+    pub async fn trace_get(
+        &self,
+        hash: B256,
+        indices: Vec<Index>,
+    ) -> Result<Option<LocalizedTransactionTrace>> {
+        node_info!("trace_get");
+        self.backend.trace_get(hash, indices).await
+    }
+
     /// Replays all transactions in a block returning the requested traces for each transaction
     ///
     /// Handler for RPC call: `trace_replayBlockTransactions`
@@ -1297,6 +1371,18 @@ impl<N: Network> EthApi<N> {
     ) -> Result<Vec<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayBlockTransactions");
         self.backend.trace_replay_block_transactions(block, trace_types).await
+    }
+
+    /// Replays a transaction returning the requested traces.
+    ///
+    /// Handler for RPC call: `trace_replayTransaction`.
+    pub async fn trace_replay_transaction(
+        &self,
+        transaction: B256,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<TraceResults> {
+        node_info!("trace_replayTransaction");
+        self.backend.trace_replay_transaction(transaction, trace_types).await
     }
 }
 
@@ -1349,6 +1435,69 @@ impl EthApi<FoundryNetwork> {
             }
         };
         Ok(block_request)
+    }
+
+    /// Returns account information after replaying a block through a transaction index.
+    ///
+    /// Handler for RPC call: `debug_accountInfoAt`.
+    pub async fn debug_account_info_at(
+        &self,
+        block_id: BlockId,
+        tx_index: Index,
+        address: Address,
+    ) -> Result<Option<AccountInfo>> {
+        node_info!("debug_accountInfoAt");
+        self.backend.debug_account_info_at(block_id, tx_index, address).await
+    }
+
+    /// Returns opcode gas usage for a transaction.
+    ///
+    /// Handler for RPC call: `trace_transactionOpcodeGas`.
+    pub async fn trace_transaction_opcode_gas(
+        &self,
+        tx_hash: B256,
+    ) -> Result<Option<TransactionOpcodeGas>> {
+        node_info!("trace_transactionOpcodeGas");
+        self.backend.trace_transaction_opcode_gas(tx_hash).await
+    }
+
+    /// Returns opcode gas usage for all transactions in a block.
+    ///
+    /// Handler for RPC call: `trace_blockOpcodeGas`.
+    pub async fn trace_block_opcode_gas(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<BlockOpcodeGas>> {
+        node_info!("trace_blockOpcodeGas");
+        self.backend.trace_block_opcode_gas(block_id).await
+    }
+
+    /// Traces a raw signed transaction without importing it into the mempool.
+    ///
+    /// Handler for RPC call: `trace_rawTransaction`.
+    pub async fn trace_raw_transaction(
+        &self,
+        tx: Bytes,
+        trace_types: HashSet<TraceType>,
+        block_number: Option<BlockId>,
+    ) -> Result<TraceResults> {
+        node_info!("trace_rawTransaction");
+
+        let mut data = tx.as_ref();
+        if data.is_empty() {
+            return Err(BlockchainError::EmptyRawTransactionData);
+        }
+
+        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        self.ensure_typed_transaction_supported(&transaction)?;
+
+        let pending_transaction = PendingTransaction::new(transaction)?;
+        let block_request = self.block_request(block_number).await?;
+
+        self.backend
+            .trace_raw_transaction(pending_transaction, trace_types, Some(block_request))
+            .await
     }
 
     /// Increases the balance of an account.
@@ -1668,6 +1817,9 @@ impl EthApi<FoundryNetwork> {
                 .call(call, block, EvmOverrides::new(state_override, block_overrides))
                 .await
                 .to_rpc_result(),
+            EthRequest::EthCallMany(bundles, state_context, state_override) => {
+                self.call_many(bundles, state_context, state_override).await.to_rpc_result()
+            }
             EthRequest::EthSimulateV1(simulation, block) => {
                 self.simulate_v1(simulation, block).await.to_rpc_result()
             }
@@ -1758,17 +1910,44 @@ impl EthApi<FoundryNetwork> {
                 self.debug_get_modified_accounts_by_number(start_number, end_number).to_rpc_result()
             }
             EthRequest::DebugFreeOsMemory(()) => self.debug_free_os_memory().to_rpc_result(),
+            EthRequest::DebugAccountInfoAt(block_id, tx_index, address) => {
+                self.debug_account_info_at(block_id, tx_index, address).await.to_rpc_result()
+            }
+            EthRequest::DebugTraceBlock(rlp_block, opts) => {
+                self.debug_trace_block(rlp_block, opts).await.to_rpc_result()
+            }
             EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
                 self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
             }
             EthRequest::DebugTraceBlockByNumber(block_number, opts) => {
                 self.debug_trace_block_by_number(block_number, opts).await.to_rpc_result()
             }
+            EthRequest::TraceCall(tx, trace_types, block) => {
+                self.trace_call(tx, trace_types, block).await.to_rpc_result()
+            }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
+            EthRequest::TraceGet(hash, indices) => {
+                self.trace_get(hash, indices).await.to_rpc_result()
+            }
             EthRequest::TraceReplayBlockTransactions(block, trace_types) => {
                 self.trace_replay_block_transactions(block, trace_types).await.to_rpc_result()
+            }
+            EthRequest::TraceReplayTransaction(transaction, trace_types) => {
+                self.trace_replay_transaction(transaction, trace_types).await.to_rpc_result()
+            }
+            EthRequest::TraceTransactionOpcodeGas(tx_hash) => {
+                self.trace_transaction_opcode_gas(tx_hash).await.to_rpc_result()
+            }
+            EthRequest::TraceBlockOpcodeGas(block_id) => {
+                self.trace_block_opcode_gas(block_id).await.to_rpc_result()
+            }
+            EthRequest::TraceRawTransaction(tx, trace_types, block_number) => {
+                self.trace_raw_transaction(tx, trace_types, block_number).await.to_rpc_result()
+            }
+            EthRequest::TraceCallMany(calls, block_number) => {
+                self.trace_call_many(calls, block_number).await.to_rpc_result()
             }
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
@@ -1811,6 +1990,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
+            EthRequest::DealTIP20(addr, token_addr, val) => {
+                self.anvil_deal_tip20(addr, token_addr, val).await.to_rpc_result()
+            }
             EthRequest::SetERC20Allowance(owner, spender, token_addr, val) => self
                 .anvil_set_erc20_allowance(owner, spender, token_addr, val)
                 .await
@@ -1825,6 +2007,9 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_storage_at(addr, slot, val).await.to_rpc_result()
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
+            EthRequest::SetNextBlockPrevRandao(prevrandao) => {
+                self.anvil_set_next_block_prevrandao(prevrandao).await.to_rpc_result()
+            }
             EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
             EthRequest::SetMinGasPrice(gas) => {
@@ -2161,13 +2346,20 @@ impl EthApi<FoundryNetwork> {
     /// Returns block header with given number.
     ///
     /// Handler for ETH RPC call: `eth_getHeaderByNumber`
-    pub async fn header_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcHeader>> {
+    pub async fn header_by_number(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
         if number == BlockNumber::Pending {
-            return Ok(Some(self.pending_block().await.header.clone()));
+            let WithOtherFields { inner: block, other } = self.pending_block().await.0;
+            return Ok(Some(WithOtherFields { inner: block.header, other }));
         }
 
-        Ok(self.backend.block_by_number(number).await?.map(|block| block.header.clone()))
+        Ok(self.backend.block_by_number(number).await?.map(|block| {
+            let WithOtherFields { inner: block, other } = block.0;
+            WithOtherFields { inner: block.header, other }
+        }))
     }
 
     /// Returns a _full_ block with given number
@@ -2379,13 +2571,7 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let (requires, provides) = if let Some((requires, provides)) =
-            tempo_parallel_nonce_markers(&pending_transaction)
-        {
-            (requires, provides)
-        } else {
-            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-        };
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -2438,13 +2624,7 @@ impl EthApi<FoundryNetwork> {
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let on_chain_nonce = self.backend.current_nonce(from).await?;
-        let (requires, provides) = if let Some((requires, provides)) =
-            tempo_parallel_nonce_markers(&pending_transaction)
-        {
-            (requires, provides)
-        } else {
-            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-        };
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -2457,7 +2637,8 @@ impl EthApi<FoundryNetwork> {
             return Ok(receipt);
         }
         while let Some(notification) = stream.next().await {
-            if let Some(block) = self.backend.get_block_by_hash(notification.hash)
+            if let Some(new_block) = notification.as_new_block()
+                && let Some(block) = self.backend.get_block_by_hash(new_block.hash)
                 && block.body.transactions.iter().any(|tx| tx.hash() == hash)
                 && let Some(receipt) = self.backend.transaction_receipt(hash).await?
             {
@@ -2556,21 +2737,15 @@ impl EthApi<FoundryNetwork> {
         Ok(*tx.hash())
     }
 
-    /// Sends a signed transaction with an empty transaction condition.
+    /// Sends a signed transaction with an ignored transaction condition.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransactionConditional`
     pub async fn send_raw_transaction_conditional(
         &self,
         tx: Bytes,
-        condition: serde_json::Value,
+        _condition: TransactionConditional,
     ) -> Result<TxHash> {
         node_info!("eth_sendRawTransactionConditional");
-        if !is_empty_transaction_condition(&condition) {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                "transaction conditions are not supported",
-            )));
-        }
-
         self.send_raw_transaction(tx).await
     }
 
@@ -2658,6 +2833,40 @@ impl EthApi<FoundryNetwork> {
             trace!(target : "node", "Call status {:?}, gas {}", exit, gas);
 
             ensure_return_ok(exit, &out)
+        })
+        .await
+    }
+
+    pub async fn call_many(
+        &self,
+        bundles: Vec<Bundle<WithOtherFields<TransactionRequest>>>,
+        state_context: Option<StateContext>,
+        state_override: Option<StateOverride>,
+    ) -> Result<Vec<Vec<EthCallResponse>>> {
+        node_info!("eth_callMany");
+        let StateContext { transaction_index, block_number } = state_context.unwrap_or_default();
+        if transaction_index.is_some_and(|index| index.index().is_some()) {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "transactionIndex is not supported for eth_callMany yet".to_string(),
+            )));
+        }
+
+        let block_request = self.block_request(block_number).await?;
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork
+                .call_many(
+                    bundles,
+                    Some(StateContext { transaction_index, block_number: Some(number.into()) }),
+                    state_override,
+                )
+                .await?);
+        }
+
+        self.on_blocking_task(|this| async move {
+            this.backend.call_many(bundles, Some(block_request), state_override).await
         })
         .await
     }
@@ -3160,6 +3369,18 @@ impl EthApi<FoundryNetwork> {
         self.backend.debug_trace_transaction(tx_hash, opts).await
     }
 
+    /// Returns traces for all transactions in an RLP-encoded block.
+    ///
+    /// Handler for RPC call: `debug_traceBlock`
+    pub async fn debug_trace_block(
+        &self,
+        rlp_block: Bytes,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlock");
+        self.backend.debug_trace_block(rlp_block, opts).await
+    }
+
     /// Returns traces for all transactions in a block by hash.
     ///
     /// Handler for RPC call: `debug_traceBlockByHash`
@@ -3207,18 +3428,21 @@ impl EthApi<FoundryNetwork> {
             self.backend.call_with_tracing(request, fees, Some(block_request), opts).await;
         result
     }
-}
 
-fn is_empty_transaction_condition(condition: &serde_json::Value) -> bool {
-    let Some(condition) = condition.as_object() else {
-        return false;
-    };
+    /// Traces calls sequentially on top of the same block.
+    ///
+    /// Handler for RPC call: `trace_callMany`.
+    pub async fn trace_call_many(
+        &self,
+        calls: Vec<(WithOtherFields<TransactionRequest>, HashSet<TraceType>)>,
+        block_number: Option<BlockId>,
+    ) -> Result<Vec<TraceResults>> {
+        node_info!("trace_callMany");
+        let block_number = block_number.unwrap_or(BlockId::Number(BlockNumber::Pending));
+        let block_request = self.block_request(Some(block_number)).await?;
 
-    condition.iter().all(|(key, value)| match key.as_str() {
-        "knownAccounts" => value.as_object().is_some_and(|accounts| accounts.is_empty()),
-        "blockNumberMin" | "blockNumberMax" | "timestampMin" | "timestampMax" => value.is_null(),
-        _ => false,
-    })
+        self.backend.trace_call_many(calls, Some(block_request)).await
+    }
 }
 
 // == impl EthApi anvil endpoints ==
@@ -3329,6 +3553,12 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<()> {
         node_info!("anvil_dealERC20");
 
+        if self.backend.is_tempo()
+            && self.backend.try_set_tip20_balance(address, token_address, balance).await?
+        {
+            return Ok(());
+        }
+
         sol! {
             #[sol(rpc)]
             contract IERC20 {
@@ -3352,6 +3582,21 @@ impl EthApi<FoundryNetwork> {
         )
         .await?;
 
+        Ok(())
+    }
+
+    /// Deals TIP-20 tokens to an address.
+    ///
+    /// Handler for RPC call: `anvil_dealTIP20`.
+    pub async fn anvil_deal_tip20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> Result<()> {
+        node_info!("anvil_dealTIP20");
+        self.ensure_tempo_mode()?;
+        self.backend.set_tip20_balance(address, token_address, balance).await?;
         Ok(())
     }
 
@@ -3596,13 +3841,7 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let (requires, provides) = if let Some((requires, provides)) =
-            tempo_parallel_nonce_markers(&pending_transaction)
-        {
-            (requires, provides)
-        } else {
-            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-        };
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -3653,10 +3892,17 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `txpool_content`
     pub async fn txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
         node_info!("txpool_content");
-        self.build_txpool_content()
+        self.build_txpool_content(None)
     }
 
-    fn build_txpool_content(&self) -> Result<TxpoolContent<AnyRpcTransaction>> {
+    /// Builds the txpool content, optionally filtered to a single sender.
+    ///
+    /// When `filter` is `Some`, only transactions from that sender are converted, avoiding the
+    /// cost of building RPC transactions for unrelated senders.
+    fn build_txpool_content(
+        &self,
+        filter: Option<Address>,
+    ) -> Result<TxpoolContent<AnyRpcTransaction>> {
         let mut content = TxpoolContent::<AnyRpcTransaction>::default();
         fn convert(tx: Arc<PoolTransaction<FoundryTxEnvelope>>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
@@ -3680,12 +3926,20 @@ impl EthApi<FoundryNetwork> {
         }
 
         for pending in self.pool.ready_transactions() {
-            let entry = content.pending.entry(*pending.pending_transaction.sender()).or_default();
+            let sender = *pending.pending_transaction.sender();
+            if filter.is_some_and(|from| from != sender) {
+                continue;
+            }
+            let entry = content.pending.entry(sender).or_default();
             let key = txpool_transaction_key(&pending.pending_transaction);
             entry.insert(key, convert(pending)?);
         }
         for queued in self.pool.pending_transactions() {
-            let entry = content.queued.entry(*queued.pending_transaction.sender()).or_default();
+            let sender = *queued.pending_transaction.sender();
+            if filter.is_some_and(|from| from != sender) {
+                continue;
+            }
+            let entry = content.queued.entry(sender).or_default();
             let key = txpool_transaction_key(&queued.pending_transaction);
             entry.insert(key, convert(queued)?);
         }
@@ -3705,7 +3959,7 @@ impl EthApi<FoundryNetwork> {
         from: Address,
     ) -> Result<TxpoolContentFrom<AnyRpcTransaction>> {
         node_info!("txpool_contentFrom");
-        let mut content = self.build_txpool_content()?;
+        let mut content = self.build_txpool_content(Some(from))?;
         Ok(content.remove_from(&from))
     }
 }
@@ -3852,7 +4106,7 @@ impl EthApi<FoundryNetwork> {
                 .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
 
             loop {
-                let block = tokio::select! {
+                let notification = tokio::select! {
                     biased;
                     // Exit when the subscriber unsubscribes, even while awaiting the next block.
                     _ = tx.closed() => break,
@@ -3860,6 +4114,10 @@ impl EthApi<FoundryNetwork> {
                         Some(block) => block,
                         None => break,
                     },
+                };
+
+                let Some(block) = notification.as_new_block() else {
+                    continue;
                 };
 
                 let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {
@@ -4104,9 +4362,7 @@ impl EthApi<FoundryNetwork> {
     /// Only supported when running in Tempo mode (`--tempo`).
     pub async fn anvil_set_fee_token(&self, user: Address, token: Address) -> Result<()> {
         node_info!("anvil_setFeeToken");
-        if !self.backend.is_tempo() {
-            return Err(BlockchainError::RpcUnimplemented);
-        }
+        self.ensure_tempo_mode()?;
         self.backend.set_fee_token(user, token).await?;
         Ok(())
     }
@@ -4122,9 +4378,7 @@ impl EthApi<FoundryNetwork> {
         token: Address,
     ) -> Result<()> {
         node_info!("anvil_setValidatorFeeToken");
-        if !self.backend.is_tempo() {
-            return Err(BlockchainError::RpcUnimplemented);
-        }
+        self.ensure_tempo_mode()?;
         self.backend.set_validator_fee_token(validator, token).await?;
         Ok(())
     }
@@ -4141,11 +4395,14 @@ impl EthApi<FoundryNetwork> {
         amount: U256,
     ) -> Result<()> {
         node_info!("anvil_setFeeAmmLiquidity");
-        if !self.backend.is_tempo() {
-            return Err(BlockchainError::RpcUnimplemented);
-        }
+        self.ensure_tempo_mode()?;
         self.backend.set_fee_amm_liquidity(user_token, validator_token, amount).await?;
         Ok(())
+    }
+
+    /// Ensures anvil runs in Tempo mode (`--tempo`), the RPC method is unavailable otherwise.
+    fn ensure_tempo_mode(&self) -> Result<()> {
+        if self.backend.is_tempo() { Ok(()) } else { Err(BlockchainError::RpcUnimplemented) }
     }
 }
 
@@ -4176,6 +4433,19 @@ fn tempo_parallel_nonce_markers(
         .as_ref()
         .has_nonzero_tempo_nonce_key()
         .then(|| (vec![], vec![pending_transaction.hash().to_vec()]))
+}
+
+/// Returns the pool `(requires, provides)` markers for a transaction, accounting for
+/// Tempo's 2D nonce system (see [`tempo_parallel_nonce_markers`]).
+fn nonce_markers(
+    pending_transaction: &PendingTransaction<FoundryTxEnvelope>,
+    nonce: u64,
+    on_chain_nonce: u64,
+    from: Address,
+) -> (Vec<TxMarker>, Vec<TxMarker>) {
+    tempo_parallel_nonce_markers(pending_transaction).unwrap_or_else(|| {
+        (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+    })
 }
 
 fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnvelope>) -> String {

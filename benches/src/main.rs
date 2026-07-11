@@ -44,8 +44,9 @@ struct Cli {
     #[clap(long)]
     output_file: Option<String>,
 
-    /// Filename for a flat JSON summary (benchmark/repo -> mean_seconds).
-    /// Resolved relative to --output-dir. Used by the nightly regression comparison script.
+    /// Filename for a JSON summary (benchmark/repo -> wall-time stats and, when
+    /// available, symbolic solver counters). Resolved relative to --output-dir.
+    /// Consumed by the nightly regression comparison script.
     #[clap(long)]
     json_output: Option<PathBuf>,
 
@@ -261,6 +262,7 @@ fn main() -> Result<()> {
     if let Some(filename) = md_filename {
         sh_println!("📝 Generating report...");
         let markdown = results.generate_markdown(&versions, &repos);
+        fs::create_dir_all(&cli.output_dir).wrap_err("Failed to create output directory")?;
         let output_path = cli.output_dir.join(filename);
         fs::write(&output_path, markdown).wrap_err("Failed to write output file")?;
         sh_println!("✅ Report written to: {}", output_path.display());
@@ -270,6 +272,7 @@ fn main() -> Result<()> {
         let summary = results.generate_json_summary(&versions);
         let json =
             serde_json::to_string_pretty(&summary).wrap_err("Failed to serialize JSON summary")?;
+        fs::create_dir_all(&cli.output_dir).wrap_err("Failed to create output directory")?;
         let json_path = cli.output_dir.join(json_filename);
         fs::write(&json_path, json).wrap_err("Failed to write JSON summary")?;
         sh_println!("✅ JSON summary written to: {}", json_path.display());

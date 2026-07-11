@@ -12,26 +12,33 @@
 //!
 //! Output is consumable by tools like `riesentoaster/differential-coverage`.
 
-use crate::executors::{
-    Executor,
-    corpus::{DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created},
-    corpus_io::read_corpus_tree,
-    invariant::{
-        call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
-        snapshot_edge_fingerprint,
+use crate::{
+    executors::{
+        Executor,
+        corpus::{
+            DynamicTargetCtx, StatelessReplayTarget, WorkerCorpus, register_replay_created,
+            rollback_replay_created,
+        },
+        corpus_io::read_corpus_tree,
+        invariant::{
+            call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
+            snapshot_edge_fingerprint,
+        },
     },
+    inspectors::EdgeIndexMap,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Selector, hex};
+use alloy_primitives::{Address, B256, Selector, hex, keccak256};
 use eyre::Result;
+use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
     decode::SkipReason,
     evm::FoundryEvmNetwork,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_fuzz::invariant::FuzzRunIdentifiedContracts;
+use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
     collections::HashMap,
     fmt,
@@ -110,7 +117,7 @@ pub struct ShowmapStats {
 
 /// Test target metadata needed to replay corpus entries.
 pub struct ShowmapReplayTarget<'a> {
-    pub fuzzed_function: Option<&'a Function>,
+    pub stateless: Option<StatelessReplayTarget<'a>>,
     pub fuzz_fail_on_revert: bool,
     pub fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
     pub invariant_address: Option<Address>,
@@ -130,10 +137,8 @@ pub struct InvariantReplayOptions {
 /// A structured identity for a failure observed during corpus replay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayFailure {
-    /// A stateless fuzz test call failed. Keyed by selector and code-path fingerprint.
-    // TODO(@mablr): include revert data/reason if this identity is reused by
-    // minimization, so same-edge branchless failures cannot be swapped.
-    Fuzz { selector: Selector, fingerprint: Option<B256> },
+    /// A stateless fuzz test call failed. Keyed by selector, code-path fingerprint, and output.
+    Fuzz { selector: Selector, fingerprint: Option<B256>, output: B256 },
     /// An invariant handler call hit an assertion or a `fail_on_revert` revert.
     /// Keyed by `(target, selector)` site and code-path fingerprint, mirroring the
     /// campaign's handler-bug deduplication.
@@ -170,10 +175,49 @@ impl fmt::Display for ReplayFailure {
     }
 }
 
+impl ReplayFailure {
+    /// Whether this failure terminates the run, mirroring the campaign.
+    const fn is_terminal(&self) -> bool {
+        !matches!(self, Self::Handler { terminal: false, .. })
+    }
+
+    /// Whether this failure is a broken invariant predicate.
+    const fn is_predicate(&self) -> bool {
+        matches!(self, Self::Invariant { .. } | Self::AfterInvariant)
+    }
+}
+
+/// Records `failure` as the representative failure for an observation, preferring
+/// terminal failures over non-terminal handler bugs and keeping the first of each class.
+fn record_replay_failure(slot: &mut Option<ReplayFailure>, failure: ReplayFailure) {
+    match slot {
+        None => *slot = Some(failure),
+        Some(existing) if !existing.is_terminal() && failure.is_terminal() => *slot = Some(failure),
+        Some(_) => {}
+    }
+}
+
+/// Facts observed while replaying one candidate for corpus minimization.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReplayObservation {
+    /// AFL-bucketed EVM edge coverage for the candidate.
+    pub evm_edges: Vec<u8>,
+    /// AFL-bucketed native sancov edge coverage for the candidate.
+    pub sancov_edges: Vec<u8>,
+    /// Comparable failure identity, if replaying this candidate fails.
+    pub failure: Option<ReplayFailure>,
+    /// Number of replayable transactions executed.
+    pub replayed: usize,
+    /// Number of transactions that do not target this fuzz/invariant context.
+    pub unmatched: usize,
+    /// Number of transactions rejected via `vm.assume`/`vm.skip`.
+    pub skipped: usize,
+}
+
 /// Replay every corpus entry under `corpus_dir` and emit showmap files.
 ///
-/// `fuzzed_function` is set for stateless fuzz tests; `fuzzed_contracts` is set
-/// for invariant tests (txs are committed between calls in that case).
+/// `stateless` is set for stateless fuzz tests; `fuzzed_contracts` is set for
+/// invariant tests (txs are committed between calls in that case).
 /// `dynamic` lets invariant replay register contracts deployed mid-sequence so
 /// follow-up calls into them aren't dropped.
 pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
@@ -222,7 +266,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         let mut last_accepted_checked_invariant = false;
         let mut entry_failure: Option<ReplayFailure> = None;
         for tx in &tx_seq {
-            if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
+            if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
                 continue;
             }
 
@@ -309,7 +353,11 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                     target.fuzz_fail_on_revert,
                 )
             {
-                entry_failure = Some(ReplayFailure::Fuzz { selector, fingerprint });
+                entry_failure = Some(ReplayFailure::Fuzz {
+                    selector,
+                    fingerprint,
+                    output: keccak256(call_result.result.as_ref()),
+                });
                 break;
             }
         }
@@ -383,6 +431,137 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     }
 
     Ok(stats)
+}
+
+pub struct MinimizationReplayInput<'a> {
+    pub sequence: &'a [BasicTxDetails],
+    pub evm_edge_indices: &'a mut EdgeIndexMap,
+    pub corpus: &'a FuzzCorpusConfig,
+}
+
+/// Replays one candidate input and returns coverage/failure facts for minimizers.
+pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    input: MinimizationReplayInput<'_>,
+    target: ShowmapReplayTarget<'_>,
+) -> Result<ReplayObservation> {
+    let mut observation = ReplayObservation::default();
+    let mut executor = executor.clone();
+    executor.inspector_mut().collect_edge_coverage_with_config(input.corpus);
+    executor.inspector_mut().collect_sancov_edges(input.corpus.collect_sancov_edges());
+    executor.inspector_mut().collect_sancov_trace_cmp(input.corpus.collect_sancov_trace_cmp());
+
+    let mut created = Vec::new();
+    let mut accepted = 0usize;
+    let mut last_accepted_checked_invariant = false;
+    for tx in input.sequence {
+        if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
+            observation.unmatched += 1;
+            continue;
+        }
+
+        let mut call_result = execute_tx(&mut executor, tx)?;
+        let target_addr = tx.call_details.target;
+        let selector =
+            tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
+        let fingerprint = snapshot_edge_fingerprint(&call_result);
+
+        if call_result.result.as_ref() == MAGIC_ASSUME
+            || (call_result.reverter == Some(CHEATCODE_ADDRESS)
+                && SkipReason::decode(&call_result.result).is_some())
+        {
+            observation.skipped += 1;
+            continue;
+        }
+
+        call_result.merge_all_coverage(
+            &mut observation.evm_edges,
+            input.evm_edge_indices,
+            &mut observation.sancov_edges,
+        );
+        observation.replayed += 1;
+
+        register_replay_created(
+            &call_result.state_changeset,
+            target.dynamic,
+            target.fuzzed_contracts,
+            &mut created,
+        );
+
+        if target.fuzzed_contracts.is_some() {
+            accepted += 1;
+            last_accepted_checked_invariant = false;
+            if let Some(failure) = invariant_handler_failure(
+                target_addr,
+                selector,
+                did_fail_on_assert(&call_result, &call_result.state_changeset),
+                target.invariant_fns,
+                &call_result,
+                fingerprint,
+            ) {
+                let terminal = failure.is_terminal();
+                record_replay_failure(&mut observation.failure, failure);
+                if terminal {
+                    break;
+                }
+            }
+            executor.commit(&mut call_result);
+            if should_check_invariant(
+                accepted,
+                target.invariant_replay.check_interval,
+                target.invariant_replay.is_optimization,
+            ) {
+                last_accepted_checked_invariant = true;
+                if !target.invariant_replay.is_optimization
+                    && !observation.failure.as_ref().is_some_and(ReplayFailure::is_predicate)
+                    && let Some(address) = target.invariant_address
+                    && let Some(failure) =
+                        broken_invariant(&executor, address, target.invariant_fns)?
+                {
+                    record_replay_failure(&mut observation.failure, failure);
+                }
+            }
+        } else if !fuzz_replay_call_succeeded(
+            &executor,
+            target_addr,
+            &mut call_result,
+            target.fuzz_fail_on_revert,
+        ) {
+            record_replay_failure(
+                &mut observation.failure,
+                ReplayFailure::Fuzz {
+                    selector,
+                    fingerprint,
+                    output: keccak256(call_result.result.as_ref()),
+                },
+            );
+            break;
+        }
+
+        if observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal) {
+            break;
+        }
+    }
+
+    if !observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal)
+        && accepted > 0
+        && target.fuzzed_contracts.is_some()
+        && let Some(address) = target.invariant_address
+    {
+        if !target.invariant_replay.is_optimization
+            && !last_accepted_checked_invariant
+            && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
+        {
+            record_replay_failure(&mut observation.failure, failure);
+        } else if target.invariant_replay.call_after_invariant
+            && let Some(failure) = broken_after_invariant(&executor, address)?
+        {
+            record_replay_failure(&mut observation.failure, failure);
+        }
+    }
+
+    rollback_replay_created(target.fuzzed_contracts, created);
+    Ok(observation)
 }
 
 fn replay_failure_report(replay_failures: &[String], failed_entries: usize) -> String {

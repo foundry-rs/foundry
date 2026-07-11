@@ -49,6 +49,9 @@ the fixed cheatcode address and are dispatched through the cheatcode inspector.
 Custom network behavior for `anvil`, `forge`, and `cast` is implemented through
 the EVM networks crate.
 
+For symbolic execution work under `crates/evm/symbolic`, read
+`crates/evm/symbolic/AGENTS.md` before editing.
+
 ## Testing
 
 - Add tests for code changes that fix behavior or add functionality.
@@ -149,6 +152,38 @@ not include validation/testing boilerplate such as "Validated with", "Tested
 with", or command lists unless explicitly requested. Do not use templates,
 bullet lists, or long essays. When writing PR bodies from scripts, use a file or
 heredoc with real newlines; never pass escaped `\n` sequences.
+
+### Performance PRs
+
+When drafting or updating a PR body for a performance-related change, benchmark
+the feature branch against `master` or the user-specified base before writing the
+performance claims.
+
+- Use the local benchmark runners under `benches/` unless the user explicitly
+  asks for GitHub Actions or the Derek/decofe automation.
+- Use `foundry-bench` when the claim is about elapsed time for a Foundry command
+  on an existing Solidity project: `forge build`, cached rebuilds, `forge test`,
+  fuzz-test replay, isolated tests, coverage, or focused symbolic tests.
+- For invariant or campaign-style benchmarking, use `foundry-scfuzzbench`; this
+  is the local equivalent of the `derek bench invariant`/`decofe bench
+  invariant` PR flow, which publishes a `scfuzzbench` event.
+- The local runners do not compare two local refs in one invocation. Run the
+  baseline and candidate separately, with identical benchmark inputs, timeout,
+  worker count, environment, target repository, and output schema.
+- For branch-vs-base PR comparisons, use the profiling profile
+  (`FOUNDRY_BENCH_LOCAL_BUILD_PROFILE=profiling`) rather than an ad hoc debug or
+  release build. Keep ordinary `foundry-bench --versions local` comparisons on
+  the default release distribution profile.
+- Include only benchmarks that exercise the changed path. Do not pad the PR body
+  with unrelated benchmark suites.
+- Report both wall-time results and domain counters when available, for example
+  solver queries, reported solver time, throughput, coverage relscore/relcov,
+  or invariant findings.
+- If results are neutral, noisy, or regress a secondary metric, state that
+  directly. Do not convert noise into a performance claim.
+- Keep the PR body short: one paragraph explaining the optimization and why it
+  is correct, followed by a `### Results` table.
+- Exact benchmark commands and result-table mechanics in `benches/README.md`.
 
 ## Notes
 

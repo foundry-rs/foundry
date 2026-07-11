@@ -30,31 +30,33 @@ impl SymExpr {
         if let Some(value) = self.as_const() {
             format!("concrete-address:{:?}", word_to_address(value))
         } else {
-            let bytes = self
-                .address_byte_terms()
+            let expr = self.symbolic_address_canonical();
+            let bytes = expr
+                .address_byte_terms_for_equivalence()
                 .map(|bytes| format!("{bytes:?}"))
-                .unwrap_or_else(|| format!("{self:?}"));
+                .unwrap_or_else(|| format!("{expr:?}"));
             format!("symbolic-address:{bytes}")
         }
     }
 
-    pub(crate) fn address_match_condition(&self, address: Address) -> SymBoolExpr {
+    pub(crate) fn address_match_condition(&self, cx: &mut SymCx, address: Address) -> SymBoolExpr {
         if let Some(word) = self.as_const() {
-            return SymBoolExpr::constant(word == address_word(address));
+            return SymBoolExpr::constant(cx, word == address_word(address));
         }
-        let Some(terms) = self.address_byte_terms() else {
-            return SymBoolExpr::eq(self.clone(), Self::constant(address_word(address)));
+        let Some(terms) = self.address_byte_terms(cx) else {
+            let address = Self::constant(cx, address_word(address));
+            return SymBoolExpr::eq(cx, self.clone(), address);
         };
         let bytes = address.as_slice();
-        SymBoolExpr::and(
-            terms
-                .into_iter()
-                .enumerate()
-                .map(|(index, term)| {
-                    SymBoolExpr::eq(term, Self::constant(U256::from(bytes[index])))
-                })
-                .collect(),
-        )
+        let conditions = terms
+            .into_iter()
+            .enumerate()
+            .map(|(index, term)| {
+                let byte = Self::constant(cx, U256::from(bytes[index]));
+                SymBoolExpr::eq(cx, term, byte)
+            })
+            .collect();
+        SymBoolExpr::and(cx, conditions)
     }
 
     pub(crate) fn symbolic_address_equivalent(&self, alias: &Self) -> bool {
@@ -66,24 +68,26 @@ impl SymExpr {
     }
 
     fn address_expr_equivalent(&self, alias: &Self) -> bool {
-        if self == alias {
+        let this = self.symbolic_address_canonical();
+        let alias = alias.symbolic_address_canonical();
+
+        if this == alias {
             return true;
         }
 
         if let (Some(candidate), Some(alias)) =
-            (self.address_byte_terms(), alias.address_byte_terms())
+            (this.address_byte_terms_for_equivalence(), alias.address_byte_terms_for_equivalence())
         {
             return candidate == alias;
         }
 
-        match self.kind() {
-            SymExprKind::Op(SymExprOp::And, left, right) => {
-                (right.is_address_mask() && left.address_expr_equivalent(alias))
-                    || (left.is_address_mask() && right.address_expr_equivalent(alias))
+        match this.kind() {
+            SymExprKind::BinOp(SymBinOp::And, left, right) if right.is_address_mask() => {
+                left.address_expr_equivalent(alias)
             }
-            SymExprKind::Op(SymExprOp::Shr, value, shift) if shift.is_shift_96() => {
+            SymExprKind::BinOp(SymBinOp::Shr, value, shift) if shift.is_shift_96() => {
                 match value.kind() {
-                    SymExprKind::Op(SymExprOp::Shl, inner, inner_shift)
+                    SymExprKind::BinOp(SymBinOp::Shl, inner, inner_shift)
                         if inner_shift.is_shift_96() =>
                     {
                         inner.address_expr_equivalent(alias)
@@ -95,8 +99,31 @@ impl SymExpr {
         }
     }
 
-    fn address_byte_terms(&self) -> Option<Vec<Self>> {
-        (12..32).map(|index| self.byte_term(index)).collect()
+    fn symbolic_address_canonical(&self) -> &Self {
+        match self.kind() {
+            SymExprKind::BinOp(SymBinOp::And, left, right) if right.is_address_mask() => {
+                left.symbolic_address_canonical()
+            }
+            SymExprKind::BinOp(SymBinOp::Shr, value, shift) if shift.is_shift_96() => {
+                match value.kind() {
+                    SymExprKind::BinOp(SymBinOp::Shl, inner, inner_shift)
+                        if inner_shift.is_shift_96() =>
+                    {
+                        inner.symbolic_address_canonical()
+                    }
+                    _ => self,
+                }
+            }
+            _ => self,
+        }
+    }
+
+    fn address_byte_terms(&self, cx: &mut SymCx) -> Option<Vec<Self>> {
+        (12..32).map(|index| self.byte_term(cx, index)).collect()
+    }
+
+    fn address_byte_terms_for_equivalence(&self) -> Option<Vec<Self>> {
+        (12..32).map(|index| self.extracted_byte_source(index)).collect()
     }
 
     fn is_address_mask(&self) -> bool {
@@ -108,7 +135,7 @@ impl SymExpr {
     }
 }
 
-pub(crate) fn stable_symbol(prefix: &'static str, input: &[u8]) -> Symbol {
+pub(crate) fn stable_symbol(cx: &mut SymCx, prefix: &'static str, input: &[u8]) -> Symbol {
     let digest = keccak256(input);
     let mut symbol = String::with_capacity(prefix.len() + 17);
     symbol.push_str(prefix);
@@ -116,5 +143,5 @@ pub(crate) fn stable_symbol(prefix: &'static str, input: &[u8]) -> Symbol {
     for byte in &digest[..8] {
         let _ = write!(symbol, "{byte:02x}");
     }
-    Symbol::intern(&symbol)
+    cx.intern(&symbol)
 }

@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address, fixed_bytes};
+use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
@@ -601,6 +601,85 @@ async fn test_fork_revert_next_block_timestamp() {
     api.mine_one().await;
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert!(block.header.timestamp >= latest_block.header.timestamp);
+}
+
+// Tests that `anvil_setNextBlockPrevRandao` overrides the `prevrandao` (block header `mixHash`) of
+// the next mined block, and that the override is one-shot: subsequent blocks fall back to anvil's
+// default per-block `prevrandao` derivation.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, Some(prevrandao));
+
+    // the override only applies to a single block: the next block uses the default derivation
+    api.mine_one().await;
+    let next = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(next.header.mix_hash, Some(prevrandao));
+}
+
+// Tests that the `prevrandao` set via `anvil_setNextBlockPrevRandao` is observed by the EVM: the
+// `PREVRANDAO` opcode (exposed through `Multicall::getCurrentBlockDifficulty`) returns the manually
+// set value for the overridden block.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_evm() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // deploying the contract auto-mines a block
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+
+    let prevrandao = b256!("0x00000000000000000000000000000000000000000000000000000000deadbeef");
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    api.mine_one().await;
+
+    // post-merge the `PREVRANDAO` opcode (0x44) returns the current block's `prevrandao`
+    let difficulty = multicall.getCurrentBlockDifficulty().call().await.unwrap();
+    assert_eq!(difficulty, U256::from_be_bytes(prevrandao.0));
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, Some(prevrandao));
+}
+
+// Tests that a `prevrandao` override set via `anvil_setNextBlockPrevRandao` but not yet mined is
+// dropped by `anvil_reset`, so the pending value cannot leak into a block mined after the reset.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_cleared_on_reset() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    // resetting must drop the pending override before it is consumed by a block
+    api.anvil_reset(None).await.unwrap();
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(block.header.mix_hash, Some(prevrandao));
+}
+
+// Tests that a `prevrandao` override set via `anvil_setNextBlockPrevRandao` but not yet mined is
+// dropped by `evm_revert`, so the pending value cannot leak into a block mined after the revert.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_cleared_on_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    // reverting must drop the pending override before it is consumed by a block
+    api.evm_revert(state_snapshot).await.unwrap();
+    api.mine_one().await;
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(block.header.mix_hash, Some(prevrandao));
 }
 
 // test that after a snapshot revert, the env block is reset
@@ -1258,7 +1337,7 @@ async fn can_get_node_info_tempo_t0() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info_tempo_t5_from_chain_timestamp() {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     let timestamp = TempoHardfork::T5.mainnet_activation_timestamp().unwrap();
     let config = NodeConfig::test_tempo()
@@ -1273,7 +1352,7 @@ async fn can_get_node_info_tempo_t5_from_chain_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info_tempo_t1() {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()));
     let (api, handle) = spawn(config).await;
@@ -1306,33 +1385,6 @@ async fn can_get_node_info_tempo_t1() {
     };
 
     assert_eq!(node_info, expected_node_info);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn can_deal_erc20_tempo() {
-    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
-
-    let (api, _handle) = spawn(NodeConfig::test_tempo()).await;
-
-    let target = Address::random();
-
-    // TIP20 tokens are precompile-backed — anvil_dealERC20 uses access-list slot probing
-    // which doesn't discover precompile storage slots. Verify this fails gracefully.
-    for token_addr in [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS] {
-        let amount = U256::from(5_000_000); // 5 tokens (6 decimals)
-
-        let result = api.anvil_deal_erc20(target, token_addr, amount).await;
-        assert!(
-            result.is_err(),
-            "anvil_dealERC20 should fail for precompile-based TIP20 {token_addr}"
-        );
-
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("no slot found"),
-            "Error should mention slot discovery failure, got: {err}"
-        );
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
