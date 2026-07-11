@@ -166,14 +166,11 @@ fn format_inner(
         _ => {}
     }
 
-    if first_result.is_ok() && second_result.is_err() && !DEBUG {
-        panic!(
-            "failed to format a second time:\nfirst_result={first_result:#?}\nsecond_result={second_result:#?}"
-        );
-        // second_result
-    } else {
-        first_result
-    }
+    assert!(
+        !(first_result.is_ok() && second_result.is_err() && !DEBUG),
+        "failed to format a second time:\nfirst_result={first_result:#?}\nsecond_result={second_result:#?}"
+    );
+    first_result
 }
 
 fn diff(first: &str, second: &str) -> impl std::fmt::Display {
