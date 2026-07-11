@@ -555,7 +555,7 @@ pub struct Config {
     pub enable_tx_gas_limit: bool,
 
     /// Deprecated address-label alias; use [`TracingConfig::labels`].
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "AddressHashMap::is_empty")]
     pub labels: AddressHashMap<String>,
 
     /// Whether to enable safety checks for `vm.getCode` and `vm.getDeployedCode` invocations.
@@ -2752,7 +2752,9 @@ impl Provider for Config {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
         let root = Value::serialize(self.root.clone())?;
-        let labels = Value::serialize(self.tracing.labels.clone())?;
+        let mut labels = self.labels.clone();
+        labels.extend(self.tracing.labels.clone());
+        let labels = Value::serialize(labels)?;
         if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
             entry.insert("root".to_string(), root.clone());
             entry.insert("labels".to_string(), labels.clone());
@@ -5840,6 +5842,23 @@ mod tests {
         let merged = config.merge_inline_provider(("ffi", true)).unwrap();
         assert_eq!(merged.tracing.verbosity, 4);
         assert_eq!(merged.tracing.labels, config.tracing.labels);
+    }
+
+    #[test]
+    fn test_legacy_programmatic_labels_survive_serialization() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
+        let config = Config { labels: labels.clone(), ..Default::default() };
+
+        let serialized = toml::Value::try_from(&config).unwrap();
+        assert_eq!(
+            serialized["labels"].as_table().unwrap().values().next().and_then(|v| v.as_str()),
+            Some("Alice")
+        );
+
+        let provided = Config::from_provider(&config).unwrap();
+        assert_eq!(provided.labels, labels);
+        assert_eq!(provided.tracing.labels, labels);
     }
 
     #[test]
