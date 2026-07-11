@@ -3,6 +3,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, shell};
+use foundry_compilers::{Graph, artifacts::Source, multi::MultiCompilerParser};
 use serde::Serialize;
 use solar::sema::{
     Gcx, Hir,
@@ -48,9 +49,29 @@ impl Display for Eip712Output {
 impl Eip712Args {
     pub fn run(self) -> Result<()> {
         let config = self.build.load_config()?;
-        let project = config.solar_project()?;
-        let mut output = ProjectCompiler::new().files([self.target_path]).compile(&project)?;
-        let compiler = output.parser_mut().solc_mut().compiler_mut();
+        let artifacts_requested = self.build.out_path.is_some()
+            || config.force
+            || config.ast
+            || config.build_info
+            || config.build_info_path.is_some()
+            || config.out != config.root.join("out")
+            || !config.extra_output.is_empty()
+            || !config.extra_output_files.is_empty();
+
+        if artifacts_requested {
+            let project = config.solar_project()?;
+            let mut output = ProjectCompiler::new().files([self.target_path]).compile(&project)?;
+            Self::run_with_compiler(output.parser_mut().solc_mut().compiler_mut())
+        } else {
+            let sources = Source::read_all([self.target_path])?;
+            let graph =
+                Graph::<MultiCompilerParser>::resolve_sources(&config.project_paths(), sources)?;
+            let (_, mut edges) = graph.into_sources();
+            Self::run_with_compiler(edges.parser_mut().solc_mut().compiler_mut())
+        }
+    }
+
+    fn run_with_compiler(compiler: &mut solar::sema::Compiler) -> Result<()> {
         compiler.enter_mut(|compiler| -> Result<()> {
             let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
             let gcx = compiler.gcx();

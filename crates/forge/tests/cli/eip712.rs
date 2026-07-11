@@ -62,12 +62,7 @@ contract DummyTest {
     cmd.forge_fuse()
         .args(["eip712", path.to_string_lossy().as_ref()])
         .assert_success()
-        .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]])
+        .stdout_eq("")
         .stderr_eq(str![[r#"
 Structs.sol > Structs > Foo:
  - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
@@ -161,7 +156,22 @@ Structs.sol > Structs2 > FooBar:
 "#]],
     );
 
-    // Testing `solar_project` doesn't mess up cache.
+    // EIP-712 analysis only needs the source graph and must not emit compiler output.
+    assert!(std::fs::read_dir(prj.artifacts()).map(|mut dir| dir.next().is_none()).unwrap_or(true));
+    assert!(!prj.cache().exists());
+
+    // Explicit artifact settings retain the compiler-backed path.
+    let custom_out = prj.root().join("eip712-out");
+    cmd.forge_fuse()
+        .args([
+            "eip712",
+            path.to_string_lossy().as_ref(),
+            "--out",
+            custom_out.to_string_lossy().as_ref(),
+        ])
+        .assert_success();
+    assert!(std::fs::read_dir(custom_out).unwrap().next().is_some());
+
     cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -212,12 +222,7 @@ library InsideLibrary {
     cmd.forge_fuse()
         .args(["eip712", path.to_string_lossy().as_ref()])
         .assert_success()
-        .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]])
+        .stdout_eq("")
         .stderr_eq(str![[r#"
 FreeStanding:
  - type: FreeStanding(uint256 id,string name)
