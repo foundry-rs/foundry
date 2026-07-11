@@ -1305,7 +1305,10 @@ impl<N: Network> EthApi<N> {
         let block_request = match &block_id {
             BlockId::Number(BlockNumber::Pending) => {
                 let pending_txs = self.pool.ready_transactions().collect();
-                BlockRequest::Pending(pending_txs)
+                BlockRequest::Pending(MiningTransactions::new(
+                    pending_txs,
+                    self.pool.private_bundles(),
+                ))
             }
             _ => {
                 let number = self.backend.ensure_block_number(Some(block_id)).await?;
@@ -1428,7 +1431,10 @@ impl EthApi<FoundryNetwork> {
         let block_request = match block_number {
             Some(BlockId::Number(BlockNumber::Pending)) => {
                 let pending_txs = self.pool.ready_transactions().collect();
-                BlockRequest::Pending(pending_txs)
+                BlockRequest::Pending(MiningTransactions::new(
+                    pending_txs,
+                    self.pool.private_bundles(),
+                ))
             }
             _ => {
                 let number = self.backend.ensure_block_number(block_number).await?;
@@ -2468,14 +2474,8 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByNumber");
         let block_request = self.block_request(Some(block_number.into())).await?;
-        if let BlockRequest::Pending(txs) = block_request {
-            let block = self
-                .backend
-                .pending_block_with_bundles(MiningTransactions::new(
-                    txs,
-                    self.pool.private_bundles(),
-                ))
-                .await;
+        if let BlockRequest::Pending(mining_transactions) = block_request {
+            let block = self.backend.pending_block_with_bundles(mining_transactions).await;
             return Ok(Some(U256::from(block.block.body.transactions.len())));
         }
         let block = self.backend.block_by_number(block_number).await?;
@@ -2752,22 +2752,22 @@ impl EthApi<FoundryNetwork> {
     pub async fn send_bundle(&self, bundle: EthSendBundle) -> Result<EthBundleHash> {
         node_info!("eth_sendBundle");
         if bundle.txs.is_empty() {
-            return Err(BlockchainError::InvalidTransactionRequest(
-                "bundle must contain at least one transaction".to_string(),
-            ));
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundle must contain at least one transaction",
+            )));
         }
         if bundle.block_number <= self.backend.best_number() {
-            return Err(BlockchainError::InvalidTransactionRequest(format!(
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
                 "bundle target block {} has already been mined",
-                bundle.block_number
-            )));
+                bundle.block_number,
+            ))));
         }
         if let (Some(minimum), Some(maximum)) = (bundle.min_timestamp, bundle.max_timestamp)
             && minimum > maximum
         {
-            return Err(BlockchainError::InvalidTransactionRequest(
-                "bundle minTimestamp exceeds maxTimestamp".to_string(),
-            ));
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundle minTimestamp exceeds maxTimestamp",
+            )));
         }
 
         let bundle_hash = bundle.bundle_hash();
@@ -2779,9 +2779,12 @@ impl EthApi<FoundryNetwork> {
             let mut data = raw.as_ref();
             let transaction = FoundryTxEnvelope::decode_2718(&mut data)
                 .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+            if !data.is_empty() {
+                return Err(BlockchainError::FailedToDecodeSignedTransaction);
+            }
             self.ensure_typed_transaction_supported(&transaction)?;
             let pending_transaction = PendingTransaction::new(transaction)?;
-            self.backend.validate_pool_transaction(&pending_transaction).await?;
+            self.backend.validate_transaction_chain_id(&pending_transaction.transaction)?;
             let nonce = pending_transaction.nonce();
             let sender = *pending_transaction.sender();
             transactions.push(Arc::new(PoolTransaction {
@@ -2792,15 +2795,19 @@ impl EthApi<FoundryNetwork> {
             }));
         }
 
-        self.pool.add_private_bundle(PrivateBundle {
-            hash: bundle_hash,
-            transactions,
-            block_number: bundle.block_number,
-            min_timestamp: bundle.min_timestamp,
-            max_timestamp: bundle.max_timestamp,
-            reverting_tx_hashes: bundle.reverting_tx_hashes.into_iter().collect(),
-            replacement_uuid: bundle.replacement_uuid,
-        });
+        self.pool.add_private_bundle(
+            PrivateBundle {
+                hash: bundle_hash,
+                transactions,
+                block_number: bundle.block_number,
+                min_timestamp: bundle.min_timestamp,
+                max_timestamp: bundle.max_timestamp,
+                reverting_tx_hashes: bundle.reverting_tx_hashes.into_iter().collect(),
+                dropping_tx_hashes: bundle.dropping_tx_hashes.into_iter().collect(),
+                replacement_uuid: bundle.replacement_uuid,
+            },
+            self.backend.best_number().saturating_add(1),
+        );
 
         Ok(EthBundleHash { bundle_hash })
     }

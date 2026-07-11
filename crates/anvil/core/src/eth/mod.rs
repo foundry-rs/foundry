@@ -2031,6 +2031,12 @@ true}]}"#;
     }
 
     #[test]
+    fn test_eth_send_bundle() {
+        let s = r#"{"method":"eth_sendBundle","params":[{"txs":["0x1234"],"blockNumber":"0x1","minTimestamp":"0x2","maxTimestamp":"0x3","revertingTxHashes":["0x0000000000000000000000000000000000000000000000000000000000000004"],"droppingTxHashes":["0x0000000000000000000000000000000000000000000000000000000000000005"],"replacementUuid":"replacement"}]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+    }
+
+    #[test]
     fn test_serde_eth_balance() {
         let s = r#"{"method": "eth_getBalance", "params":
 ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "latest"]}"#;

@@ -61,27 +61,15 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
 
     /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot);
-}
 
-impl<'a, T: 'a + MaybeFullDatabase + ?Sized> MaybeFullDatabase for &'a T
-where
-    &'a T: DatabaseRef<Error = DatabaseError>,
-{
-    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
-        T::maybe_as_full_db(self)
+    /// Restores a checkpoint used during speculative bundle execution.
+    ///
+    /// Implementations with persistent caches should override this to avoid persistence side
+    /// effects that are appropriate for a general clear but not for an execution rollback.
+    fn restore_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        self.clear();
+        self.init_from_state_snapshot(state_snapshot);
     }
-
-    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
-        unreachable!("never called for DatabaseRef")
-    }
-
-    fn read_as_state_snapshot(&self) -> StateSnapshot {
-        unreachable!("never called for DatabaseRef")
-    }
-
-    fn clear(&mut self) {}
-
-    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
 }
 
 impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for &mut T {
@@ -104,6 +92,64 @@ impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for &mut T {
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
         T::init_from_state_snapshot(self, state_snapshot)
     }
+
+    fn restore_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        T::restore_state_snapshot(self, state_snapshot)
+    }
+}
+
+/// An explicit read-only database view used by query and historical-state paths.
+///
+/// This preserves lazy fork lookups without exposing mutation through [`MaybeFullDatabase`]. Any
+/// speculative execution using this view must first layer a mutable [`CacheDB`] over it; bundle
+/// and pending-block execution use mutable database implementations directly.
+#[derive(Debug)]
+pub struct ReadOnlyDatabase<'a, T: ?Sized>(&'a T);
+
+impl<'a, T: ?Sized> ReadOnlyDatabase<'a, T> {
+    pub const fn new(db: &'a T) -> Self {
+        Self(db)
+    }
+}
+
+impl<T: MaybeFullDatabase + ?Sized> DatabaseRef for ReadOnlyDatabase<'_, T> {
+    type Error = DatabaseError;
+
+    fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
+        self.0.basic_ref(address)
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
+        self.0.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> DatabaseResult<U256> {
+        self.0.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> DatabaseResult<B256> {
+        self.0.block_hash_ref(number)
+    }
+}
+
+impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for ReadOnlyDatabase<'_, T> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        self.0.maybe_as_full_db()
+    }
+
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        self.0.read_as_state_snapshot()
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        self.0.read_as_state_snapshot()
+    }
+
+    fn clear(&mut self) {}
+
+    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
+
+    fn restore_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
 }
 
 /// Helper trait to reset the DB if it's forked

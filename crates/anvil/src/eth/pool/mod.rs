@@ -53,7 +53,7 @@ pub struct Pool<T> {
     /// listeners for new ready transactions
     transaction_listener: Mutex<Vec<Sender<TxHash>>>,
     /// Listeners used exclusively to wake the miner.
-    mining_listener: Mutex<Vec<Sender<TxHash>>>,
+    mining_listener: Mutex<Vec<Sender<MiningNotification>>>,
     /// Private bundles awaiting their target block.
     private_bundles: RwLock<Vec<Arc<PrivateBundle<T>>>>,
 }
@@ -100,7 +100,7 @@ impl<T> Pool<T> {
     }
 
     /// Adds a listener that is notified for public transactions and private bundles.
-    pub fn add_mining_listener(&self) -> Receiver<TxHash> {
+    pub fn add_mining_listener(&self) -> Receiver<MiningNotification> {
         const MINING_LISTENER_BUFFER_SIZE: usize = 2048;
         let (tx, rx) = channel(MINING_LISTENER_BUFFER_SIZE);
         self.mining_listener.lock().push(tx);
@@ -112,21 +112,30 @@ impl<T> Pool<T> {
         self.private_bundles.read().clone()
     }
 
-    /// Returns whether any private bundles are waiting to be mined.
-    pub fn has_private_bundles(&self) -> bool {
-        !self.private_bundles.read().is_empty()
+    /// Returns whether a private bundle notification still refers to a queued target.
+    pub fn contains_private_bundle(&self, hash: B256, block_number: u64) -> bool {
+        self.private_bundles
+            .read()
+            .iter()
+            .any(|bundle| bundle.hash == hash && bundle.block_number == block_number)
     }
 
     /// Adds a private bundle, replacing an existing bundle with the same replacement UUID.
-    pub fn add_private_bundle(&self, bundle: PrivateBundle<T>) {
+    pub fn add_private_bundle(&self, bundle: PrivateBundle<T>, next_block_number: u64) {
         let hash = bundle.hash;
+        let is_next_block = bundle.block_number == next_block_number;
         let mut bundles = self.private_bundles.write();
         if let Some(replacement_uuid) = &bundle.replacement_uuid {
             bundles.retain(|queued| queued.replacement_uuid.as_ref() != Some(replacement_uuid));
         }
         bundles.push(Arc::new(bundle));
         drop(bundles);
-        Self::notify_listeners(&self.mining_listener, hash);
+        if is_next_block {
+            Self::notify_listeners(
+                &self.mining_listener,
+                MiningNotification::PrivateBundle { hash, block_number: next_block_number },
+            );
+        }
     }
 
     /// Removes bundles whose exact target block has already been mined.
@@ -191,10 +200,16 @@ impl<T> Pool<T> {
     fn notify_ready(&self, tx: &AddedTransaction<T>) {
         if let AddedTransaction::Ready(ready) = tx {
             self.notify_listener(ready.hash);
-            Self::notify_listeners(&self.mining_listener, ready.hash);
+            Self::notify_listeners(
+                &self.mining_listener,
+                MiningNotification::Transaction(ready.hash),
+            );
             for promoted in ready.promoted.iter().copied() {
                 self.notify_listener(promoted);
-                Self::notify_listeners(&self.mining_listener, promoted);
+                Self::notify_listeners(
+                    &self.mining_listener,
+                    MiningNotification::Transaction(promoted),
+                );
             }
         }
     }
@@ -204,19 +219,19 @@ impl<T> Pool<T> {
         Self::notify_listeners(&self.transaction_listener, hash);
     }
 
-    fn notify_listeners(listeners: &Mutex<Vec<Sender<TxHash>>>, hash: TxHash) {
+    fn notify_listeners<N: Copy + fmt::Debug>(listeners: &Mutex<Vec<Sender<N>>>, notification: N) {
         let mut listener = listeners.lock();
         // this is basically a retain but with mut reference
         for n in (0..listener.len()).rev() {
             let mut listener_tx = listener.swap_remove(n);
-            let retain = match listener_tx.try_send(hash) {
+            let retain = match listener_tx.try_send(notification) {
                 Ok(()) => true,
                 Err(e) => {
                     if e.is_full() {
                         warn!(
                             target: "txpool",
                             "[{:?}] Failed to send tx notification because channel is full",
-                            hash,
+                            notification,
                         );
                         true
                     } else {
@@ -246,6 +261,20 @@ impl<T: Transaction> Pool<T> {
         let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
 
         self.prune_private_bundles(block_number);
+        if let Some(bundle) = self
+            .private_bundles
+            .read()
+            .iter()
+            .find(|bundle| bundle.block_number == block_number.saturating_add(1))
+        {
+            Self::notify_listeners(
+                &self.mining_listener,
+                MiningNotification::PrivateBundle {
+                    hash: bundle.hash,
+                    block_number: bundle.block_number,
+                },
+            );
+        }
 
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
@@ -265,7 +294,10 @@ impl<T: Transaction> Pool<T> {
                 for hash in tx_hashes {
                     trace!(target: "txpool", "re-notifying for not-yet-valid tx: {:?}", hash);
                     pool.notify_listener(hash);
-                    Self::notify_listeners(&pool.mining_listener, hash);
+                    Self::notify_listeners(
+                        &pool.mining_listener,
+                        MiningNotification::Transaction(hash),
+                    );
                 }
             });
         }
@@ -316,8 +348,24 @@ pub struct PrivateBundle<T> {
     pub max_timestamp: Option<u64>,
     /// Transactions allowed to revert without invalidating the bundle.
     pub reverting_tx_hashes: HashSet<TxHash>,
+    /// Transactions allowed to be omitted if they cannot be included successfully.
+    pub dropping_tx_hashes: HashSet<TxHash>,
     /// Identifier used to replace a previously queued bundle.
     pub replacement_uuid: Option<String>,
+}
+
+/// A miner wakeup that keeps private bundles separate from public transaction listeners.
+#[derive(Clone, Copy, Debug)]
+pub enum MiningNotification {
+    /// A public transaction became ready.
+    Transaction(TxHash),
+    /// A private bundle became eligible for the next block.
+    PrivateBundle {
+        /// Bundle hash used to reject stale replacement notifications.
+        hash: B256,
+        /// Exact block for which the notification was emitted.
+        block_number: u64,
+    },
 }
 
 impl<T> PrivateBundle<T> {

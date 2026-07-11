@@ -120,6 +120,12 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         *db.storage.write() = storage;
         *db.block_hashes.write() = block_hashes;
     }
+
+    fn restore_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        // Unlike a general clear, speculative execution rollback must not flush rejected bundle
+        // state into the persistent fork cache.
+        self.init_from_state_snapshot(state_snapshot);
+    }
 }
 
 impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
@@ -151,6 +157,11 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
     }
 
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        self.state_snapshot = state_snapshot;
+    }
+
+    fn restore_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        self.local.clear();
         self.state_snapshot = state_snapshot;
     }
 }
