@@ -241,6 +241,108 @@ invariant_notHit()
     );
 });
 
+forgetest_init!(symbolic_predicate_artifact_rejects_handler_assertion_replay, |prj, cmd| {
+    skip_unless_z3!("symbolic_predicate_artifact_rejects_handler_assertion_replay");
+
+    let test_path = prj.add_test(
+        "SymbolicPredicateArtifactOrigin.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract PredicateArtifactTarget {
+    bool public hit;
+
+    function trigger() external {
+        hit = true;
+    }
+}
+
+contract SymbolicPredicateArtifactOrigin is Test {
+    PredicateArtifactTarget target;
+
+    function setUp() public {
+        target = new PredicateArtifactTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_notHit",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_notHit()");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    let artifact_path = result["invariant_failures"][0]["artifact"]["path"]
+        .as_str()
+        .expect("predicate artifact path")
+        .to_string();
+
+    std::fs::write(
+        test_path,
+        r#"
+import "forge-std/Test.sol";
+
+contract PredicateArtifactTarget {
+    bool public hit;
+
+    function trigger() external {
+        hit = !hit;
+        assert(false);
+    }
+}
+
+contract SymbolicPredicateArtifactOrigin is Test {
+    PredicateArtifactTarget target;
+
+    function setUp() public {
+        target = new PredicateArtifactTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let replay_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let replay_result = json_test_result(&replay_output, "invariant_notHit()");
+    assert!(
+        replay_result["reason"]
+            .as_str()
+            .expect("replay mismatch reason")
+            .contains("different failure origin than the stored predicate"),
+        "{replay_result}"
+    );
+});
+
 forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_handler_failure_stays_handler");
 
@@ -825,6 +927,71 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
+});
+
+// Reverted calls still consume invariant depth. With end-only checking, the
+// symbolic runner must carry the reverted branch forward and check the unchanged
+// state at the configured sequence end.
+forgetest_init!(symbolic_revert_branch_preserves_end_only_invariant_check, |prj, cmd| {
+    skip_unless_z3!("symbolic_revert_branch_preserves_end_only_invariant_check");
+
+    prj.add_test(
+        "SymbolicTerminalRevertInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract TerminalRevertTarget {
+    bool public broken;
+
+    function breakIt() external {
+        require(!broken, "already broken");
+        broken = true;
+    }
+
+    function alwaysRevert() external pure {
+        revert("always");
+    }
+}
+
+contract SymbolicTerminalRevertInvariant is Test {
+    TerminalRevertTarget target;
+
+    function setUp() public {
+        target = new TerminalRevertTarget();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = target.breakIt.selector;
+        selectors[1] = target.alwaysRevert.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.check_interval = 0
+    function invariant_neverBroken() public view {
+        require(!target.broken(), "broken");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_neverBroken",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_neverBroken()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
 });
 
 forgetest_init!(symbolic_invariant_does_not_inherit_prank_into_nested_call, |prj, cmd| {

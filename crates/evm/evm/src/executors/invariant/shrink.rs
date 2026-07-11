@@ -213,6 +213,9 @@ pub struct CheckSequenceOutcome {
     pub calls_count: usize,
     pub reverts: usize,
     pub failure_site: Option<CheckSequenceFailureSite>,
+    /// Whether replay stopped on an assertion in a sequence call rather than a plain revert or
+    /// terminal invariant check.
+    pub sequence_assertion_failure: bool,
 }
 
 pub struct ShrunkSequence {
@@ -711,6 +714,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                     calls_count: calls_executed,
                     reverts,
                     failure_site: Some(site),
+                    sequence_assertion_failure: true,
                 }));
             }
             if call_result.reverted && options.fail_on_revert {
@@ -722,6 +726,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                         calls_count: calls_executed,
                         reverts,
                         failure_site: None,
+                        sequence_assertion_failure: false,
                     }));
                 }
                 let site = sequence_call_failure_site(&calls[idx], &call_result);
@@ -732,6 +737,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                     calls_count: calls_executed,
                     reverts,
                     failure_site: Some(site),
+                    sequence_assertion_failure: false,
                 }));
             }
             Ok(ReplayDecision::Continue(call_result))
@@ -752,6 +758,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
         calls_count: calls_executed,
         reverts,
         failure_site,
+        sequence_assertion_failure: false,
     })
 }
 

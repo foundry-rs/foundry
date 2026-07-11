@@ -156,6 +156,27 @@ fn symbolic_artifact_handler_failure_matches(
     )
 }
 
+const fn symbolic_artifact_predicate_failure_matches(
+    failure: Option<&SymbolicInvariantArtifactFailure>,
+    outcome: &CheckSequenceOutcome,
+    fail_on_revert: bool,
+) -> bool {
+    if !matches!(failure, Some(SymbolicInvariantArtifactFailure::Predicate { .. })) {
+        return false;
+    }
+
+    match outcome.failure_site {
+        Some(
+            CheckSequenceFailureSite::Invariant { .. }
+            | CheckSequenceFailureSite::AfterInvariant { .. },
+        ) => true,
+        Some(CheckSequenceFailureSite::SequenceCall { .. }) => {
+            fail_on_revert && !outcome.sequence_assertion_failure
+        }
+        None => false,
+    }
+}
+
 const FUZZ_BRANCH_FRONTIER_SCHEMA: &str = "foundry:fuzz.branch-frontiers@v1";
 const FUZZ_BRANCH_FRONTIER_FILE: &str = "branch-frontiers.json";
 
@@ -418,6 +439,7 @@ mod tests {
                 selector: Selector::from([0, 0, 0, 1]),
                 fingerprint: B256::from([1; 32]),
             }),
+            sequence_assertion_failure: true,
             calls_count: 1,
             reverts: 0,
         };
@@ -429,6 +451,7 @@ mod tests {
                 selector: Selector::from([0, 0, 0, 1]),
                 fingerprint: B256::from([1; 32]),
             }),
+            sequence_assertion_failure: true,
             calls_count: 1,
             reverts: 0,
         };
@@ -440,6 +463,7 @@ mod tests {
                 selector: Selector::from([0, 0, 0, 1]),
                 fingerprint: B256::from([2; 32]),
             }),
+            sequence_assertion_failure: true,
             calls_count: 1,
             reverts: 0,
         };
@@ -1267,6 +1291,7 @@ struct SymbolicSequenceFailure {
     replayed_entirely: bool,
     reason: Option<String>,
     site: Option<CheckSequenceFailureSite>,
+    sequence_assertion_failure: bool,
     calls_count: usize,
     reverts: usize,
 }
@@ -1277,6 +1302,7 @@ impl SymbolicSequenceFailure {
             replayed_entirely: outcome.replayed_entirely,
             reason: outcome.reason.clone(),
             site: outcome.failure_site,
+            sequence_assertion_failure: outcome.sequence_assertion_failure,
             calls_count: outcome.calls_count,
             reverts: outcome.reverts,
         }
@@ -1286,6 +1312,7 @@ impl SymbolicSequenceFailure {
         self.replayed_entirely == expected.replayed_entirely
             && self.reason == expected.reason
             && self.site == expected.site
+            && self.sequence_assertion_failure == expected.sequence_assertion_failure
     }
 }
 
@@ -2856,6 +2883,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             self.result
                                 .invariant_replay_success(outcome.calls_count, outcome.reverts);
                         } else {
+                            if matches!(
+                                artifact_failure,
+                                Some(SymbolicInvariantArtifactFailure::Predicate { .. })
+                            ) && !symbolic_artifact_predicate_failure_matches(
+                                artifact_failure,
+                                &outcome,
+                                artifact.replay_semantics.fail_on_revert,
+                            ) {
+                                self.result.single_fail(Some(format!(
+                                    "sequence symbolic artifact replayed a different failure \
+                                     origin than the stored predicate: got {:?}",
+                                    outcome.failure_site
+                                )));
+                                return self.result;
+                            }
                             let reason = outcome.reason.or_else(|| artifact.replay.reason.clone());
                             if let Some(SymbolicInvariantArtifactFailure::Handler {
                                 name,

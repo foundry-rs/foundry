@@ -584,10 +584,60 @@ impl SymbolicExecutor {
                                                 },
                                             );
                                         }
-                                        // With `fail_on_revert = false`, a reverted top-level
-                                        // call cannot change persistent state. The unchanged
-                                        // prefix was already checked, so carrying each revert
-                                        // branch forward only duplicates the same frontier.
+                                        // A reverted top-level call cannot change persistent
+                                        // state, but it still consumes one invariant sequence
+                                        // step. Preserve the pre-call world together with the
+                                        // reverted branch constraints so end-only and periodic
+                                        // invariant checks observe the same call schedule as the
+                                        // concrete campaign.
+                                        let mut reverted_state = sequence.state.clone();
+                                        reverted_state
+                                            .merge_noncommitting_check_constraints(&outcome.state);
+                                        if symbolic_invariant_should_check(
+                                            steps.len(),
+                                            input.depth,
+                                            input.check_interval,
+                                        ) {
+                                            for invariant_outcome in self.execute_invariant_check(
+                                                input.executor,
+                                                reverted_state.clone(),
+                                                input.invariant_address,
+                                                input.sender,
+                                                input.invariant,
+                                                input.after_invariant,
+                                                &mut completed_paths,
+                                            )? {
+                                                if invariant_outcome.failed {
+                                                    let (sequence, storage) = self
+                                                        .materialize_sequence(
+                                                            &steps,
+                                                            &invariant_outcome.state,
+                                                        )?;
+                                                    return Ok(
+                                                        SymbolicInvariantRunResult::Counterexample {
+                                                            kind: SymbolicInvariantCounterexampleKind::Predicate,
+                                                            sequence,
+                                                            storage,
+                                                            stats: self
+                                                                .stats_with_paths(completed_paths),
+                                                        },
+                                                    );
+                                                }
+                                                let mut state = reverted_state.clone();
+                                                state.merge_noncommitting_check_constraints(
+                                                    &invariant_outcome.state,
+                                                );
+                                                next_frontier.push(SequencePath {
+                                                    state,
+                                                    steps: steps.clone(),
+                                                });
+                                            }
+                                        } else {
+                                            next_frontier.push(SequencePath {
+                                                state: reverted_state,
+                                                steps: steps.clone(),
+                                            });
+                                        }
                                     }
                                     TopLevelCallStatus::Success => {
                                         if symbolic_invariant_should_check(
