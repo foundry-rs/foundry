@@ -1320,6 +1320,24 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Cancun);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.35", "--evm-version", "amsterdam", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Osaka);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.36", "--evm-version", "amsterdam", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Amsterdam);
 });
 
 // Tests that root paths are properly resolved even if submodule specifies remappings for them.

@@ -1388,33 +1388,6 @@ async fn can_get_node_info_tempo_t1() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_deal_erc20_tempo() {
-    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
-
-    let (api, _handle) = spawn(NodeConfig::test_tempo()).await;
-
-    let target = Address::random();
-
-    // TIP20 tokens are precompile-backed — anvil_dealERC20 uses access-list slot probing
-    // which doesn't discover precompile storage slots. Verify this fails gracefully.
-    for token_addr in [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS] {
-        let amount = U256::from(5_000_000); // 5 tokens (6 decimals)
-
-        let result = api.anvil_deal_erc20(target, token_addr, amount).await;
-        assert!(
-            result.is_err(),
-            "anvil_dealERC20 should fail for precompile-based TIP20 {token_addr}"
-        );
-
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("no slot found"),
-            "Error should mention slot discovery failure, got: {err}"
-        );
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn can_get_default_base_fee_tempo() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();

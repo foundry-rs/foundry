@@ -233,7 +233,7 @@ impl SelectorsSubcommands {
                     ]);
                     for method in &colliding_methods {
                         #[allow(clippy::tuple_array_conversions)]
-                        table.add_row([method.0, method.1, method.2]);
+                        table.add_row(<[_; 3]>::from(*method));
                     }
                     sh_println!("{} collisions found:", colliding_methods.len())?;
                     sh_println!("\n{table}\n")?;

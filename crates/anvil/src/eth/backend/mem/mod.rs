@@ -121,8 +121,8 @@ use foundry_evm_networks::{NetworkConfigs, arbitrum};
 #[cfg(feature = "optimism")]
 use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
-    FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt,
+    FoundryHeader, FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest,
+    FoundryTxEnvelope, FoundryTxReceipt,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "optimism")]
@@ -194,9 +194,10 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
-    storage::{StorageActions, StorageCtx},
+    storage::{Handler, StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+    tip20_factory::TIP20Factory,
 };
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
@@ -1051,11 +1052,26 @@ impl<N: Network> Backend<N> {
         let transactions = block.body.transactions;
 
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
-        let Header { number, withdrawals_root, .. } = header;
+        let number = header.number();
+        let withdrawals_root = header.withdrawals_root();
+        let tempo_fields = header
+            .as_tempo()
+            .map(|header| {
+                (
+                    header.timestamp_millis(),
+                    header.general_gas_limit,
+                    header.shared_gas_limit,
+                    header.timestamp_millis_part,
+                )
+            })
+            .or_else(|| {
+                self.is_tempo()
+                    .then(|| (header.timestamp().saturating_mul(1000), header.gas_limit(), 0, 0))
+            });
 
         let block = AlloyBlock {
             header: AlloyHeader {
-                inner: AnyHeader::from(header),
+                inner: AnyHeader::from(header.into_inner()),
                 hash,
                 total_difficulty: Some(self.total_difficulty()),
                 size: Some(size),
@@ -1075,24 +1091,28 @@ impl<N: Network> Backend<N> {
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
 
-        // Add Tempo-specific header fields for compatibility with TempoNetwork provider.
-        if self.is_tempo() {
-            let timestamp = block.header.timestamp();
-            let gas_limit = block.header.gas_limit();
+        if let Some((
+            timestamp_millis,
+            general_gas_limit,
+            shared_gas_limit,
+            timestamp_millis_part,
+        )) = tempo_fields
+        {
             block.other.insert(
                 "timestampMillis".to_string(),
-                serde_json::Value::String(format!("0x{:x}", timestamp.saturating_mul(1000))),
+                serde_json::Value::String(format!("0x{timestamp_millis:x}")),
             );
             block.other.insert(
                 "mainBlockGeneralGasLimit".to_string(),
-                serde_json::Value::String(format!("0x{gas_limit:x}")),
+                serde_json::Value::String(format!("0x{general_gas_limit:x}")),
             );
-            block
-                .other
-                .insert("sharedGasLimit".to_string(), serde_json::Value::String("0x0".to_string()));
+            block.other.insert(
+                "sharedGasLimit".to_string(),
+                serde_json::Value::String(format!("0x{shared_gas_limit:x}")),
+            );
             block.other.insert(
                 "timestampMillisPart".to_string(),
-                serde_json::Value::String("0x0".to_string()),
+                serde_json::Value::String(format!("0x{timestamp_millis_part:x}")),
             );
         }
 
@@ -2252,6 +2272,7 @@ impl<N: Network> Backend<N> {
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
                 genesis.number,
+                networks.is_tempo(),
             )
         };
 
@@ -2570,6 +2591,7 @@ impl<N: Network> Backend<N> {
             base_fee,
             genesis_timestamp,
             genesis_number,
+            self.is_tempo(),
         );
         self.states.write().clear();
 
@@ -2889,7 +2911,9 @@ where
     }
 
     /// Builds a [`BlockInfo`] from the EVM environment, execution results, and transactions.
+    #[allow(clippy::too_many_arguments)]
     fn build_block_info(
+        &self,
         evm_env: &EvmEnv,
         parent_hash: B256,
         number: u64,
@@ -2936,7 +2960,7 @@ where
             slot_number: None,
         };
 
-        let block = create_block(header, transactions);
+        let block = create_block(FoundryHeader::new(header, self.is_tempo()), transactions);
         BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts }
     }
 
@@ -3020,7 +3044,7 @@ where
                 let not_yet_valid = pool_result.not_yet_valid;
 
                 let state_root = db.maybe_state_root().unwrap_or_default();
-                let block_info = Self::build_block_info(
+                let block_info = self.build_block_info(
                     &evm_env,
                     best_hash,
                     block_number,
@@ -3134,7 +3158,7 @@ where
         ));
 
         // notify all listeners
-        self.notify_on_new_block(header, block_hash);
+        self.notify_on_new_block(header.into_inner(), block_hash);
 
         outcome
     }
@@ -3216,7 +3240,7 @@ where
 
         let state_root = cache_db.maybe_state_root().unwrap_or_default();
         let block_number = evm_env.block_env.number.saturating_to();
-        let block_info = Self::build_block_info(
+        let block_info = self.build_block_info(
             &evm_env,
             parent_hash,
             block_number,
@@ -5133,6 +5157,39 @@ impl Backend<FoundryNetwork> {
                 .mint(admin, user_token, validator_token, amount, admin)
                 .map_err(tempo_db_err)?;
             Ok(())
+        })
+        .await
+    }
+
+    /// Sets an account's balance for a deployed TIP-20 token (Tempo-only).
+    pub async fn set_tip20_balance(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> DatabaseResult<()> {
+        if self.try_set_tip20_balance(address, token_address, balance).await? {
+            return Ok(());
+        }
+
+        Err(tempo_db_err(format!("address {token_address} is not a deployed TIP-20 token")))
+    }
+
+    /// Sets an account's balance if the address is a deployed TIP-20 token (Tempo-only).
+    pub async fn try_set_tip20_balance(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> DatabaseResult<bool> {
+        self.with_tempo_storage(|| {
+            if !TIP20Factory::new().is_tip20(token_address).map_err(tempo_db_err)? {
+                return Ok(false);
+            }
+
+            let mut token = TIP20Token::from_address(token_address).map_err(tempo_db_err)?;
+            token.balances[address].write(balance).map_err(tempo_db_err)?;
+            Ok(true)
         })
         .await
     }

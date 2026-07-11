@@ -1,4 +1,4 @@
-use crate::RepoConfig;
+use crate::{RepoConfig, symbolic::Sidecar};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, process::Command, thread};
@@ -22,6 +22,8 @@ pub struct HyperfineResult {
     pub parameters: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbolic: Option<SymbolicBenchmarkSummary>,
+    #[serde(skip)]
+    pub symbolic_sidecar: Option<Sidecar>,
 }
 
 /// Aggregated symbolic counters for one benchmark run.
@@ -376,6 +378,7 @@ mod tests {
             exit_codes: None,
             parameters: None,
             symbolic: None,
+            symbolic_sidecar: None,
         }
     }
 

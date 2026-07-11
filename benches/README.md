@@ -86,6 +86,11 @@ foundry-bench --verbose
 foundry-bench --output-dir ./results --output-file LATEST_RESULTS.md
 ```
 
+`forge_symbolic_test` keeps the existing focused commands for Solady, Angstrom, and Farcaster
+and uses the generic symbolic command for other repositories.
+Use `--symbolic-sidecar-output <FILE>` with exactly one `--versions` value to capture the
+versioned per-run results. Like `--json-output`, the sidecar path is relative to `--output-dir`.
+
 ## Branch vs master PR-body workflow
 
 Use this workflow when preparing performance numbers for a PR body. It keeps the
@@ -255,6 +260,7 @@ The artifact bundle exposes:
 - `--verbose` - Show detailed benchmark output
 - `--output-dir <DIR>` - Directory for output files (default: benches)
 - `--output-file <FILE_NAME.md>` - Name of the output file (default: LATEST.md)
+- `--symbolic-sidecar-output <FILE.json>` - Write the opt-in v1 symbolic samples sidecar (requires exactly one version)
 
 ## Benchmark Structure
 
@@ -264,7 +270,7 @@ The artifact bundle exposes:
 - `forge_fuzz_test` - Benchmarks non-isolated `forge test` with only fuzz tests (tests with parameters)
 - `forge_coverage` - Benchmarks `forge coverage --ir-minimum` command across repos
 - `forge_isolate_test` - Benchmarks isolated `forge test` command across repos
-- `forge_symbolic_test` - Benchmarks focused `forge test --symbolic --json` checks and reports symbolic solver counters
+- `forge_symbolic_test` - Benchmarks `forge test --symbolic` for any repository, with focused recipes for Solady, Angstrom, and Farcaster. Compatibility JSON retains the median-wall-run counter projection; the optional sidecar records all five aligned samples, exact tests/statuses, and solver counters.
 
 ## Configuration
 
