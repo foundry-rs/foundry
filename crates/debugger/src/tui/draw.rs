@@ -8,10 +8,9 @@ use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
 use foundry_common::fmt::format_token;
-use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::{
-    DebugSourceScope, DebugVariable, SourceData, decode_step_parameters, function_signature,
+    DebugSourceScope, DebugVariable, decode_step_parameters, function_signature,
 };
 use ratatui::{
     Frame,
@@ -490,23 +489,6 @@ impl TUIContext<'_> {
         }
 
         (Text::from(lines.lines), source.path.to_str())
-    }
-
-    /// Returns source map, source code and source name of the current line.
-    fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
-        let address = self.address();
-        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
-            return Err(format!("Unknown contract at address {address}"));
-        };
-
-        self.debugger_context
-            .contracts_sources
-            .find_source_mapping(
-                contract_name,
-                self.current_step().pc as u32,
-                self.debug_call().kind.is_any_create(),
-            )
-            .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 
     fn current_step_notice_text(&self) -> Option<&str> {
