@@ -7,7 +7,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.9.1"
+FOUNDRYUP_INSTALLER_VERSION="1.9.2"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -48,7 +48,7 @@ FOUNDRYUP_RETRY_DELAY=2
 FOUNDRYUP_RETRY_MAX_TIME=60
 FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT=5
 
-BINS=(forge cast anvil chisel)
+BINS=(forge cast anvil chisel solar)
 HASH_NAMES=()
 HASH_VALUES=()
 FOUNDRYUP_NIGHTLY_CANDIDATES=()
@@ -128,6 +128,9 @@ main() {
     for bin in "${BINS[@]}"; do
       # Remove prior installations if they exist
       rm -f "$FOUNDRY_BIN_DIR/$bin"
+      if is_optional_bin "$bin" && [ ! -f "$PWD/target/release/$bin" ]; then
+        continue
+      fi
       # Symlink from local repo binaries to bin dir
       ensure ln -s "$PWD/target/release/$bin" "$FOUNDRY_BIN_DIR/$bin"
     done
@@ -169,7 +172,7 @@ main() {
     # If `--force` is set, skip the SHA verification.
     if [ "$FOUNDRYUP_IGNORE_VERIFICATION" = false ]; then
       # Check if the version is already installed by downloading the attestation file.
-      say "checking if forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version are already installed"
+      say "checking if forge, cast, anvil, chisel, and solar for $FOUNDRYUP_TAG version are already installed"
 
       # Create a temporary directory to store the attestation link and artifact.
       tmp_dir="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
@@ -234,6 +237,10 @@ main() {
 
           path="$version_dir/$bin"
 
+          if [ -z "$expected" ] && is_optional_bin "$bin"; then
+            continue
+          fi
+
           if [ -z "$expected" ] || [ ! -x "$path" ]; then
             all_match=false
             break
@@ -260,7 +267,7 @@ main() {
     fi
 
     # Download and extract the binaries archive
-    say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
+    say "downloading forge, cast, anvil, chisel, and solar for $FOUNDRYUP_TAG version"
     if [ "$PLATFORM" = "win32" ]; then
       tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
       tmp="$tmp/foundry.zip"
@@ -312,6 +319,9 @@ main() {
           path="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin"
 
           if [ -z "$expected" ]; then
+            if is_optional_bin "$bin"; then
+              continue
+            fi
             say "no expected hash for $bin"
             failed=true
             continue
@@ -486,6 +496,9 @@ list() {
       say "${VERSION##*/}"
       for bin in "${BINS[@]}"; do
         bin_path="$VERSION/$bin"
+        if is_optional_bin "$bin" && [ ! -x "$bin_path" ]; then
+          continue
+        fi
         say "- $(ensure "$bin_path" -V)"
       done
       printf "\n"
@@ -493,6 +506,9 @@ list() {
   else
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
+      if is_optional_bin "$bin" && [ ! -x "$bin_path" ]; then
+        continue
+      fi
       say "- $(ensure "$bin_path" -V)"
     done
   fi
@@ -528,6 +544,9 @@ use() {
       # workspace and silently makes the next `--path` activation use the
       # downloaded release binary instead of a fresh local build.
       ensure rm -f "$bin_path"
+      if is_optional_bin "$bin" && [ ! -x "$FOUNDRY_VERSION_DIR/$bin" ]; then
+        continue
+      fi
       ensure cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
       # Print usage msg
       say "use - $(ensure "$bin_path" -V)"
@@ -586,6 +605,10 @@ need_cmd() {
 
 check_cmd() {
   command -v "$1" &>/dev/null
+}
+
+is_optional_bin() {
+  [ "$1" = "solar" ]
 }
 
 detect_platform_arch() {

@@ -36,6 +36,11 @@ check_eq() {
 say() { :; }
 warn() { :; }
 
+check_eq "managed binaries include solar" \
+  "forge cast anvil chisel solar" "${BINS[*]}"
+check_eq "solar is optional for legacy releases" \
+  "0" "$(is_optional_bin solar; echo $?)"
+
 # --- resolve_latest_tag_via_redirect --------------------------------------
 
 curl() { printf 'https://github.com/foundry-rs/foundry/releases/tag/v1.7.1'; }
