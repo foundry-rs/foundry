@@ -1,4 +1,4 @@
-//@compile-flags: --severity high med low info
+//@compile-flags: --only-lint type-based-tautology
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;

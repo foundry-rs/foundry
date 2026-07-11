@@ -129,9 +129,8 @@ impl GasSnapshotArgs {
             let snaps = read_gas_snapshot(snap)?;
             if check(tests, snaps, self.tolerance) {
                 std::process::exit(0)
-            } else {
-                std::process::exit(1)
             }
+            std::process::exit(1)
         } else {
             if matches!(self.format, Some(Format::Table)) {
                 let table = build_gas_snapshot_table(&tests);
