@@ -4823,7 +4823,6 @@ impl Backend<FoundryNetwork> {
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<EthCallBundleResponse, BlockchainError> {
         let EthCallBundle {
-            txs: _,
             block_number,
             coinbase,
             timestamp,
