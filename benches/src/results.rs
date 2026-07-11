@@ -1,7 +1,7 @@
 use crate::{RepoConfig, symbolic::Sidecar};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, process::Command, thread};
+use std::{collections::HashMap, path::Path, process::Command, thread};
 
 /// Hyperfine benchmark result
 #[derive(Debug, Deserialize, Serialize)]
@@ -299,6 +299,18 @@ fn get_benchmark_cell_content(
     "N/A".to_string()
 }
 
+/// Insert `version` before the extension of the `--json-output` filename, e.g.
+/// `summary.json` + `local` -> `summary-local.json`.
+pub fn versioned_summary_filename(json_output: &Path, version: &str) -> String {
+    let stem =
+        json_output.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = if stem.is_empty() { "summary" } else { &stem };
+    match json_output.extension() {
+        Some(ext) => format!("{stem}-{version}.{}", ext.to_string_lossy()),
+        None => format!("{stem}-{version}"),
+    }
+}
+
 pub fn format_benchmark_name(name: &str) -> String {
     match name {
         "forge_test" => "Forge Test",
@@ -380,6 +392,19 @@ mod tests {
             symbolic: None,
             symbolic_sidecar: None,
         }
+    }
+
+    #[test]
+    fn versioned_summary_filename_inserts_version() {
+        assert_eq!(
+            versioned_summary_filename(Path::new("forge_test_bench.json"), "local"),
+            "forge_test_bench-local.json"
+        );
+        assert_eq!(
+            versioned_summary_filename(Path::new("summary.json"), "stable"),
+            "summary-stable.json"
+        );
+        assert_eq!(versioned_summary_filename(Path::new("summary"), "nightly"), "summary-nightly");
     }
 
     #[test]

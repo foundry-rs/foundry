@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       versions:
-        description: "Comma-separated list of Foundry versions to benchmark (optional, defaults to 'stable,local'). Use 'local' to bench HEAD of the current branch."
+        description: "Comma-separated list of Foundry versions to benchmark (optional, defaults to 'master,local'). Include 'local' to compare this branch's HEAD against a source-built 'origin/master' baseline and post the comparison on the PR. Omit 'local' (e.g. 'stable,nightly') to track released versions and commit results."
         required: false
         type: string
       repos:
@@ -15,7 +15,7 @@ on:
         type: string
 
 env:
-  DEFAULT_VERSIONS: "stable,local"
+  DEFAULT_VERSIONS: "master,local"
 
   # Repos to benchmark per step. Each comma-separated entry has the form
   #   org/repo[:rev][ <extra args>]
@@ -58,11 +58,19 @@ jobs:
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
+    outputs:
+      is_source_comparison: ${{ steps.prep.outputs.is_source_comparison }}
+    # Source-built baseline/candidate use the profiling profile, forge only.
+    env:
+      FOUNDRY_BENCH_LOCAL_BUILD_PROFILE: profiling
+      FOUNDRY_BENCH_LOCAL_BUILD_BINS: forge
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          # Full history so the origin/master baseline can be built from source.
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
@@ -95,10 +103,33 @@ jobs:
           sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
           rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
 
+      # When 'local' is requested, build origin/master from source in a separate
+      # worktree and benchmark it as the baseline (labelled 'master') against
+      # this branch (labelled 'local'). This compares against master itself, not
+      # the last stable release, so master-only regressions are not hidden.
+      - name: Prepare comparison
+        id: prep
+        env:
+          REQUESTED_VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+        run: |
+          compact="${REQUESTED_VERSIONS//[[:space:]]/}"
+          if [[ ",$compact," == *,local,* ]]; then
+            git fetch --no-tags origin master:refs/remotes/origin/master
+            base_sha="$(git rev-parse origin/master)"
+            git worktree add --detach ../foundry-baseline "$base_sha"
+            echo "versions=master=../foundry-baseline,local" >> "$GITHUB_OUTPUT"
+            echo "is_source_comparison=true" >> "$GITHUB_OUTPUT"
+            printf '%s' "$base_sha" > benches/baseline-ref.txt
+            echo "Comparing origin/master ($base_sha) against this branch."
+          else
+            echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
+            echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run forge test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ steps.prep.outputs.versions }}
           REPOS: ${{ github.event.inputs.repos || env.TEST_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
@@ -106,12 +137,13 @@ jobs:
             --repos "$REPOS" \
             --benchmarks forge_test,forge_fuzz_test \
             --output-file forge_test_bench.md \
+            --json-output forge_test_bench.json \
             --verbose
 
       - name: Run forge isolate test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ steps.prep.outputs.versions }}
           REPOS: ${{ github.event.inputs.repos || env.ISOLATE_TEST_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches \
@@ -119,6 +151,7 @@ jobs:
             --repos "$REPOS" \
             --benchmarks forge_isolate_test \
             --output-file forge_isolate_test_bench.md \
+            --json-output forge_isolate_test_bench.json \
             --verbose
 
       # Temporarily disabled as long as the previous stable benchmark baseline
@@ -139,7 +172,7 @@ jobs:
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ steps.prep.outputs.versions }}
           REPOS: ${{ github.event.inputs.repos || env.BUILD_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches \
@@ -147,12 +180,13 @@ jobs:
             --repos "$REPOS" \
             --benchmarks forge_build_no_cache,forge_build_with_cache \
             --output-file forge_build_bench.md \
+            --json-output forge_build_bench.json \
             --verbose
 
       - name: Run forge coverage benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ steps.prep.outputs.versions }}
           REPOS: ${{ github.event.inputs.repos || env.COVERAGE_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches \
@@ -160,6 +194,7 @@ jobs:
             --repos "$REPOS" \
             --benchmarks forge_coverage \
             --output-file forge_coverage_bench.md \
+            --json-output forge_coverage_bench.json \
             --verbose
 
       - name: Combine benchmark results
@@ -168,17 +203,37 @@ jobs:
       - name: Print benchmark results
         run: cat benches/LATEST.md
 
+      # For a source comparison the bench binary writes one JSON summary per
+      # version (suffixed `-master` / `-local`). Merge each side's per-benchmark
+      # files into a single baseline/candidate summary for the verdict table.
+      - name: Merge benchmark JSON summaries
+        if: steps.prep.outputs.is_source_comparison == 'true'
+        run: |
+          shopt -s nullglob
+          base_parts=( benches/*_bench-master.json )
+          cand_parts=( benches/*_bench-local.json )
+          if [[ ${#base_parts[@]} -eq 0 || ${#cand_parts[@]} -eq 0 ]]; then
+            echo "::error::Missing per-version benchmark JSON summaries."
+            exit 1
+          fi
+          jq -s 'add' "${base_parts[@]}" > benches/base-summary.json
+          jq -s 'add' "${cand_parts[@]}" > benches/candidate-summary.json
+
       - name: Upload benchmark results as artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: benchmark-results
           # The symbolic benchmark artifact is omitted while the symbolic step is disabled.
+          # base/candidate summaries and baseline-ref exist only for source comparisons.
           path: |
             benches/forge_test_bench.md
             benches/forge_isolate_test_bench.md
             benches/forge_build_bench.md
             benches/forge_coverage_bench.md
             benches/LATEST.md
+            benches/base-summary.json
+            benches/candidate-summary.json
+            benches/baseline-ref.txt
 
   publish-results:
     name: Publish Results
@@ -204,7 +259,7 @@ jobs:
 
       - name: Commit benchmark results
         id: commit_results
-        if: "!contains(github.event.inputs.versions || env.DEFAULT_VERSIONS, 'local')"
+        if: needs.run-benchmarks.outputs.is_source_comparison != 'true'
         env:
           GITHUB_HEAD_REF: ${{ github.head_ref }}
         run: ./.github/scripts/commit-benchmark-results.sh benches "${{ github.event_name }}" "${{ github.repository }}"
@@ -236,13 +291,33 @@ jobs:
             console.log(`Created PR #${pr.number}: ${pr.html_url}`);
 
       - name: Comment on PR
-        if: contains(github.event.inputs.versions || env.DEFAULT_VERSIONS, 'local')
+        if: needs.run-benchmarks.outputs.is_source_comparison == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { execSync } = require('child_process');
+            const { execFileSync } = require('child_process');
+            const fs = require('fs');
 
-            const formatted = execSync('./.github/scripts/format-pr-comment.sh benches/LATEST.md').toString();
+            // Regression/improvement verdicts from the base vs candidate summaries.
+            const verdicts = execFileSync(
+              './.github/scripts/compare-nightly.sh',
+              ['benches/base-summary.json', 'benches/candidate-summary.json', '2', '2'],
+              {
+                env: {
+                  ...process.env,
+                  BASE_LABEL: 'master',
+                  CANDIDATE_LABEL: 'this branch',
+                  REPORT_TITLE: '### Verdicts',
+                  FAIL_ON_REGRESSION: '0',
+                },
+              },
+            ).toString();
+
+            // Full comparison tables, collapsed.
+            const formatted = execFileSync(
+              './.github/scripts/format-pr-comment.sh',
+              ['benches/LATEST.md'],
+            ).toString();
 
             const branch = context.ref.replace('refs/heads/', '');
             const { data: prs } = await github.rest.pulls.list({
@@ -258,7 +333,12 @@ jobs:
             }
 
             const prNumber = prs[0].number;
-            const body = `## Benchmark Results (stable vs this branch)\n\n${formatted}\n\n---\n\n🤖 This comment was automatically generated by the [Foundry Benchmarks workflow](https://github.com/${{ github.repository }}/actions/workflows/benchmarks.yml).`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const baseline = fs.existsSync('benches/baseline-ref.txt')
+              ? fs.readFileSync('benches/baseline-ref.txt', 'utf8').trim().slice(0, 12)
+              : 'origin/master';
+
+            const body = `## Benchmark Results (master vs this branch)\n\n[View benchmark run](${runUrl}) · baseline \`${baseline}\`\n\n${verdicts}\n\n${formatted}\n\n---\n\n🤖 This comment was automatically generated by the [Foundry Benchmarks workflow](https://github.com/${{ github.repository }}/actions/workflows/benchmarks.yml).`;
 
             await github.rest.issues.createComment({
               issue_number: prNumber,

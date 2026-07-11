@@ -618,6 +618,19 @@ const LOCAL_BUILD_BINS_ENV: &str = "FOUNDRY_BENCH_LOCAL_BUILD_BINS";
 const DEFAULT_LOCAL_BUILD_PROFILE: &str = "dist";
 const FOUNDRY_BINS: [&str; 4] = ["forge", "cast", "anvil", "chisel"];
 
+/// Parse a `--versions` entry into a display name and an optional source
+/// workspace. `name=path` builds Foundry from `path` (a checked-out ref) and
+/// labels it `name`; a bare entry uses foundryup, or the default workspace for
+/// `local`.
+pub fn parse_version_spec(spec: &str) -> (String, Option<PathBuf>) {
+    match spec.split_once('=') {
+        Some((name, path)) if !name.is_empty() && !path.is_empty() => {
+            (name.to_string(), Some(PathBuf::from(path)))
+        }
+        _ => (spec.to_string(), None),
+    }
+}
+
 /// Switch to a specific foundry version.
 ///
 /// The special keyword `local` builds and activates the current workspace.
@@ -649,11 +662,17 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build and activate the local workspace.
-/// Builds only the shipped Foundry binaries without linking unused workspace binaries.
-#[allow(unused_must_use)]
+/// Build and activate the local workspace resolved from the
+/// `FOUNDRY_BENCH_WORKSPACE_ROOT` env var (or the compiled-in default).
 pub fn install_local_version() -> Result<()> {
-    let workspace = workspace_root()?;
+    install_local_workspace(&workspace_root()?)
+}
+
+/// Build and activate the shipped Foundry binaries from an explicit workspace,
+/// without linking unused workspace binaries. Used to benchmark a baseline ref
+/// checked out into a separate worktree.
+#[allow(unused_must_use)]
+pub fn install_local_workspace(workspace: &Path) -> Result<()> {
     let profile = local_build_profile();
     let bins = local_build_bins()?;
     sh_println!(
@@ -664,7 +683,7 @@ pub fn install_local_version() -> Result<()> {
     );
 
     let mut cmd = Command::new("cargo");
-    cmd.current_dir(&workspace).args(["build", "--locked", "--profile"]).arg(&profile);
+    cmd.current_dir(workspace).args(["build", "--locked", "--profile"]).arg(&profile);
     for bin in &bins {
         cmd.args(["--bin", bin]);
     }
@@ -675,7 +694,7 @@ pub fn install_local_version() -> Result<()> {
         eyre::bail!("local Foundry build failed");
     }
 
-    activate_local_binaries(&workspace, &profile, &bins)?;
+    activate_local_binaries(workspace, &profile, &bins)?;
     sh_println!("  Successfully activated local {} build", profile.to_string_lossy());
     Ok(())
 }
@@ -807,5 +826,22 @@ pub fn get_forge_version_details() -> Result<String> {
     } else {
         // Fallback to just the first line if format is unexpected
         Ok(lines.first().unwrap_or(&"unknown").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_version_spec() {
+        assert_eq!(parse_version_spec("stable"), ("stable".to_string(), None));
+        assert_eq!(parse_version_spec("local"), ("local".to_string(), None));
+        assert_eq!(
+            parse_version_spec("master=../foundry-baseline"),
+            ("master".to_string(), Some(PathBuf::from("../foundry-baseline")))
+        );
+        // A trailing/leading empty side is treated as a plain name, not a source.
+        assert_eq!(parse_version_spec("=path"), ("=path".to_string(), None));
     }
 }
