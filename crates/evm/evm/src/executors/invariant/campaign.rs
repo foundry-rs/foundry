@@ -173,11 +173,17 @@ impl InvariantCampaignState {
     pub(super) fn sync_handler_failures(&self, failures: &InvariantFailures) {
         let mut failure_metrics =
             self.failure_metrics.lock().expect("failure metrics lock poisoned");
-        for key in failures.failures.keys() {
+        for (key, error) in &failures.failures {
             let FailureKey::Handler(addr, selector) = key else { continue };
-            failure_metrics.handler_sites.insert((*addr, *selector));
+            if failure_metrics.handler_sites.insert((*addr, *selector)) {
+                let reason = error.revert_reason().unwrap_or_default();
+                failure_metrics.metrics.record_handler_failure(*addr, *selector, &reason);
+            }
         }
-        failure_metrics.metrics.broken_handlers = failure_metrics.handler_sites.len();
+        debug_assert_eq!(
+            failure_metrics.metrics.broken_handlers,
+            failure_metrics.handler_sites.len()
+        );
     }
 
     pub(super) fn failure_metrics(&self) -> InvariantFailureMetrics {
@@ -633,6 +639,30 @@ mod tests {
         assert_eq!(state.throughput_totals(), (2, 50));
         assert_eq!(state.increment_runs(), 1);
         assert_eq!(state.total_runs(), 1);
+    }
+
+    #[test]
+    fn campaign_state_deduplicates_handler_failure_events_across_workers() {
+        let state = InvariantCampaignState::new(EarlyExit::new(false), None);
+        let target = Address::repeat_byte(0x11);
+        let selector = Selector::from([0xde, 0xad, 0xbe, 0xef]);
+        let mut first_worker = InvariantFailures::new();
+        first_worker.seed_handler_failure(
+            target,
+            selector,
+            handler_error(target, selector, 2, "assertion failed"),
+        );
+        let mut second_worker = InvariantFailures::new();
+        second_worker.seed_handler_failure(
+            target,
+            selector,
+            handler_error(target, selector, 1, "assertion failed"),
+        );
+
+        state.sync_handler_failures(&first_worker);
+        state.sync_handler_failures(&second_worker);
+
+        assert_eq!(state.failure_metrics().broken_handlers, 1);
     }
 
     #[test]

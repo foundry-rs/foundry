@@ -47,6 +47,8 @@ use std::{
     sync::Arc,
 };
 
+use crate::executors::EarlyExit;
+
 #[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
 pub struct InspectorStackBuilder<BLOCK: Clone> {
@@ -411,6 +413,8 @@ pub struct InspectorStackInner {
     /// Per-inspector random seed mixed into `--batch` CREATE2 salts, ensuring re-runs
     /// at identical on-chain state still produce distinct salts. Lazily initialized.
     pub batch_rewrite_process_salt: Option<u64>,
+    /// Shared cancellation state for interruptible EVM execution.
+    early_exit: Option<EarlyExit>,
     static_step_dispatch: OpcodeStepDispatch,
     has_static_step_end_inspectors: bool,
 }
@@ -520,6 +524,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub fn set_analysis(&mut self, analysis: Analysis) {
         self.analysis = Some(analysis);
+    }
+
+    /// Set the cancellation state checked during EVM execution.
+    #[inline]
+    pub(crate) fn set_early_exit(&mut self, early_exit: EarlyExit) {
+        self.early_exit = Some(early_exit);
     }
 
     /// Sets the block for the relevant inspectors.
@@ -1055,6 +1065,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        if self.inner.early_exit.as_ref().is_some_and(EarlyExit::should_stop) {
+            interpreter.halt(InstructionResult::Stop);
+            return;
+        }
+
         match self.static_step_dispatch {
             OpcodeStepDispatch::None => {}
             OpcodeStepDispatch::FuzzerOnly => {

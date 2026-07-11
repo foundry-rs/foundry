@@ -49,7 +49,7 @@ pub(crate) use result::did_fail_on_assert;
 use result::{assert_after_invariant, can_continue, invariant_preflight_check};
 use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     collections::{HashMap as Map, HashSet, btree_map::Entry},
     sync::Arc,
@@ -478,6 +478,32 @@ impl InvariantFailureMetrics {
         });
         let _ = sh_eprintln!("{}", serde_json::to_string(&event).unwrap_or_default());
     }
+
+    /// Records a handler assertion and emits a structured JSON `"failure"` event.
+    fn record_handler_failure(&mut self, target: Address, selector: Selector, reason: &str) {
+        self.broken_handlers += 1;
+
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let event = build_handler_failure_event(timestamp, target, selector, reason);
+        let _ = sh_eprintln!("{}", serde_json::to_string(&event).unwrap_or_default());
+    }
+}
+
+fn build_handler_failure_event(
+    timestamp_secs: u64,
+    target: Address,
+    selector: Selector,
+    reason: &str,
+) -> Value {
+    json!({
+        "timestamp": timestamp_secs,
+        "event": "failure",
+        "failure_type": "handler_assertion",
+        "target": target,
+        "selector": selector,
+        "reason": reason,
+    })
 }
 
 /// Bridges newly-recorded invariant breaks from `failures.errors` into the pulse
@@ -1073,6 +1099,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
         let config = invariant_worker_config(config, plan.worker_id, worker_count);
+        executor.inspector_mut().set_early_exit(campaign_state.early_exit().clone());
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
@@ -1154,6 +1181,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &mut current_run.executor,
                     current_run.inputs.last().expect("checked above"),
                 )?;
+                if campaign_state.early_exit().should_stop() {
+                    break 'stop;
+                }
                 if let Some(fuzzer) = current_run.executor.inspector_mut().fuzzer.as_mut() {
                     invariant_test.fuzz_state.collect_fuzzer_values(fuzzer);
                 }
@@ -1285,6 +1315,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         };
 
                     let errors_before_check = invariant_test.test_data.failures.invariant_count();
+                    let handlers_before_check = invariant_test.test_data.failures.handler_count();
                     let (continues, broken) = if should_check_invariant {
                         let outcome = can_continue(
                             &invariant_contract,
@@ -1355,6 +1386,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             (true, None)
                         }
                     };
+
+                    if invariant_test.test_data.failures.handler_count() > handlers_before_check {
+                        campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
+                    }
 
                     // Keep `cmp_seq` parallel to `inputs`: only push when the input survived the
                     // pop branch above.
@@ -2931,6 +2966,24 @@ mod tests {
         assert_eq!(payload["metrics"]["broken_invariants"], json!(2));
         assert_eq!(payload["metrics"]["broken_assertions"], json!(7));
         assert!(payload["metrics"].get("broken_handlers").is_none());
+    }
+
+    #[test]
+    fn handler_assertion_failure_event_includes_site_and_reason() {
+        let target = Address::repeat_byte(0x11);
+        let selector = Selector::from([0xde, 0xad, 0xbe, 0xef]);
+
+        assert_eq!(
+            build_handler_failure_event(123, target, selector, "assertion failed"),
+            json!({
+                "timestamp": 123,
+                "event": "failure",
+                "failure_type": "handler_assertion",
+                "target": target,
+                "selector": "0xdeadbeef",
+                "reason": "assertion failed",
+            })
+        );
     }
 
     #[test]
