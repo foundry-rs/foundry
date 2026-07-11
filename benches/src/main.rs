@@ -2,7 +2,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
     BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
-    get_forge_version_details, install_local_version, install_local_workspace, parse_version_spec,
+    get_forge_version_details, install_local_workspace, parse_version_spec,
     results::{BenchmarkResults, versioned_summary_filename},
     switch_foundry_version,
 };
@@ -358,11 +358,6 @@ fn install_foundry_versions(versions: &[String]) -> Result<()> {
 
     for version in versions {
         sh_println!("Installing {version}...");
-
-        if version == "local" {
-            install_local_version()?;
-            continue;
-        }
 
         let status = Command::new("foundryup")
             .args(["--install", version, "--force"])
