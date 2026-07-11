@@ -1527,6 +1527,7 @@ mod tests {
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
     use revm::context::{Cfg, TxEnv};
+    use std::{sync::mpsc, thread};
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
         RawCallResult {
@@ -1641,6 +1642,45 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn early_exit_interrupts_active_evm_execution() {
+        const GAS_LIMIT: u64 = 1 << 24;
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let early_exit = EarlyExit::new(false);
+        executor.inspector_mut().set_early_exit(early_exit.clone());
+
+        let target = Address::repeat_byte(0x11);
+        // JUMPDEST; PUSH1 0; JUMP loops until the inspector observes the interrupt.
+        executor
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])))
+            .unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO);
+            let _ = result_tx.send(result);
+        });
+
+        started_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(1));
+        early_exit.record_ctrl_c();
+
+        let result = result_rx.recv_timeout(Duration::from_secs(1));
+        handle.join().unwrap();
+        let result = result.expect("active EVM execution did not observe early exit").unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert!(result.gas_used > 21_000, "interrupt fired before EVM execution started");
+        assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of exiting");
     }
 
     #[test]
