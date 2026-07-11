@@ -163,7 +163,8 @@ impl CallTraceDecoderBuilder {
 
     /// Build the decoder.
     #[inline]
-    pub fn build(self) -> CallTraceDecoder {
+    pub fn build(mut self) -> CallTraceDecoder {
+        self.decoder.base_labels = self.decoder.labels.clone();
         self.decoder
     }
 }
@@ -183,6 +184,8 @@ pub struct CallTraceDecoder {
     pub contracts: HashMap<Address, String>,
     /// Address labels.
     pub labels: HashMap<Address, String>,
+    /// Labels configured when the decoder was built.
+    base_labels: HashMap<Address, String>,
     /// Contract addresses that have a receive function.
     pub receive_contracts: HashSet<Address>,
     /// Contract addresses that have fallback functions, mapped to function selectors of that
@@ -297,6 +300,7 @@ impl CallTraceDecoder {
                 (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
             ]),
+            base_labels: Default::default(),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
             non_fallback_contracts: Default::default(),
@@ -366,9 +370,10 @@ impl CallTraceDecoder {
     pub fn clear_addresses(&mut self) {
         self.contracts.clear();
 
-        let default_labels = &Self::new().labels;
-        if self.labels.len() > default_labels.len() {
-            self.labels.clone_from(default_labels);
+        if self.base_labels.is_empty() {
+            self.labels.clone_from(&Self::new().labels);
+        } else {
+            self.labels.clone_from(&self.base_labels);
         }
 
         self.receive_contracts.clear();
@@ -1316,6 +1321,23 @@ mod tests {
         let tracing = TracingConfig { compact_labels: true, ..tracing };
         let decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
         assert_eq!(decoder.format_value(&value), "Alice");
+    }
+
+    #[test]
+    fn configured_labels_survive_address_reset() {
+        let configured = address!("0x0000000000000000000000000000000000000100");
+        let discovered = address!("0x0000000000000000000000000000000000000200");
+        let tracing = TracingConfig {
+            labels: AddressHashMap::from_iter([(configured, "configured".to_string())]),
+            ..Default::default()
+        };
+        let mut decoder = CallTraceDecoderBuilder::new().with_tracing_config(&tracing).build();
+        decoder.labels.insert(discovered, "discovered".to_string());
+
+        decoder.clear_addresses();
+
+        assert_eq!(decoder.labels.get(&configured).map(String::as_str), Some("configured"));
+        assert!(!decoder.labels.contains_key(&discovered));
     }
 
     #[test]

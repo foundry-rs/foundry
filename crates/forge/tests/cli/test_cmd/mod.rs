@@ -3933,6 +3933,10 @@ forgetest_init!(tracing_verbosity_shows_state_changes_independently, |prj, cmd| 
     prj.update_config(|config| {
         config.verbosity = 0;
         config.tracing.verbosity = 5;
+        config.tracing.labels.insert(
+            Address::from_str("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f").unwrap(),
+            "ConfiguredCounter".to_string(),
+        );
     });
 
     cmd.args(["test", "--mt", "test_Increment", "--no-dynamic-test-linking"])
@@ -3943,18 +3947,18 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
   [218890] CounterTest::setUp()
-    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [156801] → new ConfiguredCounter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [23784] Counter::setNumber(0)
+    ├─ [23784] ConfiguredCounter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
   [51847] CounterTest::test_Increment()
-    ├─ [43482] Counter::increment()
+    ├─ [43482] ConfiguredCounter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [2424] Counter::number() [staticcall]
+    ├─ [2424] ConfiguredCounter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
