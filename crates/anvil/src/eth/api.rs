@@ -19,7 +19,7 @@ use crate::{
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
-            Pool,
+            MiningTransactions, Pool, PrivateBundle,
             transactions::{
                 PoolTransaction, TransactionOrder, TransactionPriority, TxMarker, to_marker,
             },
@@ -69,7 +69,7 @@ use alloy_rpc_types::{
     txpool::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
 use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, FillTransaction, StateContext};
-use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
+use alloy_rpc_types_mev::{EthBundleHash, EthCallBundle, EthCallBundleResponse, EthSendBundle};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;
@@ -257,7 +257,7 @@ impl<N: Network> EthApi<N> {
             }
             self.miner.set_mining_mode(MiningMode::None);
         } else if enable_automine {
-            let listener = self.pool.add_ready_listener();
+            let listener = self.pool.add_mining_listener();
             let mode = MiningMode::instant(1_000, listener);
             self.miner.set_mining_mode(mode);
         }
@@ -1811,6 +1811,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthSendRawTransactionConditional(tx, condition) => {
                 self.send_raw_transaction_conditional(tx, condition).await.to_rpc_result()
             }
+            EthRequest::EthSendBundle(bundle) => self.send_bundle(bundle).await.to_rpc_result(),
             EthRequest::AnvilClassifyTransaction(tx) => {
                 self.anvil_classify_transaction(tx).to_rpc_result()
             }
@@ -2468,7 +2469,13 @@ impl EthApi<FoundryNetwork> {
         node_info!("eth_getBlockTransactionCountByNumber");
         let block_request = self.block_request(Some(block_number.into())).await?;
         if let BlockRequest::Pending(txs) = block_request {
-            let block = self.backend.pending_block(txs).await;
+            let block = self
+                .backend
+                .pending_block_with_bundles(MiningTransactions::new(
+                    txs,
+                    self.pool.private_bundles(),
+                ))
+                .await;
             return Ok(Some(U256::from(block.block.body.transactions.len())));
         }
         let block = self.backend.block_by_number(block_number).await?;
@@ -2737,6 +2744,65 @@ impl EthApi<FoundryNetwork> {
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Queues an ordered private transaction bundle for an exact future block.
+    ///
+    /// Handler for ETH RPC call: `eth_sendBundle`
+    pub async fn send_bundle(&self, bundle: EthSendBundle) -> Result<EthBundleHash> {
+        node_info!("eth_sendBundle");
+        if bundle.txs.is_empty() {
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "bundle must contain at least one transaction".to_string(),
+            ));
+        }
+        if bundle.block_number <= self.backend.best_number() {
+            return Err(BlockchainError::InvalidTransactionRequest(format!(
+                "bundle target block {} has already been mined",
+                bundle.block_number
+            )));
+        }
+        if let (Some(minimum), Some(maximum)) = (bundle.min_timestamp, bundle.max_timestamp)
+            && minimum > maximum
+        {
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "bundle minTimestamp exceeds maxTimestamp".to_string(),
+            ));
+        }
+
+        let bundle_hash = bundle.bundle_hash();
+        let mut transactions = Vec::with_capacity(bundle.txs.len());
+        for raw in &bundle.txs {
+            if raw.is_empty() {
+                return Err(BlockchainError::EmptyRawTransactionData);
+            }
+            let mut data = raw.as_ref();
+            let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+                .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
+            let pending_transaction = PendingTransaction::new(transaction)?;
+            self.backend.validate_pool_transaction(&pending_transaction).await?;
+            let nonce = pending_transaction.nonce();
+            let sender = *pending_transaction.sender();
+            transactions.push(Arc::new(PoolTransaction {
+                requires: Vec::new(),
+                provides: vec![to_marker(nonce, sender)],
+                pending_transaction,
+                priority: TransactionPriority::default(),
+            }));
+        }
+
+        self.pool.add_private_bundle(PrivateBundle {
+            hash: bundle_hash,
+            transactions,
+            block_number: bundle.block_number,
+            min_timestamp: bundle.min_timestamp,
+            max_timestamp: bundle.max_timestamp,
+            reverting_tx_hashes: bundle.reverting_tx_hashes.into_iter().collect(),
+            replacement_uuid: bundle.replacement_uuid,
+        });
+
+        Ok(EthBundleHash { bundle_hash })
     }
 
     /// Sends a signed transaction with an ignored transaction condition.
@@ -4197,7 +4263,13 @@ impl EthApi<FoundryNetwork> {
     /// Mines exactly one block
     pub async fn mine_one(&self) {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await;
+        let outcome = self
+            .backend
+            .mine_block_with_bundles(MiningTransactions::new(
+                transactions,
+                self.pool.private_bundles(),
+            ))
+            .await;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);
@@ -4206,15 +4278,26 @@ impl EthApi<FoundryNetwork> {
     /// Returns the pending block with tx hashes
     async fn pending_block(&self) -> AnyRpcBlock {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let info = self.backend.pending_block(transactions).await;
+        let info = self
+            .backend
+            .pending_block_with_bundles(MiningTransactions::new(
+                transactions,
+                self.pool.private_bundles(),
+            ))
+            .await;
         self.backend.convert_block(info.block)
     }
 
     /// Returns the full pending block with `Transaction` objects
     async fn pending_block_full(&self) -> Option<AnyRpcBlock> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let BlockInfo { block, transactions, receipts: _ } =
-            self.backend.pending_block(transactions).await;
+        let BlockInfo { block, transactions, receipts: _ } = self
+            .backend
+            .pending_block_with_bundles(MiningTransactions::new(
+                transactions,
+                self.pool.private_bundles(),
+            ))
+            .await;
 
         let mut partial_block = self.backend.convert_block(block.clone());
 

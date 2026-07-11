@@ -37,7 +37,7 @@ use crate::{
     mem::storage::MinedBlockOutcome,
 };
 use alloy_consensus::Transaction;
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, B256, TxHash, map::HashSet};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{Receiver, Sender, channel};
@@ -52,11 +52,20 @@ pub struct Pool<T> {
     inner: RwLock<PoolInner<T>>,
     /// listeners for new ready transactions
     transaction_listener: Mutex<Vec<Sender<TxHash>>>,
+    /// Listeners used exclusively to wake the miner.
+    mining_listener: Mutex<Vec<Sender<TxHash>>>,
+    /// Private bundles awaiting their target block.
+    private_bundles: RwLock<Vec<Arc<PrivateBundle<T>>>>,
 }
 
 impl<T> Default for Pool<T> {
     fn default() -> Self {
-        Self { inner: RwLock::new(PoolInner::default()), transaction_listener: Default::default() }
+        Self {
+            inner: RwLock::new(PoolInner::default()),
+            transaction_listener: Default::default(),
+            mining_listener: Default::default(),
+            private_bundles: Default::default(),
+        }
     }
 }
 
@@ -90,6 +99,41 @@ impl<T> Pool<T> {
         rx
     }
 
+    /// Adds a listener that is notified for public transactions and private bundles.
+    pub fn add_mining_listener(&self) -> Receiver<TxHash> {
+        const MINING_LISTENER_BUFFER_SIZE: usize = 2048;
+        let (tx, rx) = channel(MINING_LISTENER_BUFFER_SIZE);
+        self.mining_listener.lock().push(tx);
+        rx
+    }
+
+    /// Returns all private bundles without exposing them through public transaction APIs.
+    pub fn private_bundles(&self) -> Vec<Arc<PrivateBundle<T>>> {
+        self.private_bundles.read().clone()
+    }
+
+    /// Returns whether any private bundles are waiting to be mined.
+    pub fn has_private_bundles(&self) -> bool {
+        !self.private_bundles.read().is_empty()
+    }
+
+    /// Adds a private bundle, replacing an existing bundle with the same replacement UUID.
+    pub fn add_private_bundle(&self, bundle: PrivateBundle<T>) {
+        let hash = bundle.hash;
+        let mut bundles = self.private_bundles.write();
+        if let Some(replacement_uuid) = &bundle.replacement_uuid {
+            bundles.retain(|queued| queued.replacement_uuid.as_ref() != Some(replacement_uuid));
+        }
+        bundles.push(Arc::new(bundle));
+        drop(bundles);
+        Self::notify_listeners(&self.mining_listener, hash);
+    }
+
+    /// Removes bundles whose exact target block has already been mined.
+    fn prune_private_bundles(&self, block_number: u64) {
+        self.private_bundles.write().retain(|bundle| bundle.block_number > block_number);
+    }
+
     /// Returns true if this pool already contains the transaction
     pub fn contains(&self, tx_hash: &TxHash) -> bool {
         self.inner.read().contains(tx_hash)
@@ -110,6 +154,7 @@ impl<T> Pool<T> {
     pub fn clear(&self) {
         let mut pool = self.inner.write();
         pool.clear();
+        self.private_bundles.write().clear();
     }
 
     /// Remove the given transactions from the pool
@@ -146,15 +191,21 @@ impl<T> Pool<T> {
     fn notify_ready(&self, tx: &AddedTransaction<T>) {
         if let AddedTransaction::Ready(ready) = tx {
             self.notify_listener(ready.hash);
+            Self::notify_listeners(&self.mining_listener, ready.hash);
             for promoted in ready.promoted.iter().copied() {
                 self.notify_listener(promoted);
+                Self::notify_listeners(&self.mining_listener, promoted);
             }
         }
     }
 
     /// notifies all listeners about the transaction
     fn notify_listener(&self, hash: TxHash) {
-        let mut listener = self.transaction_listener.lock();
+        Self::notify_listeners(&self.transaction_listener, hash);
+    }
+
+    fn notify_listeners(listeners: &Mutex<Vec<Sender<TxHash>>>, hash: TxHash) {
+        let mut listener = listeners.lock();
         // this is basically a retain but with mut reference
         for n in (0..listener.len()).rev() {
             let mut listener_tx = listener.swap_remove(n);
@@ -194,6 +245,8 @@ impl<T: Transaction> Pool<T> {
     pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
         let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
 
+        self.prune_private_bundles(block_number);
+
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
 
@@ -212,6 +265,7 @@ impl<T: Transaction> Pool<T> {
                 for hash in tx_hashes {
                     trace!(target: "txpool", "re-notifying for not-yet-valid tx: {:?}", hash);
                     pool.notify_listener(hash);
+                    Self::notify_listeners(&pool.mining_listener, hash);
                 }
             });
         }
@@ -244,6 +298,58 @@ impl<T: Transaction> Pool<T> {
         let added = self.inner.write().add_transaction(tx)?;
         self.notify_ready(&added);
         Ok(added)
+    }
+}
+
+/// A private, ordered group of transactions that is considered as one mining unit.
+#[derive(Clone, Debug)]
+pub struct PrivateBundle<T> {
+    /// Flashbots bundle hash.
+    pub hash: B256,
+    /// Transactions in their required execution order.
+    pub transactions: Vec<Arc<PoolTransaction<T>>>,
+    /// Exact block number for which this bundle is valid.
+    pub block_number: u64,
+    /// Earliest valid block timestamp.
+    pub min_timestamp: Option<u64>,
+    /// Latest valid block timestamp.
+    pub max_timestamp: Option<u64>,
+    /// Transactions allowed to revert without invalidating the bundle.
+    pub reverting_tx_hashes: HashSet<TxHash>,
+    /// Identifier used to replace a previously queued bundle.
+    pub replacement_uuid: Option<String>,
+}
+
+impl<T> PrivateBundle<T> {
+    /// Returns whether the bundle is eligible for this exact block environment.
+    pub fn is_eligible(&self, block_number: u64, timestamp: u64) -> bool {
+        self.block_number == block_number
+            && self.min_timestamp.is_none_or(|minimum| timestamp >= minimum)
+            && self.max_timestamp.is_none_or(|maximum| timestamp <= maximum)
+    }
+}
+
+/// Transactions and private bundles considered while constructing a block.
+#[derive(Clone, Debug)]
+pub struct MiningTransactions<T> {
+    /// Public transactions selected by the miner.
+    pub transactions: Vec<Arc<PoolTransaction<T>>>,
+    /// Private bundles held outside the public transaction queues.
+    pub private_bundles: Vec<Arc<PrivateBundle<T>>>,
+}
+
+impl<T> Default for MiningTransactions<T> {
+    fn default() -> Self {
+        Self { transactions: Vec::new(), private_bundles: Vec::new() }
+    }
+}
+
+impl<T> MiningTransactions<T> {
+    pub const fn new(
+        transactions: Vec<Arc<PoolTransaction<T>>>,
+        private_bundles: Vec<Arc<PrivateBundle<T>>>,
+    ) -> Self {
+        Self { transactions, private_bundles }
     }
 }
 

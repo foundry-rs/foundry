@@ -315,7 +315,7 @@ impl ReadyTransactionMiner {
         // there are pending transactions if we didn't drain the pool
         self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
 
-        if transactions.is_empty() {
+        if transactions.is_empty() && !pool.has_private_bundles() {
             self.has_pending_txs = Some(false);
             return Poll::Pending;
         }

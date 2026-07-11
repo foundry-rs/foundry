@@ -84,6 +84,28 @@ where
     fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
 }
 
+impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for &mut T {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        T::maybe_as_full_db(self)
+    }
+
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        T::clear_into_state_snapshot(self)
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        T::read_as_state_snapshot(self)
+    }
+
+    fn clear(&mut self) {
+        T::clear(self)
+    }
+
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        T::init_from_state_snapshot(self, state_snapshot)
+    }
+}
+
 /// Helper trait to reset the DB if it's forked
 pub trait MaybeForkedDatabase {
     fn maybe_reset(&mut self, _urls: Vec<String>, block_number: BlockId) -> Result<(), String>;
@@ -163,6 +185,28 @@ impl<T: DatabaseRef<Error = DatabaseError>> DatabaseRef for AnvilCacheDB<T> {
 impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> DatabaseCommit for AnvilCacheDB<T> {
     fn commit(&mut self, changes: revm::state::EvmState) {
         self.0.commit(changes)
+    }
+}
+
+impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> MaybeFullDatabase for AnvilCacheDB<T> {
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        self.0.maybe_as_full_db()
+    }
+
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        self.0.clear_into_state_snapshot()
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        self.0.read_as_state_snapshot()
+    }
+
+    fn clear(&mut self) {
+        self.0.clear()
+    }
+
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        self.0.init_from_state_snapshot(state_snapshot)
     }
 }
 

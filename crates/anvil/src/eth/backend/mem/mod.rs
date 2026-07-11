@@ -26,7 +26,7 @@ use crate::{
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
         fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
-        pool::transactions::PoolTransaction,
+        pool::{MiningTransactions, transactions::PoolTransaction},
         sign::build_impersonated,
     },
     mem::{
@@ -1416,7 +1416,7 @@ impl<N: Network> Backend<N> {
         evm_env: &EvmEnv,
         parent_hash: B256,
         spec_id: SpecId,
-        pool_transactions: &[Arc<PoolTransaction<FoundryTxEnvelope>>],
+        mining_transactions: &MiningTransactions<FoundryTxEnvelope>,
         gas_config: &PoolTxGasConfig,
         inspector_tx_config: &InspectorTxConfig,
         validator: &dyn Fn(
@@ -1425,7 +1425,7 @@ impl<N: Network> Backend<N> {
         ) -> Result<(), InvalidTransactionError>,
     ) -> (ExecutedPoolTransactions<FoundryTxEnvelope>, BlockExecutionResult<FoundryReceiptEnvelope>)
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB<Error = DatabaseError> + MaybeFullDatabase,
     {
         let inspector = self.build_mining_inspector();
 
@@ -1437,7 +1437,10 @@ impl<N: Network> Backend<N> {
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
                 let pool_result = execute_pool_transactions(
                     &mut executor,
-                    pool_transactions,
+                    &mining_transactions.transactions,
+                    &mining_transactions.private_bundles,
+                    evm_env.block_env.number.saturating_to(),
+                    evm_env.block_env.timestamp.saturating_to(),
                     gas_config,
                     inspector_tx_config,
                     self.cheats(),
@@ -2908,7 +2911,15 @@ where
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> MinedBlockOutcome<FoundryTxEnvelope> {
-        self.do_mine_block(pool_transactions).await
+        self.do_mine_block(MiningTransactions::new(pool_transactions, Vec::new())).await
+    }
+
+    /// Mines a new block with public transactions and private bundles.
+    pub async fn mine_block_with_bundles(
+        &self,
+        mining_transactions: MiningTransactions<FoundryTxEnvelope>,
+    ) -> MinedBlockOutcome<FoundryTxEnvelope> {
+        self.do_mine_block(mining_transactions).await
     }
 
     /// Builds a [`BlockInfo`] from the EVM environment, execution results, and transactions.
@@ -2967,10 +2978,10 @@ where
 
     async fn do_mine_block(
         &self,
-        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        mining_transactions: MiningTransactions<FoundryTxEnvelope>,
     ) -> MinedBlockOutcome<FoundryTxEnvelope> {
         let _mining_guard = self.mining.lock().await;
-        trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
+        trace!(target: "backend", "creating new block with {} public transactions and {} private bundles", mining_transactions.transactions.len(), mining_transactions.private_bundles.len());
 
         let (outcome, header, block_hash) = {
             let current_base_fee = self.base_fee();
@@ -3032,7 +3043,7 @@ where
                     &evm_env,
                     best_hash,
                     spec_id,
-                    &pool_transactions,
+                    &mining_transactions,
                     &gas_config,
                     &inspector_tx_config,
                     &|pending, account| {
@@ -3180,7 +3191,8 @@ where
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await;
+            let outcome =
+                self.do_mine_block(MiningTransactions::new(to_be_mined, Vec::new())).await;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -3199,7 +3211,16 @@ where
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> BlockInfo<N> {
-        self.with_pending_block(pool_transactions, |_, block| block).await
+        self.pending_block_with_bundles(MiningTransactions::new(pool_transactions, Vec::new()))
+            .await
+    }
+
+    /// Creates the pending block with public transactions and private bundles.
+    pub async fn pending_block_with_bundles(
+        &self,
+        mining_transactions: MiningTransactions<FoundryTxEnvelope>,
+    ) -> BlockInfo<N> {
+        self.with_pending_block_with_bundles(mining_transactions, |_, block| block).await
     }
 
     /// Creates the pending block
@@ -3208,6 +3229,22 @@ where
     pub async fn with_pending_block<F, T>(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+        f: F,
+    ) -> T
+    where
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockInfo<N>) -> T,
+    {
+        self.with_pending_block_with_bundles(
+            MiningTransactions::new(pool_transactions, Vec::new()),
+            f,
+        )
+        .await
+    }
+
+    /// Executes a closure against a pending block containing private bundles.
+    pub async fn with_pending_block_with_bundles<F, T>(
+        &self,
+        mining_transactions: MiningTransactions<FoundryTxEnvelope>,
         f: F,
     ) -> T
     where
@@ -3230,7 +3267,7 @@ where
             &evm_env,
             parent_hash,
             spec_id,
-            &pool_transactions,
+            &mining_transactions,
             &gas_config,
             &inspector_tx_config,
             &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
@@ -3467,7 +3504,7 @@ where
                 &evm_env,
                 block.header.parent_hash,
                 spec_id,
-                &pool_txs,
+                &MiningTransactions::new(pool_txs.clone(), Vec::new()),
                 &gas_config,
                 &inspector_tx_config,
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
@@ -3862,7 +3899,7 @@ where
                 &evm_env,
                 block.header.parent_hash,
                 spec_id,
-                &pool_txs,
+                &MiningTransactions::new(pool_txs.clone(), Vec::new()),
                 &gas_config,
                 &inspector_tx_config,
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
@@ -4159,7 +4196,7 @@ where
                 &evm_env,
                 block.header.parent_hash,
                 spec_id,
-                &pool_txs,
+                &MiningTransactions::new(pool_txs.clone(), Vec::new()),
                 &gas_config,
                 &inspector_tx_config,
                 &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
