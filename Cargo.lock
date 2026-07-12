@@ -737,6 +737,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-rpc-types-mev"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54c635f0c45a871b55c276653e3838d1687d86282eeaf3d83a1914e02563b3f2"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "alloy-rpc-types-trace"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1207,6 +1222,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-beacon",
  "alloy-rpc-types-eth",
+ "alloy-rpc-types-mev",
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
@@ -1273,6 +1289,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types",
+ "alloy-rpc-types-mev",
  "alloy-serde",
  "bytes",
  "foundry-common",

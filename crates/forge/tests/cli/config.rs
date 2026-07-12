@@ -2244,12 +2244,7 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
             "unwrapped-modifier-logic".to_string(),
         ]
     });
-    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]]);
+    cmd.args(["lint"]).assert_success().stdout_eq("");
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6529>

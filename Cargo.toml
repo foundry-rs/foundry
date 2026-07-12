@@ -363,6 +363,7 @@ alloy-rpc-types = { version = "2.1.0", default-features = true }
 alloy-rpc-types-beacon = { version = "2.1.0", default-features = true }
 alloy-rpc-types-engine = { version = "2.1.0", default-features = false }
 alloy-rpc-types-eth = { version = "2.1.0", default-features = false }
+alloy-rpc-types-mev = { version = "2.1.0", default-features = false }
 alloy-serde = { version = "2.1.0", default-features = false }
 alloy-signer = { version = "2.1.0", default-features = false }
 alloy-signer-aws = { version = "2.1.0", default-features = false }
