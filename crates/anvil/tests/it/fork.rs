@@ -204,6 +204,27 @@ async fn test_spawn_fork() {
     assert_eq!(head, U256::from(BLOCK_NUMBER))
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_resolves_hardfork() {
+    const CANCUN_TIMESTAMP: u64 = 1_710_338_135;
+    let (_origin_api, origin_handle) = spawn(
+        NodeConfig::test().with_chain_id(Some(1u64)).with_genesis_timestamp(Some(CANCUN_TIMESTAMP)),
+    )
+    .await;
+
+    let (fork_api, _fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Cancun");
+
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+    )
+    .await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Shanghai");
+}
+
 // <https://github.com/foundry-rs/foundry/issues/9743>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_set_storage_visible_to_call() {

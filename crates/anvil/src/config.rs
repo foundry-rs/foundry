@@ -37,6 +37,7 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::resolve_fork_hardfork,
     hardfork::FoundryHardfork,
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
@@ -1419,14 +1420,17 @@ latest block number: {latest_block}"
             chain_id
         };
 
-        // Auto-detect hardfork from chain activation data if not explicitly set.
-        if self.hardfork.is_none()
-            && let Some(hardfork) =
-                FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
-        {
-            evm_env.cfg_env.spec = SpecId::from(hardfork);
-            self.hardfork = Some(hardfork);
-        }
+        let hardfork = resolve_fork_hardfork(
+            provider.as_ref(),
+            self.hardfork,
+            self.get_hardfork(),
+            chain_id,
+            block.header.timestamp(),
+            fork_block_number,
+        )
+        .await;
+        evm_env.cfg_env.spec = SpecId::from(hardfork);
+        self.hardfork = Some(hardfork);
 
         // The fee manager was built before the fork hardfork was known, so refresh the Tempo
         // hardfork it uses for base fee calculations.
