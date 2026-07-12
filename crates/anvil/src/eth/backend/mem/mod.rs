@@ -7,9 +7,7 @@ use crate::{
     eth::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
-            db::{
-                AnvilCacheDB, Db, MaybeFullDatabase, ReadOnlyDatabase, SerializableState, StateDb,
-            },
+            db::{AnvilCacheDB, Db, MaybeFullDatabase, SerializableState, StateDb},
             executor::{
                 AnvilBlockExecutor, ExecutedPoolTransactions, PoolTxGasConfig,
                 execute_pool_transactions,
@@ -248,18 +246,14 @@ pub type State = foundry_evm::utils::StateChangeset;
 
 /// A block request, which includes the Pool Transactions if it's Pending
 pub enum BlockRequest<T> {
-    Pending(MiningTransactions<T>),
+    Pending(Vec<Arc<PoolTransaction<T>>>),
     Number(u64),
 }
 
 impl<T> fmt::Debug for BlockRequest<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Pending(txs) => f
-                .debug_struct("Pending")
-                .field("transactions", &txs.transactions.len())
-                .field("private_bundles", &txs.private_bundles.len())
-                .finish(),
+            Self::Pending(txs) => f.debug_tuple("Pending").field(&txs.len()).finish(),
             Self::Number(n) => f.debug_tuple("Number").field(n).finish(),
         }
     }
@@ -1445,6 +1439,8 @@ impl<N: Network> Backend<N> {
                     &mut executor,
                     &mining_transactions.transactions,
                     &mining_transactions.private_bundles,
+                    evm_env.block_env.number.saturating_to(),
+                    evm_env.block_env.timestamp.saturating_to(),
                     gas_config,
                     inspector_tx_config,
                     self.cheats(),
@@ -3494,8 +3490,7 @@ where
 
         let trace = |parent_state: &StateDb| -> Result<GethTrace, BlockchainError> {
             let mut cache_db =
-                AnvilCacheDB::new(Box::new(ReadOnlyDatabase::new(parent_state))
-                    as Box<dyn MaybeFullDatabase + '_>);
+                AnvilCacheDB::new(Box::new(parent_state) as Box<dyn MaybeFullDatabase + '_>);
 
             let mut evm_env = self.evm_env.read().clone();
             evm_env.block_env = block_env_from_header(&block.header);
@@ -3694,9 +3689,9 @@ where
         F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
     {
         let block_number = match block_request {
-            Some(BlockRequest::Pending(mining_transactions)) => {
+            Some(BlockRequest::Pending(pool_transactions)) => {
                 let result = self
-                    .with_pending_block_with_bundles(mining_transactions, |state, block| {
+                    .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
                         f(state, block_env_from_header(&block.header))
                     })
@@ -3722,18 +3717,12 @@ where
             {
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return Ok(f(
-                        Box::new(ReadOnlyDatabase::new(state_db)),
-                        block_env_from_header(&block.header),
-                    ));
+                    return Ok(f(Box::new(state_db), block_env_from_header(&block.header)));
                 }
 
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
                 if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return Ok(f(
-                        Box::new(ReadOnlyDatabase::new(state)),
-                        block_env_from_header(&block.header),
-                    ));
+                    return Ok(f(Box::new(state), block_env_from_header(&block.header)));
                 }
             }
 
@@ -3743,7 +3732,7 @@ where
 
         let db = self.db.read().await;
         let block = self.evm_env.read().block_env.clone();
-        Ok(f(Box::new(ReadOnlyDatabase::new(&**db)), block))
+        Ok(f(Box::new(&**db), block))
     }
 
     pub async fn storage_at(
@@ -3831,7 +3820,17 @@ where
         address: Address,
         block_request: BlockRequest<FoundryTxEnvelope>,
     ) -> Result<u64, BlockchainError> {
-        self.with_database_at(Some(block_request), |db, _| {
+        if let BlockRequest::Pending(pool_transactions) = &block_request
+            && let Some(value) = get_pool_transactions_nonce(pool_transactions, address)
+        {
+            return Ok(value);
+        }
+        let final_block_request = match block_request {
+            BlockRequest::Pending(_) => BlockRequest::Number(self.best_number()),
+            BlockRequest::Number(bn) => BlockRequest::Number(bn),
+        };
+
+        self.with_database_at(Some(final_block_request), |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
             Ok(db.basic_ref(address)?.unwrap_or_default().nonce)
         })
@@ -5394,39 +5393,24 @@ fn tempo_db_err<E: std::fmt::Display>(e: E) -> DatabaseError {
     DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}")))
 }
 
-impl<N: Network> Backend<N>
-where
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
-{
-    /// Validates the transaction chain ID without consulting mutable account or fee state.
-    pub fn validate_transaction_chain_id(
-        &self,
-        tx: &FoundryTxEnvelope,
-    ) -> Result<(), InvalidTransactionError> {
-        self.validate_transaction_chain_id_for(tx, &self.next_evm_env())
+/// Get max nonce from transaction pool by address.
+fn get_pool_transactions_nonce(
+    pool_transactions: &[Arc<PoolTransaction<FoundryTxEnvelope>>],
+    address: Address,
+) -> Option<u64> {
+    if let Some(highest_nonce) = pool_transactions
+        .iter()
+        .filter(|tx| {
+            *tx.pending_transaction.sender() == address
+                && !tx.pending_transaction.transaction.as_ref().has_nonzero_tempo_nonce_key()
+        })
+        .map(|tx| tx.pending_transaction.nonce())
+        .max()
+    {
+        let tx_count = highest_nonce.saturating_add(1);
+        return Some(tx_count);
     }
-
-    fn validate_transaction_chain_id_for(
-        &self,
-        tx: &FoundryTxEnvelope,
-        evm_env: &EvmEnv,
-    ) -> Result<(), InvalidTransactionError> {
-        if let Some(tx_chain_id) = tx.chain_id() {
-            let chain_id = self.chain_id();
-            if chain_id.to::<u64>() != tx_chain_id {
-                if let FoundryTxEnvelope::Legacy(tx) = tx {
-                    // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON && tx.chain_id().is_none() {
-                        debug!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
-                        return Err(InvalidTransactionError::IncompatibleEIP155);
-                    }
-                }
-                debug!(target: "backend", ?chain_id, ?tx_chain_id, "invalid chain id");
-                return Err(InvalidTransactionError::InvalidChainId);
-            }
-        }
-        Ok(())
-    }
+    None
 }
 
 #[async_trait::async_trait]
@@ -5504,7 +5488,21 @@ where
     ) -> Result<(), InvalidTransactionError> {
         let tx = &pending.transaction;
 
-        self.validate_transaction_chain_id_for(tx, evm_env)?;
+        if let Some(tx_chain_id) = tx.chain_id() {
+            let chain_id = self.chain_id();
+            if chain_id.to::<u64>() != tx_chain_id {
+                if let FoundryTxEnvelope::Legacy(tx) = tx.as_ref() {
+                    // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+                    if evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON && tx.chain_id().is_none() {
+                        debug!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
+                        return Err(InvalidTransactionError::IncompatibleEIP155);
+                    }
+                } else {
+                    debug!(target: "backend", ?chain_id, ?tx_chain_id, "invalid chain id");
+                    return Err(InvalidTransactionError::InvalidChainId);
+                }
+            }
+        }
 
         // Reject native value transfers on Tempo networks
         if self.is_tempo() && !tx.value().is_zero() {

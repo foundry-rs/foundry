@@ -1,6 +1,7 @@
 //! Mines transactions
 
-use crate::eth::pool::{MiningNotification, Pool, transactions::PoolTransaction};
+use crate::eth::pool::{Pool, transactions::PoolTransaction};
+use alloy_primitives::TxHash;
 use futures::{
     channel::mpsc::Receiver,
     stream::{Fuse, StreamExt},
@@ -162,11 +163,10 @@ pub enum MiningMode {
 }
 
 impl MiningMode {
-    pub fn instant(max_transactions: usize, listener: Receiver<MiningNotification>) -> Self {
+    pub fn instant(max_transactions: usize, listener: Receiver<TxHash>) -> Self {
         Self::Auto(ReadyTransactionMiner {
             max_transactions,
             has_pending_txs: None,
-            has_pending_bundle: false,
             rx: listener.fuse(),
             coalesce: None,
         })
@@ -176,16 +176,11 @@ impl MiningMode {
         Self::FixedBlockTime(FixedBlockTimeMiner::new(duration))
     }
 
-    pub fn mixed(
-        max_transactions: usize,
-        listener: Receiver<MiningNotification>,
-        duration: Duration,
-    ) -> Self {
+    pub fn mixed(max_transactions: usize, listener: Receiver<TxHash>, duration: Duration) -> Self {
         Self::Mixed(
             ReadyTransactionMiner {
                 max_transactions,
                 has_pending_txs: None,
-                has_pending_bundle: false,
                 rx: listener.fuse(),
                 coalesce: None,
             },
@@ -276,10 +271,8 @@ pub struct ReadyTransactionMiner {
     max_transactions: usize,
     /// stores whether there are pending transactions (if known)
     has_pending_txs: Option<bool>,
-    /// Whether a private bundle eligible for the next block woke the miner.
-    has_pending_bundle: bool,
-    /// Receives public transaction and eligible private bundle notifications.
-    rx: Fuse<Receiver<MiningNotification>>,
+    /// Receives hashes of transactions that are ready
+    rx: Fuse<Receiver<TxHash>>,
     /// Active [`INSTANT_COALESCE_WINDOW`] timer; while pending, ready txs are accumulated.
     coalesce: Option<Pin<Box<Sleep>>>,
 }
@@ -292,11 +285,8 @@ impl ReadyTransactionMiner {
     ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         // always drain the notification stream so that we're woken up as soon as there's a new tx
         let mut saw_new_ready = false;
-        while let Poll::Ready(Some(notification)) = self.rx.poll_next_unpin(cx) {
+        while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
             saw_new_ready = true;
-            if let MiningNotification::PrivateBundle { hash, block_number } = notification {
-                self.has_pending_bundle |= pool.contains_private_bundle(hash, block_number);
-            }
         }
 
         // Arm the coalescing window only on fresh notifications to avoid delaying
@@ -325,12 +315,11 @@ impl ReadyTransactionMiner {
         // there are pending transactions if we didn't drain the pool
         self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
 
-        if transactions.is_empty() && !self.has_pending_bundle {
+        if transactions.is_empty() && !pool.has_private_bundles() {
             self.has_pending_txs = Some(false);
             return Poll::Pending;
         }
 
-        self.has_pending_bundle = false;
         Poll::Ready(transactions)
     }
 }

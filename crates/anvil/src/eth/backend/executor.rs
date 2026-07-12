@@ -331,7 +331,8 @@ where
 
     fn revert_bundle(&mut self, checkpoint: BundleCheckpoint) {
         let db = self.evm.db_mut();
-        db.restore_state_snapshot(checkpoint.state);
+        db.clear();
+        db.init_from_state_snapshot(checkpoint.state);
         self.receipts.truncate(checkpoint.receipts_len);
         self.gas_used = checkpoint.gas_used;
         self.blob_gas_used = checkpoint.blob_gas_used;
@@ -401,6 +402,8 @@ pub fn execute_pool_transactions<B>(
     executor: &mut B,
     pool_transactions: &[Arc<PoolTransaction<B::Transaction>>],
     private_bundles: &[Arc<PrivateBundle<B::Transaction>>],
+    block_number: u64,
+    block_timestamp: u64,
     gas_config: &PoolTxGasConfig,
     inspector_config: &InspectorTxConfig,
     cheats: &CheatsManager,
@@ -419,8 +422,6 @@ where
     <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
 {
     let mut executed = ExecutedPoolTransactions::default();
-    let block_number = executor.evm().block().number().saturating_to();
-    let block_timestamp = executor.evm().block().timestamp().saturating_to();
 
     for bundle in private_bundles {
         if !bundle.is_eligible(block_number, block_timestamp) {
@@ -428,37 +429,18 @@ where
         }
 
         let checkpoint = executor.bundle_checkpoint();
-        let mut bundle_result = ExecutedPoolTransactions::default();
-        let mut accepted = true;
-
-        for transaction in &bundle.transactions {
-            let hash = transaction.hash();
-            let may_drop = bundle.dropping_tx_hashes.contains(&hash);
-            let transaction_checkpoint = may_drop.then(|| executor.bundle_checkpoint());
-            let transaction_result = execute_transaction_list(
-                executor,
-                std::slice::from_ref(transaction),
-                gas_config,
-                inspector_config,
-                cheats,
-                validator,
-            );
-            let included = transaction_result.included.len() == 1;
-            let succeeded = included
-                && transaction_result.tx_info.iter().all(|info| {
-                    info.exit.is_ok() || bundle.reverting_tx_hashes.contains(&info.transaction_hash)
-                });
-
-            if succeeded {
-                bundle_result.extend(transaction_result);
-            } else if let Some(transaction_checkpoint) = transaction_checkpoint {
-                executor.revert_bundle(transaction_checkpoint);
-                trace!(target: "backend", bundle = ?bundle.hash, transaction = ?hash, "dropping invalid private bundle transaction");
-            } else {
-                accepted = false;
-                break;
-            }
-        }
+        let bundle_result = execute_transaction_list(
+            executor,
+            &bundle.transactions,
+            gas_config,
+            inspector_config,
+            cheats,
+            validator,
+        );
+        let accepted = bundle_result.included.len() == bundle.transactions.len()
+            && bundle_result.tx_info.iter().all(|info| {
+                info.exit.is_ok() || bundle.reverting_tx_hashes.contains(&info.transaction_hash)
+            });
 
         if accepted {
             executed.extend(bundle_result);
