@@ -26,6 +26,28 @@ pub fn configure_pcx(
     project: Option<&Project>,
     target_paths: Option<&[PathBuf]>,
 ) -> Result<()> {
+    configure_pcx_with_sources(pcx, config, project, target_paths, false).map(drop)
+}
+
+/// Configures a Solar parsing context with all Solar-compatible project sources.
+///
+/// Returns `true` if any compatible sources were configured.
+pub fn configure_pcx_all_sources(
+    pcx: &mut ParsingContext<'_>,
+    config: &Config,
+    project: Option<&Project>,
+    target_paths: Option<&[PathBuf]>,
+) -> Result<bool> {
+    configure_pcx_with_sources(pcx, config, project, target_paths, true)
+}
+
+fn configure_pcx_with_sources(
+    pcx: &mut ParsingContext<'_>,
+    config: &Config,
+    project: Option<&Project>,
+    target_paths: Option<&[PathBuf]>,
+    all_versions: bool,
+) -> Result<bool> {
     // Process build options
     let project = match project {
         Some(project) => project,
@@ -47,9 +69,9 @@ pub fn configure_pcx(
         None => project.paths.read_input_files()?,
     };
 
-    // Only process sources with latest Solidity version to avoid conflicts.
+    // Process Solar-compatible sources and use the latest version for the compiler input.
     let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
-    let (version, sources) = graph
+    let versioned_sources = graph
         // Resolve graph into mapping language -> version -> sources
         .into_sources_by_version(project)?
         .sources
@@ -57,15 +79,26 @@ pub fn configure_pcx(
         // Only interested in Solidity sources
         .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
         .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
-        .1
-        .into_iter()
-        // Filter unsupported versions
-        .filter(|(v, _, _)| v >= &MIN_SOLIDITY_VERSION)
-        // Always pick the latest version
-        .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-        .map_or((MIN_SOLIDITY_VERSION, Sources::default()), |(v, s, _)| (v, s));
+        .1;
 
-    if sources.is_empty() {
+    let versioned_sources =
+        versioned_sources.into_iter().filter(|(v, _, _)| v >= &MIN_SOLIDITY_VERSION);
+    let (version, sources) = if all_versions {
+        versioned_sources.fold(
+            (MIN_SOLIDITY_VERSION, Sources::default()),
+            |(version, mut sources), (source_version, version_sources, _)| {
+                sources.extend(version_sources);
+                (version.max(source_version), sources)
+            },
+        )
+    } else {
+        versioned_sources
+            .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
+            .map_or((MIN_SOLIDITY_VERSION, Sources::default()), |(v, s, _)| (v, s))
+    };
+
+    let has_sources = !sources.is_empty();
+    if !all_versions && !has_sources {
         sh_warn!("no files found. Solar doesn't support Solidity versions prior to 0.8.0")?;
     }
 
@@ -78,7 +111,7 @@ pub fn configure_pcx(
 
     configure_pcx_from_solc(pcx, &project.paths, &solc, true);
 
-    Ok(())
+    Ok(has_sources)
 }
 
 /// Extracts Solar-compatible sources from a [`ProjectCompileOutput`].
