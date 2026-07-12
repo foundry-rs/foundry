@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_primitives::U256;
 use solar::{
-    ast::{ElementaryType, LitKind},
+    ast::{ElementaryType, LitKind, Visibility},
     interface::{kw, source_map::FileName},
     sema::{
         Gcx,
@@ -72,8 +72,11 @@ impl<'hir> Visit<'hir> for MintCallFinder<'_, '_, '_, 'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let ExprKind::Call(callee, _, _) = &expr.kind
-            && let Some(function_id) = self.resolved_callee(callee)
+        // `type_of_expr` on the callee is the function the type checker resolved, so overload
+        // selection by argument types (`_mint(to, data)` vs `_mint(to, id)`), override shadowing
+        // (a contract that overrides `_mint` resolves to its own declaration, not the base it
+        // hides) and `super._mint(...)` are all already accounted for.
+        if let Some(function_id) = resolved_callee(self.gcx, expr)
             && self.is_erc721_mint(function_id)
         {
             self.ctx.emit(&UNSAFE_OZ_ERC721_MINT, expr.span);
@@ -83,18 +86,6 @@ impl<'hir> Visit<'hir> for MintCallFinder<'_, '_, '_, 'hir> {
 }
 
 impl MintCallFinder<'_, '_, '_, '_> {
-    /// The single function a call dispatches to. `type_of_expr` on the callee is the function the
-    /// type checker resolved, so overload selection by argument types (`_mint(to, data)` vs
-    /// `_mint(to, id)`), override shadowing (a contract that overrides `_mint` resolves to its own
-    /// declaration, not the base it hides) and `super._mint(...)` are all already accounted for.
-    fn resolved_callee(&self, callee: &hir::Expr<'_>) -> Option<FunctionId> {
-        let ty = self.gcx.type_of_expr(callee.peel_parens().id)?;
-        match ty.kind {
-            TyKind::Fn(function_ty) => function_ty.function_id,
-            _ => None,
-        }
-    }
-
     /// Whether `function_id` is a `_mint` whose execution skips the receiver check: the
     /// canonical OZ declaration, or a user override that transitively delegates to one.
     fn is_erc721_mint(&self, function_id: FunctionId) -> bool {
@@ -114,7 +105,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
         }
         seen.push(function_id);
         let function = self.hir.function(function_id);
-        if !function.name.is_some_and(|name| name.as_str() == "_mint") {
+        if function.name.is_none_or(|name| name.as_str() != "_mint") {
             return false;
         }
         let Some(contract_id) = function.contract else { return false };
@@ -132,7 +123,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
         }
         // A delegating override: any call in its body dispatching to an unsafe `_mint`. An
         // override that reverts when the recipient refuses the token is a safe wrapper like the
-        // canonical `_safeMint`, so it is not an unsafe target. See [`reverts_on_refusal`].
+        // canonical `_safeMint`, so it is not an unsafe target. See [`walk_guards`].
         if function.override_
             && let Some(body) = &function.body
         {
@@ -166,28 +157,75 @@ impl MintCallFinder<'_, '_, '_, '_> {
             }
             let mut delegates = false;
             let mut only_to_recipient = true;
-            for (callee, first_argument) in &scan.calls {
+            // The token every delegation credits, when they all name the same variable: the
+            // recipient may accept one token and refuse another, so a guard is only about the
+            // token it was asked about, and two delegations minting different tokens have no
+            // single answer to share.
+            let mut token = None;
+            let mut token_consistent = true;
+            for (callee, args) in &scan.calls {
                 if !unsafe_targets.contains(callee) {
                     continue;
                 }
                 delegates = true;
-                // A guard covers the recipient it names, and no other.
+                // A guard covers the recipient it names, and no other. The recipient is what
+                // the delegation binds to the callee's first parameter, the token what it binds
+                // to the second, as the canonical `_mint(address to, uint256 tokenId)` orders
+                // them.
                 let handed_the_recipient = recipient.is_some_and(|recipient| {
-                    first_argument.is_some_and(|argument| is_exactly_recipient(argument, recipient))
+                    argument_bound_to_parameter(self.hir, *callee, args, 0)
+                        .is_some_and(|argument| is_exactly_var(argument, recipient))
                 });
                 if !handed_the_recipient {
                     only_to_recipient = false;
+                }
+                match argument_bound_to_parameter(self.hir, *callee, args, 1)
+                    .and_then(variable_of)
+                    .filter(|&minted| keeps_its_value(self.hir, minted))
+                {
+                    Some(minted) => {
+                        if token.is_some_and(|token| token != minted) {
+                            token_consistent = false;
+                        }
+                        token = Some(minted);
+                    }
+                    // A token that is not a plain variable, a literal or an expression, cannot
+                    // be matched against what a guard was asked about; neither can one the
+                    // recipient may move under the guard's feet, see [`keeps_its_value`].
+                    None => token_consistent = false,
                 }
             }
             if !delegates {
                 return false;
             }
             if only_to_recipient
+                && token_consistent
                 && let Some(recipient) = recipient
-                && (reverts_on_refusal(self.gcx, self.hir, body.stmts, recipient, &mut Vec::new())
-                    || modifiers_revert_on_refusal(self.gcx, self.hir, function, recipient))
+                && let Some(token) = token
             {
-                return false;
+                // A modifier guard runs at the call boundary, so it starts the body covered:
+                // it acknowledged the values passed in. But the body is still read in order,
+                // because it holds a copy of those values, and reassigning the recipient or the
+                // token before a delegation credits a value the modifier never saw. Seeding the
+                // walk covered lets the body's own reassignments retire it, the way a body guard
+                // is retired. See [`walk_guards`].
+                let covered =
+                    modifiers_revert_on_refusal(self.gcx, self.hir, function, recipient, token);
+                let mut walk = GuardWalk { covered, ..GuardWalk::default() };
+                walk_guards(
+                    self.gcx,
+                    self.hir,
+                    body.stmts,
+                    recipient,
+                    token,
+                    &unsafe_targets,
+                    false,
+                    &mut Vec::new(),
+                    &mut walk,
+                );
+                if !walk.failed && !walk.pending {
+                    return false;
+                }
             }
             return true;
         }
@@ -212,12 +250,12 @@ fn is_openzeppelin_source(hir: &Hir<'_>, source_id: hir::SourceId) -> bool {
     }
 }
 
-/// Collects every call in a subtree as its resolved target and the argument bound to the
-/// callee's first parameter, which for a mint is the address the token goes to.
+/// Collects every call in a subtree as its resolved target and its argument list, from which
+/// the caller reads what the delegation binds to the mint's parameters.
 struct CalleeCollector<'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
-    calls: Vec<(FunctionId, Option<&'hir Expr<'hir>>)>,
+    calls: Vec<(FunctionId, &'hir hir::CallArgs<'hir>)>,
 }
 
 impl<'hir> Visit<'hir> for CalleeCollector<'hir> {
@@ -231,25 +269,26 @@ impl<'hir> Visit<'hir> for CalleeCollector<'hir> {
         if let Some(function_id) = resolved_callee(self.gcx, expr)
             && let ExprKind::Call(_, args, _) = &expr.kind
         {
-            self.calls.push((function_id, first_parameter_argument(self.hir, function_id, args)));
+            self.calls.push((function_id, args));
         }
         self.walk_expr(expr)
     }
 }
 
-/// The argument a call binds to the callee's first parameter. Named arguments come in source
-/// order, which is not the parameter order: `_mint({id: tokenId, to: to})` hands the token to
-/// `to` all the same.
-fn first_parameter_argument<'hir>(
+/// The argument a call binds to the callee's parameter at `index`. Named arguments come in
+/// source order, which is not the parameter order: `_mint({id: tokenId, to: to})` hands the
+/// token to `to` all the same.
+fn argument_bound_to_parameter<'hir>(
     hir: &'hir Hir<'hir>,
     function_id: FunctionId,
     args: &'hir hir::CallArgs<'hir>,
+    index: usize,
 ) -> Option<&'hir Expr<'hir>> {
     match &args.kind {
-        hir::CallArgsKind::Unnamed(exprs) => exprs.first(),
+        hir::CallArgsKind::Unnamed(exprs) => exprs.get(index),
         hir::CallArgsKind::Named(named) => {
-            let first = *hir.function(function_id).parameters.first()?;
-            let name = hir.variable(first).name?;
+            let parameter = *hir.function(function_id).parameters.get(index)?;
+            let name = hir.variable(parameter).name?;
             named
                 .iter()
                 .find(|argument| argument.name.as_str() == name.as_str())
@@ -258,21 +297,36 @@ fn first_parameter_argument<'hir>(
     }
 }
 
-/// The function a call expression dispatches to, as the type checker resolved it.
-fn resolved_callee(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<FunctionId> {
-    let ExprKind::Call(callee, ..) = &expr.kind else { return None };
-    let ty = gcx.type_of_expr(callee.peel_parens().id)?;
+/// The function a bare expression names, as the type checker resolved it.
+fn resolved_function(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<FunctionId> {
+    let ty = gcx.type_of_expr(expr.peel_parens().id)?;
     let TyKind::Fn(function_ty) = ty.kind else { return None };
     function_ty.function_id
 }
 
-/// Whether a resolved declaration is the ERC721 receiver hook: the exact name and the exact
-/// `(address, address, uint256, bytes)` shape. The name alone would let a call to a same-name
-/// function of an unrelated interface, which answers on a different selector, pass as the check.
+/// The function a call expression dispatches to, as the type checker resolved it.
+fn resolved_callee(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<FunctionId> {
+    let ExprKind::Call(callee, ..) = &expr.kind else { return None };
+    resolved_function(gcx, callee)
+}
+
+/// Whether a resolved declaration is the ERC721 receiver hook: the exact name, the exact
+/// `(address, address, uint256, bytes)` shape, and an externally callable declaration of a
+/// non-library contract. The name alone would let a call to a same-name function of an
+/// unrelated interface, which answers on a different selector, pass as the check, and an
+/// attached library or free function runs in the minting contract without any external call,
+/// so resolving to one says nothing about the recipient.
 fn is_receiver_hook(hir: &Hir<'_>, function_id: FunctionId) -> bool {
     let function = hir.function(function_id);
     let Some(name) = function.name else { return false };
     if name.as_str() != "onERC721Received" {
+        return false;
+    }
+    let Some(contract_id) = function.contract else { return false };
+    if hir.contract(contract_id).kind.is_library() {
+        return false;
+    }
+    if !matches!(function.visibility, Visibility::Public | Visibility::External) {
         return false;
     }
     let params = function.parameters;
@@ -288,49 +342,91 @@ fn is_receiver_hook(hir: &Hir<'_>, function_id: FunctionId) -> bool {
         && is(3, |kind| matches!(kind, hir::TypeKind::Elementary(ElementaryType::Bytes)))
 }
 
-/// The recipient itself, behind parentheses or a single interface cast: `to`, `(to)`,
-/// `IERC721Receiver(to)`. Anything else, `guardians[to]` or `IERC721Receiver(other)`, is a
-/// different address, and asking it about the token says nothing about the recipient.
-fn is_exactly_recipient<'hir>(expr: &'hir Expr<'hir>, recipient: hir::VariableId) -> bool {
+/// The expression carrying the same value, behind parentheses, `payable(...)` and casts to an
+/// address or contract type, which map every operand to itself. A numeric cast such as
+/// `uint8(...)` truncates: the minted address is then usually not the checked one, so it is
+/// not peeled.
+fn peel_value_preserving<'hir>(expr: &'hir Expr<'hir>) -> &'hir Expr<'hir> {
     let expr = expr.peel_parens();
-    if let ExprKind::Ident(resolutions) = &expr.kind {
-        return resolutions.iter().any(
-            |res| matches!(res, hir::Res::Item(hir::ItemId::Variable(vid)) if *vid == recipient),
-        );
-    }
-    // A cast keeps the address: `IERC721Receiver(to)` wraps the callee as an identifier resolved
-    // to the contract, `address(to)` as a type.
-    if let ExprKind::Call(callee, args, _) = &expr.kind
-        && matches!(
-            &callee.peel_parens().kind,
-            ExprKind::Type(..) | ExprKind::Ident([hir::Res::Item(hir::ItemId::Contract(_)), ..])
-        )
-    {
-        let mut operands = args.exprs();
-        if let Some(inner) = operands.next()
-            && operands.next().is_none()
+    match &expr.kind {
+        ExprKind::Payable(inner) => peel_value_preserving(inner),
+        // A cast wraps the callee as an identifier resolved to the contract for
+        // `IERC721Receiver(to)`, as a type for `address(to)`.
+        ExprKind::Call(callee, args, _)
+            if matches!(&callee.peel_parens().kind,
+                ExprKind::Type(ty)
+                    if matches!(ty.kind, hir::TypeKind::Elementary(ElementaryType::Address(_))))
+                || matches!(
+                    &callee.peel_parens().kind,
+                    ExprKind::Ident([hir::Res::Item(hir::ItemId::Contract(_)), ..])
+                ) =>
         {
-            return is_exactly_recipient(inner, recipient);
+            let mut operands = args.exprs();
+            if let Some(inner) = operands.next()
+                && operands.next().is_none()
+            {
+                return peel_value_preserving(inner);
+            }
+            expr
         }
+        _ => expr,
+    }
+}
+
+/// The variable itself, behind parentheses and value-preserving conversions: `to`, `(to)`,
+/// `IERC721Receiver(to)`, `payable(to)`. Anything else, `guardians[to]` or
+/// `IERC721Receiver(other)`, is a different value, and asking it about the token says nothing
+/// about the recipient.
+fn is_exactly_var<'hir>(expr: &'hir Expr<'hir>, variable: hir::VariableId) -> bool {
+    if let ExprKind::Ident(resolutions) = &peel_value_preserving(expr).kind {
+        return resolutions.iter().any(
+            |res| matches!(res, hir::Res::Item(hir::ItemId::Variable(vid)) if *vid == variable),
+        );
     }
     false
 }
 
-/// `recipient.onERC721Received(...)`: the hook, asked of the recipient itself.
+/// Whether nothing can reassign the variable between the guard and the delegation. The hook is
+/// an external call: the recipient answering it can reenter and move a mutable state variable
+/// before the mint credits it, so the value the guard asked about and the one minted may
+/// differ. A local, a parameter, a `constant` or an `immutable` cannot be moved that way.
+fn keeps_its_value(hir: &Hir<'_>, variable: hir::VariableId) -> bool {
+    let variable = hir.variable(variable);
+    !variable.is_state_variable() || variable.is_constant() || variable.is_immutable()
+}
+
+/// The variable an expression is, behind the same conversions [`is_exactly_var`] sees through,
+/// or nothing when the expression is not a plain variable.
+fn variable_of(expr: &Expr<'_>) -> Option<hir::VariableId> {
+    if let ExprKind::Ident(resolutions) = &peel_value_preserving(expr).kind {
+        return resolutions.iter().find_map(|res| match res {
+            hir::Res::Item(hir::ItemId::Variable(vid)) => Some(*vid),
+            _ => None,
+        });
+    }
+    None
+}
+
+/// `recipient.onERC721Received(..., token, ...)`: the hook, asked of the recipient itself and
+/// about the delegated token itself. A recipient may accept one token and refuse another, so an
+/// answer about a different id, the hook's third parameter, decides nothing for the minted one.
 fn is_hook_call_on<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     expr: &'hir Expr<'hir>,
     recipient: hir::VariableId,
+    token: hir::VariableId,
 ) -> bool {
     let expr = expr.peel_parens();
-    let ExprKind::Call(callee, ..) = &expr.kind else { return false };
+    let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
     let Some(function_id) = resolved_callee(gcx, expr) else { return false };
     if !is_receiver_hook(hir, function_id) {
         return false;
     }
     let ExprKind::Member(receiver, _) = &callee.peel_parens().kind else { return false };
-    is_exactly_recipient(receiver, recipient)
+    is_exactly_var(receiver, recipient)
+        && argument_bound_to_parameter(hir, function_id, args, 2)
+            .is_some_and(|asked| is_exactly_var(asked, token))
 }
 
 /// The ERC721 answer meaning the recipient accepts the token, `onERC721Received`'s selector.
@@ -339,10 +435,12 @@ const ERC721_RECEIVED: u64 = 0x150b_7a02;
 /// Whether an expression is the accepting answer. Comparing the hook's answer against anything
 /// else mints to a recipient that answered something the ERC721 receiver interface calls a
 /// refusal, so only an operand this reads and finds equal to the selector is credited: the
-/// literal, a conversion of it, a `constant` holding it, or an `onERC721Received.selector`
-/// member. A value settled at deployment or at runtime, an `immutable` or a state variable, is
-/// unknown here and does not exempt.
-fn is_received_selector(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+/// literal, a conversion of it, a `constant` holding it, or a `selector` member resolving to
+/// the receiver hook itself. The member is resolved rather than matched by name: spelled on a
+/// same-name function of another shape, `.selector` is a different value, which a recipient
+/// answering it never accepted with. A value settled at deployment or at runtime, an
+/// `immutable` or a state variable, is unknown here and does not exempt.
+fn is_received_selector<'hir>(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>, expr: &Expr<'hir>) -> bool {
     let expr = expr.peel_parens();
     match &expr.kind {
         ExprKind::Lit(lit) => {
@@ -354,15 +452,15 @@ fn is_received_selector(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
         {
             let mut operands = args.exprs();
             match (operands.next(), operands.next()) {
-                (Some(inner), None) => is_received_selector(hir, inner),
+                (Some(inner), None) => is_received_selector(gcx, hir, inner),
                 _ => false,
             }
         }
         // `IERC721Receiver.onERC721Received.selector`, the answer named rather than spelled.
         ExprKind::Member(base, member) => {
             member.as_str() == "selector"
-                && matches!(&base.peel_parens().kind, ExprKind::Member(_, hook)
-                    if hook.as_str() == "onERC721Received")
+                && resolved_function(gcx, base)
+                    .is_some_and(|function_id| is_receiver_hook(hir, function_id))
         }
         // A constant is worth what it holds.
         ExprKind::Ident(resolutions) => resolutions.iter().any(|res| match res {
@@ -371,7 +469,7 @@ fn is_received_selector(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
                 variable.is_constant()
                     && variable
                         .initializer
-                        .is_some_and(|initializer| is_received_selector(hir, initializer))
+                        .is_some_and(|initializer| is_received_selector(gcx, hir, initializer))
             }
             _ => false,
         }),
@@ -388,6 +486,7 @@ fn is_hook_comparison<'hir>(
     hir: &'hir Hir<'hir>,
     expr: &'hir Expr<'hir>,
     recipient: hir::VariableId,
+    token: hir::VariableId,
     want: hir::BinOpKind,
 ) -> bool {
     let ExprKind::Binary(lhs, op, rhs) = &expr.peel_parens().kind else { return false };
@@ -395,9 +494,9 @@ fn is_hook_comparison<'hir>(
         return false;
     }
     let compares = |hook: &'hir Expr<'hir>, answer: &'hir Expr<'hir>| {
-        is_hook_call_on(gcx, hir, hook, recipient)
-            && !is_hook_call_on(gcx, hir, answer, recipient)
-            && is_received_selector(hir, answer)
+        is_hook_call_on(gcx, hir, hook, recipient, token)
+            && !is_hook_call_on(gcx, hir, answer, recipient, token)
+            && is_received_selector(gcx, hir, answer)
     };
     compares(lhs, rhs) || compares(rhs, lhs)
 }
@@ -476,7 +575,7 @@ fn is_recipient_code_length<'hir>(expr: &'hir Expr<'hir>, recipient: hir::Variab
         return false;
     }
     let ExprKind::Member(base, member) = &code.peel_parens().kind else { return false };
-    member.as_str() == "code" && is_exactly_recipient(base, recipient)
+    member.as_str() == "code" && is_exactly_var(base, recipient)
 }
 
 /// `recipient.code.length` compared against zero, for one polarity. Nothing else may ride along:
@@ -529,9 +628,10 @@ fn is_acceptance_condition<'hir>(
     hir: &'hir Hir<'hir>,
     cond: &'hir Expr<'hir>,
     recipient: hir::VariableId,
+    token: hir::VariableId,
 ) -> bool {
     let cond = cond.peel_parens();
-    if is_hook_comparison(gcx, hir, cond, recipient, hir::BinOpKind::Eq) {
+    if is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq) {
         return true;
     }
     let ExprKind::Binary(lhs, op, rhs) = &cond.kind else { return false };
@@ -540,109 +640,446 @@ fn is_acceptance_condition<'hir>(
     }
     let accepts = |skip: &'hir Expr<'hir>, check: &'hir Expr<'hir>| {
         is_code_length_test(skip, recipient, false)
-            && is_hook_comparison(gcx, hir, check, recipient, hir::BinOpKind::Eq)
+            && is_hook_comparison(gcx, hir, check, recipient, token, hir::BinOpKind::Eq)
     };
     accepts(lhs, rhs) || accepts(rhs, lhs)
 }
 
-/// A call handing the recipient itself to a function or a modifier whose body reverts on refusal
-/// for the parameter it lands on. The argument is matched by [`is_exactly_recipient`].
+/// A call handing both the recipient and the token to a function or a modifier whose body
+/// reverts on refusal for the parameters they land on. The arguments are matched by
+/// [`is_exactly_var`] against the callee's parameters, by name for named arguments: bound by
+/// source position, `_check({actual: to, checked: other})` would analyze `to` as the parameter
+/// the runtime hands `other`. A helper never asked about the token cannot answer for it.
+#[expect(clippy::too_many_arguments)]
 fn callee_guards_recipient<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     function_id: FunctionId,
     args: &'hir hir::CallArgs<'hir>,
     recipient: hir::VariableId,
+    token: hir::VariableId,
+    bypass: bool,
     seen: &mut Vec<FunctionId>,
 ) -> bool {
     let parameters = hir.function(function_id).parameters;
-    for (index, arg) in args.exprs().enumerate() {
-        if is_exactly_recipient(arg, recipient)
-            && let Some(&param) = parameters.get(index)
-            && body_reverts_on_refusal(gcx, hir, function_id, param, seen)
-        {
-            return true;
+    let mut recipient_parameter = None;
+    let mut token_parameter = None;
+    // The parameters the call binds the recipient and the token to, if any: the callee's own
+    // guard is then judged against those.
+    for (index, &parameter) in parameters.iter().enumerate() {
+        let Some(argument) = argument_bound_to_parameter(hir, function_id, args, index) else {
+            continue;
+        };
+        if recipient_parameter.is_none() && is_exactly_var(argument, recipient) {
+            recipient_parameter = Some(parameter);
         }
+        if token_parameter.is_none() && is_exactly_var(argument, token) {
+            token_parameter = Some(parameter);
+        }
+    }
+    if let (Some(recipient), Some(token)) = (recipient_parameter, token_parameter) {
+        return body_guards(gcx, hir, function_id, recipient, token, bypass, seen);
     }
     false
 }
 
-/// Whether a body reverts when the recipient refuses the token, which is what makes a delegating
-/// override a safe wrapper: the token cannot end up in a contract that never acknowledged it.
+/// The straight-line reading of a body: `covered` once a guard has run on the path, `pending`
+/// while a delegated mint has run with no guard before or after it yet, `failed` once a path
+/// may leave the function successfully with such a mint standing, `escaped` once one may leave
+/// before any guard ran.
+#[derive(Clone, Default)]
+struct GuardWalk {
+    covered: bool,
+    pending: bool,
+    failed: bool,
+    escaped: bool,
+}
+
+/// Reads a body in statement order and judges the delegated mints against the guards. A guard
+/// executed before a delegation covers it, the recipient having accepted the token by the time
+/// it is credited; one executed after covers the delegations still pending, the revert undoing
+/// them, unless a statement in between may leave the function successfully, keeping the
+/// unacknowledged token: `super._mint(to, id); if (id == 0) return; require(hook...)` walks out
+/// with token zero standing.
 ///
-/// The recognized shapes are a closed set, because a hook call that merely appears inside a
-/// condition proves nothing about whether the revert depends on its answer. They are:
+/// The recognized guard shapes are a closed set, because a hook call that merely appears inside
+/// a condition proves nothing about whether the revert depends on its answer. They are:
 /// `require`/`assert` on an acceptance condition, `if (hook != selector) <exits>`,
-/// `if (hook == selector) {} else <exits>`, any of those nested under `if (to.code.length > 0)`,
-/// and any of those reached through a function or a modifier the recipient itself is handed to,
-/// the way OpenZeppelin factors `_checkOnERC721Received` out of `_safeMint`. The guard may follow
-/// the delegation, since the revert undoes the mint.
+/// `if (hook == selector) {} else <exits>`, and any of those reached through a function or a
+/// modifier the recipient and the token are handed to, the way OpenZeppelin factors
+/// `_checkOnERC721Received` out of `_safeMint`.
 ///
-/// Everything else reports, a `try` whose `catch` may swallow the refusal included, and so are an
-/// answer stored in a local and a helper returning it as a `bool`. Following the value across
-/// statements would take a dataflow analysis this detector does not run.
-fn reverts_on_refusal<'hir>(
+/// Branches are read separately and merged: coverage holds only when every path checked, while
+/// a pending or escaping path taints the whole. The branch a `to.code.length` test dedicates to
+/// accounts starts covered, an account always accepting the token. A loop body may run zero
+/// times, so nothing in one is credited, while the delegations and escapes it may hold still
+/// count.
+///
+/// Everything else reports, a `try` whose `catch` may swallow the refusal included, and so are
+/// an answer stored in a local and a helper returning it as a `bool`. Following the value
+/// across statements would take a dataflow analysis this detector does not run.
+#[expect(clippy::too_many_arguments)]
+fn walk_guards<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     stmts: &'hir [hir::Stmt<'hir>],
     recipient: hir::VariableId,
+    token: hir::VariableId,
+    delegations: &[FunctionId],
+    bypass: bool,
     seen: &mut Vec<FunctionId>,
-) -> bool {
-    stmts.iter().any(|stmt| stmt_reverts_on_refusal(gcx, hir, stmt, recipient, seen))
+    walk: &mut GuardWalk,
+) {
+    // Read in order: what a guard covers and what an exit walks out with depend on what already
+    // ran.
+    for stmt in stmts {
+        match &stmt.kind {
+            hir::StmtKind::Block(block) | hir::StmtKind::UncheckedBlock(block) => {
+                walk_guards(
+                    gcx,
+                    hir,
+                    block.stmts,
+                    recipient,
+                    token,
+                    delegations,
+                    bypass,
+                    seen,
+                    walk,
+                );
+            }
+            hir::StmtKind::Expr(expr) if is_guard_expr(gcx, hir, expr, recipient, token, seen) => {
+                // A guard that also reassigns the recipient or the token cannot be trusted:
+                // evaluation order decides whether the hook read the value the mint credits, so
+                // an assignment tucked in the guard's other arguments retires coverage instead
+                // of granting it.
+                if mutates_var(hir, stmt, recipient) || mutates_var(hir, stmt, token) {
+                    if walk.pending {
+                        walk.failed = true;
+                    }
+                    walk.covered = false;
+                } else {
+                    walk.covered = true;
+                    walk.pending = false;
+                }
+            }
+            hir::StmtKind::If(cond, then, else_) => {
+                // The condition runs before either branch, so an assignment embedded in it,
+                // `if ((tokenId = tokenId + 1) > 0) {}`, retires coverage exactly as a bare
+                // assignment statement does. A genuine hook or account test carries none.
+                if expr_mutates_var(hir, cond, recipient) || expr_mutates_var(hir, cond, token) {
+                    if walk.pending {
+                        walk.failed = true;
+                    }
+                    walk.covered = false;
+                }
+                // The exiting branch must be the one a refusal takes, not the one an acceptance
+                // does. The branch the guard lets through holds nothing to read: a mint there
+                // runs checked, and an exit there leaves with the recipient's answer in hand.
+                if (is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Ne)
+                    && branch_always_reverts(then))
+                    || (is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq)
+                        && else_.is_some_and(branch_always_reverts))
+                {
+                    walk.covered = true;
+                    walk.pending = false;
+                    continue;
+                }
+                // Each branch is read on its own, from what already ran. The branch a
+                // `to.code.length` test dedicates to accounts starts covered with nothing
+                // pending: an account always accepts, so the mints already made are as
+                // satisfied on that path as the ones to come, and its exits break no promise.
+                let mut then_walk = walk.clone();
+                let mut else_walk = walk.clone();
+                if is_code_length_test(cond, recipient, true) {
+                    else_walk.covered = true;
+                    else_walk.pending = false;
+                } else if is_code_length_test(cond, recipient, false) {
+                    then_walk.covered = true;
+                    then_walk.pending = false;
+                }
+                walk_one(
+                    gcx,
+                    hir,
+                    then,
+                    recipient,
+                    token,
+                    delegations,
+                    bypass,
+                    seen,
+                    &mut then_walk,
+                );
+                if let Some(else_) = else_ {
+                    walk_one(
+                        gcx,
+                        hir,
+                        else_,
+                        recipient,
+                        token,
+                        delegations,
+                        bypass,
+                        seen,
+                        &mut else_walk,
+                    );
+                }
+                // A guard behind a condition only counts when every path passed one; anything
+                // pending or escaped on either path stands.
+                walk.covered = then_walk.covered && else_walk.covered;
+                walk.pending = then_walk.pending || else_walk.pending;
+                walk.failed = then_walk.failed || else_walk.failed;
+                walk.escaped = then_walk.escaped || else_walk.escaped;
+            }
+            _ => {
+                // Reassigning the recipient or the token retires every guard so far: a guard
+                // checked their value, and identity here is by variable, so a later delegation
+                // spelling the same variable now credits a value the guard never saw. A mint
+                // already pending can no longer be covered by a guard to come either, the guard
+                // reading the new value. This runs first: an assignment inside a delegation's
+                // own arguments happens before the call.
+                if mutates_var(hir, stmt, recipient) || mutates_var(hir, stmt, token) {
+                    if walk.pending {
+                        walk.failed = true;
+                    }
+                    walk.covered = false;
+                }
+                // An opaque statement: a delegation anywhere inside it mints, unchecked unless
+                // already covered, and a possible successful exit walks out with whatever is
+                // pending. The placeholder counts as one when the wrapped body can leave
+                // through an assembly `return`, which skips everything after `_;`: a guard only
+                // the modifier's tail holds is then not guaranteed.
+                if !walk.covered && contains_delegation(gcx, hir, stmt, delegations) {
+                    walk.pending = true;
+                }
+                if may_return(stmt) || (bypass && contains_placeholder(hir, stmt)) {
+                    if walk.pending {
+                        walk.failed = true;
+                    }
+                    if !walk.covered {
+                        walk.escaped = true;
+                    }
+                }
+            }
+        }
+    }
 }
 
-fn stmt_reverts_on_refusal<'hir>(
+/// [`walk_guards`] on a single statement.
+#[expect(clippy::too_many_arguments)]
+fn walk_one<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     stmt: &'hir hir::Stmt<'hir>,
     recipient: hir::VariableId,
+    token: hir::VariableId,
+    delegations: &[FunctionId],
+    bypass: bool,
+    seen: &mut Vec<FunctionId>,
+    walk: &mut GuardWalk,
+) {
+    walk_guards(
+        gcx,
+        hir,
+        std::slice::from_ref(stmt),
+        recipient,
+        token,
+        delegations,
+        bypass,
+        seen,
+        walk,
+    );
+}
+
+/// Whether a subtree holds the `_;` placeholder of a modifier.
+fn contains_placeholder<'hir>(hir: &'hir Hir<'hir>, stmt: &'hir hir::Stmt<'hir>) -> bool {
+    struct PlaceholderFinder<'hir> {
+        hir: &'hir Hir<'hir>,
+    }
+    impl<'hir> Visit<'hir> for PlaceholderFinder<'hir> {
+        type BreakValue = ();
+
+        fn hir(&self) -> &'hir Hir<'hir> {
+            self.hir
+        }
+
+        fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+            if matches!(stmt.kind, hir::StmtKind::Placeholder) {
+                return ControlFlow::Break(());
+            }
+            self.walk_stmt(stmt)
+        }
+    }
+    let mut finder = PlaceholderFinder { hir };
+    finder.visit_stmt(stmt).is_break()
+}
+
+/// Whether a subtree holds an assembly block, whose EVM `return` leaves the call frame without
+/// running what a modifier holds after its placeholder.
+fn contains_assembly<'hir>(hir: &'hir Hir<'hir>, stmts: &'hir [hir::Stmt<'hir>]) -> bool {
+    struct AssemblyFinder<'hir> {
+        hir: &'hir Hir<'hir>,
+    }
+    impl<'hir> Visit<'hir> for AssemblyFinder<'hir> {
+        type BreakValue = ();
+
+        fn hir(&self) -> &'hir Hir<'hir> {
+            self.hir
+        }
+
+        fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+            if matches!(stmt.kind, hir::StmtKind::AssemblyBlock(_)) {
+                return ControlFlow::Break(());
+            }
+            self.walk_stmt(stmt)
+        }
+    }
+    let mut finder = AssemblyFinder { hir };
+    stmts.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
+}
+
+/// A statement expression that guards the recipient and the token: `require`/`assert` on an
+/// acceptance condition, or a call handing both to a helper that does. Only the condition is
+/// read: a hook call sitting in the revert message decides nothing, and neither does one in any
+/// other argument.
+fn is_guard_expr<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    expr: &'hir Expr<'hir>,
+    recipient: hir::VariableId,
+    token: hir::VariableId,
     seen: &mut Vec<FunctionId>,
 ) -> bool {
-    match &stmt.kind {
-        hir::StmtKind::Expr(expr) => {
-            let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-            // Only the condition is read: a hook call sitting in the revert message decides
-            // nothing, and neither does one in any other argument.
-            if is_require_or_assert(callee) {
-                return args
-                    .exprs()
-                    .next()
-                    .is_some_and(|cond| is_acceptance_condition(gcx, hir, cond, recipient));
-            }
-            resolved_callee(gcx, expr.peel_parens()).is_some_and(|function_id| {
-                callee_guards_recipient(gcx, hir, function_id, args, recipient, seen)
-            })
-        }
-        hir::StmtKind::If(cond, then, else_) => {
-            // The exiting branch must be the one a refusal takes, not the one an acceptance does.
-            if is_hook_comparison(gcx, hir, cond, recipient, hir::BinOpKind::Ne)
-                && branch_always_reverts(then)
+    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+    if is_require_or_assert(callee) {
+        return args
+            .exprs()
+            .next()
+            .is_some_and(|cond| is_acceptance_condition(gcx, hir, cond, recipient, token));
+    }
+    resolved_callee(gcx, expr.peel_parens()).is_some_and(|function_id| {
+        callee_guards_recipient(gcx, hir, function_id, args, recipient, token, false, seen)
+    })
+}
+
+/// Whether a statement assigns to `var`: `var = x`, `var += x`, `var++`, `delete var`, or `var`
+/// as a component of a tuple assignment. Identity here is by variable, not by value, so a guard
+/// that checked `var` says nothing once `var` is reassigned: the delegation then credits a value
+/// or an address the guard never saw, though the two spell the same variable.
+fn mutates_var<'hir>(
+    hir: &'hir Hir<'hir>,
+    stmt: &'hir hir::Stmt<'hir>,
+    var: hir::VariableId,
+) -> bool {
+    let mut finder = MutationFinder { hir, var };
+    finder.visit_stmt(stmt).is_break()
+}
+
+/// [`mutates_var`] over an expression, for the condition of an `if`, which the `If` arm reaches
+/// before the statement arm ever sees it: `if ((tokenId = x) > 0) {}` reassigns as surely as a
+/// bare statement, and the condition runs whichever branch is taken.
+fn expr_mutates_var<'hir>(
+    hir: &'hir Hir<'hir>,
+    expr: &'hir Expr<'hir>,
+    var: hir::VariableId,
+) -> bool {
+    let mut finder = MutationFinder { hir, var };
+    finder.visit_expr(expr).is_break()
+}
+
+/// Finds an assignment to `var` anywhere in a subtree: `var = x`, `var += x`, `var++`,
+/// `delete var`, or `var` as a component of a tuple assignment.
+struct MutationFinder<'hir> {
+    hir: &'hir Hir<'hir>,
+    var: hir::VariableId,
+}
+
+impl<'hir> Visit<'hir> for MutationFinder<'hir> {
+    type BreakValue = ();
+
+    fn hir(&self) -> &'hir Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        let target = match &expr.kind {
+            ExprKind::Assign(lhs, _, _) => Some(*lhs),
+            ExprKind::Delete(inner) => Some(*inner),
+            ExprKind::Unary(op, inner)
+                if matches!(
+                    op.kind,
+                    hir::UnOpKind::PreInc
+                        | hir::UnOpKind::PreDec
+                        | hir::UnOpKind::PostInc
+                        | hir::UnOpKind::PostDec
+                ) =>
             {
-                return true;
+                Some(*inner)
             }
-            if is_hook_comparison(gcx, hir, cond, recipient, hir::BinOpKind::Eq)
-                && else_.is_some_and(branch_always_reverts)
-            {
-                return true;
-            }
-            // Skipping the hook for an account is the one admissible reason not to run it.
-            is_code_length_test(cond, recipient, true)
-                && stmt_reverts_on_refusal(gcx, hir, then, recipient, seen)
+            _ => None,
+        };
+        if let Some(target) = target
+            && assigns_to(target, self.var)
+        {
+            return ControlFlow::Break(());
         }
-        hir::StmtKind::Block(block) | hir::StmtKind::UncheckedBlock(block) => {
-            reverts_on_refusal(gcx, hir, block.stmts, recipient, seen)
+        self.walk_expr(expr)
+    }
+}
+
+/// Whether an assignment target names `var`, directly or as one component of a tuple.
+fn assigns_to(target: &Expr<'_>, var: hir::VariableId) -> bool {
+    match &target.peel_parens().kind {
+        ExprKind::Ident(resolutions) => resolutions
+            .iter()
+            .any(|res| matches!(res, hir::Res::Item(hir::ItemId::Variable(vid)) if *vid == var)),
+        ExprKind::Tuple(elements) => {
+            elements.iter().any(|element| element.is_some_and(|inner| assigns_to(inner, var)))
         }
         _ => false,
     }
 }
 
-/// [`reverts_on_refusal`] on a callee's body, against the parameter the recipient landed on.
-/// `seen` cuts recursion cycles.
-fn body_reverts_on_refusal<'hir>(
+/// Whether a subtree holds a call dispatching to one of the delegated mints.
+fn contains_delegation<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    stmt: &'hir hir::Stmt<'hir>,
+    delegations: &[FunctionId],
+) -> bool {
+    struct DelegationFinder<'a, 'hir> {
+        gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        delegations: &'a [FunctionId],
+    }
+    impl<'hir> Visit<'hir> for DelegationFinder<'_, 'hir> {
+        type BreakValue = ();
+
+        fn hir(&self) -> &'hir Hir<'hir> {
+            self.hir
+        }
+
+        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+            if let Some(function_id) = resolved_callee(self.gcx, expr)
+                && self.delegations.contains(&function_id)
+            {
+                return ControlFlow::Break(());
+            }
+            self.walk_expr(expr)
+        }
+    }
+    let mut finder = DelegationFinder { gcx, hir, delegations };
+    finder.visit_stmt(stmt).is_break()
+}
+
+/// [`walk_guards`] on a callee's body, against the parameters the recipient and the token
+/// landed on: the callee guards when a guard ran before any possible successful exit, which is
+/// what its caller relies on. `bypass` says the wrapped body can leave through an assembly
+/// `return`, making an uncovered placeholder such an exit. `seen` cuts recursion cycles.
+fn body_guards<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     function_id: FunctionId,
     recipient: hir::VariableId,
+    token: hir::VariableId,
+    bypass: bool,
     seen: &mut Vec<FunctionId>,
 ) -> bool {
     if seen.contains(&function_id) {
@@ -656,20 +1093,26 @@ fn body_reverts_on_refusal<'hir>(
         return false;
     }
     let Some(body) = &function.body else { return false };
-    reverts_on_refusal(gcx, hir, body.stmts, recipient, seen)
+    let mut walk = GuardWalk::default();
+    walk_guards(gcx, hir, body.stmts, recipient, token, &[], bypass, seen, &mut walk);
+    walk.covered && !walk.escaped
 }
 
-/// Whether one of the modifiers a function carries reverts on refusal for the recipient it is
-/// handed. A base-constructor call in the same list carries no body to analyze.
+/// Whether one of the modifiers a function carries reverts on refusal for the recipient and the
+/// token it is handed. A base-constructor call in the same list carries no body to analyze. A
+/// body holding an assembly block can leave the call frame without ever coming back to the
+/// modifier, so a guard after `_;` is only guaranteed for a body that cannot.
 fn modifiers_revert_on_refusal<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     function: &'hir hir::Function<'hir>,
     recipient: hir::VariableId,
+    token: hir::VariableId,
 ) -> bool {
+    let bypass = function.body.as_ref().is_some_and(|body| contains_assembly(hir, body.stmts));
     function.modifiers.iter().any(|modifier| {
         matches!(modifier.id, hir::ItemId::Function(id)
-            if callee_guards_recipient(gcx, hir, id, &modifier.args, recipient, &mut Vec::new()))
+            if callee_guards_recipient(gcx, hir, id, &modifier.args, recipient, token, bypass, &mut Vec::new()))
     })
 }
 
