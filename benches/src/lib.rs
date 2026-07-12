@@ -10,6 +10,7 @@ use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
 use once_cell::sync::Lazy;
 use std::{
+    collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -618,17 +619,36 @@ const LOCAL_BUILD_BINS_ENV: &str = "FOUNDRY_BENCH_LOCAL_BUILD_BINS";
 const DEFAULT_LOCAL_BUILD_PROFILE: &str = "dist";
 const FOUNDRY_BINS: [&str; 4] = ["forge", "cast", "anvil", "chisel"];
 
-/// Parse a `--versions` entry into a display name and an optional source
-/// workspace. `name=path` builds Foundry from `path` (a checked-out ref) and
-/// labels it `name`; a bare entry uses foundryup, or the default workspace for
-/// `local`.
-pub fn parse_version_spec(spec: &str) -> (String, Option<PathBuf>) {
-    match spec.split_once('=') {
-        Some((name, path)) if !name.is_empty() && !path.is_empty() => {
-            (name.to_string(), Some(PathBuf::from(path)))
-        }
-        _ => (spec.to_string(), None),
-    }
+/// Parse `--versions` entries into unique display names and optional source
+/// workspaces. `name=path` builds Foundry from `path` and labels it `name`.
+pub fn parse_version_specs(specs: &[String]) -> Result<Vec<(String, Option<PathBuf>)>> {
+    let mut labels = HashSet::new();
+    specs
+        .iter()
+        .map(|spec| {
+            let spec = spec.trim();
+            let (name, source) = match spec.split_once('=') {
+                Some((name, path)) if !name.is_empty() && !path.is_empty() => {
+                    (name, Some(PathBuf::from(path)))
+                }
+                Some(_) => eyre::bail!("invalid source version '{spec}'; expected name=path"),
+                None => (spec, None),
+            };
+            if name.is_empty()
+                || name == "."
+                || name == ".."
+                || !name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+            {
+                eyre::bail!(
+                    "invalid version label '{name}'; use letters, numbers, '.', '_', or '-'"
+                );
+            }
+            if !labels.insert(name.to_string()) {
+                eyre::bail!("duplicate version label '{name}'");
+            }
+            Ok((name.to_string(), source))
+        })
+        .collect()
 }
 
 /// Switch to a specific foundry version.
@@ -828,14 +848,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_version_spec() {
-        assert_eq!(parse_version_spec("stable"), ("stable".to_string(), None));
-        assert_eq!(parse_version_spec("local"), ("local".to_string(), None));
+    fn parses_and_validates_version_specs() {
+        let specs = vec!["stable".to_string(), "master=../foundry-baseline".to_string()];
         assert_eq!(
-            parse_version_spec("master=../foundry-baseline"),
-            ("master".to_string(), Some(PathBuf::from("../foundry-baseline")))
+            parse_version_specs(&specs).unwrap(),
+            vec![
+                ("stable".to_string(), None),
+                ("master".to_string(), Some(PathBuf::from("../foundry-baseline")))
+            ]
         );
-        // A trailing/leading empty side is treated as a plain name, not a source.
-        assert_eq!(parse_version_spec("=path"), ("=path".to_string(), None));
+
+        assert!(
+            parse_version_specs(&["local".to_string(), "local=/tmp/foundry".to_string()]).is_err()
+        );
+        assert!(parse_version_specs(&["../master=/tmp/foundry".to_string()]).is_err());
+        assert!(parse_version_specs(&["master=".to_string()]).is_err());
     }
 }

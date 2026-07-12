@@ -2,7 +2,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
     BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
-    get_forge_version_details, install_local_workspace, parse_version_spec,
+    get_forge_version_details, install_local_workspace, parse_version_specs,
     results::{BenchmarkResults, versioned_summary_filename},
     switch_foundry_version,
 };
@@ -127,8 +127,7 @@ fn main() -> Result<()> {
     } else {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };
-    let version_specs: Vec<(String, Option<PathBuf>)> =
-        raw_versions.iter().map(|v| parse_version_spec(v)).collect();
+    let version_specs = parse_version_specs(&raw_versions)?;
     let versions: Vec<String> = version_specs.iter().map(|(name, _)| name.clone()).collect();
     if cli.symbolic_sidecar_output.is_some() && versions.len() != 1 {
         eyre::bail!("--symbolic-sidecar-output requires exactly one --versions entry");

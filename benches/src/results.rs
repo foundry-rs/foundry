@@ -408,6 +408,30 @@ mod tests {
     }
 
     #[test]
+    fn json_summaries_are_isolated_by_version() {
+        let mut results = BenchmarkResults::new();
+        results.add_result("forge_test", "master", "solady", hyperfine_result("forge test", 1.0));
+        results.add_result("forge_test", "local", "solady", hyperfine_result("forge test", 2.0));
+
+        let dir = tempfile::tempdir().unwrap();
+        let output = Path::new("summary.json");
+        for version in ["master", "local"] {
+            let summary = results.generate_json_summary(&[version.to_string()]);
+            let path = dir.path().join(versioned_summary_filename(output, version));
+            std::fs::write(path, serde_json::to_vec(&summary).unwrap()).unwrap();
+        }
+
+        let master: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("summary-master.json")).unwrap())
+                .unwrap();
+        let local: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("summary-local.json")).unwrap())
+                .unwrap();
+        assert_eq!(master["forge_test/solady"]["mean"], 1.0);
+        assert_eq!(local["forge_test/solady"]["mean"], 2.0);
+    }
+
+    #[test]
     fn json_summary_includes_symbolic_counters() {
         let mut results = BenchmarkResults::new();
 
