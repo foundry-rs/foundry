@@ -38,7 +38,7 @@ jobs:
         with:
           script: |
             const usage = [
-              '**Usage:** `derek bench [subcommand] [args]` (defaults to `all`; also `decofe bench ...`).\n',
+              '**Usage:** `derek bench <subcommand> [args]` (also `decofe bench ...`).\n',
               '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization]`\n',
               '- `bench symex [compare-ref=REF] [timeout=N]`\n',
               '- `bench test [compare-ref=REF] [timeout=N] [isolate=true|false]`\n',
@@ -84,11 +84,14 @@ jobs:
             const prefix = /^(?:(?:@?decofe|derek)\s+)bench\b/i;
             const afterBench = body.replace(prefix, '').trim();
             const subMatch = afterBench.match(/^([A-Za-z][A-Za-z-]*)\b/);
-            const hasExplicitSubcommand = subMatch && !afterBench.startsWith(`${subMatch[0]}=`);
-            const subcommand = hasExplicitSubcommand ? subMatch[1].toLowerCase() : 'all';
-            const rawArgs = (hasExplicitSubcommand ? afterBench.slice(subMatch[0].length) : afterBench).trim();
+            const subcommand = subMatch ? subMatch[1].toLowerCase() : '';
+            const rawArgs = (subMatch ? afterBench.slice(subMatch[0].length) : afterBench).trim();
 
             const supported = new Set(['invariant', 'symex', 'test', 'build', 'fuzz', 'coverage', 'all']);
+            if (!subcommand) {
+              await failWithComment('Missing bench subcommand.');
+              return;
+            }
             if (!supported.has(subcommand)) {
               await failWithComment(`Unknown bench subcommand \`${subcommand}\`.`);
               return;
