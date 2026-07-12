@@ -1,7 +1,10 @@
 use super::transaction::TransactionInfo;
 #[cfg(test)]
 use alloy_consensus::Header;
-use alloy_consensus::{BlockBody, EMPTY_OMMER_ROOT_HASH, proofs::calculate_transaction_root};
+use alloy_consensus::{
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Typed2718, proofs::ordered_trie_root_with_encoder,
+    transaction::RlpEcdsaEncodableTx,
+};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::Network;
 use foundry_primitives::{FoundryHeader, FoundryTxEnvelope};
@@ -20,6 +23,23 @@ pub struct BlockInfo<N: Network> {
     pub receipts: Vec<N::ReceiptEnvelope>,
 }
 
+/// A transaction that can be encoded for inclusion in a block body.
+pub trait EncodableBlockTransaction: Encodable2718 {
+    /// Encodes the transaction in its canonical block-body form.
+    fn encode_2718_for_block(&self, out: &mut dyn bytes::BufMut);
+}
+
+impl EncodableBlockTransaction for FoundryTxEnvelope {
+    fn encode_2718_for_block(&self, out: &mut dyn bytes::BufMut) {
+        if let Self::Eip4844(tx) = self {
+            out.put_u8(self.ty());
+            tx.tx().tx().rlp_encode_signed(tx.signature(), out);
+        } else {
+            self.encode_2718(out);
+        }
+    }
+}
+
 /// Helper function to create a new block with Header and Anvil transactions, generic over the
 /// transaction envelope with a default of [`FoundryTxEnvelope`].
 ///
@@ -30,11 +50,13 @@ pub fn create_block<T, Tx>(
     transactions: impl IntoIterator<Item = T>,
 ) -> Block<Tx>
 where
-    Tx: Encodable2718,
+    Tx: EncodableBlockTransaction,
     T: Into<MaybeImpersonatedTransaction<Tx>>,
 {
     let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-    let transactions_root = calculate_transaction_root(&transactions);
+    let transactions_root = ordered_trie_root_with_encoder(&transactions, |tx, out| {
+        tx.as_ref().encode_2718_for_block(out)
+    });
 
     header.set_transactions_root(transactions_root);
     header.set_ommers_hash(EMPTY_OMMER_ROOT_HASH);
@@ -45,14 +67,60 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{
+        BlobTransactionSidecar, BlobTransactionSidecarVariant, BlockHeader, SignableTransaction,
+        TxEip4844, proofs::calculate_transaction_root, transaction::eip4844::TxEip4844Variant,
+    };
     use alloy_primitives::{
-        Address, B64, B256, Bloom, U256, b256,
+        Address, B64, B256, Bloom, Signature, U256, b256,
         hex::{self, FromHex},
     };
     use alloy_rlp::Decodable;
 
     use super::*;
     use std::str::FromStr;
+
+    fn assert_blob_transaction_root(sidecar: BlobTransactionSidecarVariant) {
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            to: Address::ZERO,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            blob_versioned_hashes: vec![B256::ZERO],
+            max_fee_per_blob_gas: 1,
+            input: Default::default(),
+        };
+        let signature = Signature::new(U256::from(1), U256::from(1), false);
+        let canonical = FoundryTxEnvelope::Eip4844(
+            TxEip4844Variant::TxEip4844(tx.clone()).into_signed(signature),
+        );
+        let pooled = FoundryTxEnvelope::Eip4844(
+            TxEip4844Variant::TxEip4844WithSidecar(tx.with_sidecar(sidecar)).into_signed(signature),
+        );
+
+        let canonical_root = calculate_transaction_root(&[canonical]);
+        let pooled_root = calculate_transaction_root(std::slice::from_ref(&pooled));
+        let block = create_block(FoundryHeader::default(), [pooled]);
+
+        assert_ne!(canonical_root, pooled_root);
+        assert_eq!(block.header.transactions_root(), canonical_root);
+    }
+
+    #[test]
+    fn blob_transaction_root_uses_canonical_encoding() {
+        assert_blob_transaction_root(BlobTransactionSidecarVariant::Eip4844(
+            BlobTransactionSidecar::new(
+                vec![Default::default()],
+                vec![Default::default()],
+                vec![Default::default()],
+            ),
+        ));
+        assert_blob_transaction_root(BlobTransactionSidecarVariant::Eip7594(Default::default()));
+    }
 
     #[test]
     fn header_rlp_roundtrip() {

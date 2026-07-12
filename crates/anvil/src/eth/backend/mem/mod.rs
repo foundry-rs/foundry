@@ -37,7 +37,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
-    TrieAccount, TxEnvelope, TxReceipt, Typed2718,
+    TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
@@ -5226,15 +5226,18 @@ impl Backend<FoundryNetwork> {
     }
 
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
-        // Try to get the mined transaction by hash
-        if let Some(tx) = self.mined_transaction_by_hash(hash)
-            && let Ok(typed_tx) = FoundryTxEnvelope::try_from(tx)
-            && let Some(sidecar) = typed_tx.sidecar()
-        {
-            return Ok(Some(sidecar.sidecar.blobs().to_vec()));
-        }
-
-        Ok(None)
+        let storage = self.blockchain.storage.read();
+        Ok(storage.transactions.get(&hash).and_then(|mined| {
+            storage
+                .blocks
+                .get(&mined.block_hash)?
+                .body
+                .transactions
+                .get(mined.info.transaction_index as usize)?
+                .as_ref()
+                .sidecar()
+                .map(|sidecar| sidecar.sidecar.blobs().to_vec())
+        }))
     }
 
     /// Sets the fee token for a user address (Tempo-only).
@@ -5771,7 +5774,10 @@ pub fn transaction_build(
         TxEnvelope::Legacy(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(rehash(s, hash))),
         TxEnvelope::Eip1559(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(rehash(s, hash))),
         TxEnvelope::Eip2930(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(rehash(s, hash))),
-        TxEnvelope::Eip4844(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash))),
+        TxEnvelope::Eip4844(s) => {
+            let s = if block.is_some() { s.map(TxEip4844Variant::drop_sidecar) } else { s };
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash)))
+        }
         TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
     };
 

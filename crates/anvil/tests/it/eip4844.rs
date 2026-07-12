@@ -1,11 +1,14 @@
 use crate::utils::{http_provider, http_provider_with_signer};
-use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder, Transaction};
+use alloy_consensus::{
+    BlobTransactionSidecar, EthereumTxEnvelope, SidecarBuilder, SimpleCoder, Transaction,
+    TxEip4844, proofs::calculate_transaction_root,
+};
 use alloy_eips::{
-    Typed2718,
+    Decodable2718, Typed2718,
     eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK_DENCUN},
 };
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
-use alloy_primitives::{Address, U256, b256};
+use alloy_primitives::{Address, Bytes, U256, b256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -16,7 +19,7 @@ use foundry_test_utils::rpc;
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip4844_transaction() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
-    let (_api, handle) = spawn(node_config).await;
+    let (api, handle) = spawn(node_config).await;
 
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let from = wallets[0].address();
@@ -45,6 +48,26 @@ async fn can_send_eip4844_transaction() {
 
     assert_eq!(receipt.blob_gas_used, Some(131072));
     assert_eq!(receipt.blob_gas_price, Some(0x1)); // 1 wei
+
+    let raw: Bytes = provider
+        .client()
+        .request("eth_getRawTransactionByHash", (receipt.transaction_hash,))
+        .await
+        .unwrap();
+    let canonical = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw.as_ref()).unwrap();
+    let block = provider
+        .get_block_by_number(receipt.block_number.unwrap().into())
+        .full()
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(block.header.transactions_root, calculate_transaction_root(&[canonical]));
+    let tx = serde_json::to_value(&block.transactions.as_transactions().unwrap()[0]).unwrap();
+    for field in ["blobs", "commitments", "proofs", "cellProofs"] {
+        assert!(tx.get(field).is_none());
+    }
+    assert!(api.anvil_get_blob_by_tx_hash(receipt.transaction_hash).unwrap().is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]
