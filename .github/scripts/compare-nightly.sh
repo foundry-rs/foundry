@@ -3,16 +3,13 @@
 #
 # Usage: compare-nightly.sh <base.json> <candidate.json> [warn_pct] [fail_pct]
 #
-# Wall time is lower-is-better. A change is judged against a noise band equal to
-# the combined relative stddev of both sides (scaled by NOISE_MULT), so a delta
-# only counts when it exceeds the threshold beyond noise. Single-run metrics
-# (no stddev, e.g. coverage) are reported but not judged.
+# Wall time is lower-is-better. Thresholds apply to the raw percentage change,
+# preserving the existing nightly alert contract.
 #
 # Env overrides (defaults preserve the nightly regression report):
 #   BASE_LABEL          baseline column label     (default: Stable)
 #   CANDIDATE_LABEL     candidate column label     (default: Nightly)
 #   REPORT_TITLE        heading                    (default: ## Nightly Benchmark Regression Report)
-#   NOISE_MULT          noise band multiplier      (default: 1.0)
 #   FAIL_ON_REGRESSION  exit 1 on any regression   (default: 1)
 #
 # Exits 0 if no regressions (or FAIL_ON_REGRESSION=0), 1 otherwise.
@@ -27,13 +24,12 @@ FAIL="${4:-3}"
 BASE_JSON="$BASE_JSON" CAND_JSON="$CAND_JSON" WARN="$WARN" FAIL="$FAIL" \
 BASE_LABEL="${BASE_LABEL:-Stable}" CANDIDATE_LABEL="${CANDIDATE_LABEL:-Nightly}" \
 REPORT_TITLE="${REPORT_TITLE-## Nightly Benchmark Regression Report}" \
-NOISE_MULT="${NOISE_MULT:-1.0}" FAIL_ON_REGRESSION="${FAIL_ON_REGRESSION:-1}" \
+FAIL_ON_REGRESSION="${FAIL_ON_REGRESSION:-1}" \
 python3 - <<'EOF'
-import json, math, os, sys
+import json, os, sys
 
 warn = float(os.environ["WARN"])
 fail = float(os.environ["FAIL"])
-noise_mult = float(os.environ["NOISE_MULT"])
 fail_on_regression = os.environ["FAIL_ON_REGRESSION"] != "0"
 base_label = os.environ["BASE_LABEL"]
 cand_label = os.environ["CANDIDATE_LABEL"]
@@ -47,9 +43,6 @@ with open(os.environ["CAND_JSON"]) as f:
 # or, for historical files, a bare mean-seconds float.
 def mean_of(v):
     return v["mean"] if isinstance(v, dict) else v
-
-def stddev_of(v):
-    return v.get("stddev") if isinstance(v, dict) else None
 
 def fmt_duration(seconds):
     if seconds < 0.001:
@@ -79,27 +72,18 @@ for key in sorted(base.keys() | cand.keys()):
         print(f"| `{key}` | N/A | {fmt_duration(mean_of(c))} | 🆕 New |")
         continue
     bm, cm = mean_of(b), mean_of(c)
-    bs, cs = stddev_of(b), stddev_of(c)
     delta = (cm - bm) / bm * 100
     sign = "+" if delta > 0 else ""
-    if bs is None or cs is None:
-        change = f"{sign}{delta:.2f}% ⚪ (single run, informational)"
+    if delta >= fail:
+        verdict = "❌"
+        has_regression = True
+    elif delta >= warn:
+        verdict = "⚠️"
+    elif delta <= -warn:
+        verdict = "✅"
     else:
-        band = math.hypot(bs / bm, cs / cm) * 100 * noise_mult
-        if delta - band >= fail:
-            verdict = "❌"
-            floor = fail
-            has_regression = True
-        elif delta - band >= warn:
-            verdict = "⚠️"
-            floor = warn
-        elif -delta - band >= warn:
-            verdict = "✅"
-            floor = warn
-        else:
-            verdict = "⚪"
-            floor = warn
-        change = f"{sign}{delta:.2f}% {verdict} (±{band:.2f}%, floor {floor:.2f}%)"
+        verdict = "⚪"
+    change = f"{sign}{delta:.2f}% {verdict}"
     print(f"| `{key}` | {fmt_duration(bm)} | {fmt_duration(cm)} | {change} |")
 
 sys.exit(1 if has_regression and fail_on_regression else 0)
