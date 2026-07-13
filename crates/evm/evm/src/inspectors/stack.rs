@@ -426,6 +426,8 @@ pub struct InspectorStackInner {
     execution_cancellation: Option<EvmExecutionCancellation>,
     /// Amortizes deadline checks in the opcode hot path.
     cancellation_poll_counter: u8,
+    /// Whether this inspector halted the current execution due to cancellation.
+    execution_cancelled: bool,
     #[cfg(test)]
     early_exit_test_gate: Option<EarlyExitTestGate>,
     static_step_dispatch: OpcodeStepDispatch,
@@ -551,10 +553,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.execution_cancellation = Some(cancellation);
     }
 
-    /// Returns whether cancellation has been requested for this execution.
+    /// Returns whether this inspector halted execution due to cancellation.
     #[inline]
-    pub(crate) fn cancellation_requested(&self) -> bool {
-        self.execution_cancellation.as_ref().is_some_and(|state| state.should_stop(true))
+    pub(crate) const fn execution_cancelled(&self) -> bool {
+        self.inner.execution_cancelled
     }
 
     #[cfg(test)]
@@ -1124,6 +1126,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             self.inner.cancellation_poll_counter =
                 self.inner.cancellation_poll_counter.wrapping_add(1);
             if cancellation.should_stop(poll_deadline) {
+                self.inner.execution_cancelled = true;
                 interpreter.halt(InstructionResult::Stop);
                 return;
             }

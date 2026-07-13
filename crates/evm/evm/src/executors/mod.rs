@@ -1063,6 +1063,8 @@ impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for RawCallResult<FEN> {
 pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The status of the call
     pub exit_reason: Option<InstructionResult>,
+    /// Whether the call was halted by the execution cancellation inspector.
+    pub execution_cancelled: bool,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// Whether the call includes a snapshot failure
@@ -1120,6 +1122,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
     fn default() -> Self {
         Self {
             exit_reason: None,
+            execution_cancelled: false,
             reverted: false,
             has_state_snapshot_failure: false,
             result: Bytes::new(),
@@ -1356,6 +1359,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult<FEN>> {
+    let execution_cancelled = inspector.execution_cancelled();
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas, output, logs } => {
             (reason.into(), gas.final_refunded(), gas.tx_gas_used(), Some(output), logs)
@@ -1407,6 +1411,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
 
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
+        execution_cancelled,
         reverted: !matches!(exit_reason, return_ok!()),
         has_state_snapshot_failure,
         result,
@@ -1729,10 +1734,31 @@ mod tests {
         let result = result_rx.recv_timeout(Duration::from_secs(1));
         handle.join().unwrap();
         let result = result.expect("active EVM execution did not observe early exit").unwrap();
+        assert!(result.execution_cancelled);
         assert!(!result.reverted);
         assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
         assert!(result.gas_used > 21_000, "interrupt fired before EVM execution started");
         assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of exiting");
+    }
+
+    #[test]
+    fn completed_execution_is_not_retroactively_cancelled() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(1 << 24).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let early_exit = EarlyExit::new(false);
+        executor.inspector_mut().set_early_exit(early_exit.clone());
+
+        let target = Address::repeat_byte(0x11);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        early_exit.record_ctrl_c();
+
+        assert!(!result.execution_cancelled);
+        assert!(!result.reverted);
     }
 
     #[test]
@@ -1757,6 +1783,7 @@ mod tests {
             .unwrap();
 
         let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.execution_cancelled);
         assert!(!result.reverted);
         assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
         assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of timing out");

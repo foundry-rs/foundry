@@ -1209,7 +1209,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &mut current_run.executor,
                     current_run.inputs.last().expect("checked above"),
                 )?;
-                if campaign_state.should_stop() {
+                if call_result.execution_cancelled {
                     invariant_test.test_data.failures.clone_from(&failures_checkpoint);
                     break 'stop;
                 }
@@ -1338,6 +1338,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 || is_last_call
                         };
 
+                    let mut predicate_cancelled = false;
+                    let mut completed_predicate_finding = false;
                     let (continues, _) = if should_check_invariant {
                         let outcome = can_continue(
                             &invariant_contract,
@@ -1352,7 +1354,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             pre_merge_edges_hash,
                         )
                         .map_err(|e| eyre!(e.to_string()))?;
-                        (outcome.continues, outcome.broken)
+                        predicate_cancelled = outcome.cancelled;
+                        completed_predicate_finding = outcome.completed_finding;
+                        (outcome.continues, None)
                     } else {
                         // Skip invariant check but still track reverts
                         if call_result.reverted {
@@ -1411,7 +1415,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                     // A predicate or optimization call can be interrupted after the handler
                     // completed. Do not accept the partial run as a successful one.
-                    if campaign_state.should_stop() {
+                    if predicate_cancelled {
+                        if completed_predicate_finding {
+                            current_run.save_last_run_inputs = true;
+                            stop_after_run = true;
+                            break;
+                        }
                         invariant_test.test_data.failures.clone_from(&failures_checkpoint);
                         break 'stop;
                     }
@@ -1450,14 +1459,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             if invariant_contract.call_after_invariant
                 && invariant_test.test_data.failures.invariant_count() == failures_before_run
             {
-                let broken = assert_after_invariant(
+                let (broken, hook_cancelled) = assert_after_invariant(
                     &invariant_contract,
                     &mut invariant_test,
                     &current_run,
                     &config,
                 )
                 .map_err(|_| eyre!("Failed to call afterInvariant"))?;
-                if broken.is_some() {
+                if hook_cancelled
+                    && invariant_test.test_data.failures.invariant_count() == failures_before_run
+                    && invariant_test.test_data.failures.handler_count()
+                        == failures_checkpoint.handler_count()
+                {
+                    invariant_test.test_data.failures.clone_from(&failures_checkpoint);
+                    break 'stop;
+                } else if hook_cancelled {
+                    stop_after_run = true;
+                } else if broken.is_some() {
                     current_run.save_last_run_inputs = true;
                 }
             }
@@ -1466,8 +1484,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // complete failing run. All other campaign stops discard the partial run before any
             // corpus persistence or accounting.
             if campaign_state.should_stop() && !stop_after_run {
-                invariant_test.test_data.failures.clone_from(&failures_checkpoint);
-                break 'stop;
+                let completed_finding = invariant_test.test_data.failures.invariant_count()
+                    > failures_before_run
+                    || invariant_test.test_data.failures.handler_count()
+                        > failures_checkpoint.handler_count();
+                if completed_finding {
+                    stop_after_run = true;
+                } else {
+                    invariant_test.test_data.failures.clone_from(&failures_checkpoint);
+                    break 'stop;
+                }
             }
 
             if invariant_test.test_data.failures.invariant_count() > failures_before_run {
