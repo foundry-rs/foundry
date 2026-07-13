@@ -689,6 +689,63 @@ mod tests {
     }
 
     #[test]
+    fn symbolic_counterexample_schema_includes_predicate_failure_sites() {
+        let schema: serde_json::Value =
+            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA_JSON).unwrap();
+        let predicate = schema["$defs"]["invariant_failure"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|variant| variant["properties"]["kind"]["const"] == "predicate")
+            .unwrap();
+        assert_eq!(predicate["properties"]["site"]["$ref"], "#/$defs/invariant_failure_site");
+
+        let site_schema = &schema["$defs"]["invariant_failure_site"];
+        let site_properties = site_schema["properties"].as_object().unwrap();
+        let required_site_properties = site_schema["required"].as_array().unwrap();
+        let site_kinds = site_properties["kind"]["enum"].as_array().unwrap();
+        for (site, expected_kind) in [
+            (
+                SymbolicInvariantFailureSite::SequenceCall {
+                    target: Address::ZERO,
+                    selector: Selector::ZERO,
+                    fingerprint: B256::ZERO,
+                },
+                "sequence_call",
+            ),
+            (
+                SymbolicInvariantFailureSite::Invariant {
+                    target: Address::ZERO,
+                    selector: Selector::ZERO,
+                    fingerprint: B256::ZERO,
+                },
+                "invariant",
+            ),
+            (
+                SymbolicInvariantFailureSite::AfterInvariant {
+                    target: Address::ZERO,
+                    selector: Selector::ZERO,
+                    fingerprint: B256::ZERO,
+                },
+                "after_invariant",
+            ),
+        ] {
+            let failure = SymbolicInvariantArtifactFailure::Predicate {
+                name: "invariant_counter".to_string(),
+                site: Some(site),
+            };
+            let value = serde_json::to_value(failure).unwrap();
+            assert_eq!(value["site"]["kind"], expected_kind);
+            assert!(site_kinds.contains(&value["site"]["kind"]));
+            let site = value["site"].as_object().unwrap();
+            assert!(site.keys().all(|key| site_properties.contains_key(key)));
+            assert!(
+                required_site_properties.iter().all(|key| site.contains_key(key.as_str().unwrap()))
+            );
+        }
+    }
+
+    #[test]
     fn symbolic_counterexample_artifact_serializes_zero_quantities_compactly() {
         let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
         let call = SymbolicCounterexampleCall {

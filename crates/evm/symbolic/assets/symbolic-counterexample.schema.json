@@ -122,6 +122,9 @@
             },
             "name": {
               "type": "string"
+            },
+            "site": {
+              "$ref": "#/$defs/invariant_failure_site"
             }
           }
         },
@@ -143,6 +146,20 @@
           }
         }
       ]
+    },
+    "invariant_failure_site": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "selector", "fingerprint"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["sequence_call", "invariant", "after_invariant"]
+        },
+        "target": { "$ref": "#/$defs/address" },
+        "selector": { "$ref": "#/$defs/selector" },
+        "fingerprint": { "$ref": "#/$defs/b256" }
+      }
     },
     "call": {
       "type": "object",
