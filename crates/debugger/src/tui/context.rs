@@ -4,7 +4,9 @@ use super::storage::{StorageAccess, hex_u256, storage_access_at};
 use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{Address, U256, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
+use foundry_evm_traces::debug::SourceData;
 use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
@@ -191,6 +193,23 @@ impl<'a> TUIContext<'a> {
 
     pub(crate) const fn active_buffer_name(&self) -> &'static str {
         buffer_name(&self.active_buffer)
+    }
+
+    /// Returns source map, source code and source name of the current line.
+    pub(crate) fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
+        let address = self.address();
+        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
+            return Err(format!("Unknown contract at address {address}"));
+        };
+
+        self.debugger_context
+            .contracts_sources
+            .find_source_mapping(
+                contract_name,
+                self.current_step().pc as u32,
+                self.debug_call().kind.is_any_create(),
+            )
+            .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 }
 
@@ -559,7 +578,7 @@ impl TUIContext<'_> {
         }
     }
 
-    fn apply_pc_target(&mut self, candidate: PcCandidate, target: PcTarget) {
+    fn apply_pc_target(&mut self, candidate: PcCandidate, target: StepTarget) {
         let already_at_target = self.draw_memory.inner_call_index == target.node_index
             && self.current_step == target.step_index;
 
@@ -572,8 +591,8 @@ impl TUIContext<'_> {
 
         let pc = candidate.pc;
         let scope = match target.scope {
-            PcTargetScope::CurrentNode => "current trace",
-            PcTargetScope::SameCodeContext => "same contract",
+            StepTargetScope::CurrentNode => "current trace",
+            StepTargetScope::SameCodeContext => "same contract",
         };
         let action = if already_at_target { "Already at" } else { "Jumped to" };
         self.set_info(format!("{action} PC 0x{pc:x} ({pc}) in {scope}"));
@@ -636,6 +655,14 @@ impl TUIContext<'_> {
             self.run_buffer_command(command, BufferKind::Returndata, parts);
         } else if STORAGE_COMMANDS.contains(&command) {
             self.run_storage_command(command, parts);
+        } else if LINE_COMMANDS.contains(&command) {
+            let Some(line) = parts.next() else {
+                return self.set_error(command_usage(command, "<line>"));
+            };
+            if parts.next().is_some() {
+                return self.set_error(command_usage(command, "<line>"));
+            }
+            self.goto_source_line_from_input(line);
         } else if OPCODE_COMMANDS.contains(&command) {
             self.run_pane_command(command, PaneCommand::Opcodes, parts);
         } else if SOURCE_COMMANDS.contains(&command) {
@@ -674,6 +701,80 @@ impl TUIContext<'_> {
             return self.set_error(command_usage(command, "<slot>"));
         }
         self.goto_storage_slot_from_input(slot);
+    }
+
+    fn goto_source_line_from_input(&mut self, input: &str) {
+        let line = match input.parse::<usize>() {
+            Ok(line) if line > 0 => line,
+            _ => {
+                self.set_error(format!(
+                    "Invalid source line `{input}`; use a positive decimal line number"
+                ));
+                return;
+            }
+        };
+
+        let (source_path, source_line, contract_name) = {
+            let (_, source) = match self.src_map() {
+                Ok(source) => source,
+                Err(err) => {
+                    self.set_error(err);
+                    return;
+                }
+            };
+            let Some(source_line) = source_line_range(&source.source, line) else {
+                let line_count = source.source.lines().count().max(1);
+                self.set_error(format!(
+                    "Source line {line} is outside {} ({line_count} lines)",
+                    source.path.display()
+                ));
+                return;
+            };
+            let contract_name = self
+                .debugger_context
+                .identified_contracts
+                .get(self.address())
+                .expect("source mapping requires an identified contract")
+                .clone();
+            (source.path.clone(), source_line, contract_name)
+        };
+
+        let sources = &self.debugger_context.contracts_sources;
+        let Some(target) = find_step_target(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            |node, step| {
+                let Some((source_element, source)) = sources.find_source_mapping(
+                    &contract_name,
+                    step.pc as u32,
+                    node.kind.is_any_create(),
+                ) else {
+                    return false;
+                };
+                source.path == source_path
+                    && source_line.contains(&(source_element.offset() as usize))
+            },
+        ) else {
+            self.set_error(format!(
+                "No opcode mapped to {}:{line} in current contract",
+                source_path.display()
+            ));
+            return;
+        };
+
+        let already_at_target = self.draw_memory.inner_call_index == target.node_index
+            && self.current_step == target.step_index;
+        self.draw_memory.inner_call_index = target.node_index;
+        self.current_step = target.step_index;
+        self.draw_memory.current_buf_startline = 0;
+        self.draw_memory.current_stack_startline = 0;
+        self.scroll_memory_to_current_write();
+        self.key_buffer.clear();
+
+        let pc = self.current_step().pc;
+        let action = if already_at_target { "Already at" } else { "Jumped to" };
+        self.set_info(format!("{action} {}:{line} at PC 0x{pc:x} ({pc})", source_path.display()));
     }
 
     fn run_pane_command<'a>(
@@ -907,6 +1008,7 @@ const MEMORY_COMMANDS: &[&str] = &["mem", "memory"];
 const CALLDATA_COMMANDS: &[&str] = &["calldata", "cd"];
 const RETURNDATA_COMMANDS: &[&str] = &["returndata", "ret", "rd"];
 const STORAGE_COMMANDS: &[&str] = &["storage", "store", "slot"];
+const LINE_COMMANDS: &[&str] = &["line", "ln"];
 const OPCODE_COMMANDS: &[&str] = &["opcodes", "opcode", "ops"];
 const SOURCE_COMMANDS: &[&str] = &["source", "src"];
 const VARIABLES_COMMANDS: &[&str] = &["variables", "vars"];
@@ -938,13 +1040,14 @@ fn command_usage(command: &str, arg: &str) -> String {
 
 fn command_help() -> String {
     format!(
-        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>, {} <slot>, {}, {}, {}, {}",
+        "Commands: {} <pc>, {} <pc>, {} <offset>, {} <offset>, {} <offset>, {} <slot>, {} <line>, {}, {}, {}, {}",
         command_aliases(CONTINUE_COMMANDS),
         command_aliases(PC_COMMANDS),
         command_aliases(MEMORY_COMMANDS),
         command_aliases(CALLDATA_COMMANDS),
         command_aliases(RETURNDATA_COMMANDS),
         command_aliases(STORAGE_COMMANDS),
+        command_aliases(LINE_COMMANDS),
         command_aliases(OPCODE_COMMANDS),
         command_aliases(SOURCE_COMMANDS),
         command_aliases(VARIABLES_COMMANDS),
@@ -1043,16 +1146,16 @@ impl PcCandidate {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PcTargetScope {
+enum StepTargetScope {
     CurrentNode,
     SameCodeContext,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PcTarget {
+struct StepTarget {
     node_index: usize,
     step_index: usize,
-    scope: PcTargetScope,
+    scope: StepTargetScope,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1272,37 +1375,46 @@ fn find_pc_target(
     current_node_index: usize,
     current_step: usize,
     pc: usize,
-) -> Option<PcTarget> {
+) -> Option<StepTarget> {
+    find_step_target(arena, current_node_index, current_step, |_, step| step.pc == pc)
+}
+
+fn find_step_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    mut matches: impl FnMut(&DebugNode, &CallTraceStep) -> bool,
+) -> Option<StepTarget> {
     let current_node = arena.get(current_node_index)?;
 
-    if let Some(step_index) = find_pc_in_current_node(&current_node.steps, current_step, pc) {
-        return Some(PcTarget {
+    if let Some(step_index) = find_step_in_current_node(current_node, current_step, &mut matches) {
+        return Some(StepTarget {
             node_index: current_node_index,
             step_index,
-            scope: PcTargetScope::CurrentNode,
+            scope: StepTargetScope::CurrentNode,
         });
     }
 
     for (node_index, node) in arena.iter().enumerate().skip(current_node_index + 1) {
         if same_code_context(current_node, node)
-            && let Some(step_index) = node.steps.iter().position(|step| step.pc == pc)
+            && let Some(step_index) = node.steps.iter().position(|step| matches(node, step))
         {
-            return Some(PcTarget {
+            return Some(StepTarget {
                 node_index,
                 step_index,
-                scope: PcTargetScope::SameCodeContext,
+                scope: StepTargetScope::SameCodeContext,
             });
         }
     }
 
     for (node_index, node) in arena.iter().enumerate().take(current_node_index).rev() {
         if same_code_context(current_node, node)
-            && let Some(step_index) = node.steps.iter().rposition(|step| step.pc == pc)
+            && let Some(step_index) = node.steps.iter().rposition(|step| matches(node, step))
         {
-            return Some(PcTarget {
+            return Some(StepTarget {
                 node_index,
                 step_index,
-                scope: PcTargetScope::SameCodeContext,
+                scope: StepTargetScope::SameCodeContext,
             });
         }
     }
@@ -1310,27 +1422,43 @@ fn find_pc_target(
     None
 }
 
-fn find_pc_in_current_node(
-    steps: &[CallTraceStep],
+fn find_step_in_current_node(
+    node: &DebugNode,
     current_step: usize,
-    pc: usize,
+    matches: &mut impl FnMut(&DebugNode, &CallTraceStep) -> bool,
 ) -> Option<usize> {
-    if steps.get(current_step).is_some_and(|step| step.pc == pc) {
+    if node.steps.get(current_step).is_some_and(|step| matches(node, step)) {
         return Some(current_step);
     }
 
-    steps
+    node.steps
         .iter()
         .enumerate()
         .skip(current_step.saturating_add(1))
-        .find_map(|(i, step)| (step.pc == pc).then_some(i))
+        .find_map(|(i, step)| matches(node, step).then_some(i))
         .or_else(|| {
-            steps[..current_step.min(steps.len())]
+            node.steps[..current_step.min(node.steps.len())]
                 .iter()
                 .enumerate()
                 .rev()
-                .find_map(|(i, step)| (step.pc == pc).then_some(i))
+                .find_map(|(i, step)| matches(node, step).then_some(i))
         })
+}
+
+fn source_line_range(source: &str, line: usize) -> Option<std::ops::Range<usize>> {
+    if line == 0 {
+        return None;
+    }
+
+    let mut start = 0;
+    for _ in 1..line {
+        start += source.get(start..)?.find('\n')? + 1;
+    }
+    if start >= source.len() {
+        return None;
+    }
+    let end = source[start..].find('\n').map_or(source.len(), |offset| start + offset + 1);
+    Some(start..end)
 }
 
 fn same_code_context(a: &DebugNode, b: &DebugNode) -> bool {
@@ -1407,10 +1535,12 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
 mod tests {
     use super::*;
     use alloy_primitives::Bytes;
-    use foundry_evm_core::Breakpoints;
-    use foundry_evm_traces::debug::ContractSources;
+    use foundry_compilers::artifacts::sourcemap::Parser;
+    use foundry_evm_core::{Breakpoints, ic::PcIcMap};
+    use foundry_evm_traces::debug::{ArtifactData, ContractSources};
     use revm::interpreter::InstructionResult;
     use revm_inspectors::tracing::types::{StorageChange, StorageChangeReason};
+    use std::{path::PathBuf, sync::Arc};
 
     fn step(pc: usize) -> CallTraceStep {
         step_with_stack(pc, OpCode::STOP, &[])
@@ -1464,6 +1594,37 @@ mod tests {
             breakpoints: Breakpoints::default(),
             layout: Default::default(),
         }
+    }
+
+    fn context_with_source_lines(address: Address) -> DebuggerContext {
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[0, 1, 2])]);
+        context.identified_contracts.insert(address, "Test".to_string());
+
+        let build_id = "test-build".to_string();
+        context.contracts_sources.sources_by_id.entry(build_id.clone()).or_default().insert(
+            0,
+            Arc::new(SourceData {
+                source: Arc::new("line one\nline two\nline three\n".to_string()),
+                language: Default::default(),
+                path: PathBuf::from("src/Test.sol"),
+                contract_definitions: Vec::new(),
+                debug_scopes: Vec::new(),
+            }),
+        );
+        context.contracts_sources.artifacts_by_name.insert(
+            "Test".to_string(),
+            vec![ArtifactData {
+                source_map: None,
+                source_map_runtime: Some(
+                    Parser::new("0:8:0;9:8:0;18:10:0").collect::<Result<_, _>>().unwrap(),
+                ),
+                pc_ic_map: None,
+                pc_ic_map_runtime: Some(PcIcMap::new(&[0x00, 0x00, 0x00])),
+                build_id,
+                file_id: 0,
+            }],
+        );
+        context
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1722,7 +1883,7 @@ mod tests {
 
         assert_eq!(
             find_pc_target(&arena, 0, 0, 3),
-            Some(PcTarget { node_index: 0, step_index: 2, scope: PcTargetScope::CurrentNode })
+            Some(StepTarget { node_index: 0, step_index: 2, scope: StepTargetScope::CurrentNode })
         );
     }
 
@@ -2109,6 +2270,19 @@ mod tests {
     }
 
     #[test]
+    fn command_prompt_jumps_to_source_line() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_source_lines(address);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("line 2");
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to src/Test.sol:2 at PC 0x1 (1)");
+    }
+
+    #[test]
     fn command_prompt_reports_help_and_usage_errors() {
         let address = Address::repeat_byte(1);
         let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
@@ -2125,6 +2299,7 @@ mod tests {
             CALLDATA_COMMANDS,
             RETURNDATA_COMMANDS,
             STORAGE_COMMANDS,
+            LINE_COMMANDS,
             OPCODE_COMMANDS,
             SOURCE_COMMANDS,
             VARIABLES_COMMANDS,
@@ -2142,6 +2317,11 @@ mod tests {
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Error);
         assert_eq!(status.text, "Usage: :store <slot>");
+
+        tui.run_command_from_input("line");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Usage: :line <line>");
     }
 
     #[test]

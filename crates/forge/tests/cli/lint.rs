@@ -203,6 +203,22 @@ interface IToken {
 }
 "#;
 
+forgetest!(lint_does_not_write_artifacts, |prj, cmd| {
+    use std::fs;
+
+    prj.add_source("LintTarget", "contract LintTarget {}");
+    let artifact = prj.root().join("out/LintTarget.sol/LintTarget.json");
+
+    cmd.arg("lint").assert_success();
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.forge_fuse().arg("lint").assert_success();
+    assert_eq!(fs::read(artifact).unwrap(), b"sentinel");
+});
+
 forgetest!(can_use_config, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);

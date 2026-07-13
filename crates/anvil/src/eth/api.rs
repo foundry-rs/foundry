@@ -69,6 +69,7 @@ use alloy_rpc_types::{
     txpool::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
 use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, FillTransaction, StateContext};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;
@@ -1820,6 +1821,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthCallMany(bundles, state_context, state_override) => {
                 self.call_many(bundles, state_context, state_override).await.to_rpc_result()
             }
+            EthRequest::EthCallBundle(bundle) => self.call_bundle(bundle).await.to_rpc_result(),
             EthRequest::EthSimulateV1(simulation, block) => {
                 self.simulate_v1(simulation, block).await.to_rpc_result()
             }
@@ -2867,6 +2869,51 @@ impl EthApi<FoundryNetwork> {
 
         self.on_blocking_task(|this| async move {
             this.backend.call_many(bundles, Some(block_request), state_override).await
+        })
+        .await
+    }
+
+    /// Simulates a bundle of signed transactions against the requested state.
+    ///
+    /// Handler for ETH RPC call: `eth_callBundle`.
+    pub async fn call_bundle(&self, bundle: EthCallBundle) -> Result<EthCallBundleResponse> {
+        node_info!("eth_callBundle");
+        if bundle.txs.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundle missing txs".to_string(),
+            )));
+        }
+        if bundle.block_number == 0 {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundle missing blockNumber".to_string(),
+            )));
+        }
+
+        let block_request = self.block_request(Some(bundle.state_block_number.into())).await?;
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.call_bundle(bundle).await?);
+        }
+
+        let transactions = bundle
+            .txs
+            .iter()
+            .map(|raw| {
+                let mut data = raw.as_ref();
+                if data.is_empty() {
+                    return Err(BlockchainError::EmptyRawTransactionData);
+                }
+                let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+                    .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+                self.ensure_typed_transaction_supported(&transaction)?;
+                PendingTransaction::new(transaction).map_err(Into::into)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.on_blocking_task(|this| async move {
+            this.backend.call_bundle(bundle, transactions, Some(block_request)).await
         })
         .await
     }

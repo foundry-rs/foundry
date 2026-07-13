@@ -88,6 +88,7 @@ use alloy_rpc_types::{
     },
 };
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
@@ -121,8 +122,8 @@ use foundry_evm_networks::{NetworkConfigs, arbitrum};
 #[cfg(feature = "optimism")]
 use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
-    FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt,
+    FoundryHeader, FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest,
+    FoundryTxEnvelope, FoundryTxReceipt,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "optimism")]
@@ -1052,11 +1053,26 @@ impl<N: Network> Backend<N> {
         let transactions = block.body.transactions;
 
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
-        let Header { number, withdrawals_root, .. } = header;
+        let number = header.number();
+        let withdrawals_root = header.withdrawals_root();
+        let tempo_fields = header
+            .as_tempo()
+            .map(|header| {
+                (
+                    header.timestamp_millis(),
+                    header.general_gas_limit,
+                    header.shared_gas_limit,
+                    header.timestamp_millis_part,
+                )
+            })
+            .or_else(|| {
+                self.is_tempo()
+                    .then(|| (header.timestamp().saturating_mul(1000), header.gas_limit(), 0, 0))
+            });
 
         let block = AlloyBlock {
             header: AlloyHeader {
-                inner: AnyHeader::from(header),
+                inner: AnyHeader::from(header.into_inner()),
                 hash,
                 total_difficulty: Some(self.total_difficulty()),
                 size: Some(size),
@@ -1076,24 +1092,28 @@ impl<N: Network> Backend<N> {
             block.other.insert("l1BlockNumber".to_string(), number.into());
         }
 
-        // Add Tempo-specific header fields for compatibility with TempoNetwork provider.
-        if self.is_tempo() {
-            let timestamp = block.header.timestamp();
-            let gas_limit = block.header.gas_limit();
+        if let Some((
+            timestamp_millis,
+            general_gas_limit,
+            shared_gas_limit,
+            timestamp_millis_part,
+        )) = tempo_fields
+        {
             block.other.insert(
                 "timestampMillis".to_string(),
-                serde_json::Value::String(format!("0x{:x}", timestamp.saturating_mul(1000))),
+                serde_json::Value::String(format!("0x{timestamp_millis:x}")),
             );
             block.other.insert(
                 "mainBlockGeneralGasLimit".to_string(),
-                serde_json::Value::String(format!("0x{gas_limit:x}")),
+                serde_json::Value::String(format!("0x{general_gas_limit:x}")),
             );
-            block
-                .other
-                .insert("sharedGasLimit".to_string(), serde_json::Value::String("0x0".to_string()));
+            block.other.insert(
+                "sharedGasLimit".to_string(),
+                serde_json::Value::String(format!("0x{shared_gas_limit:x}")),
+            );
             block.other.insert(
                 "timestampMillisPart".to_string(),
-                serde_json::Value::String("0x0".to_string()),
+                serde_json::Value::String(format!("0x{timestamp_millis_part:x}")),
             );
         }
 
@@ -2253,6 +2273,7 @@ impl<N: Network> Backend<N> {
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
                 genesis.number,
+                networks.is_tempo(),
             )
         };
 
@@ -2571,6 +2592,7 @@ impl<N: Network> Backend<N> {
             base_fee,
             genesis_timestamp,
             genesis_number,
+            self.is_tempo(),
         );
         self.states.write().clear();
 
@@ -2890,7 +2912,9 @@ where
     }
 
     /// Builds a [`BlockInfo`] from the EVM environment, execution results, and transactions.
+    #[allow(clippy::too_many_arguments)]
     fn build_block_info(
+        &self,
         evm_env: &EvmEnv,
         parent_hash: B256,
         number: u64,
@@ -2937,7 +2961,7 @@ where
             slot_number: None,
         };
 
-        let block = create_block(header, transactions);
+        let block = create_block(FoundryHeader::new(header, self.is_tempo()), transactions);
         BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts }
     }
 
@@ -3021,7 +3045,7 @@ where
                 let not_yet_valid = pool_result.not_yet_valid;
 
                 let state_root = db.maybe_state_root().unwrap_or_default();
-                let block_info = Self::build_block_info(
+                let block_info = self.build_block_info(
                     &evm_env,
                     best_hash,
                     block_number,
@@ -3135,7 +3159,7 @@ where
         ));
 
         // notify all listeners
-        self.notify_on_new_block(header, block_hash);
+        self.notify_on_new_block(header.into_inner(), block_hash);
 
         outcome
     }
@@ -3217,7 +3241,7 @@ where
 
         let state_root = cache_db.maybe_state_root().unwrap_or_default();
         let block_number = evm_env.block_env.number.saturating_to();
-        let block_info = Self::build_block_info(
+        let block_info = self.build_block_info(
             &evm_env,
             parent_hash,
             block_number,
@@ -4791,6 +4815,137 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 }
 
 impl Backend<FoundryNetwork> {
+    /// Simulates a bundle of signed transactions and returns Flashbots-compatible results.
+    pub async fn call_bundle(
+        &self,
+        bundle: EthCallBundle,
+        transactions: Vec<PendingTransaction<FoundryTxEnvelope>>,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Result<EthCallBundleResponse, BlockchainError> {
+        let EthCallBundle {
+            block_number,
+            coinbase,
+            timestamp,
+            gas_limit,
+            difficulty,
+            base_fee,
+            ..
+        } = bundle;
+
+        let blob_gas_used = transactions
+            .iter()
+            .filter_map(|transaction| transaction.transaction.blob_gas_used())
+            .sum::<u64>();
+        let max_blob_gas = self.blob_params().max_blob_gas_per_block();
+        if blob_gas_used > max_blob_gas {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
+            ))));
+        }
+
+        self.with_database_at(block_request, |state, mut block_env| {
+            let state_block_number = block_env.number.to::<u64>();
+            block_env.number = U256::from(block_number);
+            block_env.timestamp = timestamp
+                .map(U256::from)
+                .unwrap_or_else(|| block_env.timestamp.saturating_add(U256::from(12)));
+            if let Some(coinbase) = coinbase {
+                block_env.beneficiary = coinbase;
+            }
+            if let Some(gas_limit) = gas_limit {
+                block_env.gas_limit = gas_limit;
+            }
+            if let Some(difficulty) = difficulty {
+                block_env.difficulty = difficulty;
+            }
+            if let Some(base_fee) = base_fee {
+                block_env.basefee = base_fee.try_into().unwrap_or(u64::MAX);
+            }
+
+            let mut evm_env = self.evm_env.read().clone();
+            evm_env.block_env = block_env;
+            let coinbase = evm_env.block_env.beneficiary;
+            let base_fee = evm_env.block_env.basefee;
+            let mut cache_db = CacheDB::new(state);
+            let initial_coinbase = revm::DatabaseRef::basic_ref(&cache_db, coinbase)?
+                .map(|account| account.balance)
+                .unwrap_or_default();
+            let mut coinbase_balance_before_tx = initial_coinbase;
+            let mut coinbase_balance_after_tx = initial_coinbase;
+            let mut total_gas_used = 0u64;
+            let mut total_gas_fees = U256::ZERO;
+            let mut bundle_hash = alloy_primitives::Keccak256::new();
+            let mut results = Vec::with_capacity(transactions.len());
+
+            for transaction in transactions {
+                let sender = *transaction.sender();
+                let tx = transaction.transaction.into_inner();
+                let tx_hash = tx.hash();
+                bundle_hash.update(tx_hash);
+
+                let mut inspector = self.build_inspector();
+                let (ResultAndState { result, state }, _) = self
+                    .transact_envelope_with_inspector_ref(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        &tx,
+                        sender,
+                    )?;
+
+                let gas_price = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
+                let gas_used = result.tx_gas_used();
+                let gas_fees = U256::from(gas_used) * U256::from(gas_price);
+                total_gas_used += gas_used;
+                total_gas_fees += gas_fees;
+
+                coinbase_balance_after_tx = state
+                    .get(&coinbase)
+                    .map(|account| account.info.balance)
+                    .unwrap_or(coinbase_balance_before_tx);
+                let coinbase_diff =
+                    coinbase_balance_after_tx.saturating_sub(coinbase_balance_before_tx);
+                let eth_sent_to_coinbase = coinbase_diff.saturating_sub(gas_fees);
+                coinbase_balance_before_tx = coinbase_balance_after_tx;
+
+                let output = result.output().cloned().unwrap_or_default();
+                let (value, revert) =
+                    if result.is_success() { (Some(output), None) } else { (None, Some(output)) };
+
+                results.push(EthCallBundleTransactionResult {
+                    coinbase_diff,
+                    eth_sent_to_coinbase,
+                    from_address: sender,
+                    gas_fees,
+                    gas_price: U256::from(gas_price),
+                    gas_used,
+                    to_address: tx.to(),
+                    tx_hash,
+                    value,
+                    revert,
+                });
+                cache_db.commit(state);
+            }
+
+            let coinbase_diff = coinbase_balance_after_tx.saturating_sub(initial_coinbase);
+            let eth_sent_to_coinbase = coinbase_diff.saturating_sub(total_gas_fees);
+            let bundle_gas_price =
+                coinbase_diff.checked_div(U256::from(total_gas_used)).unwrap_or_default();
+
+            Ok(EthCallBundleResponse {
+                bundle_hash: bundle_hash.finalize(),
+                bundle_gas_price,
+                coinbase_diff,
+                eth_sent_to_coinbase,
+                gas_fees: total_gas_fees,
+                results,
+                state_block_number,
+                total_gas_used,
+            })
+        })
+        .await?
+    }
+
     /// Executes bundles of call requests and returns each call output.
     pub async fn call_many(
         &self,
