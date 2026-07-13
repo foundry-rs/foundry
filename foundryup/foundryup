@@ -123,6 +123,7 @@ main() {
     # Enter local repo and build
     say "installing from $FOUNDRYUP_LOCAL_REPO"
     cd "$FOUNDRYUP_LOCAL_REPO"
+    clear_built_bins "$PWD/target/release"
     ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
 
     for bin in "${BINS[@]}"; do
@@ -272,23 +273,21 @@ main() {
 
     # Download and extract the binaries archive
     say "downloading forge, cast, anvil, chisel, and solar for $FOUNDRYUP_TAG version"
+    archive_tmp_dir="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+    staged_dir="$archive_tmp_dir/extracted"
+    ensure mkdir -p "$staged_dir"
     if [ "$PLATFORM" = "win32" ]; then
-      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
-      tmp="$tmp/foundry.zip"
+      tmp="$archive_tmp_dir/foundry.zip"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
-      clear_version_bins "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-      ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-      rm -f "$tmp"
+      ensure unzip "$tmp" -d "$staged_dir"
     else
-      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
-      tmp="$tmp/foundry.tar.gz"
+      tmp="$archive_tmp_dir/foundry.tar.gz"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       # Make sure it's a valid tar archive.
       ensure tar tf "$tmp" 1> /dev/null
-      clear_version_bins "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
-      rm -f "$tmp"
+      ensure tar -C "$staged_dir" -xvf "$tmp"
     fi
+    validate_staged_bins "$staged_dir"
 
     # Optionally download the manuals
     if check_cmd tar; then
@@ -321,7 +320,7 @@ main() {
             fi
           done
 
-          path="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin"
+          path="$staged_dir/$bin"
 
           if [ -z "$expected" ]; then
             if is_missing_optional_bin "$bin" "$expected" "$path"; then
@@ -354,6 +353,9 @@ main() {
         fi
       fi
     fi
+
+    replace_version_bins "$staged_dir" "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+    cleanup_staged_bins "$archive_tmp_dir" "$staged_dir" "$tmp"
 
     # Use newly installed version.
     FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
@@ -398,6 +400,7 @@ main() {
     say "installing version $FOUNDRYUP_VERSION"
 
     # Build the repo.
+    clear_built_bins "$PWD/target/release"
     ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
     # Create foundry custom version directory.
     ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
@@ -628,6 +631,43 @@ clear_version_bins() {
   for bin in "${BINS[@]}"; do
     rm -f "$1/$bin" "$1/$bin.exe"
   done
+}
+
+clear_built_bins() {
+  for bin in "${BINS[@]}"; do
+    rm -f "$1/$bin" "$1/$bin.exe"
+  done
+}
+
+validate_staged_bins() {
+  for bin in "${BINS[@]}"; do
+    path="$1/$bin"
+    if is_optional_bin "$bin" && [ ! -e "$path" ]; then
+      continue
+    fi
+    [ -x "$path" ] || err "binary $bin not found at $path"
+  done
+}
+
+replace_version_bins() {
+  staged_dir="$1"
+  version_dir="$2"
+  clear_version_bins "$version_dir"
+  for bin in "${BINS[@]}"; do
+    if [ -f "$staged_dir/$bin" ]; then
+      ensure cp "$staged_dir/$bin" "$version_dir/$bin"
+    elif ! is_optional_bin "$bin"; then
+      err "binary $bin not found at $staged_dir/$bin"
+    fi
+  done
+}
+
+cleanup_staged_bins() {
+  for bin in "${BINS[@]}"; do
+    rm -f "$2/$bin" "$2/$bin.exe"
+  done
+  rm -f "$3"
+  rmdir "$2" "$1" 2>/dev/null || true
 }
 
 detect_platform_arch() {
