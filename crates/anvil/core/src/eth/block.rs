@@ -2,8 +2,8 @@ use super::transaction::TransactionInfo;
 #[cfg(test)]
 use alloy_consensus::Header;
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Typed2718, proofs::ordered_trie_root_with_encoder,
-    transaction::RlpEcdsaEncodableTx,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, TxEip4844Variant, Typed2718,
+    proofs::ordered_trie_root_with_encoder, transaction::RlpEcdsaEncodableTx,
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::Network;
@@ -38,6 +38,23 @@ impl EncodableBlockTransaction for FoundryTxEnvelope {
             self.encode_2718(out);
         }
     }
+}
+
+/// Drops pooled sidecars so a transaction uses its canonical block-body representation.
+pub fn canonical_block_transaction(tx: FoundryTxEnvelope) -> FoundryTxEnvelope {
+    match tx {
+        FoundryTxEnvelope::Eip4844(tx) => {
+            FoundryTxEnvelope::Eip4844(tx.map(TxEip4844Variant::drop_sidecar))
+        }
+        tx => tx,
+    }
+}
+
+/// Returns a block whose transactions use canonical block-body representations.
+pub fn canonical_block(mut block: Block) -> Block {
+    block.body.transactions =
+        block.body.transactions.into_iter().map(|tx| tx.map(canonical_block_transaction)).collect();
+    block
 }
 
 /// Helper function to create a new block with Header and Anvil transactions, generic over the

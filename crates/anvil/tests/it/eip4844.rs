@@ -67,6 +67,25 @@ async fn can_send_eip4844_transaction() {
     for field in ["blobs", "commitments", "proofs", "cellProofs"] {
         assert!(tx.get(field).is_none());
     }
+
+    let raw_transactions: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::number(block.header.number),))
+        .await
+        .unwrap();
+    assert_eq!(raw_transactions.len(), 1);
+    EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw_transactions[0].as_ref()).unwrap();
+
+    let raw_block: Bytes = provider
+        .client()
+        .request("debug_getRawBlock", (BlockId::number(block.header.number),))
+        .await
+        .unwrap();
+    assert_eq!(block.header.size, Some(U256::from(raw_block.len())));
+    let decoded: alloy_consensus::Block<EthereumTxEnvelope<TxEip4844>> =
+        alloy_rlp::Decodable::decode(&mut raw_block.as_ref()).unwrap();
+    assert_eq!(decoded.body.transactions.len(), 1);
+
     assert!(api.anvil_get_blob_by_tx_hash(receipt.transaction_hash).unwrap().is_some());
 }
 
