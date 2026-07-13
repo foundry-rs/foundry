@@ -2488,10 +2488,10 @@ impl Config {
         if profile != Self::DEFAULT_PROFILE {
             profiles.push(profile.clone());
         }
-        let provider = toml_provider.strict_select(profiles);
-
-        // apply any key fixes
-        let provider = &BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
+        // Apply key fixes before selecting profiles, while standalone sections and profile names
+        // are still distinguishable.
+        let provider = ForcedSnakeCaseData(toml_provider).strict_select(profiles);
+        let provider = &BackwardsCompatTomlProvider(provider);
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
@@ -6049,6 +6049,119 @@ mod tests {
     }
 
     #[test]
+    fn inherited_symbolic_sections_preserve_source_precedence() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.symbolic]
+                    max_paths = 10
+                    depth = 100
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [symbolic]
+                    max_paths = 20
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.symbolic.max_paths, 20);
+            assert_eq!(config.symbolic.depth, Some(100));
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [symbolic]
+                    max_paths = 30
+                    depth = 200
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.symbolic]
+                    max_paths = 40
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.symbolic.max_paths, 40);
+            assert_eq!(config.symbolic.depth, Some(200));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_symbolic_sections_detect_effective_collisions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.symbolic]
+                    max_paths = 10
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+
+                    [symbolic]
+                    max_paths = 20
+                "#,
+            )?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("Key collision detected"), "unexpected error: {err}");
+            assert!(err.contains("symbolic"), "unexpected error: {err}");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_fuzz_section_remains_invariant_fallback() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [fuzz]
+                    include_storage = false
+                    dictionary_weight = 99
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [invariant]
+                    runs = 420
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.invariant.runs, 420);
+            assert!(!config.invariant.dictionary.include_storage);
+            assert_eq!(config.invariant.dictionary.dictionary_weight, 99);
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_inheritance_validation() {
         figment::Jail::expect_with(|jail| {
             // Test 1: Base file with 'extends' should fail
@@ -7840,6 +7953,26 @@ mod tests {
                 "profiles should contain 'default-venom', got: {:?}",
                 config.profiles
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn standalone_section_name_can_be_used_as_profile_name() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.symbolic]
+                eth-rpc-url = "https://example.com/"
+                "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "symbolic");
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.profile.as_str(), "symbolic");
+            assert_eq!(config.eth_rpc_url.as_deref(), Some("https://example.com/"));
 
             Ok(())
         });
