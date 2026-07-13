@@ -12,6 +12,7 @@ use foundry_evm_hardforks::OpHardfork;
 
 const ARB_SYS_ADDRESS: Address = address!("0000000000000000000000000000000000000064");
 const ARB_OS_VERSION_SELECTOR: Bytes = bytes!("051038f2");
+const ARB_OS_VERSION_OFFSET: u64 = 55;
 
 /// Resolves the hardfork active at a remote fork block.
 ///
@@ -35,7 +36,7 @@ where
     }
 
     let chain = Chain::from_id(chain_id);
-    if chain.is_ethereum()
+    if !chain.is_arbitrum()
         && let Some(hardfork) = EthereumHardfork::from_chain_and_timestamp(chain, timestamp)
     {
         return hardfork.into();
@@ -77,6 +78,9 @@ where
 }
 
 fn arbitrum_hardfork(arb_os_version: U256) -> Option<EthereumHardfork> {
+    // ArbSys exposes internal ArbOS versions with a 55 offset.
+    let arb_os_version = arb_os_version.checked_sub(U256::from(ARB_OS_VERSION_OFFSET))?;
+
     if arb_os_version >= U256::from(50) {
         Some(EthereumHardfork::Osaka)
     } else if arb_os_version >= U256::from(40) {
@@ -93,6 +97,7 @@ fn arbitrum_hardfork(arb_os_version: U256) -> Option<EthereumHardfork> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_hardforks::hoodi::HOODI_PRAGUE_TIMESTAMP;
     use alloy_network::AnyNetwork;
     use alloy_provider::{ProviderBuilder, mock::Asserter};
 
@@ -132,17 +137,39 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn resolves_hoodi_hardfork_boundary() {
+        let fallback = EthereumHardfork::Osaka.into();
+        let provider = provider(Asserter::new());
+
+        let before = resolve_fork_hardfork(
+            &provider,
+            None,
+            fallback,
+            560048,
+            HOODI_PRAGUE_TIMESTAMP - 1,
+            123,
+        )
+        .await;
+        assert_eq!(before, EthereumHardfork::Cancun.into());
+
+        let at =
+            resolve_fork_hardfork(&provider, None, fallback, 560048, HOODI_PRAGUE_TIMESTAMP, 123)
+                .await;
+        assert_eq!(at, EthereumHardfork::Prague.into());
+    }
+
     #[test]
-    fn maps_arb_os_versions_in_descending_order() {
+    fn maps_arb_sys_os_versions_in_descending_order() {
         let cases = [
-            (10, None),
-            (11, Some(EthereumHardfork::Shanghai)),
-            (19, Some(EthereumHardfork::Shanghai)),
-            (20, Some(EthereumHardfork::Cancun)),
-            (39, Some(EthereumHardfork::Cancun)),
-            (40, Some(EthereumHardfork::Prague)),
-            (49, Some(EthereumHardfork::Prague)),
-            (50, Some(EthereumHardfork::Osaka)),
+            (65, None),
+            (66, Some(EthereumHardfork::Shanghai)),
+            (74, Some(EthereumHardfork::Shanghai)),
+            (75, Some(EthereumHardfork::Cancun)),
+            (94, Some(EthereumHardfork::Cancun)),
+            (95, Some(EthereumHardfork::Prague)),
+            (104, Some(EthereumHardfork::Prague)),
+            (105, Some(EthereumHardfork::Osaka)),
             (u64::MAX, Some(EthereumHardfork::Osaka)),
         ];
 
@@ -178,7 +205,7 @@ mod tests {
     #[tokio::test]
     async fn resolves_arbitrum_hardfork_from_arb_os_version() {
         let asserter = Asserter::new();
-        asserter.push_success(&Bytes::copy_from_slice(&U256::from(20).to_be_bytes::<32>()));
+        asserter.push_success(&Bytes::copy_from_slice(&U256::from(75).to_be_bytes::<32>()));
 
         let resolved = resolve_fork_hardfork(
             &provider(asserter),

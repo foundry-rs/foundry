@@ -1430,12 +1430,11 @@ latest block number: {latest_block}"
         )
         .await;
         evm_env.cfg_env.spec = SpecId::from(hardfork);
-        self.hardfork = Some(hardfork);
 
         // The fee manager was built before the fork hardfork was known, so refresh the Tempo
         // hardfork it uses for base fee calculations.
         if self.networks.is_tempo() {
-            fees.set_tempo_hardfork(Some(TempoHardfork::from(self.get_hardfork())));
+            fees.set_tempo_hardfork(Some(TempoHardfork::from(hardfork)));
         }
 
         // if not set explicitly we use the base fee of the latest block
@@ -1538,7 +1537,7 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
-            hardfork: self.hardfork,
+            hardfork: Some(hardfork),
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,

@@ -207,21 +207,40 @@ async fn test_spawn_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_resolves_hardfork() {
     const CANCUN_TIMESTAMP: u64 = 1_710_338_135;
-    let (_origin_api, origin_handle) = spawn(
-        NodeConfig::test().with_chain_id(Some(1u64)).with_genesis_timestamp(Some(CANCUN_TIMESTAMP)),
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(CANCUN_TIMESTAMP - 1)),
     )
     .await;
+    origin_api.evm_set_next_block_timestamp(CANCUN_TIMESTAMP).unwrap();
+    origin_api.evm_mine(None).await.unwrap();
 
-    let (fork_api, _fork_handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Shanghai");
+    fork_api
+        .anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) }))
+        .await
+        .unwrap();
     assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Cancun");
 
     let (fork_api, _fork_handle) = spawn(
         NodeConfig::test()
             .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
-            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
     )
     .await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Shanghai");
+    fork_api
+        .anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(1) }))
+        .await
+        .unwrap();
     assert_eq!(fork_api.anvil_node_info().await.unwrap().hard_fork, "Shanghai");
 }
 
