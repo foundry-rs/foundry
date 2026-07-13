@@ -1779,6 +1779,40 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_reuses_cached_remote_state() {
+    let address = Address::random();
+    let balance = U256::from(1337u64);
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    let origin_config = NodeConfig::test()
+        .with_chain_id(Some(chain_id))
+        .with_funded_accounts([(address, balance)].into_iter().collect());
+    let (_origin_api, origin_handle) = spawn(origin_config).await;
+    let fork_config = NodeConfig::test()
+        .with_chain_id(Some(chain_id))
+        .with_eth_rpc_url(Some(origin_handle.http_endpoint()));
+    let (api, handle) = spawn(fork_config).await;
+    let provider = handle.http_provider();
+    let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
+
+    assert_eq!(provider.get_balance(address).await.unwrap(), balance);
+
+    for _ in 0..2 {
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
+            .await
+            .unwrap();
+
+        let db = api.backend.get_db().read().await;
+        assert!(db.maybe_inner().unwrap().accounts().read().contains_key(&address));
+    }
+
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_get_account() {
     let (_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();

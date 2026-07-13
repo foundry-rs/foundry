@@ -2486,7 +2486,10 @@ impl<N: Network> Backend<N> {
             // reset the fork entirely and reapply the genesis config
             let reset_urls =
                 forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
-            fork.reset(reset_urls, block_number).await?;
+            // Persist fetched remote state before rebuilding the fork database so the new
+            // block-specific database can load it from disk.
+            fork.database.read().await.maybe_flush_cache().map_err(BlockchainError::Internal)?;
+            fork.prepare_reset(reset_urls, block_number.into()).await?;
             let fork_block_number = fork.block_number();
             let fork_block = fork
                 .block_by_number(fork_block_number)
@@ -2549,7 +2552,6 @@ impl<N: Network> Backend<N> {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
-            self.db.write().await.clear();
 
             self.apply_genesis().await?;
 
