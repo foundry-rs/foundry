@@ -5278,7 +5278,8 @@ impl Backend<FoundryNetwork> {
         validator_token: Address,
         amount: U256,
     ) -> DatabaseResult<()> {
-        let admin = Address::ZERO;
+        // T3+ rejects minting to the zero address.
+        let admin = Address::repeat_byte(0x11);
         self.with_tempo_storage(|| {
             // Mint the required tokens to admin so it can provide liquidity.
             // grant_role_internal bypasses the caller check, matching genesis seeding.
