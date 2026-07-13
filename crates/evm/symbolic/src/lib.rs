@@ -332,6 +332,8 @@ pub struct SymbolicInvariantRunInput<'a, FEN: FoundryEvmNetwork> {
     pub targets: Vec<SymbolicInvariantTarget>,
     /// Concrete sender set discovered by Foundry invariant targeting.
     pub senders: Vec<Address>,
+    /// Sender addresses excluded by Foundry invariant targeting.
+    pub excluded_senders: Vec<Address>,
     /// Maximum number of sequence calls to execute.
     pub depth: usize,
     /// Concrete invariant check interval. `0` means only check at sequence end.

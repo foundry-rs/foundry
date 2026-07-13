@@ -687,6 +687,113 @@ contract SymbolicInvariantInitialState is Test {
     assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
 });
 
+forgetest_init!(symbolic_after_invariant_runs_only_at_terminal_depth, |prj, cmd| {
+    skip_unless_z3!("symbolic_after_invariant_runs_only_at_terminal_depth");
+
+    prj.add_test(
+        "SymbolicAfterInvariantTerminal.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ToggleTarget {
+    bool public active;
+
+    function step() external {
+        active = !active;
+    }
+}
+
+contract SymbolicAfterInvariantTerminal is Test {
+    ToggleTarget target;
+
+    function setUp() public {
+        target = new ToggleTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.check_interval = 1
+    function invariant_ok() public pure {}
+
+    function afterInvariant() public view {
+        assertFalse(target.active());
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--fuzz-runs", "0", "--match-test", "invariant_ok"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_ok()");
+    assert_eq!(result["status"], "Success");
+    assert_eq!(result["symbolic"]["status"], "pass");
+});
+
+forgetest_init!(symbolic_invariant_respects_excluded_fallback_sender, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_respects_excluded_fallback_sender");
+
+    prj.add_test(
+        "SymbolicExcludedFallbackSender.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SenderTarget {
+    address public excluded;
+    bool public broken;
+
+    constructor(address excluded_) {
+        excluded = excluded_;
+    }
+
+    function breakIfExcluded() external {
+        if (msg.sender == excluded) {
+            broken = true;
+        }
+    }
+}
+
+contract SymbolicExcludedFallbackSender is Test {
+    SenderTarget target;
+
+    function setUp() public {
+        address excluded = msg.sender;
+        target = new SenderTarget(excluded);
+        targetContract(address(target));
+        excludeSender(excluded);
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_notBroken",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_notBroken()");
+    assert_eq!(result["status"], "Success");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+});
+
 forgetest_init!(symbolic_invariant_replay_mismatch_falls_back_to_fuzz, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_replay_mismatch_falls_back_to_fuzz");
 

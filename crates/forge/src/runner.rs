@@ -15,8 +15,9 @@ use crate::{
         SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
         SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
         SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
-        SymbolicInvariantArtifactFailure, SymbolicReplayMetadata, SymbolicReplayStatus,
-        SymbolicResult, TestResult, TestSetup, TestStatus, invariant_campaign_display_name,
+        SymbolicInvariantArtifactFailure, SymbolicInvariantFailureSite, SymbolicReplayMetadata,
+        SymbolicReplayStatus, SymbolicResult, TestResult, TestSetup, TestStatus,
+        invariant_campaign_display_name,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -24,7 +25,9 @@ use crate::{
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi, StateMutability};
-use alloy_primitives::{Address, Bytes, Selector, U256, address, hex, keccak256, map::HashMap};
+use alloy_primitives::{
+    Address, B256, Bytes, Selector, U256, address, hex, keccak256, map::HashMap,
+};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
@@ -156,13 +159,40 @@ fn symbolic_artifact_handler_failure_matches(
     )
 }
 
-const fn symbolic_artifact_predicate_failure_matches(
+const fn symbolic_invariant_failure_site(
+    site: CheckSequenceFailureSite,
+) -> SymbolicInvariantFailureSite {
+    match site {
+        CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint } => {
+            SymbolicInvariantFailureSite::SequenceCall { target, selector, fingerprint }
+        }
+        CheckSequenceFailureSite::Invariant { target, selector, fingerprint } => {
+            SymbolicInvariantFailureSite::Invariant { target, selector, fingerprint }
+        }
+        CheckSequenceFailureSite::AfterInvariant { target, selector, fingerprint } => {
+            SymbolicInvariantFailureSite::AfterInvariant { target, selector, fingerprint }
+        }
+    }
+}
+
+fn symbolic_invariant_failure_site_matches(
+    expected: SymbolicInvariantFailureSite,
+    actual: Option<CheckSequenceFailureSite>,
+) -> bool {
+    actual.is_some_and(|actual| symbolic_invariant_failure_site(actual) == expected)
+}
+
+fn symbolic_artifact_predicate_failure_matches(
     failure: Option<&SymbolicInvariantArtifactFailure>,
     outcome: &CheckSequenceOutcome,
     fail_on_revert: bool,
 ) -> bool {
-    if !matches!(failure, Some(SymbolicInvariantArtifactFailure::Predicate { .. })) {
+    let Some(SymbolicInvariantArtifactFailure::Predicate { site, .. }) = failure else {
         return false;
+    };
+
+    if let Some(site) = *site {
+        return symbolic_invariant_failure_site_matches(site, outcome.failure_site);
     }
 
     match outcome.failure_site {
@@ -395,7 +425,6 @@ fn select_invariant_campaigns<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::B256;
     use foundry_common::EmptyTestFilter;
     use foundry_config::NatSpec;
 
@@ -2961,6 +2990,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 let invariant_name =
                                     if let Some(SymbolicInvariantArtifactFailure::Predicate {
                                         name,
+                                        ..
                                     }) = artifact_failure
                                     {
                                         name.as_str()
@@ -3747,6 +3777,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &current_settings,
                             assertion_failure,
                             &storage,
+                            None,
                         );
                     }
                     Ok(_) => {}
@@ -3774,6 +3805,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &storage,
                         Some(SymbolicInvariantArtifactFailure::Predicate {
                             name: replay_contract.anchor().name.clone(),
+                            site: None,
                         }),
                     )
                 {
@@ -3864,6 +3896,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 after_invariant,
                 targets: symbolic_targets,
                 senders: sender_filters.targeted,
+                excluded_senders: sender_filters.excluded,
                 depth: self.config.symbolic.invariant_depth as usize,
                 check_interval: invariant_config.check_interval,
                 fail_on_revert: anchor_fail_on_revert,
@@ -3964,6 +3997,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 (SymbolicInvariantCounterexampleKind::Predicate, _) => {
                                     Some(SymbolicInvariantArtifactFailure::Predicate {
                                         name: invariant_contract.anchor().name.clone(),
+                                        site: failure.site.map(symbolic_invariant_failure_site),
                                     })
                                 }
                                 (
@@ -4016,6 +4050,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                 &current_settings,
                                                 false,
                                                 &storage,
+                                                failure.site.map(symbolic_invariant_failure_site),
                                             );
                                             let reason =
                                                 failure.reason.clone().unwrap_or_else(|| {
@@ -4122,8 +4157,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                     },
                                                 ),
                                             );
-                                            symbolic_handler_storage
-                                                .insert((reverter, selector), storage.clone());
+                                            symbolic_handler_storage.insert(
+                                                (reverter, selector, fingerprint),
+                                                storage.clone(),
+                                            );
                                             let mut symbolic_result =
                                                 SymbolicResult::fail_counterexample_sequence(
                                                     &self.config.symbolic,
@@ -4499,13 +4536,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ka.cmp(kb)
             })
             .filter_map(|(site, err)| err.as_handler_assertion().map(|f| (site, f)))
-            .map(|(site, failure)| {
+            .map(|(_site, failure)| {
                 let reverter = failure.reverter;
                 let selector = failure.selector;
                 let resolved_name =
                     invariant_handler_failure_name(identified_contracts_ro, reverter, selector);
+                let storage_key = (reverter, selector, failure.edge_fingerprint);
                 let symbolic_storage =
-                    symbolic_handler_storage.get(site).map(Vec::as_slice).unwrap_or(&[]);
+                    symbolic_handler_storage.get(&storage_key).map(Vec::as_slice).unwrap_or(&[]);
 
                 let counterexample_calls = failure
                     .call_sequence
@@ -4526,6 +4564,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         failure_dir.as_path(),
                         reverter,
                         selector,
+                        failure.edge_fingerprint,
                         &counterexample_calls,
                         &current_settings,
                         symbolic_storage,
@@ -5032,12 +5071,16 @@ struct InvariantPersistedFailure {
     /// Concrete setup-storage assignments required before replaying this failure.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     storage: Vec<SymbolicStorageAssignment>,
+    /// Exact failure site required to accept a persisted symbolic handler rerun.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_site: Option<SymbolicInvariantFailureSite>,
 }
 
 type CheckSequenceResult = eyre::Result<CheckSequenceOutcome>;
 type HandlerFailureKey = (Address, Selector);
+type HandlerFailureStorageKey = (Address, Selector, B256);
 type HandlerFailureMap = std::collections::HashMap<HandlerFailureKey, InvariantFuzzError>;
-type SymbolicHandlerStorageMap = HashMap<HandlerFailureKey, Vec<SymbolicStorageAssignment>>;
+type SymbolicHandlerStorageMap = HashMap<HandlerFailureStorageKey, Vec<SymbolicStorageAssignment>>;
 
 /// Borrowed context shared by primary-invariant and handler-side replay helpers.
 struct ReplayContext<'a> {
@@ -5377,6 +5420,7 @@ fn record_invariant_failure(
         settings,
         assertion_failure,
         &[],
+        None,
     );
 }
 
@@ -5388,6 +5432,7 @@ fn record_invariant_failure_with_storage(
     settings: &InvariantSettings,
     assertion_failure: bool,
     storage: &[SymbolicStorageAssignment],
+    failure_site: Option<SymbolicInvariantFailureSite>,
 ) {
     if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
         error!(%err, "Failed to create invariant failure dir");
@@ -5407,6 +5452,7 @@ fn record_invariant_failure_with_storage(
             settings: settings.clone(),
             assertion_failure,
             storage: storage.to_vec(),
+            failure_site,
         },
     ) {
         error!(%err, "Failed to record call sequence");
@@ -5418,6 +5464,7 @@ fn record_handler_failure_with_storage(
     failure_dir: &Path,
     reverter: Address,
     selector: Selector,
+    fingerprint: B256,
     call_sequence: &[BaseCounterExample],
     settings: &InvariantSettings,
     storage: &[SymbolicStorageAssignment],
@@ -5439,6 +5486,11 @@ fn record_handler_failure_with_storage(
         settings,
         true,
         storage,
+        Some(SymbolicInvariantFailureSite::SequenceCall {
+            target: reverter,
+            selector,
+            fingerprint,
+        }),
     );
 }
 
@@ -5486,21 +5538,16 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
         let Some(persisted) = persisted_call_sequence(&path, current_settings) else {
             continue;
         };
-        let InvariantPersistedFailure { mut call_sequence, storage, .. } = persisted;
+        let InvariantPersistedFailure { mut call_sequence, storage, failure_site, .. } = persisted;
         if call_sequence.is_empty() {
             let _ = std::fs::remove_file(&path);
             continue;
         }
         let txes = base_counterexamples_to_txes(ctx, &mut call_sequence);
-        // Expected site = (target, selector) of the persisted reproducer's last call.
-        let Some(last) = txes.last() else {
+        let Some(_last) = txes.last() else {
             let _ = std::fs::remove_file(&path);
             continue;
         };
-        let expected_target = last.call_details.target;
-        let expected_selector_bytes: [u8; 4] =
-            last.call_details.calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
-        let expected_site = (expected_target, Selector::from(expected_selector_bytes));
         let sequence: Vec<usize> =
             (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect();
         let mut replay_executor = executor.clone();
@@ -5522,9 +5569,22 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
                 );
                 let failure = HandlerAssertionFailure::from_replayed_sequence(
                     txes,
+                    outcome.reverter,
+                    outcome.selector,
                     outcome.anchor_fingerprint,
                     outcome.revert_reason.unwrap_or_default(),
                 );
+                let actual_site = SymbolicInvariantFailureSite::SequenceCall {
+                    target: outcome.reverter,
+                    selector: outcome.selector,
+                    fingerprint: outcome.anchor_fingerprint,
+                };
+                if failure_site.is_some_and(|expected| expected != actual_site) {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+                let expected_site = (failure.reverter, failure.selector);
+                let storage_key = (failure.reverter, failure.selector, failure.edge_fingerprint);
                 // On collision keep the shorter reproducer. Inlined: `replayed` uses the legacy
                 // `(reverter, selector)` key, not the unified `FailureKey`.
                 let already_shorter = replayed
@@ -5535,7 +5595,7 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
                     });
                 if !already_shorter {
                     replayed.insert(expected_site, InvariantFuzzError::HandlerAssertion(failure));
-                    replayed_storage.insert(expected_site, storage);
+                    replayed_storage.insert(storage_key, storage);
                 }
             }
             // Stale: anchor doesn't assert or earlier call asserts.

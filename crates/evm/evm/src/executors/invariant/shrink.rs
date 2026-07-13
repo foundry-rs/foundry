@@ -228,6 +228,8 @@ pub struct ShrunkSequence {
 #[derive(Debug)]
 pub struct HandlerReplayOutcome {
     pub anchor_asserted: bool,
+    pub reverter: Address,
+    pub selector: Selector,
     pub revert_reason: Option<String>,
     /// Normalized via `handler_edge_fingerprint` so callers can compare directly.
     pub anchor_fingerprint: B256,
@@ -958,6 +960,8 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
     let Some(&anchor_idx) = sequence.last() else {
         return Ok(HandlerReplayOutcome {
             anchor_asserted: false,
+            reverter: Address::ZERO,
+            selector: Selector::ZERO,
             revert_reason: None,
             anchor_fingerprint: B256::ZERO,
         });
@@ -973,7 +977,7 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
             if idx == anchor_idx {
                 let snapshot = snapshot_edge_fingerprint(&call_result);
                 let anchor = &calls[anchor_idx];
-                let reverter = anchor.call_details.target;
+                let reverter = call_result.reverter.unwrap_or(anchor.call_details.target);
                 let selector_bytes: [u8; 4] = anchor
                     .call_details
                     .calldata
@@ -986,6 +990,8 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
                     if asserted { assertion_failure_reason(call_result, rd) } else { None };
                 return Ok(ReplayDecision::Stop(HandlerReplayOutcome {
                     anchor_asserted: asserted,
+                    reverter,
+                    selector,
                     revert_reason: reason,
                     anchor_fingerprint: fingerprint,
                 }));
@@ -994,6 +1000,8 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
                 // Pre-anchor assertion = different bug; reject.
                 return Ok(ReplayDecision::Stop(HandlerReplayOutcome {
                     anchor_asserted: false,
+                    reverter: Address::ZERO,
+                    selector: Selector::ZERO,
                     revert_reason: None,
                     anchor_fingerprint: B256::ZERO,
                 }));
@@ -1004,6 +1012,8 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
 
     Ok(outcome.unwrap_or(HandlerReplayOutcome {
         anchor_asserted: false,
+        reverter: Address::ZERO,
+        selector: Selector::ZERO,
         revert_reason: None,
         anchor_fingerprint: B256::ZERO,
     }))

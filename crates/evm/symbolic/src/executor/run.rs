@@ -482,8 +482,15 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("symbolic invariant has no targets"));
         }
 
-        let senders =
+        let mut senders =
             if input.senders.is_empty() { vec![input.sender] } else { input.senders.clone() };
+        senders.retain(|sender| !input.excluded_senders.contains(sender));
+        if senders.is_empty() {
+            return Err(SymbolicError::Unsupported("symbolic invariant senders are excluded"));
+        }
+        let after_invariant_for = |steps_len: usize| {
+            (steps_len == input.depth).then_some(input.after_invariant).flatten()
+        };
         let mut completed_paths = 0usize;
         let mut initial_state = PathState::empty(
             &mut self.cx,
@@ -502,7 +509,7 @@ impl SymbolicExecutor {
                 input.invariant_address,
                 input.sender,
                 input.invariant,
-                input.after_invariant,
+                after_invariant_for(0),
                 &mut completed_paths,
             )? {
                 if outcome.failed {
@@ -592,7 +599,7 @@ impl SymbolicExecutor {
                                         // concrete campaign.
                                         let mut reverted_state = sequence.state.clone();
                                         reverted_state
-                                            .merge_noncommitting_check_constraints(&outcome.state);
+                                            .merge_reverted_top_level_effects(&outcome.state);
                                         if symbolic_invariant_should_check(
                                             steps.len(),
                                             input.depth,
@@ -604,7 +611,7 @@ impl SymbolicExecutor {
                                                 input.invariant_address,
                                                 input.sender,
                                                 input.invariant,
-                                                input.after_invariant,
+                                                after_invariant_for(steps.len()),
                                                 &mut completed_paths,
                                             )? {
                                                 if invariant_outcome.failed {
@@ -651,7 +658,7 @@ impl SymbolicExecutor {
                                                 input.invariant_address,
                                                 input.sender,
                                                 input.invariant,
-                                                input.after_invariant,
+                                                after_invariant_for(steps.len()),
                                                 &mut completed_paths,
                                             )? {
                                                 if invariant_outcome.failed {

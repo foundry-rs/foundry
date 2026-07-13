@@ -1663,6 +1663,9 @@ pub enum SymbolicInvariantArtifactFailure {
     Predicate {
         /// Invariant function name.
         name: String,
+        /// Exact concrete failure site confirmed during replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        site: Option<SymbolicInvariantFailureSite>,
     },
     /// A target/handler call asserted before an invariant predicate failed.
     Handler {
@@ -1676,6 +1679,18 @@ pub enum SymbolicInvariantArtifactFailure {
         /// Stable edge fingerprint for the failing handler site.
         fingerprint: B256,
     },
+}
+
+/// Concrete invariant failure site stored in symbolic replay artifacts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SymbolicInvariantFailureSite {
+    /// Target/handler call failed before the invariant predicate.
+    SequenceCall { target: Address, selector: Selector, fingerprint: B256 },
+    /// Invariant predicate failed.
+    Invariant { target: Address, selector: Selector, fingerprint: B256 },
+    /// `afterInvariant` hook failed.
+    AfterInvariant { target: Address, selector: Selector, fingerprint: B256 },
 }
 
 /// Test identity for a symbolic counterexample artifact.

@@ -354,6 +354,20 @@ impl PathState {
         self.world.merge_replay_metadata_from(&check.world);
     }
 
+    pub(crate) fn merge_reverted_top_level_effects(&mut self, reverted: &Self) {
+        self.merge_noncommitting_check_constraints(reverted);
+        self.block = reverted.block.clone();
+        self.recorded_logs = reverted.recorded_logs.clone();
+        self.access_record = reverted.access_record.clone();
+        self.expected_revert = reverted.expected_revert.clone();
+        self.assume_no_revert_next_call = reverted.assume_no_revert_next_call.clone();
+        self.expected_emit = reverted.expected_emit.clone();
+        self.expected_calls = reverted.expected_calls.clone();
+        self.expected_creates = reverted.expected_creates.clone();
+        self.call_mocks = reverted.call_mocks.clone();
+        self.function_mocks = reverted.function_mocks.clone();
+    }
+
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
         self.branch_target.is_none() || self.branch_target_reached
     }
@@ -1823,7 +1837,11 @@ impl SymbolicWorld {
                 self.record_replay_storage_slot(symbol, address, slot);
             }
         }
-        Some(SymExpr::get_var(cx, symbol))
+        let value = SymExpr::get_var(cx, symbol);
+        if let Some(source) = copied_source {
+            self.sstore(source, key.clone(), value.clone());
+        }
+        Some(value)
     }
 
     fn record_replay_storage_slot(&mut self, symbol: Symbol, address: Address, slot: U256) {
@@ -2292,6 +2310,24 @@ mod tests {
                 SymbolicStorageAssignment { address: copied, slot, value: U256::from(42) },
             ]
         );
+    }
+
+    #[test]
+    fn copied_arbitrary_storage_read_writes_source_slot() {
+        let source = Address::repeat_byte(0x11);
+        let copied = Address::repeat_byte(0x22);
+        let slot = U256::from(7);
+        let mut cx = SymCx::new();
+        let key = SymExpr::constant(&mut cx, slot);
+        let mut world = SymbolicWorld::default();
+        world.enable_arbitrary_storage_copy(source, copied);
+
+        let copied_base =
+            world.unchecked_arbitrary_storage_base(&mut cx, copied, &key, Some(slot)).unwrap();
+        let zero = SymExpr::zero(&mut cx);
+        let source_read = StorageWrite::select_from(&mut cx, &world.storage, source, key, zero);
+
+        assert_eq!(source_read, copied_base);
     }
 
     #[test]
