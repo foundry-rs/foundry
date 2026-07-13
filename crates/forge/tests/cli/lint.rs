@@ -28,7 +28,7 @@ contract ContractWithLints {
     function unoptimizedHashGas(uint256 a, uint256 b) public view {
         keccak256(abi.encodePacked(a, b));
     }
-    function FUNCTION_MIXED_CASE_INFO() public {}
+    function FUNCTION_MIXED_CASE_INFO() public { VARIABLE_MIXED_CASE_INFO = 1; }
 }
 "#;
 
@@ -40,7 +40,7 @@ pragma solidity ^0.8.0;
 import { ContractWithLints } from "./ContractWithLints.sol";
 
 contract OtherContractWithLints {
-    function functionMIXEDCaseInfo() public {}
+    function functionMIXEDCaseInfo() public { uint256 x = 1; }
 }
 "#;
 
@@ -56,6 +56,24 @@ import "./ContractWithLints.sol";
 
 contract Dummy {
     bool foo;
+}
+"#;
+
+const DEFAULT_INFO_LINTS_IMPORT: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract UnusedSymbol {}
+"#;
+
+const DEFAULT_INFO_LINTS: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+
+contract DefaultInfoLints {
+    function BAD_CASE() public { uint256 x = 1; }
 }
 "#;
 
@@ -185,6 +203,22 @@ interface IToken {
 }
 "#;
 
+forgetest!(lint_does_not_write_artifacts, |prj, cmd| {
+    use std::fs;
+
+    prj.add_source("LintTarget", "contract LintTarget {}");
+    let artifact = prj.root().join("out/LintTarget.sol/LintTarget.json");
+
+    cmd.arg("lint").assert_success();
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.forge_fuse().arg("lint").assert_success();
+    assert_eq!(fs::read(artifact).unwrap(), b"sentinel");
+});
+
 forgetest!(can_use_config, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
@@ -230,7 +264,7 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
-9 │     function functionMIXEDCaseInfo() public {}
+9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
@@ -248,8 +282,33 @@ note[mixed-case-function]: function names should use mixedCase
             ..Default::default()
         };
     });
-    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
 nothing to lint
+
+"#]]);
+});
+
+forgetest!(default_lint_severity_includes_info, |prj, cmd| {
+    prj.add_source("DefaultInfoLintsImport", DEFAULT_INFO_LINTS_IMPORT);
+    prj.add_source("DefaultInfoLints", DEFAULT_INFO_LINTS);
+
+    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+note[mixed-case-function]: function names should use mixedCase
+  [FILE]:8:14
+  │
+8 │     function BAD_CASE() public { uint256 x = 1; }
+  │              ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[unused-import]: unused imports should be removed
+  [FILE]:5:10
+  │
+5 │ import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+  │          ━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/unused-import
+
 
 "#]]);
 });
@@ -613,7 +672,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
-9 │     function functionMIXEDCaseInfo() public {}
+9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
@@ -881,9 +940,8 @@ Warning (2018): Function state mutability can be restricted to pure
     ]]);
 });
 
-// `deny = notes` + an info-level lint forces the linter to return Err, exercising the same
-// failure-notice path an unhandled solar edge case would take.
-forgetest!(build_emits_lint_failure_notice_on_failure, |prj, cmd| {
+// Denied lint diagnostics are expected failures and must not be presented as internal errors.
+forgetest!(build_denied_lints_do_not_emit_internal_failure_notice, |prj, cmd| {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
@@ -900,19 +958,55 @@ note[mixed-case-variable]: mutable variables should use mixedCase
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
-
-note: internal lint engine failure (compilation itself succeeded).
-note: please file a bug report at
-      https://github.com/foundry-rs/foundry/issues/new?template=BUG-FORM.yml
-      and attach the full output above.
-help: rerun with `--no-lint` to skip linting for this build, or consider temporarily
-      disabling forge lint on build:
-      https://getfoundry.sh/forge/linting#disable-linting-on-build
-
 Error: post-build lint step failed
 
 Context:
 - aborting due to 1 linter note(s)
+
+"#]]);
+});
+
+// Solar currently rejects enum `@param` tags while solc accepts them. This recoverable frontend
+// diagnostic must not prevent type-dependent late lints from running.
+forgetest!(build_lints_after_recoverable_solar_diagnostic, |prj, cmd| {
+    prj.add_source(
+        "RecoverableSolarDiagnostic",
+        r#"
+/// @param First The first choice.
+enum Choice { First }
+
+contract RecoverableSolarDiagnostic {
+    function chainId() public view returns (uint64) {
+        return uint64(block.chainid);
+    }
+}
+"#,
+    );
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Med];
+        config.deny = DenyLevel::Warnings;
+    });
+
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  [FILE]:9:16
+  │
+9 │         return uint64(block.chainid);
+  │                ━━━━━━━━━━━━━━━━━━━━━
+  │
+  ├ note: consider disabling this lint if you're certain the cast is safe
+  │ [..]
+  │       // casting to 'uint64' is safe because [explain why]
+  │       // forge-lint: disable-next-line(unsafe-typecast)
+  │ [..]
+  │ [..]
+  ╰ help: https://getfoundry.sh/forge/linting/unsafe-typecast
+
+Error: post-build lint step failed
+
+Context:
+- aborting due to 1 linter warning(s)
 
 "#]]);
 });

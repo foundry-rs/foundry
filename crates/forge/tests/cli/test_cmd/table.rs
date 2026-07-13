@@ -1,5 +1,6 @@
 //! Table tests.
 
+use foundry_config::fs_permissions::PathPermission;
 use foundry_test_utils::{forgetest_init, str};
 
 forgetest_init!(should_run_table_tests, |prj, cmd| {
@@ -123,8 +124,46 @@ Encountered 6 failing tests in test/CounterTable.t.sol:CounterTableTest
 Encountered a total of 6 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 6 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
+});
+
+forgetest_init!(does_not_evaluate_unused_fixtures_for_unit_test_filter, |prj, cmd| {
+    let marker = prj.root().join("fixture-called.txt");
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::write(prj.root())));
+    prj.add_test(
+        "UnusedFixtures.t.sol",
+        r#"
+interface Vm {
+    function projectRoot() external view returns (string memory path);
+    function writeFile(string calldata path, string calldata data) external;
+}
+
+contract UnusedFixturesTest {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function fixtureAmount() public returns (uint256[] memory values) {
+        vm.writeFile(string.concat(vm.projectRoot(), "/fixture-called.txt"), "called");
+        values = new uint256[](1);
+        values[0] = 1;
+    }
+
+    function testUnit() public pure {}
+
+    function tableUsesFixture(uint256 amount) public pure {
+        amount;
+    }
+}
+    "#,
+    );
+
+    cmd.args(["test", "--match-test", "testUnit", "-q"]).assert_success();
+    assert!(!marker.exists(), "unit-only run evaluated table fixture");
+
+    cmd.forge_fuse();
+    cmd.args(["test", "--match-test", "tableUsesFixture", "-q"]).assert_success();
+    assert!(marker.exists(), "table run did not evaluate table fixture");
 });
 
 // Table tests should show logs and contribute to coverage.

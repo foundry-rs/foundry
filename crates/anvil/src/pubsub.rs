@@ -1,6 +1,9 @@
 use crate::{
     StorageInfo,
-    eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
+    eth::{
+        backend::notifications::{ChainNotification, ChainNotifications},
+        error::to_rpc_result,
+    },
 };
 use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_network::{AnyRpcTransaction, Network};
@@ -8,6 +11,7 @@ use alloy_primitives::{B256, TxHash};
 use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId};
 use anvil_rpc::{request::Version, response::ResponseResult};
+use foundry_primitives::FoundryTxReceipt;
 use futures::{Stream, StreamExt, channel::mpsc::Receiver, ready};
 use serde::Serialize;
 use std::{
@@ -19,7 +23,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Listens for new blocks and matching logs emitted in that block
 pub struct LogsSubscription<N: Network> {
-    pub blocks: NewBlockNotifications,
+    pub blocks: ChainNotifications,
     pub storage: StorageInfo<N>,
     pub filter: FilteredParams,
     pub queued: VecDeque<Log>,
@@ -49,19 +53,28 @@ where
                 return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
             }
 
-            if let Some(block) = ready!(self.blocks.poll_next_unpin(cx)) {
-                let b = self.storage.block(block.hash);
-                let receipts = self.storage.receipts(block.hash);
-                if let (Some(receipts), Some(block)) = (receipts, b) {
-                    let logs = filter_logs(block, receipts, &self.filter);
-                    if logs.is_empty() {
-                        // this ensures we poll the receiver until it is pending, in which case the
-                        // underlying `UnboundedReceiver` will register the new waker, see
-                        // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
-                        continue;
+            if let Some(notification) = ready!(self.blocks.poll_next_unpin(cx)) {
+                let logs = match notification {
+                    ChainNotification::Block(block) => {
+                        let b = self.storage.block(block.hash);
+                        let receipts = self.storage.receipts(block.hash);
+                        if let (Some(receipts), Some(block)) = (receipts, b) {
+                            filter_logs(block, receipts, &self.filter)
+                        } else {
+                            continue;
+                        }
                     }
-                    self.queued.extend(logs)
+                    ChainNotification::RemovedLogs(logs) => {
+                        filter_removed_logs(&logs, &self.filter)
+                    }
+                };
+                if logs.is_empty() {
+                    // this ensures we poll the receiver until it is pending, in which case the
+                    // underlying `UnboundedReceiver` will register the new waker, see
+                    // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
+                    continue;
                 }
+                self.queued.extend(logs)
             } else {
                 return Poll::Ready(None);
             }
@@ -97,9 +110,11 @@ pub struct EthSubscriptionParams {
 /// Represents an ethereum Websocket subscription
 pub enum EthSubscription<N: Network> {
     Logs(Box<LogsSubscription<N>>),
-    Header(NewBlockNotifications, StorageInfo<N>, SubscriptionId),
+    Header(ChainNotifications, StorageInfo<N>, SubscriptionId),
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
     FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>, SubscriptionId),
+    Syncing(Option<SubscriptionId>),
+    TransactionReceipts(UnboundedReceiver<Vec<FoundryTxReceipt>>, SubscriptionId),
 }
 
 impl<N: Network> std::fmt::Debug for EthSubscription<N> {
@@ -109,6 +124,8 @@ impl<N: Network> std::fmt::Debug for EthSubscription<N> {
             Self::Header(..) => f.debug_tuple("Header").finish(),
             Self::PendingTransactions(..) => f.debug_tuple("PendingTransactions").finish(),
             Self::FullPendingTransactions(..) => f.debug_tuple("FullPendingTransactions").finish(),
+            Self::Syncing(_) => f.debug_tuple("Syncing").finish(),
+            Self::TransactionReceipts(..) => f.debug_tuple("TransactionReceipts").finish(),
         }
     }
 }
@@ -125,8 +142,10 @@ where
                 // underlying `UnboundedReceiver` will register the new waker, see
                 // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
                 loop {
-                    if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
-                        if let Some(block) = storage.eth_block(block.hash) {
+                    if let Some(notification) = ready!(blocks.poll_next_unpin(cx)) {
+                        if let Some(block) = notification.as_new_block()
+                            && let Some(block) = storage.eth_block(block.hash)
+                        {
                             let params = EthSubscriptionParams {
                                 subscription: id.clone(),
                                 result: to_rpc_result(block),
@@ -150,6 +169,21 @@ where
             }
             Self::FullPendingTransactions(tx, id) => {
                 let res = ready!(tx.poll_recv(cx)).map(to_rpc_result).map(|result| {
+                    let params = EthSubscriptionParams { subscription: id.clone(), result };
+                    EthSubscriptionResponse::new(params)
+                });
+                Poll::Ready(res)
+            }
+            Self::Syncing(id) => {
+                if let Some(id) = id.take() {
+                    let params =
+                        EthSubscriptionParams { subscription: id, result: to_rpc_result(false) };
+                    return Poll::Ready(Some(EthSubscriptionResponse::new(params)));
+                }
+                Poll::Pending
+            }
+            Self::TransactionReceipts(receipts, id) => {
+                let res = ready!(receipts.poll_recv(cx)).map(to_rpc_result).map(|result| {
                     let params = EthSubscriptionParams { subscription: id.clone(), result };
                     EthSubscriptionResponse::new(params)
                 });
@@ -221,4 +255,21 @@ where
         }
     }
     logs
+}
+
+/// Returns all logs of reorged out blocks that match the given filter.
+///
+/// The logs are expected to already be marked as `removed` and carry the metadata of the block
+/// they were originally included in, so the filter is applied against that metadata.
+pub fn filter_removed_logs(logs: &[Log], filter: &FilteredParams) -> Vec<Log> {
+    logs.iter()
+        .filter(|log| {
+            filter.filter.is_none()
+                || (filter.filter_block_range(log.block_number.unwrap_or_default())
+                    && filter.filter_block_hash(log.block_hash.unwrap_or_default())
+                    && filter.filter_address(&log.inner.address)
+                    && filter.filter_topics(log.inner.topics()))
+        })
+        .cloned()
+        .collect()
 }

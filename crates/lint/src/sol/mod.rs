@@ -406,19 +406,25 @@ impl<'a> Linter for SolidityLinter<'a> {
             // Deny warnings.
             (DenyLevel::Warnings, w, n) if w > 0 => {
                 if n > 0 {
-                    Err(eyre::eyre!("{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"))
+                    Err(DeniedLintDiagnostics(format!(
+                        "{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"
+                    ))
+                    .into())
                 } else {
-                    Err(eyre::eyre!("{MSG}{w} linter warning(s)\n"))
+                    Err(DeniedLintDiagnostics(format!("{MSG}{w} linter warning(s)\n")).into())
                 }
             }
 
             // Deny any diagnostic.
             (DenyLevel::Notes, w, n) if w > 0 || n > 0 => match (w, n) {
-                (w, n) if w > 0 && n > 0 => {
-                    Err(eyre::eyre!("{MSG}{w} linter warning(s) and {n} note(s)\n"))
+                (w, n) if w > 0 && n > 0 => Err(DeniedLintDiagnostics(format!(
+                    "{MSG}{w} linter warning(s) and {n} note(s)\n"
+                ))
+                .into()),
+                (w, 0) => {
+                    Err(DeniedLintDiagnostics(format!("{MSG}{w} linter warning(s)\n")).into())
                 }
-                (w, 0) => Err(eyre::eyre!("{MSG}{w} linter warning(s)\n")),
-                (0, n) => Err(eyre::eyre!("{MSG}{n} linter note(s)\n")),
+                (0, n) => Err(DeniedLintDiagnostics(format!("{MSG}{n} linter note(s)\n")).into()),
                 _ => unreachable!(),
             },
 
@@ -460,6 +466,10 @@ pub enum SolLintError {
     #[error("Unknown lint ID: {0}")]
     InvalidId(String),
 }
+
+#[derive(Error, Debug)]
+#[error("{0}")]
+pub struct DeniedLintDiagnostics(String);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct SolLint {

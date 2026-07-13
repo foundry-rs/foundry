@@ -485,7 +485,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     const fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
-        // Intetionally no-op. Handled with `self.comments`.
+        // Intentionally no-op. Handled with `self.comments`.
         let _ = docs;
     }
 
@@ -954,7 +954,8 @@ impl<'sess> State<'sess, '_> {
     {
         self.comments
             .iter()
-            .take_while(|c| pos_lo < c.pos() && c.pos() < pos_hi)
+            .skip_while(|c| c.pos() < pos_lo)
+            .take_while(|c| c.pos() < pos_hi)
             .find(|c| !c.style.is_blank())
     }
 

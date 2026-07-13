@@ -5,7 +5,7 @@ use super::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
-    map::{AddressHashMap, AddressMap},
+    map::{AddressHashMap, AddressHashSet, AddressMap},
 };
 
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure, Wallets};
@@ -22,8 +22,8 @@ use foundry_evm_core::{
     },
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_networks::NetworkConfigs;
-use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
+use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     Inspector,
     context::{
@@ -34,7 +34,10 @@ use revm::{
     handler::FrameResult,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
-        InstructionResult, Interpreter, InterpreterResult, return_ok,
+        InstructionResult, Interpreter, InterpreterResult,
+        bytecode::opcode as op,
+        interpreter_types::{InputsTr, Jumps},
+        return_ok,
     },
     primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
@@ -64,7 +67,7 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,
     /// Whether to enable tracing and revert diagnostics.
-    pub trace_mode: TraceMode,
+    pub trace_requirements: TraceRequirements,
     /// Whether logs should be collected.
     /// - None for no log collection.
     /// - Some(true) for realtime console.log-ing.
@@ -96,7 +99,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             gas_price: None,
             cheatcodes: None,
             fuzzer: None,
-            trace_mode: TraceMode::None,
+            trace_requirements: TraceRequirements::none(),
             logs: None,
             line_coverage: None,
             print: None,
@@ -186,13 +189,10 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Set whether to enable the tracer.
-    /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
+    /// Set trace data requirements.
     #[inline]
-    pub fn trace_mode(mut self, mode: TraceMode) -> Self {
-        if self.trace_mode < mode {
-            self.trace_mode = mode
-        }
+    pub const fn trace_requirements(mut self, requirements: TraceRequirements) -> Self {
+        self.trace_requirements = self.trace_requirements.merge(requirements);
         self
     }
 
@@ -227,7 +227,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             gas_price,
             cheatcodes,
             fuzzer,
-            trace_mode,
+            trace_requirements,
             logs,
             line_coverage,
             print,
@@ -263,7 +263,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         stack.collect_line_coverage(line_coverage.unwrap_or(false));
         stack.collect_logs(logs);
         stack.print(print.unwrap_or(false));
-        stack.tracing(trace_mode);
+        stack.tracing_requirements(trace_requirements);
 
         stack.enable_isolation(enable_isolation);
         stack.networks(networks);
@@ -331,6 +331,16 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
 pub struct InnerContextData {
     /// Origin of the transaction in the outer EVM context.
     original_origin: Address,
+    /// Accounts that were created locally before entering the nested EVM context.
+    locally_created_accounts: AddressHashSet,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum OpcodeStepDispatch {
+    #[default]
+    None,
+    FuzzerOnly,
+    General,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -350,7 +360,7 @@ pub struct InspectorStack<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub inner: InspectorStackInner,
 }
 
-/// All used inpectors besides [Cheatcodes].
+/// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
 #[derive(Default, Clone, Debug)]
@@ -383,6 +393,8 @@ pub struct InspectorStackInner {
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
+    /// Accounts that should retain the per-transaction creation marker in the current context.
+    pub locally_created_accounts: AddressHashSet,
     pub top_frame_journal: AddressMap<Account>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
@@ -399,6 +411,8 @@ pub struct InspectorStackInner {
     /// Per-inspector random seed mixed into `--batch` CREATE2 salts, ensuring re-runs
     /// at identical on-chain state still produce distinct salts. Lazily initialized.
     pub batch_rewrite_process_salt: Option<u64>,
+    static_step_dispatch: OpcodeStepDispatch,
+    has_static_step_end_inspectors: bool,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -480,6 +494,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         self.in_inner_context = enabled;
         self.inner_context_data = enabled.then(|| InnerContextData {
             original_origin: original_origin.expect("origin required when enabling inner ctx"),
+            locally_created_accounts: AddressHashSet::default(),
         });
     }
 }
@@ -533,18 +548,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub fn set_fuzzer(&mut self, fuzzer: Fuzzer) {
         self.fuzzer = Some(fuzzer.into());
+        self.refresh_static_step_dispatch();
     }
 
     /// Set the Chisel inspector.
     #[inline]
     pub fn set_chisel(&mut self, final_pc: usize) {
         self.chisel_state = Some(ChiselState::new(final_pc).into());
+        self.refresh_static_step_end_dispatch();
     }
 
     /// Set whether to enable the line coverage collector.
     #[inline]
     pub fn collect_line_coverage(&mut self, yes: bool) {
         self.line_coverage = yes.then(Default::default);
+        self.refresh_static_step_dispatch();
     }
 
     /// Set whether to enable the edge coverage collector with default config.
@@ -552,6 +570,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     pub fn collect_edge_coverage(&mut self, yes: bool) {
         self.edge_coverage =
             yes.then(|| EdgeCovInspector::with_config(EdgeCovConfig::default()).into());
+        self.refresh_static_step_dispatch();
     }
 
     /// Configure the edge coverage collector from a [`FuzzCorpusConfig`].
@@ -562,6 +581,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.edge_coverage = corpus
             .collect_evm_edge_coverage()
             .then(|| EdgeCovInspector::with_config(corpus.into()).into());
+        self.refresh_static_step_dispatch();
     }
 
     /// Set whether to collect EVM comparison operands.
@@ -569,11 +589,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     pub fn collect_evm_cmp_log(&mut self, yes: bool) {
         if yes {
             self.edge_coverage
-                .get_or_insert_with(|| EdgeCovInspector::new().into())
+                .get_or_insert_with(|| EdgeCovInspector::with_cmp_log_only().into())
                 .enable_cmp_log(true);
         } else if let Some(edge_coverage) = &mut self.edge_coverage {
             edge_coverage.enable_cmp_log(false);
         }
+        self.refresh_static_step_dispatch();
     }
 
     /// Set whether to collect sancov edge coverage from instrumented native crates.
@@ -625,19 +646,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub fn print(&mut self, yes: bool) {
         self.printer = yes.then(Default::default);
+        self.refresh_static_opcode_dispatch();
     }
 
-    /// Set whether to enable the tracer.
-    /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
+    /// Set trace data requirements.
     #[inline]
-    pub fn tracing(&mut self, mode: TraceMode) {
-        self.revert_diag = (!mode.is_none()).then(RevertDiagnostic::default).map(Into::into);
+    pub fn tracing_requirements(&mut self, requirements: TraceRequirements) {
+        let config = requirements.into_config();
+        self.revert_diag = config.is_some().then(RevertDiagnostic::default).map(Into::into);
 
-        if let Some(config) = mode.into_config() {
+        if let Some(config) = config {
             *self.tracer.get_or_insert_with(Default::default).config_mut() = config;
         } else {
             self.tracer = None;
         }
+        self.refresh_static_opcode_dispatch();
     }
 
     /// Set whether to enable script execution inspector.
@@ -645,6 +668,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     pub fn script(&mut self, script_address: Address) {
         self.script_execution_inspector.get_or_insert_with(Default::default).script_address =
             script_address;
+        self.refresh_static_step_dispatch();
     }
 
     #[inline(always)]
@@ -731,25 +755,23 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        if let Some(fuzzer) = &mut self.fuzzer {
+            fuzzer.call_end(ecx, inputs, outcome);
+        }
+
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
-            [
-                &mut self.fuzzer,
-                &mut self.tracer,
-                &mut self.cheatcodes,
-                &mut self.printer,
-                &mut self.revert_diag
-            ],
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer, &mut self.revert_diag],
             |inspector| {
-                let previous_outcome = outcome.clone();
+                let previous_output = outcome.output().clone();
                 inspector.call_end(ecx, inputs, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != previous_outcome.output());
+                        && outcome.output() != &previous_output);
                 different.then_some(())
             },
         );
@@ -771,14 +793,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
-                let previous_outcome = outcome.clone();
+                let previous_output = outcome.output().clone();
                 inspector.create_end(ecx, call, outcome);
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result
                     || (outcome.result.result == InstructionResult::Revert
-                        && outcome.output() != previous_outcome.output());
+                        && outcome.output() != &previous_output);
                 different.then_some(())
             },
         );
@@ -826,8 +848,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             ecx.tx_mut().set_blob_hashes(Vec::new());
         }
 
-        self.inner_context_data =
-            Some(InnerContextData { original_origin: cached_tx_env.caller() });
+        let locally_created_accounts = ecx
+            .journal()
+            .evm_state()
+            .iter()
+            .filter_map(|(addr, acc)| acc.is_created_locally().then_some(*addr))
+            .collect();
+        self.inner_context_data = Some(InnerContextData {
+            original_origin: cached_tx_env.caller(),
+            locally_created_accounts,
+        });
         self.in_inner_context = true;
 
         // Tell cheatcodes we're entering the synthetic inner transaction so
@@ -853,7 +883,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     let mut state = journal.state.clone();
 
                     for (addr, acc_mut) in &mut state {
-                        // mark all accounts cold, besides preloaded addresses
+                        // Preserve revm's per-transaction creation flag for accounts created in
+                        // the parent context in initialize_interp. A cold load in the nested
+                        // context clears local flags, but keeping accounts cold preserves gas
+                        // accounting for isolated calls.
                         if journal.warm_addresses.is_cold(addr) {
                             acc_mut.mark_cold();
                         }
@@ -978,6 +1011,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
+        self.locally_created_accounts.clear();
+
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
@@ -1020,21 +1055,42 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
-        call_inspectors!(
-            [
-                // These are sorted in definition order.
-                &mut self.edge_coverage,
-                &mut self.fuzzer,
-                &mut self.line_coverage,
-                &mut self.printer,
-                &mut self.revert_diag,
-                &mut self.script_execution_inspector,
-                &mut self.tracer,
-                // Keep `cheatcodes` last to make use of the tail call.
-                &mut self.cheatcodes,
-            ],
-            |inspector| (**inspector).step(interpreter, ecx),
-        );
+        match self.static_step_dispatch {
+            OpcodeStepDispatch::None => {}
+            OpcodeStepDispatch::FuzzerOnly => {
+                if let Some(inspector) = &mut self.fuzzer {
+                    inspector.step(interpreter, ecx);
+                }
+            }
+            OpcodeStepDispatch::General => {
+                call_inspectors!(
+                    [
+                        // These are sorted in definition order.
+                        &mut self.edge_coverage,
+                        &mut self.fuzzer,
+                        &mut self.line_coverage,
+                        &mut self.printer,
+                        &mut self.revert_diag,
+                        &mut self.script_execution_inspector,
+                        &mut self.tracer,
+                    ],
+                    |inspector| (**inspector).step(interpreter, ecx),
+                );
+            }
+        }
+
+        if let Some(cheats) = self.cheatcodes.as_mut() {
+            cheats.pc = interpreter.bytecode.pc();
+            if cheats.has_step_hooks() {
+                let opcode = interpreter.bytecode.opcode();
+                if !cheats.has_recording_accesses_only_step_hook()
+                    || matches!(opcode, op::SLOAD | op::SSTORE)
+                {
+                    crate::utils::cold_path();
+                    cheats.step(interpreter, ecx);
+                }
+            }
+        }
     }
 
     #[inline(always)]
@@ -1043,18 +1099,25 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
-        call_inspectors!(
-            [
-                // These are sorted in definition order.
-                &mut self.chisel_state,
-                &mut self.printer,
-                &mut self.revert_diag,
-                &mut self.tracer,
-                // Keep `cheatcodes` last to make use of the tail call.
-                &mut self.cheatcodes,
-            ],
-            |inspector| (**inspector).step_end(interpreter, ecx),
-        );
+        if self.has_static_step_end_inspectors {
+            call_inspectors!(
+                [
+                    // These are sorted in definition order.
+                    &mut self.chisel_state,
+                    &mut self.printer,
+                    &mut self.revert_diag,
+                    &mut self.tracer,
+                ],
+                |inspector| (**inspector).step_end(interpreter, ecx),
+            );
+        }
+
+        if let Some(cheats) = self.cheatcodes.as_mut()
+            && cheats.has_step_end_hooks()
+        {
+            crate::utils::cold_path();
+            cheats.step_end(interpreter, ecx);
+        }
     }
 }
 
@@ -1066,6 +1129,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        let address = interpreter.input.target_address();
+        let should_mark_created_locally = self.locally_created_accounts.contains(&address)
+            || self
+                .inner_context_data
+                .as_ref()
+                .is_some_and(|ctx| ctx.locally_created_accounts.contains(&address));
+        if should_mark_created_locally
+            && let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&address)
+        {
+            account.mark_created_locally();
+        }
+
         call_inspectors!(
             [
                 &mut self.line_coverage,
@@ -1088,10 +1163,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
     #[allow(clippy::redundant_clone)]
     fn log(&mut self, ecx: &mut FoundryContextFor<'_, FEN>, log: Log) {
-        call_inspectors!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| inspector.log(ecx, log.clone()),
-        );
+        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
+            inspector.log(ecx, log.clone())
+        });
+        if let Some(inspector) = &mut self.cheatcodes
+            && inspector.has_log_hooks()
+        {
+            crate::utils::cold_path();
+            inspector.log(ecx, log.clone());
+        }
+        call_inspectors!([&mut self.printer], |inspector| { inspector.log(ecx, log.clone()) });
     }
 
     #[allow(clippy::redundant_clone)]
@@ -1101,10 +1182,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         ecx: &mut FoundryContextFor<'_, FEN>,
         log: Log,
     ) {
-        call_inspectors!(
-            [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
-            |inspector| inspector.log_full(interpreter, ecx, log.clone()),
-        );
+        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
+            inspector.log_full(interpreter, ecx, log.clone())
+        });
+        if let Some(inspector) = &mut self.cheatcodes
+            && inspector.has_log_hooks()
+        {
+            crate::utils::cold_path();
+            inspector.log_full(interpreter, ecx, log.clone());
+        }
+        call_inspectors!([&mut self.printer], |inspector| {
+            inspector.log_full(interpreter, ecx, log.clone())
+        });
     }
 
     fn frame_start(
@@ -1277,6 +1366,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             }
         }
 
+        if let Some(outcome) = handle_arbitrum_system_call::<FEN>(ecx, call) {
+            return Some(outcome);
+        }
+
         if self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1 {
             match call.scheme {
                 // Isolate CALLs
@@ -1408,6 +1501,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
+        if outcome.result.result.is_ok()
+            && let Some(address) = outcome.address
+        {
+            self.locally_created_accounts.insert(address);
+
+            if self.in_inner_context
+                && let Some(inner_context) = &mut self.inner_context_data
+            {
+                inner_context.locally_created_accounts.insert(address);
+            }
+        }
+
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journal().depth() == 1 {
@@ -1427,6 +1532,58 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 inspector, contract, target, value,
             )
         });
+    }
+}
+
+fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
+    call: &CallInputs,
+) -> Option<CallOutcome> {
+    if call.target_address != arbitrum::ARB_SYS_ADDRESS
+        || call.bytecode_address != arbitrum::ARB_SYS_ADDRESS
+        || !arbitrum::is_arbitrum_chain(ecx.cfg().chain_id)
+    {
+        return None;
+    }
+
+    let input = call.input.bytes(ecx);
+    if input.get(..4) != Some(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR) {
+        return None;
+    }
+
+    let block_number = ecx.db().active_fork_block_number()?;
+    let Some((gas_cost, output)) = arbitrum::arb_block_number_call(call.gas_limit, block_number)
+    else {
+        return Some(arbitrum_call_outcome(
+            call,
+            InstructionResult::PrecompileOOG,
+            0,
+            Bytes::new(),
+        ));
+    };
+
+    Some(arbitrum_call_outcome(call, InstructionResult::Return, gas_cost, output))
+}
+
+fn arbitrum_call_outcome(
+    call: &CallInputs,
+    result: InstructionResult,
+    gas_used: u64,
+    output: Bytes,
+) -> CallOutcome {
+    let mut gas = Gas::new(call.gas_limit);
+    if result.is_ok() {
+        let _ = gas.record_regular_cost(gas_used);
+    } else {
+        gas.spend_all();
+    }
+
+    CallOutcome {
+        result: InterpreterResult { result, output, gas },
+        memory_offset: call.return_memory_offset.clone(),
+        was_precompile_called: true,
+        precompile_call_logs: vec![],
+        charged_new_account_state_gas: call.charged_new_account_state_gas,
     }
 }
 
@@ -1589,6 +1746,39 @@ impl<FEN: FoundryEvmNetwork> DerefMut for InspectorStack<FEN> {
 }
 
 impl InspectorStackInner {
+    #[inline]
+    const fn refresh_static_opcode_dispatch(&mut self) {
+        self.refresh_static_step_dispatch();
+        self.refresh_static_step_end_dispatch();
+    }
+
+    #[inline]
+    const fn refresh_static_step_dispatch(&mut self) {
+        self.static_step_dispatch = if self.edge_coverage.is_none()
+            && self.line_coverage.is_none()
+            && self.printer.is_none()
+            && self.revert_diag.is_none()
+            && self.script_execution_inspector.is_none()
+            && self.tracer.is_none()
+        {
+            if self.fuzzer.is_some() {
+                OpcodeStepDispatch::FuzzerOnly
+            } else {
+                OpcodeStepDispatch::None
+            }
+        } else {
+            OpcodeStepDispatch::General
+        };
+    }
+
+    #[inline]
+    const fn refresh_static_step_end_dispatch(&mut self) {
+        self.has_static_step_end_inspectors = self.chisel_state.is_some()
+            || self.printer.is_some()
+            || self.revert_diag.is_some()
+            || self.tracer.is_some();
+    }
+
     /// Derive the next `--batch` CREATE2 salt and advance the per-batch counter.
     /// The per-inspector random seed is lazily initialized on first use.
     fn next_batch_create_salt(&mut self, chain_id: u64, nonce: u64) -> U256 {
@@ -1615,7 +1805,74 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
 
 #[cfg(test)]
 mod tests {
-    use super::{Address, InspectorStackInner, compute_batch_create_salt};
+    use super::{
+        Address, Fuzzer, InspectorStack, InspectorStackInner, OpcodeStepDispatch,
+        TraceRequirements, compute_batch_create_salt,
+    };
+    use foundry_evm_core::evm::EthEvmNetwork;
+
+    #[test]
+    fn opcode_dispatch_defaults_to_no_static_inspectors() {
+        let stack = InspectorStackInner::default();
+
+        assert_eq!(stack.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(!stack.has_static_step_end_inspectors);
+    }
+
+    #[test]
+    fn opcode_dispatch_uses_fuzzer_fast_path_when_fuzzer_is_only_static_step_inspector() {
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+        stack.set_fuzzer(Fuzzer::new(16, None));
+
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
+        assert!(!stack.inner.has_static_step_end_inspectors);
+
+        stack.collect_line_coverage(true);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+
+        stack.collect_line_coverage(false);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::FuzzerOnly);
+    }
+
+    #[test]
+    fn opcode_dispatch_tracks_general_step_and_step_end_inspectors() {
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+
+        stack.print(true);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+        assert!(stack.inner.has_static_step_end_inspectors);
+
+        stack.print(false);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(!stack.inner.has_static_step_end_inspectors);
+
+        stack.tracing_requirements(TraceRequirements::none().with_calls(true));
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+        assert!(stack.inner.has_static_step_end_inspectors);
+
+        stack.tracing_requirements(TraceRequirements::none());
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(!stack.inner.has_static_step_end_inspectors);
+
+        stack.set_chisel(0);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+        assert!(stack.inner.has_static_step_end_inspectors);
+    }
+
+    #[test]
+    fn opcode_dispatch_tracks_script_and_edge_coverage_inspectors() {
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+
+        stack.script(Address::with_last_byte(1));
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+        assert!(!stack.inner.has_static_step_end_inspectors);
+
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+        stack.collect_edge_coverage(true);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::General);
+        stack.collect_edge_coverage(false);
+        assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
+    }
 
     #[test]
     fn distinct_salts_across_simulations_at_same_nonce() {

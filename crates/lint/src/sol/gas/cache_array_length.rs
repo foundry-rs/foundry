@@ -97,6 +97,10 @@ fn collect_condition_length_reads<'hir>(
     reads: &mut Vec<LengthRead<'hir>>,
 ) {
     match &expr.peel_parens().kind {
+        ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+            collect_condition_length_reads(gcx, lhs, reads);
+            collect_condition_length_reads(gcx, rhs, reads);
+        }
         ExprKind::Binary(lhs, op, rhs) if is_comparison(op.kind) => {
             if matches!(lhs.peel_parens().kind, ExprKind::Ident(_)) {
                 collect_state_array_length_read(gcx, rhs, reads);

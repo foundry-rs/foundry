@@ -81,6 +81,10 @@ differential-coverage relscore coverage_data
 
 ## Caveats
 
+- `forge fuzz replay --corpus-dir <PATH>` replays corpus entries as seeds and
+  reports whether they execute successfully for the selected targets. It is not
+  the persisted-failure replay path. To reproduce the last saved fuzz failure,
+  run `forge fuzz replay` without `--corpus-dir`.
 - Unit and table tests are not runnable in showmap mode and are skipped.
 - A test with no `corpus_dir` configured is `SKIP`ped with reason
   `"no corpus_dir configured for this test"`.

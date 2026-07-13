@@ -175,6 +175,45 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(precompile_cheatcode_load_is_read_only, |prj, cmd| {
+    prj.add_test(
+        "PrecompileCheatcodeLoad.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+contract PrecompileCheatcodeLoadTest is Test {
+    address constant ECRECOVER = address(0x01);
+    bytes32 constant SLOT = bytes32(uint256(1));
+
+    function test_load_allows_precompile_target() public view {
+        assertEq(vm.load(ECRECOVER, SLOT), bytes32(0));
+    }
+
+    function test_mutation_cheatcodes_reject_precompile_target() public {
+        (bool storeSuccess,) = address(this).call(abi.encodeCall(this.storePrecompileSlot, ()));
+        assertFalse(storeSuccess);
+
+        (bool etchSuccess,) = address(this).call(abi.encodeCall(this.etchPrecompile, ()));
+        assertFalse(etchSuccess);
+    }
+
+    function storePrecompileSlot() external {
+        vm.store(ECRECOVER, SLOT, bytes32(uint256(1)));
+    }
+
+    function etchPrecompile() external {
+        vm.etch(ECRECOVER, hex"00");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--match-contract", "PrecompileCheatcodeLoadTest"]).assert_success();
+});
+
 forgetest_init!(tempo_t5_hardfork_precompile_smoke, |prj, cmd| {
     prj.update_config(|config| {
         config.networks = NetworkConfigs::with_tempo();
@@ -442,3 +481,39 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+forgetest_init!(
+    #[ignore]
+    arbitrum_fork_arbsys_arb_block_number,
+    |prj, cmd| {
+        prj.add_test(
+            "ArbitrumArbSys.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+interface ArbSys {
+    function arbBlockNumber() external view returns (uint256);
+}
+
+contract ArbitrumArbSysTest is Test {
+    function test_arbitrum_fork_arbsys_arb_block_number() public {
+        vm.createSelectFork("https://arbitrum-one.public.blastapi.io", 75219831);
+
+        assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219831);
+        assertLt(block.number, 75219831);
+
+        (bool success,) = address(0x64).staticcall{gas: 2}(
+            abi.encodeWithSelector(ArbSys.arbBlockNumber.selector)
+        );
+        assertFalse(success);
+
+        vm.rollFork(75219832);
+        assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219832);
+    }
+}
+   "#,
+        );
+
+        cmd.args(["test", "--mt", "test_arbitrum_fork_arbsys_arb_block_number"]).assert_success();
+    }
+);

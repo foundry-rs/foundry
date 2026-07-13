@@ -1,6 +1,6 @@
 use alloy_primitives::{
     Address, U256,
-    map::{DefaultHashBuilder, HashMap},
+    map::{DefaultHashBuilder, Entry, HashMap},
 };
 use core::{
     fmt,
@@ -116,14 +116,16 @@ pub struct EdgeIndexMap {
 }
 
 impl EdgeIndexMap {
+    #[inline]
     pub fn edge_index(&mut self, edge: EdgeKey) -> usize {
-        if let Some(index) = self.edge_indices.get(&edge) {
-            *index
-        } else {
-            let index = self.next_index;
-            self.next_index += 1;
-            self.edge_indices.insert(edge, index);
-            index
+        match self.edge_indices.entry(edge) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let index = self.next_index;
+                self.next_index += 1;
+                entry.insert(index);
+                index
+            }
         }
     }
 
@@ -164,6 +166,9 @@ pub struct EdgeCovInspector {
     hitcount: Vec<u8>,
     /// Configuration for edge ID generation.
     config: EdgeCovConfig,
+    /// Whether to collect edge hits. Comparison-only consumers keep this off to avoid affecting
+    /// the active coverage guidance source.
+    collect_edges: bool,
     /// Per-execution dense edge hitcounts. Stable IDs are assigned by the corpus history owner.
     dense_hitcount: HashMap<EdgeKey, u8>,
     hash_builder: DefaultHashBuilder,
@@ -178,6 +183,7 @@ impl fmt::Debug for EdgeCovInspector {
             .field("capacity", &self.hitcount.len())
             .field("edges", &self.edge_count())
             .field("config", &self.config)
+            .field("collect_edges", &self.collect_edges)
             .finish()
     }
 }
@@ -195,6 +201,14 @@ impl EdgeCovInspector {
         inspector
     }
 
+    /// Create a comparison-operand inspector without collecting EVM edge hits.
+    pub fn with_cmp_log_only() -> Self {
+        let mut inspector = Self::new();
+        inspector.collect_edges = false;
+        inspector.enable_cmp_log(true);
+        inspector
+    }
+
     /// Create a new `EdgeCovInspector` with the given configuration.
     ///
     /// [`EdgeCovKind::Hash`] preallocates a fixed-size bitmap;
@@ -207,6 +221,7 @@ impl EdgeCovInspector {
         Self {
             hitcount,
             config,
+            collect_edges: true,
             dense_hitcount: HashMap::default(),
             hash_builder: DefaultHashBuilder::default(),
             cmp_log: None,
@@ -257,6 +272,10 @@ impl EdgeCovInspector {
 
     /// Mark the edge `(address, depth, pc, jump_dest)` as hit.
     fn store_hit(&mut self, address: Address, depth: usize, pc: usize, jump_dest: U256) {
+        if !self.collect_edges {
+            return;
+        }
+
         let edge_id = match self.config.kind {
             EdgeCovKind::CollisionFree => {
                 self.store_dense_hit(address, depth, pc, jump_dest);
@@ -422,7 +441,7 @@ where
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let op = interp.bytecode.opcode();
-        if matches!(op, opcode::JUMP | opcode::JUMPI) {
+        if self.collect_edges && matches!(op, opcode::JUMP | opcode::JUMPI) {
             self.do_step(interp, context);
         }
         if self.cmp_log.is_some()
@@ -485,6 +504,25 @@ mod tests {
         let (coverage, cmp_log) = inspector.into_parts();
         assert_eq!(coverage, EdgeCoverage::CollisionFree(Vec::new()));
         assert!(cmp_log.is_empty());
+    }
+
+    #[test]
+    fn cmp_log_only_does_not_collect_edges() {
+        let mut inspector = EdgeCovInspector::with_cmp_log_only();
+        let addr = Address::ZERO;
+
+        inspector.store_hit(addr, 0, 0, U256::from(1));
+        inspector.store_cmp(CmpOperands {
+            op1: U256::from(123),
+            op2: U256::from(456),
+            pc: 42,
+            address: addr,
+            opcode: opcode::EQ,
+        });
+
+        let (coverage, cmp_log) = inspector.into_parts();
+        assert_eq!(coverage, EdgeCoverage::CollisionFree(Vec::new()));
+        assert_eq!(cmp_log.len(), 1);
     }
 
     #[test]

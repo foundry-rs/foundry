@@ -242,6 +242,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.active_fork_url()
     }
 
+    fn active_fork_block_number(&self) -> Option<u64> {
+        self.backend.active_fork_block_number()
+    }
+
     fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {
         self.backend.ensure_fork(id)
     }
@@ -273,6 +277,14 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
 
     fn is_persistent(&self, acc: &Address) -> bool {
         self.backend.is_persistent(acc)
+    }
+
+    fn invalidate_fork_cache_account(&mut self, address: Address) {
+        self.backend.to_mut().invalidate_fork_cache_account(address)
+    }
+
+    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256) {
+        self.backend.to_mut().invalidate_fork_cache_storage(address, slot)
     }
 
     fn remove_persistent_account(&mut self, account: &Address) -> bool {

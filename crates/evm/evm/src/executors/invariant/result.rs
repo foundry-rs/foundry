@@ -187,7 +187,7 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
 ) -> Result<Option<&'a Function>> {
-    let inner_sequence = invariant_inner_sequence(executor);
+    let mut inner_sequence = None;
     let mut first_broken: Option<&'a Function> = None;
     let ctx = InvariantRunCtx {
         contract: invariant_contract,
@@ -208,8 +208,10 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
             invariant.abi_encode_input(&[])?.into(),
         )?;
         if !success {
+            let inner_sequence =
+                inner_sequence.get_or_insert_with(|| invariant_inner_sequence(executor));
             let case =
-                ctx.failed_case(invariant, *fail_on_revert, false, call_result, &inner_sequence);
+                ctx.failed_case(invariant, *fail_on_revert, false, call_result, inner_sequence);
             invariant_failures.record_failure(invariant, InvariantFuzzError::BrokenInvariant(case));
             if first_broken.is_none() {
                 first_broken = Some(*invariant);
@@ -261,6 +263,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     state_changeset: &StateChangeset,
     handler_target: Address,
     handler_selector: Selector,
+    assertion_failure: bool,
     pre_merge_edges_hash: Option<B256>,
 ) -> Result<ContinueOutcome<'a>> {
     let is_optimization = invariant_contract.is_optimization();
@@ -316,7 +319,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             )?;
         }
     } else {
-        let is_assert_failure = did_fail_on_assert(&call_result, state_changeset);
+        let is_assert_failure = assertion_failure;
         let reverted = call_result.reverted;
 
         if reverted {

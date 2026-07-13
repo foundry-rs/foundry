@@ -39,14 +39,14 @@ jobs:
       packages: write
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Login into registry ${{ env.REGISTRY }}
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -56,7 +56,7 @@ jobs:
       # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
@@ -66,11 +66,11 @@ jobs:
       # - anything else: tagged as-is
       - name: Finalize Docker Metadata
         id: docker_tagging
+        env:
+          TAG: ${{ inputs.tag_name }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
         run: |
-          TAG="${{ inputs.tag_name }}"
-          REGISTRY="${{ env.REGISTRY }}"
-          IMAGE="${{ env.IMAGE_NAME }}"
-
           if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="v${BASH_REMATCH[1]}"
             MINOR="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
@@ -86,9 +86,12 @@ jobs:
 
       # Log docker metadata to explicitly know what is being pushed
       - name: Inspect Docker Metadata
+        env:
+          DOCKER_TAGS: ${{ steps.docker_tagging.outputs.docker_tags }}
+          DOCKER_LABELS: ${{ steps.meta.outputs.labels }}
         run: |
-          printf "TAGS -> %s\n" "${{ steps.docker_tagging.outputs.docker_tags }}"
-          printf "LABELS -> %s\n" "${{ steps.meta.outputs.labels }}"
+          printf "TAGS -> %s\n" "$DOCKER_TAGS"
+          printf "LABELS -> %s\n" "$DOCKER_LABELS"
 
       - name: Set up Depot CLI
         uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1
@@ -131,7 +134,7 @@ jobs:
           done
 
       - name: Image build provenance attestation
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}

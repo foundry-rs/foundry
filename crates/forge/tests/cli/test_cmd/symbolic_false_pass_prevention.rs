@@ -113,9 +113,20 @@ contract SymbolicFalsePassPrevention is Test {
         assert(gas.gasTotalUsed == 0);
     }
 
+    function checkLastFrameGasFailsClosed() public view {
+        (bool success, bytes memory data) = address(vm).staticcall(abi.encodeWithSignature("lastFrameGas()"));
+        assert(success && data.length != 0);
+    }
+
     function checkSnapshotGasLastCallFailsClosed() public {
         uint256 gasUsed = vm.snapshotGasLastCall("name");
         assert(gasUsed == 0);
+    }
+
+    function checkSnapshotGasLastFrameFailsClosed() public {
+        (bool success, bytes memory data) =
+            address(vm).call(abi.encodeWithSignature("snapshotGasLastFrame(string)", "name"));
+        assert(success && data.length != 0);
     }
 
     function checkStopSnapshotGasFailsClosed() public {
@@ -137,9 +148,9 @@ contract SymbolicFalsePassPrevention is Test {
         foundry_test_utils::str![[r#"
 [PASS] checkConcreteAddmodMulmodUseUnboundedIntermediate()
 [FAIL: panic: assertion failed (0x01); counterexample:
+checkSymbolicAddmodFailsClosed(uint256)
+checkSymbolicMulmodFailsClosed(uint256)
 checkKzgPrecompileInvalidWitnessCounterexample(bytes32)
-unsupported symbolic execution feature: symbolic ADDMOD unbounded intermediate not modeled
-unsupported symbolic execution feature: symbolic MULMOD unbounded intermediate not modeled
 unsupported symbolic execution feature: symbolic bn254 precompile validity not modeled
 unsupported symbolic execution feature: symbolic blake2f precompile final flag not modeled
 unsupported symbolic execution feature: symbolic vm.setEvmVersion not modeled
@@ -148,7 +159,9 @@ unsupported symbolic execution feature: symbolic vm.expectSafeMemory not modeled
 unsupported symbolic execution feature: symbolic vm.expectSafeMemoryCall not modeled
 unsupported symbolic execution feature: symbolic vm.stopExpectSafeMemory not modeled
 unsupported symbolic execution feature: symbolic vm.lastCallGas not modeled
+unsupported symbolic execution feature: symbolic vm.lastFrameGas not modeled
 unsupported symbolic execution feature: symbolic vm.snapshotGasLastCall not modeled
+unsupported symbolic execution feature: symbolic vm.snapshotGasLastFrame not modeled
 unsupported symbolic execution feature: symbolic vm.stopSnapshotGas not modeled
 "#]],
     );

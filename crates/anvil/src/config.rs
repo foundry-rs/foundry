@@ -38,6 +38,7 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
+    hardforks::latest_active_tempo_hardfork,
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -60,9 +61,9 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tempo_chainspec::{
-    hardfork::TempoHardfork,
-    spec::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
+use tempo_hardfork::{
+    TempoHardfork,
+    constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
 };
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
@@ -616,7 +617,7 @@ impl NodeConfig {
             return foundry_evm::hardforks::OpHardfork::default().into();
         }
         if self.networks.is_tempo() {
-            return TempoHardfork::default().into();
+            return latest_active_tempo_hardfork().into();
         }
         EthereumHardfork::default().into()
     }
@@ -1197,6 +1198,10 @@ impl NodeConfig {
         let base_fee_params: BaseFeeParams =
             self.networks.base_fee_params(self.get_genesis_timestamp());
 
+        // On Tempo, the base fee follows the chain's hardfork rules instead of EIP-1559.
+        let tempo_hardfork =
+            self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork()));
+
         let fees = FeeManager::new(
             spec_id,
             self.get_base_fee(),
@@ -1205,6 +1210,7 @@ impl NodeConfig {
             self.get_blob_excess_gas_and_price(),
             self.get_blob_params(),
             base_fee_params,
+            tempo_hardfork,
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
@@ -1423,6 +1429,12 @@ latest block number: {latest_block}"
             self.hardfork = Some(hardfork);
         }
 
+        // The fee manager was built before the fork hardfork was known, so refresh the Tempo
+        // hardfork it uses for base fee calculations.
+        if self.networks.is_tempo() {
+            fees.set_tempo_hardfork(Some(TempoHardfork::from(self.get_hardfork())));
+        }
+
         // if not set explicitly we use the base fee of the latest block
         if self.base_fee.is_none()
             && let Some(base_fee) = block.header.base_fee_per_gas()
@@ -1574,7 +1586,7 @@ latest block number: {latest_block}"
     }
 }
 
-const fn tempo_default_base_fee(hardfork: TempoHardfork) -> u64 {
+pub(crate) const fn tempo_default_base_fee(hardfork: TempoHardfork) -> u64 {
     if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE }
 }
 
@@ -1849,5 +1861,12 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert!(matches!(config.get_hardfork(), FoundryHardfork::Tempo(_)));
+    }
+
+    #[test]
+    fn get_hardfork_on_local_tempo_defaults_to_latest_active() {
+        let config = NodeConfig::test_tempo();
+
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Tempo(latest_active_tempo_hardfork()));
     }
 }

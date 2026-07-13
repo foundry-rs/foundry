@@ -51,6 +51,27 @@ use missing_inheritance::MISSING_INHERITANCE;
 mod event_fields;
 use event_fields::EVENT_FIELDS;
 
+mod unused_error;
+use unused_error::UNUSED_ERROR;
+
+mod literal_instead_of_constant;
+use literal_instead_of_constant::LITERAL_INSTEAD_OF_CONSTANT;
+
+mod function_init_state;
+use function_init_state::FUNCTION_INIT_STATE;
+
+mod internal_function_used_once;
+use internal_function_used_once::INTERNAL_FUNCTION_USED_ONCE;
+
+mod cyclomatic_complexity;
+use cyclomatic_complexity::CYCLOMATIC_COMPLEXITY;
+
+mod incorrect_using_for;
+use incorrect_using_for::INCORRECT_USING_FOR;
+
+mod modifier_used_only_once;
+use modifier_used_only_once::MODIFIER_USED_ONLY_ONCE;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -70,4 +91,11 @@ register_lints!(
     (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
     (MissingInheritance, project, (MISSING_INHERITANCE)),
     (EventFields, early, (EVENT_FIELDS)),
+    (UnusedError, project, (UNUSED_ERROR)),
+    (LiteralInsteadOfConstant, late, (LITERAL_INSTEAD_OF_CONSTANT)),
+    (FunctionInitState, late, (FUNCTION_INIT_STATE)),
+    (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE)),
+    (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY)),
+    (IncorrectUsingFor, late, (INCORRECT_USING_FOR)),
+    (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE)),
 );

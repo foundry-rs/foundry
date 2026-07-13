@@ -32,7 +32,7 @@ pub struct RpcOpts {
 
     /// JWT Secret for the RPC endpoint.
     ///
-    /// The JWT secret will be used to create a JWT for a RPC. For example, the following can be
+    /// The JWT secret will be used to create a JWT for an RPC. For example, the following can be
     /// used to simulate a CL `engine_forkchoiceUpdated` call:
     ///
     /// cast rpc --jwt-secret <JWT_SECRET> engine_forkchoiceUpdatedV2
