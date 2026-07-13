@@ -1267,7 +1267,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             InvariantFuzzError::MaxAssumeRejects(config.max_assume_rejects),
                         );
                         campaign_state.request_terminal_stop();
-                        break 'stop;
+                        stop_after_run = true;
+                        break;
                     }
                 } else {
                     // Commit executed call result.
