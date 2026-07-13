@@ -26,7 +26,27 @@ pub fn configure_pcx(
     project: Option<&Project>,
     target_paths: Option<&[PathBuf]>,
 ) -> Result<()> {
-    configure_pcx_with_sources(pcx, config, project, target_paths, false).map(drop)
+    let status = configure_pcx_with_sources(pcx, config, project, target_paths, false)?;
+    if !status.has_compatible_sources && !status.has_unsupported_sources {
+        eyre::bail!("no Solidity sources");
+    }
+    Ok(())
+}
+
+/// Describes the Solidity sources encountered while configuring Solar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SolarSourceStatus {
+    /// Whether any Solar-compatible sources were configured.
+    has_compatible_sources: bool,
+    /// Whether any sources require a Solidity version unsupported by Solar.
+    has_unsupported_sources: bool,
+}
+
+impl SolarSourceStatus {
+    /// Returns whether compatible sources were configured and no unsupported sources were found.
+    pub const fn is_fully_supported(&self) -> bool {
+        self.has_compatible_sources && !self.has_unsupported_sources
+    }
 }
 
 /// Configures a Solar parsing context with all Solar-compatible project sources.
@@ -38,6 +58,21 @@ pub fn configure_pcx_all_sources(
     project: Option<&Project>,
     target_paths: Option<&[PathBuf]>,
 ) -> Result<bool> {
+    let status = configure_pcx_all_sources_with_status(pcx, config, project, target_paths)?;
+    if !status.has_compatible_sources && !status.has_unsupported_sources {
+        eyre::bail!("no Solidity sources");
+    }
+    Ok(status.has_compatible_sources)
+}
+
+/// Configures a Solar parsing context with all Solar-compatible project sources and reports
+/// whether unsupported sources were skipped.
+pub fn configure_pcx_all_sources_with_status(
+    pcx: &mut ParsingContext<'_>,
+    config: &Config,
+    project: Option<&Project>,
+    target_paths: Option<&[PathBuf]>,
+) -> Result<SolarSourceStatus> {
     configure_pcx_with_sources(pcx, config, project, target_paths, true)
 }
 
@@ -47,7 +82,7 @@ fn configure_pcx_with_sources(
     project: Option<&Project>,
     target_paths: Option<&[PathBuf]>,
     all_versions: bool,
-) -> Result<bool> {
+) -> Result<SolarSourceStatus> {
     // Process build options
     let project = match project {
         Some(project) => project,
@@ -66,23 +101,38 @@ fn configure_pcx_with_sources(
             sources
         }
         // Otherwise, process all project files
-        None => project.paths.read_input_files()?,
+        None => {
+            let mut sources = project.paths.read_input_files()?;
+            if let Some(filter) = &project.sparse_output {
+                sources.retain(|path, _| filter.is_match(path));
+            }
+            sources
+        }
     };
 
     // Process Solar-compatible sources and use the latest version for the compiler input.
     let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
-    let versioned_sources = graph
+    let Some(versioned_sources) = graph
         // Resolve graph into mapping language -> version -> sources
         .into_sources_by_version(project)?
         .sources
         .into_iter()
         // Only interested in Solidity sources
         .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
-        .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
-        .1;
+        .map(|(_, sources)| sources)
+    else {
+        return Ok(SolarSourceStatus::default());
+    };
 
-    let versioned_sources =
-        versioned_sources.into_iter().filter(|(v, _, _)| v >= &MIN_SOLIDITY_VERSION);
+    let mut has_unsupported_sources = false;
+    let versioned_sources = versioned_sources.into_iter().filter(|(version, sources, _)| {
+        if version < &MIN_SOLIDITY_VERSION && !sources.is_empty() {
+            has_unsupported_sources = true;
+            false
+        } else {
+            true
+        }
+    });
     let (version, sources) = if all_versions {
         versioned_sources.fold(
             (MIN_SOLIDITY_VERSION, Sources::default()),
@@ -111,7 +161,7 @@ fn configure_pcx_with_sources(
 
     configure_pcx_from_solc(pcx, &project.paths, &solc, true);
 
-    Ok(has_sources)
+    Ok(SolarSourceStatus { has_compatible_sources: has_sources, has_unsupported_sources })
 }
 
 /// Extracts Solar-compatible sources from a [`ProjectCompileOutput`].

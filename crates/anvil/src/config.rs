@@ -40,6 +40,7 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
+    hardforks::latest_active_tempo_hardfork,
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -634,7 +635,7 @@ impl NodeConfig {
             return foundry_evm::hardforks::OpHardfork::default().into();
         }
         if self.networks.is_tempo() {
-            return TempoHardfork::default().into();
+            return latest_active_tempo_hardfork().into();
         }
         #[cfg(feature = "monad")]
         if self.networks.is_monad() {
@@ -1890,6 +1891,13 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert!(matches!(config.get_hardfork(), FoundryHardfork::Tempo(_)));
+    }
+
+    #[test]
+    fn get_hardfork_on_local_tempo_defaults_to_latest_active() {
+        let config = NodeConfig::test_tempo();
+
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Tempo(latest_active_tempo_hardfork()));
     }
 
     #[test]

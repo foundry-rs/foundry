@@ -93,8 +93,8 @@ use crate::{
     runner::{count_runnable_invariant_campaign_anchors, function_matches_network_pass},
     traces::render_trace_arena_inner,
 };
-pub use filter::{FilterArgs, ProjectPathsAwareFilter};
-use filter::{RerunFailure, RerunFailures};
+use filter::RerunFailures;
+pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
@@ -342,6 +342,7 @@ pub(crate) struct TestExecutionOptions {
     pub(crate) multi_network: MultiNetworkConfig,
     pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     pub(crate) inline_config: Arc<InlineConfig>,
+    pub(crate) selected_sources: BTreeSet<PathBuf>,
 }
 
 impl TestExecutionOptions {
@@ -353,6 +354,7 @@ impl TestExecutionOptions {
             multi_network: MultiNetworkConfig::default(),
             replay_symbolic_artifact: None,
             inline_config,
+            selected_sources: BTreeSet::new(),
         }
     }
 
@@ -365,6 +367,17 @@ impl TestExecutionOptions {
 struct FuzzMinimizeNetworkPassOptions {
     inline_config: Arc<InlineConfig>,
     multi_network: MultiNetworkConfig,
+}
+
+struct CompiledTestProject {
+    project_root: PathBuf,
+    config: Config,
+    evm_opts: EvmOpts,
+    output: ProjectCompileOutput,
+    filter: ProjectPathsAwareFilter,
+    inline_config: Arc<InlineConfig>,
+    replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+    selected_sources: BTreeSet<PathBuf>,
 }
 
 fn sources_to_compile_from_artifacts(
@@ -1535,24 +1548,17 @@ impl TestArgs {
 
         self.ensure_mutation_mode_compatible(false)?;
 
-        let (
-            project_root,
-            config,
-            evm_opts,
-            output,
-            filter,
-            inline_config,
-            replay_symbolic_artifact,
-        ) = self.compile_project().await?;
+        let compiled = self.compile_project().await?;
         self.run_tests(
-            &project_root,
-            config,
-            evm_opts,
-            &output,
-            &filter,
+            &compiled.project_root,
+            compiled.config,
+            compiled.evm_opts,
+            &compiled.output,
+            &compiled.filter,
             TestExecutionOptions {
-                replay_symbolic_artifact,
-                ..TestExecutionOptions::default_run(inline_config)
+                replay_symbolic_artifact: compiled.replay_symbolic_artifact,
+                selected_sources: compiled.selected_sources,
+                ..TestExecutionOptions::default_run(compiled.inline_config)
             },
         )
         .await
@@ -1603,7 +1609,7 @@ impl TestArgs {
         let output = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit)
-            .files(files)
+            .files(files.clone())
             .compile(&project)?;
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
@@ -1618,28 +1624,20 @@ impl TestArgs {
             &filter,
             TestExecutionOptions {
                 replay_symbolic_artifact,
+                selected_sources: files,
                 ..TestExecutionOptions::default_run(inline_config)
             },
         )
         .await
     }
 
-    async fn compile_project(
-        &mut self,
-    ) -> Result<(
-        PathBuf,
-        Config,
-        EvmOpts,
-        ProjectCompileOutput,
-        ProjectPathsAwareFilter,
-        Arc<InlineConfig>,
-        Option<SymbolicArtifactReplayConfig>,
-    )> {
+    async fn compile_project(&mut self) -> Result<CompiledTestProject> {
         let should_default_fuzz_run_workers_to_auto =
             self.fuzz_only.is_enabled() && self.invariant_workers.is_none();
-
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+
+        let should_mutate = self.mutate.is_some();
 
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
@@ -1650,10 +1648,11 @@ impl TestArgs {
             config.invariant.workers = InvariantWorkers::Auto;
         }
 
-        if self.mutate.is_some() {
+        if should_mutate {
             // Force dyn test linking and cache usage for mutation testing after any config reload.
             config.dynamic_test_linking = true;
             config.cache = true;
+            apply_mutation_compiler_overrides(&mut config);
         }
 
         self.apply_auto_fuzz_corpus_dir(&mut config);
@@ -1697,7 +1696,7 @@ impl TestArgs {
                 ProjectCompiler::new().dynamic_test_linking(dynamic_test_linking).quiet(quiet),
             )?;
             let inline_config = Arc::new(InlineConfig::new_parsed(&output, &config)?);
-            return Ok((
+            return Ok(CompiledTestProject {
                 project_root,
                 config,
                 evm_opts,
@@ -1705,7 +1704,8 @@ impl TestArgs {
                 filter,
                 inline_config,
                 replay_symbolic_artifact,
-            ));
+                selected_sources: BTreeSet::new(),
+            });
         }
 
         let compile = |files| {
@@ -1716,15 +1716,21 @@ impl TestArgs {
                 .compile(&project)
         };
 
-        let (files, inline_config) =
+        let (selected_sources, inline_config) =
             self.get_sources_to_compile(&config, &filter, None, replay_symbolic_artifact.as_ref())?;
-        let output = compile(files)?;
+        let mut output = compile(selected_sources.clone());
+        if should_mutate {
+            output = output.wrap_err(
+                "Mutation testing compiler profile failed to compile before applying mutations",
+            );
+        }
+        let output = output?;
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
             None => Arc::new(InlineConfig::new_parsed(&output, &config)?),
         };
 
-        Ok((
+        Ok(CompiledTestProject {
             project_root,
             config,
             evm_opts,
@@ -1732,15 +1738,17 @@ impl TestArgs {
             filter,
             inline_config,
             replay_symbolic_artifact,
-        ))
+            selected_sources,
+        })
     }
 
     pub(crate) async fn prepare_fuzz_minimize_replay(
         &mut self,
         corpus_dir: &Path,
     ) -> Result<FuzzMinimizeReplaySession> {
-        let (_, mut config, mut evm_opts, output, filter, inline_config, _) =
-            self.compile_project().await?;
+        let compiled = self.compile_project().await?;
+        let CompiledTestProject { mut config, mut evm_opts, output, filter, inline_config, .. } =
+            compiled;
 
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -2196,7 +2204,11 @@ impl TestArgs {
         if let Some(mutate) = &self.mutate {
             // Check outcome here, stop if any test failed
             if outcome.failed() > 0 {
-                eyre::bail!("Cannot run mutation testing with failed tests");
+                eyre::bail!(
+                    "Mutation testing compiler profile failed its unmutated baseline run; \
+                     adjust `--mutation-via-ir` / `--mutation-optimizer-runs` or fix the tests \
+                     before running mutation testing"
+                );
             }
 
             // A green baseline that ran zero non-skipped tests is not useful:
@@ -2367,18 +2379,10 @@ impl TestArgs {
                 );
             }
 
-            let mut config_for_mutation = config_for_mutation;
-            apply_mutation_compiler_overrides(&mut config_for_mutation);
-
             let json_output = shell::is_json();
-            let (selected_sources, _) = self.get_sources_to_compile(
-                &config_for_mutation,
-                filter,
-                Some(execution.inline_config.clone()),
-                execution.replay_symbolic_artifact.as_ref(),
-            )?;
-            let selected_sources_relative = selected_sources
-                .into_iter()
+            let selected_sources_relative = execution
+                .selected_sources
+                .iter()
                 .filter_map(|path| {
                     path.strip_prefix(&config_for_mutation.root).ok().map(PathBuf::from)
                 })
@@ -2402,6 +2406,7 @@ impl TestArgs {
                 // into `test_pattern`. Using `self.filter.clone()` would lose
                 // those and let mutant runs silently diverge from baseline.
                 filter_args: filter.args().clone(),
+                rerun_failures: filter.rerun_failures().map(|failures| failures.to_vec()),
                 selected_sources_relative,
                 isolate: evm_opts_for_mutation.isolate,
             };
