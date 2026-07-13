@@ -7,7 +7,8 @@ use solar::{
     ast::{BinOpKind, LitKind, StrKind},
     sema::{
         Gcx,
-        hir::{self, ElementaryType, ExprKind, TypeKind},
+        eval::ConstantEvaluator,
+        hir::{self, ElementaryType, ExprKind, Res, StmtKind, TypeKind},
         ty::TyKind,
     },
 };
@@ -33,6 +34,7 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
             && args.len() == 1
             && let Some(call_arg) = args.exprs().next()
             && is_unsafe_typecast_hir(gcx, call_arg, ty)
+            && !is_bounded_by_dominating_check(gcx, _hir, expr, call_arg, ty)
         {
             ctx.emit_with_suggestion(
                 &UNSAFE_TYPECAST,
@@ -44,6 +46,206 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
             )).with_desc("consider disabling this lint if you're certain the cast is safe"));
         }
     }
+}
+
+/// Returns whether every path to the cast is constrained to the target unsigned integer range.
+///
+/// This is a small forward dataflow analysis over Solar's structured HIR. A conditional whose
+/// out-of-range edge terminates contributes an upper-bound fact to the surviving edge. Assigning
+/// to the tracked variable invalidates that fact.
+fn is_bounded_by_dominating_check<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
+    cast: &'hir hir::Expr<'hir>,
+    source: &'hir hir::Expr<'hir>,
+    target: &ElementaryType,
+) -> bool {
+    let ElementaryType::UInt(size) = target else { return false };
+    let Some(var) = resolved_variable(source) else { return false };
+    let max = if size.bits() == 256 {
+        alloy_primitives::U256::MAX
+    } else {
+        (alloy_primitives::U256::from(1) << size.bits()) - alloy_primitives::U256::from(1)
+    };
+
+    hir.all_functions().any(|id| {
+        hir.function(id).body.is_some_and(|body| {
+            body.span.contains(cast.span) && block_proves_bound(gcx, body, cast, var, max, false)
+        })
+    })
+}
+
+fn block_proves_bound<'hir>(
+    gcx: Gcx<'hir>,
+    block: hir::Block<'hir>,
+    cast: &'hir hir::Expr<'hir>,
+    var: hir::VariableId,
+    max: alloy_primitives::U256,
+    mut bounded: bool,
+) -> bool {
+    for stmt in block.stmts {
+        if stmt.span.contains(cast.span) {
+            return stmt_proves_bound(gcx, stmt, cast, var, max, bounded);
+        }
+
+        if let StmtKind::If(cond, then_stmt, else_stmt) = stmt.kind {
+            let then_terminates = stmt_always_terminates(then_stmt);
+            let else_terminates = else_stmt.is_some_and(stmt_always_terminates);
+            if then_terminates && else_stmt.is_none() && false_edge_bounds(gcx, cond, var, max) {
+                bounded = true;
+            } else if else_terminates && true_edge_bounds(gcx, cond, var, max) {
+                bounded = true;
+            }
+        }
+
+        if stmt_assigns_var(stmt, var) {
+            bounded = false;
+        }
+    }
+    false
+}
+
+fn stmt_proves_bound<'hir>(
+    gcx: Gcx<'hir>,
+    stmt: &'hir hir::Stmt<'hir>,
+    cast: &'hir hir::Expr<'hir>,
+    var: hir::VariableId,
+    max: alloy_primitives::U256,
+    bounded: bool,
+) -> bool {
+    match stmt.kind {
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block_proves_bound(gcx, block, cast, var, max, bounded)
+        }
+        StmtKind::If(cond, then_stmt, else_stmt) => {
+            if then_stmt.span.contains(cast.span) {
+                stmt_proves_bound(
+                    gcx,
+                    then_stmt,
+                    cast,
+                    var,
+                    max,
+                    bounded || true_edge_bounds(gcx, cond, var, max),
+                )
+            } else if let Some(else_stmt) = else_stmt
+                && else_stmt.span.contains(cast.span)
+            {
+                stmt_proves_bound(
+                    gcx,
+                    else_stmt,
+                    cast,
+                    var,
+                    max,
+                    bounded || false_edge_bounds(gcx, cond, var, max),
+                )
+            } else {
+                false
+            }
+        }
+        StmtKind::Loop(..)
+        | StmtKind::AssemblyBlock(..)
+        | StmtKind::Switch(..)
+        | StmtKind::Try(..) => false,
+        _ => bounded,
+    }
+}
+
+fn true_edge_bounds(
+    gcx: Gcx<'_>,
+    cond: &hir::Expr<'_>,
+    var: hir::VariableId,
+    max: alloy_primitives::U256,
+) -> bool {
+    comparison_bounds(gcx, cond, var, max, true)
+}
+
+fn false_edge_bounds(
+    gcx: Gcx<'_>,
+    cond: &hir::Expr<'_>,
+    var: hir::VariableId,
+    max: alloy_primitives::U256,
+) -> bool {
+    comparison_bounds(gcx, cond, var, max, false)
+}
+
+fn comparison_bounds(
+    gcx: Gcx<'_>,
+    cond: &hir::Expr<'_>,
+    var: hir::VariableId,
+    max: alloy_primitives::U256,
+    truthy: bool,
+) -> bool {
+    let ExprKind::Binary(lhs, op, rhs) = &cond.peel_parens().kind else { return false };
+
+    let (value, limit, op) = if resolved_variable(lhs) == Some(var) {
+        (*lhs, *rhs, op.kind)
+    } else if resolved_variable(rhs) == Some(var) {
+        let reversed = match op.kind {
+            BinOpKind::Lt => BinOpKind::Gt,
+            BinOpKind::Le => BinOpKind::Ge,
+            BinOpKind::Gt => BinOpKind::Lt,
+            BinOpKind::Ge => BinOpKind::Le,
+            _ => return false,
+        };
+        (*rhs, *lhs, reversed)
+    } else {
+        return false;
+    };
+    debug_assert_eq!(resolved_variable(value), Some(var));
+
+    let Ok(limit) = ConstantEvaluator::new(gcx).try_eval(limit) else { return false };
+    let Some(limit) = limit.as_u256() else { return false };
+    match (op, truthy) {
+        (BinOpKind::Le, true) | (BinOpKind::Gt, false) => limit <= max,
+        (BinOpKind::Lt, true) | (BinOpKind::Ge, false) => {
+            limit.checked_sub(alloy_primitives::U256::from(1)).is_some_and(|limit| limit <= max)
+        }
+        _ => false,
+    }
+}
+
+fn resolved_variable(expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
+    let ExprKind::Ident([Res::Item(hir::ItemId::Variable(id))]) = expr.peel_parens().kind else {
+        return None;
+    };
+    Some(id)
+}
+
+fn stmt_always_terminates(stmt: &hir::Stmt<'_>) -> bool {
+    match stmt.kind {
+        StmtKind::Revert(_) | StmtKind::Return(_) => true,
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block.stmts.last().is_some_and(stmt_always_terminates)
+        }
+        StmtKind::If(_, then_stmt, Some(else_stmt)) => {
+            stmt_always_terminates(then_stmt) && stmt_always_terminates(else_stmt)
+        }
+        _ => false,
+    }
+}
+
+fn stmt_assigns_var(stmt: &hir::Stmt<'_>, var: hir::VariableId) -> bool {
+    match stmt.kind {
+        StmtKind::Expr(expr) => expr_assigns_var(expr, var),
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block.stmts.iter().any(|stmt| stmt_assigns_var(stmt, var))
+        }
+        StmtKind::Loop(block, _) => block.stmts.iter().any(|stmt| stmt_assigns_var(stmt, var)),
+        // Inline assembly and try/switch control flow are conservatively treated as clobbers.
+        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Try(_) => true,
+        StmtKind::If(_, then_stmt, else_stmt) => {
+            stmt_assigns_var(then_stmt, var)
+                || else_stmt.is_some_and(|stmt| stmt_assigns_var(stmt, var))
+        }
+        _ => false,
+    }
+}
+
+fn expr_assigns_var(expr: &hir::Expr<'_>, var: hir::VariableId) -> bool {
+    matches!(
+        expr.peel_parens().kind,
+        ExprKind::Assign(lhs, _, _) if resolved_variable(lhs) == Some(var)
+    )
 }
 
 /// Determines if a typecast is potentially unsafe (could lose data or precision).
