@@ -20,6 +20,9 @@ pub struct DocConfig {
     /// The repository url.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
+    /// The Git commit hash, tag, or branch used for source links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
     /// The path to source code (e.g. `tree/main/packages/contracts`).
     /// Useful for monorepos or for projects with source code located in specific directories.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,6 +39,7 @@ impl Default for DocConfig {
             homepage: Some(PathBuf::from("README.md")),
             title: String::default(),
             repository: None,
+            commit: None,
             path: None,
             ignore: Vec::default(),
         }
