@@ -41,6 +41,33 @@ contract DocTarget {
     assert_eq!(after, b"sentinel");
 });
 
+forgetest_init!(doc_supports_empty_projects, |_prj, cmd| {
+    cmd.arg("doc").assert_success();
+});
+
+forgetest!(doc_supports_mixed_solidity_versions, |prj, cmd| {
+    prj.add_source(
+        "New.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract New {}
+"#,
+    );
+    prj.add_source(
+        "Old.sol",
+        r#"
+pragma solidity 0.7.6;
+
+contract Old {}
+"#,
+    );
+
+    cmd.arg("doc").assert_success();
+    assert!(prj.root().join("docs/src/pages/src/contract.New.mdx").exists());
+    assert!(prj.root().join("docs/src/pages/src/contract.Old.mdx").exists());
+});
+
 #[cfg(unix)]
 forgetest_init!(doc_does_not_run_solc, |prj, cmd| {
     use std::os::unix::fs::PermissionsExt;

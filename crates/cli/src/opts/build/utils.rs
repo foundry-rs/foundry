@@ -37,9 +37,16 @@ pub fn configure_pcx(
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SolarSourceStatus {
     /// Whether any Solar-compatible sources were configured.
-    pub has_compatible_sources: bool,
+    has_compatible_sources: bool,
     /// Whether any sources require a Solidity version unsupported by Solar.
-    pub has_unsupported_sources: bool,
+    has_unsupported_sources: bool,
+}
+
+impl SolarSourceStatus {
+    /// Returns whether compatible sources were configured and no unsupported sources were found.
+    pub const fn is_fully_supported(&self) -> bool {
+        self.has_compatible_sources && !self.has_unsupported_sources
+    }
 }
 
 /// Configures a Solar parsing context with all Solar-compatible project sources.

@@ -80,14 +80,13 @@ impl DocArgs {
 
         // Solar does not support Solidity versions prior to 0.8.0. Preserve support for old,
         // mixed-version, and Solidity-free projects by using the existing compiler-backed parser.
-        let mut output =
-            if source_status.has_unsupported_sources || !source_status.has_compatible_sources {
-                let mut compile_project = config.solar_project()?;
-                compile_project.no_artifacts = true;
-                Some(ProjectCompiler::new().compile(&compile_project)?)
-            } else {
-                None
-            };
+        let mut output = if source_status.is_fully_supported() {
+            None
+        } else {
+            let mut compile_project = config.solar_project()?;
+            compile_project.no_artifacts = true;
+            Some(ProjectCompiler::new().compile(&compile_project)?)
+        };
 
         let mut doc_cfg = config.doc;
         if let Some(out) = self.out.clone() {
