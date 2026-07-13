@@ -370,7 +370,7 @@ struct EarlyExitTestGate {
     notified: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// All used inpectors besides [Cheatcodes].
+/// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
 #[derive(Default, Clone, Debug)]

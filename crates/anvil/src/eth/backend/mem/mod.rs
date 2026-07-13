@@ -37,7 +37,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
-    TrieAccount, TxEnvelope, TxReceipt, Typed2718,
+    TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
@@ -88,10 +88,11 @@ use alloy_rpc_types::{
     },
 };
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
-    block::{Block, BlockInfo, create_block},
+    block::{Block, BlockInfo, canonical_block, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
 };
 use anvil_rpc::error::RpcError;
@@ -1046,7 +1047,7 @@ impl<N: Network> Backend<N> {
     /// Takes a block as it's stored internally and returns the eth api conform block format.
     /// If `known_hash` is provided, it will be used instead of computing `hash_slow()`.
     pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
-        let size = U256::from(alloy_rlp::encode(&block).len() as u32);
+        let size = U256::from(alloy_rlp::encode(canonical_block(block.clone())).len() as u32);
 
         let header = block.header.clone();
         let transactions = block.body.transactions;
@@ -4814,6 +4815,137 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 }
 
 impl Backend<FoundryNetwork> {
+    /// Simulates a bundle of signed transactions and returns Flashbots-compatible results.
+    pub async fn call_bundle(
+        &self,
+        bundle: EthCallBundle,
+        transactions: Vec<PendingTransaction<FoundryTxEnvelope>>,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+    ) -> Result<EthCallBundleResponse, BlockchainError> {
+        let EthCallBundle {
+            block_number,
+            coinbase,
+            timestamp,
+            gas_limit,
+            difficulty,
+            base_fee,
+            ..
+        } = bundle;
+
+        let blob_gas_used = transactions
+            .iter()
+            .filter_map(|transaction| transaction.transaction.blob_gas_used())
+            .sum::<u64>();
+        let max_blob_gas = self.blob_params().max_blob_gas_per_block();
+        if blob_gas_used > max_blob_gas {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
+            ))));
+        }
+
+        self.with_database_at(block_request, |state, mut block_env| {
+            let state_block_number = block_env.number.to::<u64>();
+            block_env.number = U256::from(block_number);
+            block_env.timestamp = timestamp
+                .map(U256::from)
+                .unwrap_or_else(|| block_env.timestamp.saturating_add(U256::from(12)));
+            if let Some(coinbase) = coinbase {
+                block_env.beneficiary = coinbase;
+            }
+            if let Some(gas_limit) = gas_limit {
+                block_env.gas_limit = gas_limit;
+            }
+            if let Some(difficulty) = difficulty {
+                block_env.difficulty = difficulty;
+            }
+            if let Some(base_fee) = base_fee {
+                block_env.basefee = base_fee.try_into().unwrap_or(u64::MAX);
+            }
+
+            let mut evm_env = self.evm_env.read().clone();
+            evm_env.block_env = block_env;
+            let coinbase = evm_env.block_env.beneficiary;
+            let base_fee = evm_env.block_env.basefee;
+            let mut cache_db = CacheDB::new(state);
+            let initial_coinbase = revm::DatabaseRef::basic_ref(&cache_db, coinbase)?
+                .map(|account| account.balance)
+                .unwrap_or_default();
+            let mut coinbase_balance_before_tx = initial_coinbase;
+            let mut coinbase_balance_after_tx = initial_coinbase;
+            let mut total_gas_used = 0u64;
+            let mut total_gas_fees = U256::ZERO;
+            let mut bundle_hash = alloy_primitives::Keccak256::new();
+            let mut results = Vec::with_capacity(transactions.len());
+
+            for transaction in transactions {
+                let sender = *transaction.sender();
+                let tx = transaction.transaction.into_inner();
+                let tx_hash = tx.hash();
+                bundle_hash.update(tx_hash);
+
+                let mut inspector = self.build_inspector();
+                let (ResultAndState { result, state }, _) = self
+                    .transact_envelope_with_inspector_ref(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        &tx,
+                        sender,
+                    )?;
+
+                let gas_price = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
+                let gas_used = result.tx_gas_used();
+                let gas_fees = U256::from(gas_used) * U256::from(gas_price);
+                total_gas_used += gas_used;
+                total_gas_fees += gas_fees;
+
+                coinbase_balance_after_tx = state
+                    .get(&coinbase)
+                    .map(|account| account.info.balance)
+                    .unwrap_or(coinbase_balance_before_tx);
+                let coinbase_diff =
+                    coinbase_balance_after_tx.saturating_sub(coinbase_balance_before_tx);
+                let eth_sent_to_coinbase = coinbase_diff.saturating_sub(gas_fees);
+                coinbase_balance_before_tx = coinbase_balance_after_tx;
+
+                let output = result.output().cloned().unwrap_or_default();
+                let (value, revert) =
+                    if result.is_success() { (Some(output), None) } else { (None, Some(output)) };
+
+                results.push(EthCallBundleTransactionResult {
+                    coinbase_diff,
+                    eth_sent_to_coinbase,
+                    from_address: sender,
+                    gas_fees,
+                    gas_price: U256::from(gas_price),
+                    gas_used,
+                    to_address: tx.to(),
+                    tx_hash,
+                    value,
+                    revert,
+                });
+                cache_db.commit(state);
+            }
+
+            let coinbase_diff = coinbase_balance_after_tx.saturating_sub(initial_coinbase);
+            let eth_sent_to_coinbase = coinbase_diff.saturating_sub(total_gas_fees);
+            let bundle_gas_price =
+                coinbase_diff.checked_div(U256::from(total_gas_used)).unwrap_or_default();
+
+            Ok(EthCallBundleResponse {
+                bundle_hash: bundle_hash.finalize(),
+                bundle_gas_price,
+                coinbase_diff,
+                eth_sent_to_coinbase,
+                gas_fees: total_gas_fees,
+                results,
+                state_block_number,
+                total_gas_used,
+            })
+        })
+        .await?
+    }
+
     /// Executes bundles of call requests and returns each call output.
     pub async fn call_many(
         &self,
@@ -5094,15 +5226,18 @@ impl Backend<FoundryNetwork> {
     }
 
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
-        // Try to get the mined transaction by hash
-        if let Some(tx) = self.mined_transaction_by_hash(hash)
-            && let Ok(typed_tx) = FoundryTxEnvelope::try_from(tx)
-            && let Some(sidecar) = typed_tx.sidecar()
-        {
-            return Ok(Some(sidecar.sidecar.blobs().to_vec()));
-        }
-
-        Ok(None)
+        let storage = self.blockchain.storage.read();
+        Ok(storage.transactions.get(&hash).and_then(|mined| {
+            storage
+                .blocks
+                .get(&mined.block_hash)?
+                .body
+                .transactions
+                .get(mined.info.transaction_index as usize)?
+                .as_ref()
+                .sidecar()
+                .map(|sidecar| sidecar.sidecar.blobs().to_vec())
+        }))
     }
 
     /// Sets the fee token for a user address (Tempo-only).
@@ -5143,7 +5278,8 @@ impl Backend<FoundryNetwork> {
         validator_token: Address,
         amount: U256,
     ) -> DatabaseResult<()> {
-        let admin = Address::ZERO;
+        // T3+ rejects minting to the zero address.
+        let admin = Address::repeat_byte(0x11);
         self.with_tempo_storage(|| {
             // Mint the required tokens to admin so it can provide liquidity.
             // grant_role_internal bypasses the caller check, matching genesis seeding.
@@ -5639,7 +5775,10 @@ pub fn transaction_build(
         TxEnvelope::Legacy(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(rehash(s, hash))),
         TxEnvelope::Eip1559(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(rehash(s, hash))),
         TxEnvelope::Eip2930(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(rehash(s, hash))),
-        TxEnvelope::Eip4844(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash))),
+        TxEnvelope::Eip4844(s) => {
+            let s = if block.is_some() { s.map(TxEip4844Variant::drop_sidecar) } else { s };
+            AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash)))
+        }
         TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
     };
 

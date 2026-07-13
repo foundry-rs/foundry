@@ -61,8 +61,8 @@ const THETA_USD: Address = THETA_USD_ADDRESS;
 const TEMPO_ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 
-/// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
-const TIP20_TRANSFER_GAS: u64 = 300_000;
+/// Gas limit for TIP20 transfer calls, including T1+ transaction accounting.
+const TIP20_TRANSFER_GAS: u64 = 1_000_000;
 const T5_PRECOMPILE_GAS: u64 = 10_000_000;
 
 fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
@@ -1843,7 +1843,7 @@ async fn test_contract_deployment() {
     let bytecode = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]);
 
     let tx =
-        TransactionRequest::default().from(sender).with_input(bytecode).with_gas_limit(100_000);
+        TransactionRequest::default().from(sender).with_input(bytecode).with_gas_limit(1_000_000);
 
     let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
@@ -3745,7 +3745,8 @@ async fn test_gas_estimation_tempo_aa_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_tempo_aa_with_2d_nonce() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
+    let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();
@@ -3799,7 +3800,8 @@ async fn test_gas_estimation_tempo_aa_with_2d_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_tempo_aa_expiring_nonce() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
+    let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();

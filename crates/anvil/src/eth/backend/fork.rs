@@ -31,6 +31,7 @@ use alloy_rpc_types::{
     },
 };
 use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
@@ -472,6 +473,14 @@ impl<N: Network> ClientFork<N> {
         self.provider()
             .raw_request("eth_callMany".into(), (bundles, state_context, state_override))
             .await
+    }
+
+    /// Sends `eth_callBundle`.
+    pub async fn call_bundle(
+        &self,
+        bundle: EthCallBundle,
+    ) -> Result<EthCallBundleResponse, TransportError> {
+        self.provider().raw_request("eth_callBundle".into(), (bundle,)).await
     }
 
     /// Sends `eth_simulateV1`
