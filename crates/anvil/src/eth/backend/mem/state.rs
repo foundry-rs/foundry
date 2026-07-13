@@ -5,8 +5,10 @@ use alloy_primitives::{
     map::{AddressMap, B256Map, HashSet, U256Map},
 };
 use alloy_rlp::Encodable;
-use alloy_trie::{HashBuilder, Nibbles};
-use reth_trie_sparse::{LeafUpdate, RevealableSparseTrie, SparseStateTrie};
+use alloy_trie::{
+    EMPTY_ROOT_HASH, HashBuilder, Nibbles, TrieMask,
+    nodes::{BranchNodeRef, ExtensionNodeRef, LeafNodeRef, RlpNode},
+};
 use revm::{
     database::DbAccount,
     state::{Account, AccountInfo},
@@ -17,11 +19,11 @@ use std::mem;
 ///
 /// The old state-root path rebuilt and sorted every account and storage trie after each block.
 /// That made EIP-2935's block-hash storage contract turn mining into linear work as its ring was
-/// populated. This cache keeps a fully revealed in-memory trie and only rehashes paths changed by
-/// the latest block.
+/// populated. This cache keeps an in-memory Merkle Patricia trie and only rehashes paths changed
+/// by the latest block.
 #[derive(Debug, Default)]
 pub struct StateRootCache {
-    trie: Option<SparseStateTrie>,
+    trie: Option<IncrementalStateTrie>,
     dirty: AddressMap<DirtyAccount>,
 }
 
@@ -64,88 +66,293 @@ impl StateRootCache {
     /// Returns the current root, applying only changes recorded since the previous call.
     pub fn root(&mut self, accounts: &AddressMap<DbAccount>) -> B256 {
         if self.trie.is_none() {
-            self.trie = Some(build_sparse_state_trie(accounts));
+            self.trie = Some(IncrementalStateTrie::from_accounts(accounts));
             self.dirty.clear();
-            return self.trie.as_mut().unwrap().root().expect("state trie is revealed");
+            return self.trie.as_mut().unwrap().root();
         }
 
         let trie = self.trie.as_mut().unwrap();
         for (address, dirty) in mem::take(&mut self.dirty) {
             let hashed_address = keccak256(address);
             let Some(account) = accounts.get(&address) else {
-                update_leaf(trie.trie_mut(), hashed_address, Vec::new());
+                trie.accounts.remove(hashed_address);
+                trie.storage.remove(&hashed_address);
                 continue;
             };
 
-            let storage_trie = trie.get_or_create_storage_trie_mut(hashed_address);
-            let storage = if dirty.reset_storage {
-                storage_trie.wipe().expect("storage trie is revealed");
-                account.storage.iter().map(|(slot, value)| (*slot, *value)).collect::<Vec<_>>()
+            let storage_trie = if dirty.reset_storage {
+                trie.storage
+                    .entry(hashed_address)
+                    .insert_entry(IncrementalTrie::from_storage(&account.storage))
+                    .into_mut()
             } else {
-                dirty
-                    .storage
-                    .into_iter()
-                    .map(|slot| (slot, account.storage.get(&slot).copied().unwrap_or_default()))
-                    .collect::<Vec<_>>()
+                let storage_trie = trie.storage.entry(hashed_address).or_default();
+                for slot in dirty.storage {
+                    let key = keccak256(slot.to_be_bytes::<32>());
+                    if let Some(value) = account.storage.get(&slot) {
+                        storage_trie.insert(key, alloy_rlp::encode(value));
+                    } else {
+                        storage_trie.remove(key);
+                    }
+                }
+                storage_trie
             };
-            update_storage_leaves(storage_trie, storage);
-            let storage_root = storage_trie.root().expect("storage trie is revealed");
-            update_leaf(
-                trie.trie_mut(),
+            let storage_root = storage_trie.root();
+            trie.accounts.insert(
                 hashed_address,
                 trie_account_rlp_with_storage_root(&account.info, storage_root),
             );
         }
 
-        trie.root().expect("state trie is revealed")
+        trie.root()
     }
 }
 
-fn build_sparse_state_trie(accounts: &AddressMap<DbAccount>) -> SparseStateTrie {
-    let mut trie = SparseStateTrie::new();
-    trie.set_accounts_trie(RevealableSparseTrie::revealed_empty());
-    trie.set_default_storage_trie(RevealableSparseTrie::revealed_empty());
+#[derive(Debug, Default)]
+struct IncrementalStateTrie {
+    accounts: IncrementalTrie,
+    storage: B256Map<IncrementalTrie>,
+}
 
-    let mut account_leaves = B256Map::default();
-    for (address, account) in accounts {
-        let hashed_address = keccak256(address);
-        let storage_trie = trie.get_or_create_storage_trie_mut(hashed_address);
-        update_storage_leaves(
-            storage_trie,
-            account.storage.iter().map(|(slot, value)| (*slot, *value)),
-        );
-        let storage_root = storage_trie.root().expect("storage trie is revealed");
-        account_leaves.insert(
-            hashed_address,
-            LeafUpdate::Changed(trie_account_rlp_with_storage_root(&account.info, storage_root)),
-        );
+impl IncrementalStateTrie {
+    fn from_accounts(accounts: &AddressMap<DbAccount>) -> Self {
+        let mut trie = Self::default();
+        for (address, account) in accounts {
+            let hashed_address = keccak256(address);
+            let mut storage_trie = IncrementalTrie::from_storage(&account.storage);
+            let storage_root = storage_trie.root();
+            trie.accounts.insert(
+                hashed_address,
+                trie_account_rlp_with_storage_root(&account.info, storage_root),
+            );
+            trie.storage.insert(hashed_address, storage_trie);
+        }
+        trie
     }
-    update_leaves(trie.trie_mut(), &mut account_leaves);
-    trie
+
+    fn root(&mut self) -> B256 {
+        self.accounts.root()
+    }
 }
 
-fn update_storage_leaves(
-    trie: &mut RevealableSparseTrie,
-    storage: impl IntoIterator<Item = (U256, U256)>,
-) {
-    let mut leaves = storage
-        .into_iter()
-        .map(|(slot, value)| {
-            (keccak256(slot.to_be_bytes::<32>()), LeafUpdate::Changed(alloy_rlp::encode(value)))
-        })
-        .collect();
-    update_leaves(trie, &mut leaves);
+/// A mutable Merkle Patricia trie that caches the RLP reference for every unchanged node.
+#[derive(Debug, Default)]
+struct IncrementalTrie {
+    root: TrieNode,
 }
 
-fn update_leaf(trie: &mut RevealableSparseTrie, key: B256, value: Vec<u8>) {
-    let mut leaves = B256Map::from_iter([(key, LeafUpdate::Changed(value))]);
-    update_leaves(trie, &mut leaves);
+impl IncrementalTrie {
+    fn from_storage(storage: &U256Map<U256>) -> Self {
+        let mut trie = Self::default();
+        for (slot, value) in storage {
+            trie.insert(keccak256(slot.to_be_bytes::<32>()), alloy_rlp::encode(value));
+        }
+        trie
+    }
+
+    fn insert(&mut self, key: B256, value: Vec<u8>) {
+        self.root.insert(Nibbles::unpack(key), value);
+    }
+
+    fn remove(&mut self, key: B256) {
+        self.root.remove(Nibbles::unpack(key));
+    }
+
+    fn root(&mut self) -> B256 {
+        let Some(root) = self.root.rlp() else { return EMPTY_ROOT_HASH };
+        root.as_hash().unwrap_or_else(|| keccak256(root.as_ref()))
+    }
 }
 
-fn update_leaves(trie: &mut RevealableSparseTrie, leaves: &mut B256Map<LeafUpdate>) {
-    trie.update_leaves(leaves, |_, _| unreachable!("the complete trie is always revealed"))
-        .expect("state trie update succeeds");
-    debug_assert!(leaves.is_empty());
+#[derive(Debug, Default)]
+struct TrieNode {
+    kind: TrieNodeKind,
+    rlp: Option<RlpNode>,
+}
+
+#[derive(Debug, Default)]
+enum TrieNodeKind {
+    #[default]
+    Empty,
+    Leaf {
+        path: Nibbles,
+        value: Vec<u8>,
+    },
+    Extension {
+        path: Nibbles,
+        child: Box<TrieNode>,
+    },
+    Branch {
+        children: [Option<Box<TrieNode>>; 16],
+    },
+}
+
+impl TrieNode {
+    const fn leaf(path: Nibbles, value: Vec<u8>) -> Self {
+        Self { kind: TrieNodeKind::Leaf { path, value }, rlp: None }
+    }
+
+    fn extension(path: Nibbles, child: Self) -> Self {
+        debug_assert!(!path.is_empty());
+        Self { kind: TrieNodeKind::Extension { path, child: Box::new(child) }, rlp: None }
+    }
+
+    const fn branch(children: [Option<Box<Self>>; 16]) -> Self {
+        Self { kind: TrieNodeKind::Branch { children }, rlp: None }
+    }
+
+    fn empty_children() -> [Option<Box<Self>>; 16] {
+        Default::default()
+    }
+
+    fn insert(&mut self, key: Nibbles, value: Vec<u8>) {
+        let kind = mem::take(&mut self.kind);
+        self.rlp = None;
+        *self = match kind {
+            TrieNodeKind::Empty => Self::leaf(key, value),
+            TrieNodeKind::Leaf { path, value: old_value } => {
+                let common = path.common_prefix_length(&key);
+                if common == path.len() {
+                    debug_assert_eq!(common, key.len());
+                    Self::leaf(path, value)
+                } else {
+                    let mut children = Self::empty_children();
+                    let old_index = path.get(common).unwrap() as usize;
+                    let new_index = key.get(common).unwrap() as usize;
+                    children[old_index] =
+                        Some(Box::new(Self::leaf(path.slice(common + 1..), old_value)));
+                    children[new_index] =
+                        Some(Box::new(Self::leaf(key.slice(common + 1..), value)));
+                    let branch = Self::branch(children);
+                    if common == 0 { branch } else { Self::extension(path.slice(..common), branch) }
+                }
+            }
+            TrieNodeKind::Extension { path, mut child } => {
+                let common = path.common_prefix_length(&key);
+                if common == path.len() {
+                    child.insert(key.slice(common..), value);
+                    Self::extension(path, *child)
+                } else {
+                    let mut children = Self::empty_children();
+                    let old_index = path.get(common).unwrap() as usize;
+                    let old_path = path.slice(common + 1..);
+                    let old_child = if old_path.is_empty() {
+                        *child
+                    } else {
+                        Self::extension(old_path, *child)
+                    };
+                    children[old_index] = Some(Box::new(old_child));
+
+                    let new_index = key.get(common).unwrap() as usize;
+                    children[new_index] =
+                        Some(Box::new(Self::leaf(key.slice(common + 1..), value)));
+                    let branch = Self::branch(children);
+                    if common == 0 { branch } else { Self::extension(path.slice(..common), branch) }
+                }
+            }
+            TrieNodeKind::Branch { mut children } => {
+                let index = key.first().expect("trie keys have equal lengths") as usize;
+                children[index]
+                    .get_or_insert_with(|| Box::new(Self::default()))
+                    .insert(key.slice(1..), value);
+                Self::branch(children)
+            }
+        };
+    }
+
+    fn remove(&mut self, key: Nibbles) {
+        let kind = mem::take(&mut self.kind);
+        self.rlp = None;
+        *self = match kind {
+            TrieNodeKind::Empty => Self::default(),
+            TrieNodeKind::Leaf { path, value } => {
+                if path == key {
+                    Self::default()
+                } else {
+                    Self::leaf(path, value)
+                }
+            }
+            TrieNodeKind::Extension { path, mut child } => {
+                if key.starts_with(&path) {
+                    child.remove(key.slice(path.len()..));
+                    Self::normalize_extension(path, *child)
+                } else {
+                    Self::extension(path, *child)
+                }
+            }
+            TrieNodeKind::Branch { mut children } => {
+                let index = key.first().expect("trie keys have equal lengths") as usize;
+                if let Some(child) = &mut children[index] {
+                    child.remove(key.slice(1..));
+                    if matches!(child.kind, TrieNodeKind::Empty) {
+                        children[index] = None;
+                    }
+                }
+                Self::normalize_branch(children)
+            }
+        };
+    }
+
+    fn normalize_extension(path: Nibbles, child: Self) -> Self {
+        match child.kind {
+            TrieNodeKind::Empty => Self::default(),
+            TrieNodeKind::Leaf { path: child_path, value } => {
+                Self::leaf(path.join(&child_path), value)
+            }
+            TrieNodeKind::Extension { path: child_path, child } => {
+                Self::extension(path.join(&child_path), *child)
+            }
+            TrieNodeKind::Branch { children } => Self::extension(path, Self::branch(children)),
+        }
+    }
+
+    fn normalize_branch(mut children: [Option<Box<Self>>; 16]) -> Self {
+        let mut indexes =
+            children.iter().enumerate().filter_map(|(index, child)| child.as_ref().map(|_| index));
+        let Some(index) = indexes.next() else { return Self::default() };
+        if indexes.next().is_some() {
+            return Self::branch(children);
+        }
+
+        let child = *children[index].take().unwrap();
+        let prefix = Nibbles::from_nibbles([index as u8]);
+        match child.kind {
+            TrieNodeKind::Empty => unreachable!("empty branch children are removed"),
+            TrieNodeKind::Leaf { path, value } => Self::leaf(prefix.join(&path), value),
+            TrieNodeKind::Extension { path, child } => Self::extension(prefix.join(&path), *child),
+            TrieNodeKind::Branch { children } => Self::extension(prefix, Self::branch(children)),
+        }
+    }
+
+    fn rlp(&mut self) -> Option<RlpNode> {
+        if let Some(rlp) = &self.rlp {
+            return Some(rlp.clone());
+        }
+
+        let rlp = match &mut self.kind {
+            TrieNodeKind::Empty => return None,
+            TrieNodeKind::Leaf { path, value } => {
+                LeafNodeRef::new(path, value).rlp(&mut Vec::new())
+            }
+            TrieNodeKind::Extension { path, child } => {
+                let child = child.rlp().expect("extension nodes have a child");
+                ExtensionNodeRef::new(path, child.as_ref()).rlp(&mut Vec::new())
+            }
+            TrieNodeKind::Branch { children } => {
+                let mut stack = Vec::new();
+                let mut state_mask = TrieMask::default();
+                for (index, child) in children.iter_mut().enumerate() {
+                    if let Some(child) = child {
+                        stack.push(child.rlp().expect("branch children are not empty"));
+                        state_mask.set_bit(index as u8);
+                    }
+                }
+                BranchNodeRef::new(&stack, state_mask).rlp(&mut Vec::new())
+            }
+        };
+        self.rlp = Some(rlp.clone());
+        Some(rlp)
+    }
 }
 
 pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 {
@@ -207,4 +414,48 @@ fn trie_account_rlp_with_storage_root(info: &AccountInfo, storage_root: B256) ->
     alloy_rlp::encode_list::<_, dyn Encodable>(&list, &mut out);
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rebuilt_root(values: &B256Map<Vec<u8>>) -> B256 {
+        let mut leaves = values
+            .iter()
+            .map(|(key, value)| (Nibbles::unpack(*key), value.clone()))
+            .collect::<Vec<_>>();
+        leaves.sort_by_key(|(key, _)| *key);
+        build_root(leaves)
+    }
+
+    #[test]
+    fn incremental_trie_matches_full_rebuild() {
+        let mut trie = IncrementalTrie::default();
+        let mut values = B256Map::default();
+        assert_eq!(trie.root(), EMPTY_ROOT_HASH);
+
+        for index in 0..128 {
+            let key = keccak256(U256::from(index).to_be_bytes::<32>());
+            let value = alloy_rlp::encode(U256::from(index + 1));
+            trie.insert(key, value.clone());
+            values.insert(key, value);
+            assert_eq!(trie.root(), rebuilt_root(&values));
+        }
+
+        for index in (0..128).step_by(3) {
+            let key = keccak256(U256::from(index).to_be_bytes::<32>());
+            let value = alloy_rlp::encode(U256::from(index + 1_000));
+            trie.insert(key, value.clone());
+            values.insert(key, value);
+            assert_eq!(trie.root(), rebuilt_root(&values));
+        }
+
+        for index in (0..128).rev() {
+            let key = keccak256(U256::from(index).to_be_bytes::<32>());
+            trie.remove(key);
+            values.remove(&key);
+            assert_eq!(trie.root(), rebuilt_root(&values));
+        }
+    }
 }

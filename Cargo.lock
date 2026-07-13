@@ -1260,7 +1260,6 @@ dependencies = [
  "rand 0.8.6",
  "rand 0.9.4",
  "reqwest 0.13.4",
- "reth-trie-sparse",
  "revm",
  "revm-inspectors",
  "serde",
@@ -9921,7 +9920,6 @@ dependencies = [
  "modular-bitfield",
  "once_cell",
  "quanta",
- "rayon",
  "reth-codecs 0.5.2",
  "revm-bytecode 41.0.0",
  "revm-primitives 41.0.0",
@@ -10109,25 +10107,6 @@ dependencies = [
  "revm",
  "serde",
  "serde_with",
-]
-
-[[package]]
-name = "reth-trie-sparse"
-version = "2.3.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=1bf2384#1bf23842268edad605afcc45908f8bcb6afbc26a"
-dependencies = [
- "alloy-primitives",
- "alloy-trie",
- "either",
- "rayon",
- "reth-execution-errors",
- "reth-primitives-traits 0.5.2",
- "reth-trie-common",
- "serde",
- "serde_json",
- "slotmap",
- "smallvec",
- "tracing",
 ]
 
 [[package]]
@@ -11364,15 +11343,6 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
-
-[[package]]
-name = "slotmap"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
-dependencies = [
- "version_check",
-]
 
 [[package]]
 name = "small_btree"
