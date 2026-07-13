@@ -29,6 +29,7 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-primitives = { workspace = true, default-features = false }
+reth-trie-sparse.workspace = true
 tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
 tempo-precompiles.workspace = true
@@ -99,6 +100,7 @@ thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
+imbl.workspace = true
 rand_08.workspace = true
 eyre.workspace = true
 ethereum_ssz.workspace = true
