@@ -237,9 +237,11 @@ impl DatabaseRef for PersistentStateDb {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> DatabaseResult<Option<AccountInfo>> {
-        Ok(self.accounts.get(&address).and_then(|account| {
-            (account.account_state != AccountState::NotExisting).then(|| account.info.clone())
-        }))
+        Ok(match self.accounts.get(&address) {
+            Some(account) if account.account_state == AccountState::NotExisting => None,
+            Some(account) => Some(account.info.clone()),
+            None => Some(AccountInfo::default()),
+        })
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> DatabaseResult<Bytecode> {
@@ -743,5 +745,23 @@ mod tests {
         assert_eq!(first.storage_ref(address, slot).unwrap(), U256::ZERO);
         assert_eq!(second.basic_ref(address).unwrap().unwrap().balance, U256::from(2));
         assert_eq!(second.storage_ref(address, slot).unwrap(), U256::from(3));
+    }
+
+    #[test]
+    fn historical_missing_accounts_match_live_state() {
+        let address = Address::with_last_byte(1);
+        let db = StateRootDb::default();
+        let historical = db.current_state();
+
+        let live_account = db.basic_ref(address).unwrap();
+        assert_eq!(live_account, Some(AccountInfo::default()));
+        assert_eq!(historical.basic_ref(address).unwrap(), live_account);
+
+        let mut persistent = PersistentStateDb::default();
+        persistent.accounts.insert(
+            address,
+            PersistentAccount { account_state: AccountState::NotExisting, ..Default::default() },
+        );
+        assert_eq!(persistent.basic_ref(address).unwrap(), None);
     }
 }
