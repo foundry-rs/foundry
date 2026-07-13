@@ -485,7 +485,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     const fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
-        // Intetionally no-op. Handled with `self.comments`.
+        // Intentionally no-op. Handled with `self.comments`.
         let _ = docs;
     }
 

@@ -360,7 +360,7 @@ pub struct InspectorStack<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub inner: InspectorStackInner,
 }
 
-/// All used inpectors besides [Cheatcodes].
+/// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
 #[derive(Default, Clone, Debug)]
