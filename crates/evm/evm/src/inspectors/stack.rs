@@ -362,6 +362,14 @@ pub struct InspectorStack<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub inner: InspectorStackInner,
 }
 
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct EarlyExitTestGate {
+    entered: std::sync::mpsc::Sender<()>,
+    release: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+    notified: Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// All used inpectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
@@ -415,6 +423,8 @@ pub struct InspectorStackInner {
     pub batch_rewrite_process_salt: Option<u64>,
     /// Shared cancellation state for interruptible EVM execution.
     early_exit: Option<EarlyExit>,
+    #[cfg(test)]
+    early_exit_test_gate: Option<EarlyExitTestGate>,
     static_step_dispatch: OpcodeStepDispatch,
     has_static_step_end_inspectors: bool,
 }
@@ -530,6 +540,25 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub(crate) fn set_early_exit(&mut self, early_exit: EarlyExit) {
         self.early_exit = Some(early_exit);
+    }
+
+    /// Returns whether cancellation has been requested for this execution.
+    #[inline]
+    pub(crate) fn early_exit_requested(&self) -> bool {
+        self.early_exit.as_ref().is_some_and(EarlyExit::should_stop)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_early_exit_test_gate(
+        &mut self,
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) {
+        self.early_exit_test_gate = Some(EarlyExitTestGate {
+            entered,
+            release: Arc::new(std::sync::Mutex::new(release)),
+            notified: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
     }
 
     /// Sets the block for the relevant inspectors.
@@ -1065,6 +1094,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        #[cfg(test)]
+        if interpreter.bytecode.opcode() == op::JUMPDEST
+            && let Some(gate) = &self.inner.early_exit_test_gate
+            && !gate.notified.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            let _ = gate.entered.send(());
+            let _ = gate
+                .release
+                .lock()
+                .expect("early-exit test gate lock poisoned")
+                .recv_timeout(std::time::Duration::from_secs(1));
+        }
+
         if self.inner.early_exit.as_ref().is_some_and(EarlyExit::should_stop) {
             interpreter.halt(InstructionResult::Stop);
             return;

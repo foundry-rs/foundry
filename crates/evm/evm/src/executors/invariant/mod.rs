@@ -2314,8 +2314,19 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executors::ExecutorBuilder;
+    use foundry_config::FuzzDictionaryConfig;
+    use foundry_evm_core::{
+        backend::Backend,
+        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
+    };
     use proptest::{prelude::any, strategy::ValueTree, test_runner::Config};
+    use revm::{
+        bytecode::Bytecode,
+        database::{CacheDB, EmptyDB},
+    };
     use serde_json::json;
+    use std::{sync::mpsc, thread};
 
     fn first_generated_u64(runner: &mut TestRunner) -> u64 {
         any::<u64>().new_tree(runner).unwrap().current()
@@ -2652,6 +2663,114 @@ mod tests {
             abi.functions.entry(function.name.clone()).or_default().push(function);
         }
         TargetedContract::new(identifier.to_string(), abi)
+    }
+
+    #[test]
+    fn campaign_early_exit_interrupts_active_handler_execution() {
+        const GAS_LIMIT: u64 = 1 << 24;
+        let invariant_address = Address::repeat_byte(0x11);
+        let handler_address = Address::repeat_byte(0x22);
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        // Return ABI-encoded `true` for the invariant predicate.
+        executor
+            .set_code(
+                invariant_address,
+                Bytecode::new_raw(Bytes::from_static(&[
+                    0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
+                ])),
+            )
+            .unwrap();
+        // JUMPDEST; PUSH1 0; JUMP loops until the campaign interrupt reaches the inspector.
+        executor
+            .set_code(
+                handler_address,
+                Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])),
+            )
+            .unwrap();
+
+        let (handler_entered_tx, handler_entered_rx) = mpsc::channel();
+        let (handler_release_tx, handler_release_rx) = mpsc::channel();
+        executor.inspector_mut().set_early_exit_test_gate(handler_entered_tx, handler_release_rx);
+
+        let invariant = function("invariant_ok() view returns (bool)");
+        let mut invariant_abi = alloy_json_abi::JsonAbi::new();
+        invariant_abi.functions.entry(invariant.name.clone()).or_default().push(invariant.clone());
+        let invariant_contract = InvariantContract::new(
+            invariant_address,
+            "InvariantTest",
+            vec![(&invariant, false)],
+            0,
+            false,
+            &invariant_abi,
+        );
+
+        let handler = function("loopForever()");
+        let mut handler_contract = targeted_contract("Handler", vec![handler.clone()]);
+        handler_contract.targeted_functions = vec![handler];
+        let mut targeted_contracts = TargetedContracts::new();
+        targeted_contracts.insert(handler_address, handler_contract);
+        let campaign_seed = InvariantCampaignSeed {
+            artifact_filters: ArtifactFilters::default(),
+            sender_filters: SenderFilters::new(vec![CALLER], Vec::new()),
+            targeted_contracts,
+            targets_are_updatable: false,
+            initial_handler_failures: Map::default(),
+        };
+
+        let config =
+            InvariantConfig { runs: 1, depth: 1, show_metrics: false, ..Default::default() };
+        let early_exit = EarlyExit::new(false);
+        let campaign_state = InvariantCampaignState::new(early_exit.clone(), None);
+        let fuzz_state = EvmFuzzState::new(
+            &[],
+            &CacheDB::<EmptyDB>::default(),
+            FuzzDictionaryConfig::default(),
+            None,
+        );
+        let setup_contracts = ContractsByAddress::default();
+        let project_contracts = ContractsByArtifact::default();
+        let (result_tx, result_rx) = mpsc::channel();
+
+        let (handler_entered, result) = thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                let result = InvariantExecutor::<EthEvmNetwork>::run_invariant_worker(
+                    executor,
+                    test_runner(),
+                    config,
+                    &setup_contracts,
+                    &project_contracts,
+                    InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+                    invariant_contract,
+                    &FuzzFixtures::default(),
+                    fuzz_state,
+                    None,
+                    &campaign_state,
+                    campaign_seed,
+                    WorkerCorpusSeed::default(),
+                    InvariantCorpusPersistence::Live,
+                    1,
+                    1,
+                );
+                let _ = result_tx.send(result);
+            });
+
+            let handler_entered = handler_entered_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+            early_exit.record_ctrl_c();
+            let _ = handler_release_tx.send(());
+
+            let result = result_rx.recv_timeout(Duration::from_secs(1));
+            handle.join().unwrap();
+            (handler_entered, result)
+        });
+        assert!(handler_entered, "invariant handler did not begin EVM execution");
+        let output = result.expect("invariant campaign did not observe early exit").unwrap();
+        assert_eq!(output.result.runs, 0);
+        assert_eq!(output.result.calls, 0);
     }
 
     #[test]

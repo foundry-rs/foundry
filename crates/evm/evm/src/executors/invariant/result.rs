@@ -207,6 +207,9 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
             invariant_contract.address,
             invariant.abi_encode_input(&[])?.into(),
         )?;
+        if executor.inspector().early_exit_requested() {
+            break;
+        }
         if !success {
             let inner_sequence =
                 inner_sequence.get_or_insert_with(|| invariant_inner_sequence(executor));
@@ -295,6 +298,9 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 invariant_contract.address,
                 invariant_contract.anchor().abi_encode_input(&[])?.into(),
             )?;
+            if invariant_run.executor.inspector().early_exit_requested() {
+                return Ok(ContinueOutcome { continues: true, broken: None });
+            }
             if success
                 && inv_result.result.len() >= 32
                 && let Some(value) = I256::try_from_be_slice(&inv_result.result[..32])
@@ -426,6 +432,9 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
 ) -> Result<Option<&'a Function>> {
     let (call_result, success) =
         call_after_invariant_function(&invariant_run.executor, invariant_contract.address)?;
+    if invariant_run.executor.inspector().early_exit_requested() {
+        return Ok(None);
+    }
     // Fail the test case if `afterInvariant` doesn't succeed.
     if success {
         return Ok(None);
@@ -450,14 +459,102 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
-    use foundry_evm_core::evm::EthEvmNetwork;
+    use crate::executors::{EarlyExit, ExecutorBuilder};
+    use alloy_primitives::{Bytes, U256};
+    use alloy_sol_types::SolCall;
+    use foundry_cheatcodes::{CheatsConfig, Vm::expectRevert_0Call};
+    use foundry_config::Config;
+    use foundry_evm_core::{
+        backend::Backend,
+        constants::CALLER,
+        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
+        opts::EvmOpts,
+    };
+    use foundry_evm_fuzz::invariant::TargetedContracts;
+    use revm::bytecode::Bytecode;
+    use std::sync::Arc;
 
     fn panic_payload(code: u8) -> Bytes {
         let mut payload = vec![0_u8; 36];
         payload[..4].copy_from_slice(&[0x4e, 0x48, 0x7b, 0x71]);
         payload[35] = code;
         payload.into()
+    }
+
+    #[test]
+    fn cancellation_does_not_record_call_end_rewrite_as_invariant_failure() {
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &Config::default(),
+            EvmOpts::default(),
+            None,
+            None,
+            None,
+            false,
+        ));
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .gas_limit(1 << 24)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+            );
+        let invariant_address = Address::repeat_byte(0x11);
+        executor
+            .set_code(
+                invariant_address,
+                Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])),
+            )
+            .unwrap();
+        let expect_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                expectRevert_0Call {}.abi_encode().into(),
+                U256::ZERO,
+            )
+            .unwrap();
+        assert!(!expect_result.reverted);
+
+        let early_exit = EarlyExit::new(false);
+        executor.inspector_mut().set_early_exit(early_exit.clone());
+        early_exit.record_ctrl_c();
+
+        let invariant = Function::parse("invariant_ok() view returns (bool)").unwrap();
+        let mut abi = alloy_json_abi::JsonAbi::new();
+        abi.functions.entry(invariant.name.clone()).or_default().push(invariant.clone());
+        let invariant_contract = InvariantContract::new(
+            invariant_address,
+            "InvariantTest",
+            vec![(&invariant, false)],
+            0,
+            false,
+            &abi,
+        );
+
+        let (_, success) = call_invariant_function(
+            &executor.clone(),
+            invariant_address,
+            invariant.abi_encode_input(&[]).unwrap().into(),
+        )
+        .unwrap();
+        assert!(!success, "pending expectRevert should rewrite the interrupted call");
+
+        let targets = FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false);
+        let mut failures = InvariantFailures::new();
+        let broken = assert_invariants(
+            &invariant_contract,
+            &InvariantConfig::default(),
+            &targets,
+            &executor,
+            &[],
+            &mut failures,
+        )
+        .unwrap();
+
+        assert!(broken.is_none());
+        assert_eq!(failures.invariant_count(), 0);
     }
 
     #[test]
