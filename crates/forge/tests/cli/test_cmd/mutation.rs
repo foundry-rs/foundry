@@ -1,7 +1,8 @@
 // CLI integration tests for mutation testing
 
+use foundry_compilers::artifacts::Remapping;
 use foundry_test_utils::{str, util::OutputExt};
-use std::fs;
+use std::{fs, str::FromStr};
 
 fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
@@ -1224,6 +1225,79 @@ contract UsesSharedTest {
     assert!(
         invalid < total,
         "include_paths imports should compile inside mutant workspaces: summary={summary}"
+    );
+});
+
+forgetest_init!(mutation_workspace_preserves_external_read_only_remappings, |prj, cmd| {
+    let shared_dir = prj.root().parent().unwrap().join("shared-solidity");
+    fs::create_dir_all(&shared_dir).unwrap();
+    fs::write(
+        shared_dir.join("Shared.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+library Shared {
+    function value() internal pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.update_config(|config| {
+        config.allow_paths = vec!["../shared-solidity".into()];
+        config.remappings =
+            vec![Remapping::from_str("shared/=../shared-solidity/").unwrap().into()];
+    });
+
+    prj.add_source(
+        "UsesShared.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "shared/Shared.sol";
+
+contract UsesShared {
+    function value() public pure returns (uint256) {
+        return Shared.value() + 1;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "UsesShared.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/UsesShared.sol";
+
+contract UsesSharedTest {
+    function test_Value() public {
+        UsesShared usesShared = new UsesShared();
+        assert(usesShared.value() == 2);
+    }
+}
+"#,
+    );
+
+    let out = cmd
+        .args(["test", "--mutate", "src/UsesShared.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&out);
+    let total = summary["total"].as_u64().unwrap_or(0);
+    let invalid = summary["invalid"].as_u64().unwrap_or(u64::MAX);
+
+    assert!(total > 0, "expected mutation testing to generate mutants: summary={summary}");
+    assert!(
+        invalid < total,
+        "external read-only remapping should compile inside mutant workspaces: summary={summary}"
     );
 });
 
