@@ -2,7 +2,7 @@ use super::{
     FailureKey, InvariantFailureMetrics, InvariantFailures, InvariantFuzzError,
     InvariantFuzzTestResult, InvariantMetrics,
 };
-use crate::executors::{EarlyExit, corpus::CampaignCorpusEntry};
+use crate::executors::{EarlyExit, EvmExecutionCancellation, corpus::CampaignCorpusEntry};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
@@ -10,7 +10,7 @@ use foundry_evm_fuzz::BasicTxDetails;
 use std::{
     collections::{HashMap, HashSet},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -74,12 +74,11 @@ pub struct InvariantWorkerPlan {
 /// Shared state used only to coordinate invariant worker execution.
 pub struct InvariantCampaignState {
     started_at: Instant,
-    timeout: Option<Duration>,
+    timed: bool,
     total_runs: AtomicU32,
     total_txs: AtomicU64,
     total_gas: AtomicU64,
-    terminal_stop: AtomicBool,
-    global_early_exit: EarlyExit,
+    cancellation: EvmExecutionCancellation,
     last_metrics_report: Mutex<Instant>,
     failure_metrics: Mutex<CampaignFailureMetrics>,
 }
@@ -93,14 +92,20 @@ struct CampaignFailureMetrics {
 impl InvariantCampaignState {
     pub fn new(early_exit: EarlyExit, timeout: Option<u32>) -> Self {
         let started_at = Instant::now();
+        let deadline = timeout
+            .map(|timeout| Duration::from_secs(timeout.into()))
+            .and_then(|timeout| started_at.checked_add(timeout));
         Self {
             started_at,
-            timeout: timeout.map(|timeout| Duration::from_secs(timeout.into())),
+            timed: timeout.is_some(),
             total_runs: AtomicU32::new(0),
             total_txs: AtomicU64::new(0),
             total_gas: AtomicU64::new(0),
-            terminal_stop: AtomicBool::new(false),
-            global_early_exit: early_exit,
+            cancellation: EvmExecutionCancellation::campaign(
+                early_exit,
+                Arc::new(AtomicBool::new(false)),
+                deadline,
+            ),
             last_metrics_report: Mutex::new(started_at),
             failure_metrics: Mutex::new(CampaignFailureMetrics::default()),
         }
@@ -129,21 +134,15 @@ impl InvariantCampaignState {
     }
 
     pub const fn is_timed_campaign(&self) -> bool {
-        self.timeout.is_some()
-    }
-
-    pub fn is_timed_out(&self) -> bool {
-        self.timeout.is_some_and(|duration| self.elapsed() > duration)
+        self.timed
     }
 
     pub fn should_stop(&self) -> bool {
-        self.global_early_exit.should_stop()
-            || self.terminal_stop.load(Ordering::Relaxed)
-            || self.is_timed_out()
+        self.cancellation.should_stop(true)
     }
 
     pub fn request_terminal_stop(&self) {
-        self.terminal_stop.store(true, Ordering::Relaxed);
+        self.cancellation.request_stop();
     }
 
     pub fn should_emit_metrics_report(&self, interval: Duration) -> bool {
@@ -191,7 +190,11 @@ impl InvariantCampaignState {
     }
 
     pub const fn early_exit(&self) -> &EarlyExit {
-        &self.global_early_exit
+        self.cancellation.early_exit_ref()
+    }
+
+    pub const fn cancellation(&self) -> &EvmExecutionCancellation {
+        &self.cancellation
     }
 }
 

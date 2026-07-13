@@ -47,7 +47,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::executors::EarlyExit;
+use crate::executors::{EarlyExit, EvmExecutionCancellation};
 
 #[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -367,6 +367,7 @@ pub struct InspectorStack<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 struct EarlyExitTestGate {
     entered: std::sync::mpsc::Sender<()>,
     release: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+    target_pc: usize,
     notified: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -422,7 +423,9 @@ pub struct InspectorStackInner {
     /// at identical on-chain state still produce distinct salts. Lazily initialized.
     pub batch_rewrite_process_salt: Option<u64>,
     /// Shared cancellation state for interruptible EVM execution.
-    early_exit: Option<EarlyExit>,
+    execution_cancellation: Option<EvmExecutionCancellation>,
+    /// Amortizes deadline checks in the opcode hot path.
+    cancellation_poll_counter: u8,
     #[cfg(test)]
     early_exit_test_gate: Option<EarlyExitTestGate>,
     static_step_dispatch: OpcodeStepDispatch,
@@ -539,13 +542,19 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Set the cancellation state checked during EVM execution.
     #[inline]
     pub(crate) fn set_early_exit(&mut self, early_exit: EarlyExit) {
-        self.early_exit = Some(early_exit);
+        self.execution_cancellation = Some(EvmExecutionCancellation::early_exit(early_exit));
+    }
+
+    /// Set the complete cancellation state checked during EVM execution.
+    #[inline]
+    pub(crate) fn set_execution_cancellation(&mut self, cancellation: EvmExecutionCancellation) {
+        self.execution_cancellation = Some(cancellation);
     }
 
     /// Returns whether cancellation has been requested for this execution.
     #[inline]
-    pub(crate) fn early_exit_requested(&self) -> bool {
-        self.early_exit.as_ref().is_some_and(EarlyExit::should_stop)
+    pub(crate) fn cancellation_requested(&self) -> bool {
+        self.execution_cancellation.as_ref().is_some_and(|state| state.should_stop(true))
     }
 
     #[cfg(test)]
@@ -553,10 +562,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         &mut self,
         entered: std::sync::mpsc::Sender<()>,
         release: std::sync::mpsc::Receiver<()>,
+        target_pc: usize,
     ) {
         self.early_exit_test_gate = Some(EarlyExitTestGate {
             entered,
             release: Arc::new(std::sync::Mutex::new(release)),
+            target_pc,
             notified: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
     }
@@ -1097,6 +1108,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         #[cfg(test)]
         if interpreter.bytecode.opcode() == op::JUMPDEST
             && let Some(gate) = &self.inner.early_exit_test_gate
+            && interpreter.bytecode.pc() == gate.target_pc
             && !gate.notified.swap(true, std::sync::atomic::Ordering::Relaxed)
         {
             let _ = gate.entered.send(());
@@ -1107,9 +1119,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 .recv_timeout(std::time::Duration::from_secs(1));
         }
 
-        if self.inner.early_exit.as_ref().is_some_and(EarlyExit::should_stop) {
-            interpreter.halt(InstructionResult::Stop);
-            return;
+        if let Some(cancellation) = &self.inner.execution_cancellation {
+            let poll_deadline = self.inner.cancellation_poll_counter == 0;
+            self.inner.cancellation_poll_counter =
+                self.inner.cancellation_poll_counter.wrapping_add(1);
+            if cancellation.should_stop(poll_deadline) {
+                interpreter.halt(InstructionResult::Stop);
+                return;
+            }
         }
 
         match self.static_step_dispatch {

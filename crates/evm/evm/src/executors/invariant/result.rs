@@ -207,7 +207,7 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
             invariant_contract.address,
             invariant.abi_encode_input(&[])?.into(),
         )?;
-        if executor.inspector().early_exit_requested() {
+        if executor.inspector().cancellation_requested() {
             break;
         }
         if !success {
@@ -298,14 +298,13 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 invariant_contract.address,
                 invariant_contract.anchor().abi_encode_input(&[])?.into(),
             )?;
-            if invariant_run.executor.inspector().early_exit_requested() {
+            if invariant_run.executor.inspector().cancellation_requested() {
                 return Ok(ContinueOutcome { continues: true, broken: None });
             }
             if success
                 && inv_result.result.len() >= 32
                 && let Some(value) = I256::try_from_be_slice(&inv_result.result[..32])
             {
-                invariant_test.update_optimization_value(value, &invariant_run.inputs);
                 // Track the best value and its prefix length for this run
                 // (used for corpus persistence — materialized once at run end).
                 if invariant_run.optimization_value.is_none_or(|prev| value > prev) {
@@ -432,7 +431,7 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
 ) -> Result<Option<&'a Function>> {
     let (call_result, success) =
         call_after_invariant_function(&invariant_run.executor, invariant_contract.address)?;
-    if invariant_run.executor.inspector().early_exit_requested() {
+    if invariant_run.executor.inspector().cancellation_requested() {
         return Ok(None);
     }
     // Fail the test case if `afterInvariant` doesn't succeed.

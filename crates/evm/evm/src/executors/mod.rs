@@ -1515,6 +1515,58 @@ impl EarlyExit {
     }
 }
 
+/// Shared cancellation state for an active EVM execution.
+#[derive(Clone, Debug)]
+pub(crate) enum EvmExecutionCancellation {
+    /// Cancellation driven only by the process-wide early-exit signal.
+    EarlyExit(EarlyExit),
+    /// Cancellation driven by the complete invariant campaign stop condition.
+    Campaign { early_exit: EarlyExit, stop: Arc<AtomicBool>, deadline: Option<Instant> },
+}
+
+impl EvmExecutionCancellation {
+    pub(crate) const fn early_exit(early_exit: EarlyExit) -> Self {
+        Self::EarlyExit(early_exit)
+    }
+
+    pub(crate) const fn campaign(
+        early_exit: EarlyExit,
+        stop: Arc<AtomicBool>,
+        deadline: Option<Instant>,
+    ) -> Self {
+        Self::Campaign { early_exit, stop, deadline }
+    }
+
+    /// Returns whether execution should stop, optionally polling a campaign deadline.
+    pub(crate) fn should_stop(&self, poll_deadline: bool) -> bool {
+        match self {
+            Self::EarlyExit(early_exit) => early_exit.should_stop(),
+            Self::Campaign { early_exit, stop, deadline } => {
+                if early_exit.should_stop() || stop.load(Ordering::Relaxed) {
+                    return true;
+                }
+                if poll_deadline && deadline.is_some_and(|deadline| Instant::now() > deadline) {
+                    stop.store(true, Ordering::Relaxed);
+                    return true;
+                }
+                false
+            }
+        }
+    }
+
+    pub(crate) fn request_stop(&self) {
+        if let Self::Campaign { stop, .. } = self {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) const fn early_exit_ref(&self) -> &EarlyExit {
+        match self {
+            Self::EarlyExit(early_exit) | Self::Campaign { early_exit, .. } => early_exit,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1681,6 +1733,33 @@ mod tests {
         assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
         assert!(result.gas_used > 21_000, "interrupt fired before EVM execution started");
         assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of exiting");
+    }
+
+    #[test]
+    fn campaign_deadline_interrupts_active_evm_execution() {
+        const GAS_LIMIT: u64 = 1 << 24;
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let cancellation = EvmExecutionCancellation::campaign(
+            EarlyExit::new(false),
+            Arc::new(AtomicBool::new(false)),
+            Some(Instant::now()),
+        );
+        executor.inspector_mut().set_execution_cancellation(cancellation);
+
+        let target = Address::repeat_byte(0x11);
+        executor
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])))
+            .unwrap();
+
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of timing out");
     }
 
     #[test]
