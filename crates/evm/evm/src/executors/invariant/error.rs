@@ -263,6 +263,8 @@ pub struct InvariantFailures {
     invariant_count: usize,
     /// Cached `FailureKey::Handler` count, read on progress/metrics ticks.
     handler_count: usize,
+    /// Increments whenever a failure or its reproducer is inserted or replaced.
+    revision: usize,
 }
 
 impl InvariantFailures {
@@ -292,6 +294,7 @@ impl InvariantFailures {
 
     pub fn record_failure(&mut self, invariant: &Function, failure: InvariantFuzzError) {
         let prev = self.failures.insert(FailureKey::Invariant(invariant.name.clone()), failure);
+        self.revision = self.revision.wrapping_add(1);
         if prev.is_none() {
             self.invariant_count += 1;
         }
@@ -325,6 +328,11 @@ impl InvariantFailures {
         self.handler_count
     }
 
+    /// Revision of the failure map, including replacements with shorter reproducers.
+    pub const fn revision(&self) -> usize {
+        self.revision
+    }
+
     pub fn handler_failures_mut(&mut self) -> impl Iterator<Item = &mut InvariantFuzzError> {
         self.failures.iter_mut().filter_map(|(key, error)| match key {
             FailureKey::Handler(_, _) => Some(error),
@@ -341,6 +349,7 @@ impl InvariantFailures {
                 FailureKey::Handler(site.0, site.1),
                 InvariantFuzzError::HandlerAssertion(failure),
             );
+            self.revision = self.revision.wrapping_add(1);
             if prev.is_none() {
                 self.handler_count += 1;
             }
@@ -356,6 +365,7 @@ impl InvariantFailures {
         err: InvariantFuzzError,
     ) {
         let prev = self.failures.insert(FailureKey::Handler(target, selector), err);
+        self.revision = self.revision.wrapping_add(1);
         if prev.is_none() {
             self.handler_count += 1;
         }
@@ -440,4 +450,49 @@ pub struct FailedInvariantCaseData {
     pub fail_on_revert: bool,
     /// Whether this failure originated from a handler assertion.
     pub assertion_failure: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_evm_fuzz::CallDetails;
+
+    fn handler_failure(sequence_len: usize) -> HandlerAssertionFailure {
+        let tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: CallDetails {
+                target: Address::ZERO,
+                calldata: Bytes::new(),
+                value: None,
+            },
+        };
+        HandlerAssertionFailure::from_replayed_sequence(
+            vec![tx; sequence_len],
+            Address::ZERO,
+            Selector::ZERO,
+            B256::ZERO,
+            "assertion failed".to_string(),
+        )
+    }
+
+    #[test]
+    fn failure_revision_tracks_shorter_handler_reproducer() {
+        let mut failures = InvariantFailures::new();
+        failures.record_handler_failure(handler_failure(2));
+        let checkpoint = failures.revision();
+
+        failures.record_handler_failure(handler_failure(2));
+        assert_eq!(failures.revision(), checkpoint);
+
+        failures.record_handler_failure(handler_failure(1));
+        assert_ne!(failures.revision(), checkpoint);
+        let failure = failures
+            .failures
+            .get(&FailureKey::Handler(Address::ZERO, Selector::ZERO))
+            .and_then(InvariantFuzzError::as_handler_assertion)
+            .unwrap();
+        assert_eq!(failure.call_sequence.len(), 1);
+    }
 }

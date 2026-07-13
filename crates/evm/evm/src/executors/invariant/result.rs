@@ -245,9 +245,6 @@ pub(crate) struct ContinueOutcome {
     pub continues: bool,
     /// Whether an invariant or optimization call was halted by cancellation.
     pub cancelled: bool,
-    /// Whether a predicate completed and produced a finding before a later predicate was
-    /// cancelled.
-    pub completed_finding: bool,
 }
 
 /// Returns if invariant test can continue and last successful call result of the invariant test
@@ -300,11 +297,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 invariant_contract.anchor().abi_encode_input(&[])?.into(),
             )?;
             if inv_result.execution_cancelled {
-                return Ok(ContinueOutcome {
-                    continues: true,
-                    cancelled: true,
-                    completed_finding: false,
-                });
+                return Ok(ContinueOutcome { continues: true, cancelled: true });
             }
             if success
                 && inv_result.result.len() >= 32
@@ -319,7 +312,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             }
         } else {
             // Check mode: assert invariants and fail if broken.
-            let (broken, cancelled) = assert_invariants(
+            let (_, cancelled) = assert_invariants(
                 invariant_contract,
                 invariant_config,
                 &invariant_test.targeted_contracts,
@@ -328,11 +321,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 &mut invariant_test.test_data.failures,
             )?;
             if cancelled {
-                return Ok(ContinueOutcome {
-                    continues: true,
-                    cancelled: true,
-                    completed_finding: broken.is_some(),
-                });
+                return Ok(ContinueOutcome { continues: true, cancelled: true });
             }
         }
     } else {
@@ -365,7 +354,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 .test_data
                 .failures
                 .can_continue(invariant_contract.invariant_fns.len());
-            return Ok(ContinueOutcome { continues, cancelled: false, completed_finding: false });
+            return Ok(ContinueOutcome { continues, cancelled: false });
         }
 
         // Non-assertion revert: per-invariant `fail_on_revert` still marks affected
@@ -427,7 +416,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
 
     let continues =
         invariant_test.test_data.failures.can_continue(invariant_contract.invariant_fns.len());
-    Ok(ContinueOutcome { continues, cancelled: false, completed_finding: false })
+    Ok(ContinueOutcome { continues, cancelled: false })
 }
 
 /// Given the executor state, asserts conditions within `afterInvariant` function.

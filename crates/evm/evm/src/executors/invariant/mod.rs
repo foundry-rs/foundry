@@ -609,13 +609,6 @@ struct InvariantTestData {
     optimization_best_sequence: Vec<BasicTxDetails>,
 }
 
-struct InvariantCallMetric {
-    target: Address,
-    selector: Selector,
-    reverted: bool,
-    discarded: bool,
-}
-
 /// Contains invariant test data.
 struct InvariantTest {
     // Fuzz state of invariant test.
@@ -673,28 +666,17 @@ impl InvariantTest {
     /// Update metrics for a fuzzed selector, extracted from tx details.
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
-    fn call_metric(
-        tx_details: &BasicTxDetails,
-        reverted: bool,
-        discarded: bool,
-    ) -> Option<InvariantCallMetric> {
-        let selector = tx_details
+    fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
+        let Some(selector) = tx_details
             .call_details
             .calldata
             .get(..4)
             .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
-            .map(Selector::from)?;
-        Some(InvariantCallMetric {
-            target: tx_details.call_details.target,
-            selector,
-            reverted,
-            discarded,
-        })
-    }
-
-    fn record_metric(&mut self, metric: InvariantCallMetric) {
-        let InvariantCallMetric { target, selector, reverted, discarded } = metric;
-        let cache_key = (target, selector);
+            .map(Selector::from)
+        else {
+            return;
+        };
+        let cache_key = (tx_details.call_details.target, selector);
 
         if let Some(metric_key) = self.test_data.metric_key_cache.get(&cache_key) {
             if let Some(invariant_metrics) = self.test_data.metrics.get_mut(metric_key) {
@@ -711,8 +693,10 @@ impl InvariantTest {
 
         // Not cached: resolve from the current target set. Unresolved keys aren't cached so a tx
         // whose target isn't known yet is re-resolved once that target is added.
-        let Some(metric_key) =
-            self.targeted_contracts.targets().fuzzed_metric_key_for_selector(target, selector)
+        let Some(metric_key) = self
+            .targeted_contracts
+            .targets()
+            .fuzzed_metric_key_for_selector(tx_details.call_details.target, selector)
         else {
             return;
         };
@@ -778,8 +762,6 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     rejects: u32,
     // Whether new coverage was discovered during this run.
     new_coverage: bool,
-    // Selector metrics staged until the run is accepted.
-    metrics: Vec<InvariantCallMetric>,
     // Line coverage staged until the run is accepted.
     line_coverage: Option<HitMaps>,
     // Whether this run's inputs should become the reported last run.
@@ -815,7 +797,6 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             depth: 0,
             rejects: 0,
             new_coverage: false,
-            metrics: Vec::with_capacity(depth),
             line_coverage: None,
             save_last_run_inputs: false,
             optimization_value: None,
@@ -1150,7 +1131,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let failures_checkpoint = invariant_test.test_data.failures.clone();
+            let failures_revision = failures_checkpoint.revision();
             let mut stop_after_run = false;
+            let mut run_cancelled = false;
             let mut observed_call_entries = Vec::<(Vec<ObservedCall>, BasicTxDetails)>::new();
 
             let initial_seq = corpus_manager.new_inputs(
@@ -1179,12 +1162,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             while current_run.depth < run_depth {
                 // Check if the timeout has been reached.
                 if campaign_state.should_stop() {
-                    invariant_test.test_data.failures.clone_from(&failures_checkpoint);
                     // Since we never record a revert here the test is still considered
                     // successful even though it timed out. We *want*
                     // this behavior for now, so that's ok, but
                     // future developers should be aware of this.
-                    break 'stop;
+                    run_cancelled = true;
+                    break;
                 }
 
                 // Snapshot `(target, selector)` so `can_continue` can borrow `&mut current_run`
@@ -1210,8 +1193,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.inputs.last().expect("checked above"),
                 )?;
                 if call_result.execution_cancelled {
-                    invariant_test.test_data.failures.clone_from(&failures_checkpoint);
-                    break 'stop;
+                    run_cancelled = true;
+                    break;
                 }
                 if let Some(fuzzer) = current_run.executor.inspector_mut().fuzzer.as_mut() {
                     invariant_test.fuzz_state.collect_fuzzer_values(fuzzer);
@@ -1221,14 +1204,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // assumes / pops below) get zero-length entries that the corpus side filters out.
                 let call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
-                if config.show_metrics
-                    && let Some(metric) = InvariantTest::call_metric(
+                if config.show_metrics {
+                    invariant_test.record_metrics(
                         current_run.inputs.last().expect("checked above"),
                         call_result.reverted,
                         discarded,
-                    )
-                {
-                    current_run.metrics.push(metric);
+                    );
                 }
 
                 // Collect line coverage from last fuzzed call.
@@ -1267,8 +1248,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             InvariantFuzzError::MaxAssumeRejects(config.max_assume_rejects),
                         );
                         campaign_state.request_terminal_stop();
-                        stop_after_run = true;
-                        break;
+                        break 'stop;
                     }
                 } else {
                     // Commit executed call result.
@@ -1339,8 +1319,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 || is_last_call
                         };
 
-                    let mut predicate_cancelled = false;
-                    let mut completed_predicate_finding = false;
                     let (continues, _) = if should_check_invariant {
                         let outcome = can_continue(
                             &invariant_contract,
@@ -1355,8 +1333,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             pre_merge_edges_hash,
                         )
                         .map_err(|e| eyre!(e.to_string()))?;
-                        predicate_cancelled = outcome.cancelled;
-                        completed_predicate_finding = outcome.completed_finding;
+                        run_cancelled = outcome.cancelled;
                         (outcome.continues, None)
                     } else {
                         // Skip invariant check but still track reverts
@@ -1416,14 +1393,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                     // A predicate or optimization call can be interrupted after the handler
                     // completed. Do not accept the partial run as a successful one.
-                    if predicate_cancelled {
-                        if completed_predicate_finding {
-                            current_run.save_last_run_inputs = true;
-                            stop_after_run = true;
-                            break;
-                        }
-                        invariant_test.test_data.failures.clone_from(&failures_checkpoint);
-                        break 'stop;
+                    if run_cancelled {
+                        break;
                     }
 
                     // Keep `cmp_seq` parallel to `inputs`: only push when the input survived the
@@ -1457,7 +1428,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // Call `afterInvariant` only if declared and the current run produced no new
             // failure. Multi-predicate campaigns keep running after earlier failures, but the
             // hook must still execute on subsequent runs.
-            if invariant_contract.call_after_invariant
+            if !run_cancelled
+                && invariant_contract.call_after_invariant
                 && invariant_test.test_data.failures.invariant_count() == failures_before_run
             {
                 let (broken, hook_cancelled) = assert_after_invariant(
@@ -1467,15 +1439,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &config,
                 )
                 .map_err(|_| eyre!("Failed to call afterInvariant"))?;
-                if hook_cancelled
-                    && invariant_test.test_data.failures.invariant_count() == failures_before_run
-                    && invariant_test.test_data.failures.handler_count()
-                        == failures_checkpoint.handler_count()
-                {
-                    invariant_test.test_data.failures.clone_from(&failures_checkpoint);
-                    break 'stop;
-                } else if hook_cancelled {
-                    stop_after_run = true;
+                if hook_cancelled {
+                    run_cancelled = true;
                 } else if broken.is_some() {
                     current_run.save_last_run_inputs = true;
                 }
@@ -1485,16 +1450,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // complete failing run. All other campaign stops discard the partial run before any
             // corpus persistence or accounting.
             if campaign_state.should_stop() && !stop_after_run {
-                let completed_finding = invariant_test.test_data.failures.invariant_count()
-                    > failures_before_run
-                    || invariant_test.test_data.failures.handler_count()
-                        > failures_checkpoint.handler_count();
+                run_cancelled = true;
+            }
+
+            if run_cancelled {
+                let completed_finding =
+                    invariant_test.test_data.failures.revision() != failures_revision;
                 if completed_finding {
-                    stop_after_run = true;
+                    record_new_invariant_failures(
+                        campaign_state,
+                        &invariant_contract,
+                        &invariant_test.test_data.failures,
+                    );
+                    campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
                 } else {
                     invariant_test.test_data.failures.clone_from(&failures_checkpoint);
-                    break 'stop;
                 }
+                break 'stop;
             }
 
             if invariant_test.test_data.failures.invariant_count() > failures_before_run {
@@ -1558,9 +1530,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     value,
                     &current_run.inputs[..current_run.optimization_prefix_len],
                 );
-            }
-            for metric in current_run.metrics.drain(..) {
-                invariant_test.record_metric(metric);
             }
             invariant_test.merge_line_coverage(current_run.line_coverage.take());
             for fuzz_run in &current_run.fuzz_runs {
