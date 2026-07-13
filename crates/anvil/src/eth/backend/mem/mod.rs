@@ -51,7 +51,7 @@ use alloy_evm::{
     block::{BlockExecutionResult, BlockExecutor, StateDB},
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
-    precompiles::{DynPrecompile, Precompile, PrecompilesMap},
+    precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
@@ -60,7 +60,8 @@ use alloy_network::{
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
+    Address, B256, Bloom, Bytes, Log as PrimitiveLog, LogData, TxHash, TxKind, U64, U256, hex,
+    keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
@@ -72,7 +73,7 @@ use alloy_rpc_types::{
     anvil::Forking,
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
-    simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
+    simulate::{MAX_SIMULATE_BLOCKS, SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
     trace::{
         filter::TraceFilter,
@@ -90,12 +91,13 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
+use alloy_sol_types::SolValue;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
 };
-use anvil_rpc::error::RpcError;
+use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
@@ -143,6 +145,9 @@ type OpCallDepositInfo = DepositTransactionParts;
 #[derive(Default, Clone, Debug)]
 struct OpCallDepositInfo;
 
+/// Maximum cumulative gas available to one `eth_simulateV1` request.
+const SIMULATE_GAS_CAP: u64 = 50_000_000;
+
 /// Marker trait that abstracts over the per-network inspector trait bounds
 /// required by the in-memory backend. The OP bound is only included when the
 /// `optimism` feature is enabled.
@@ -168,10 +173,12 @@ impl<DB: Database, T> BackendInspector<DB> for T where
 }
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
-    DatabaseCommit, Inspector,
+    Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
+        ContextTr,
         block::BlobExcessGasAndPrice,
+        journaled_state::JournalTr,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
@@ -180,12 +187,15 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm_inspectors::opcode::OpcodeGasInspector;
+use revm_inspectors::{
+    opcode::OpcodeGasInspector,
+    transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferKind},
+};
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
     io::{Read, Write},
-    ops::{Mul, Not},
+    ops::Mul,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -633,6 +643,47 @@ impl<N: Network> Backend<N> {
         }
 
         precompiles_map
+    }
+
+    fn simulation_precompile_moves(
+        &self,
+        state_overrides: &StateOverride,
+    ) -> Result<Vec<(Address, Address)>, BlockchainError> {
+        let moves = state_overrides
+            .iter()
+            .filter_map(|(source, account)| {
+                account.move_precompile_to.map(|destination| (*source, destination))
+            })
+            .collect::<Vec<_>>();
+        if moves.is_empty() {
+            return Ok(moves);
+        }
+
+        let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(self.spec_id()));
+        let mut precompiles = PrecompilesMap::from_static(precompiles);
+        self.inject_precompiles(&mut precompiles);
+
+        for (source, destination) in &moves {
+            if source == destination {
+                if precompiles.get(source).is_none() {
+                    return Err(simulate_rpc_error(
+                        -32000,
+                        format!("account {source} is not a precompile"),
+                    ));
+                }
+                return Err(simulate_rpc_error(
+                    -38022,
+                    format!("cannot move precompile {source} to itself"),
+                ));
+            }
+        }
+
+        precompiles.move_precompiles(moves.iter().copied()).map_err(
+            |MovePrecompileError::NotAPrecompile(address)| {
+                simulate_rpc_error(-32000, format!("account {address} is not a precompile"))
+            },
+        )?;
+        Ok(moves)
     }
 
     /// Returns the system contracts for the current spec.
@@ -1316,6 +1367,29 @@ impl<N: Network> Backend<N> {
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        self.transact_eth_with_inspector_ref_and_precompile_overrides(
+            db,
+            evm_env,
+            inspector,
+            tx_env,
+            &[],
+        )
+    }
+
+    /// Eth path of [`Backend::transact_eth_with_inspector_ref`] with per-call precompile moves.
+    fn transact_eth_with_inspector_ref_and_precompile_overrides<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+        precompile_moves: &[(Address, Address)],
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
         let mut evm = EthEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
             evm_env.clone(),
@@ -1323,6 +1397,16 @@ impl<N: Network> Backend<N> {
         );
         self.inject_precompiles(evm.precompiles_mut());
         self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        let warm_precompile_addresses = evm.precompiles_mut().addresses().copied().collect();
+        evm.precompiles_mut().move_precompiles(precompile_moves.iter().copied()).map_err(
+            |MovePrecompileError::NotAPrecompile(address)| {
+                simulate_rpc_error(-32000, format!("account {address} is not a precompile"))
+            },
+        )?;
+        // EIP-2929 warms the protocol precompile addresses, not their simulation-only destinations.
+        // Seed the journal before RevM's pre-execution hook so moving the map does not prewarm the
+        // replacement addresses.
+        evm.ctx_mut().journal_mut().warm_precompiles(&warm_precompile_addresses);
         Ok(evm.transact(tx_env)?)
     }
 
@@ -5022,6 +5106,21 @@ impl Backend<FoundryNetwork> {
         request: SimulatePayload,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
+        let base_block_number = match block_request.as_ref() {
+            Some(BlockRequest::Number(number)) => BlockNumber::Number(*number),
+            Some(BlockRequest::Pending(_)) | None => BlockNumber::Latest,
+        };
+        let base_block =
+            self.block_by_number(base_block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let base_number = base_block.header.number();
+        let base_timestamp = base_block.header.timestamp();
+        let base_hash = base_block.header.hash;
+        let base_fee = self.fees.get_next_block_base_fee_per_gas(
+            base_block.header.gas_used(),
+            base_block.header.gas_limit(),
+            base_block.header.base_fee_per_gas().unwrap_or_default(),
+        );
+
         self.with_database_at(block_request, |state, mut block_env| {
             let SimulatePayload {
                 block_state_calls,
@@ -5029,8 +5128,13 @@ impl Backend<FoundryNetwork> {
                 validation,
                 return_full_transactions,
             } = request;
+            let block_state_calls =
+                sanitize_simulation_blocks(block_state_calls, base_number, base_timestamp)?;
             let mut cache_db = CacheDB::new(state);
             let mut block_res = Vec::with_capacity(block_state_calls.len());
+            let mut parent_hash = base_hash;
+            let mut rpc_gas_budget = SIMULATE_GAS_CAP;
+            block_env.basefee = if validation { base_fee } else { 0 };
 
             // execute the blocks
             for block in block_state_calls {
@@ -5039,7 +5143,15 @@ impl Backend<FoundryNetwork> {
                 let mut log_index = 0;
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
-                let mut logs= Vec::new();
+                let mut logs = Vec::new();
+                if !validation {
+                    block_env.basefee = 0;
+                }
+                let precompile_moves = state_overrides
+                    .as_ref()
+                    .map(|overrides| self.simulation_precompile_moves(overrides))
+                    .transpose()?
+                    .unwrap_or_default();
 
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
@@ -5050,7 +5162,54 @@ impl Backend<FoundryNetwork> {
                 }
 
                 // execute all calls in that block
-                for (req_idx, request) in calls.into_iter().enumerate() {
+                for (req_idx, mut request) in calls.into_iter().enumerate() {
+                    let remaining_gas = block_env.gas_limit.saturating_sub(gas_used);
+                    let requested_gas = request.gas.unwrap_or(remaining_gas);
+                    if requested_gas > remaining_gas {
+                        return Err(simulate_rpc_error(
+                            -38015,
+                            format!(
+                                "block gas limit reached: remaining: {remaining_gas}, required: {requested_gas}"
+                            ),
+                        ));
+                    }
+                    request.gas = Some(requested_gas.min(rpc_gas_budget));
+
+                    let caller = request.from.unwrap_or_default();
+                    if request.nonce.is_none() {
+                        request.nonce = Some(
+                            RevmDatabase::basic(&mut cache_db, caller)?
+                                .map(|account| account.nonce)
+                                .unwrap_or_default(),
+                        );
+                    }
+                    if validation && request.nonce == Some(u64::MAX) {
+                        return Err(simulate_rpc_error(
+                            -32603,
+                            format!(
+                                "err: nonce has max value: address {caller}, nonce: {} (supplied gas {})",
+                                u64::MAX,
+                                request.gas.unwrap_or_default()
+                            ),
+                        ));
+                    }
+                    if validation {
+                        let max_fee = request
+                            .gas_price
+                            .or(request.max_fee_per_gas)
+                            .unwrap_or_default();
+                        if max_fee < block_env.basefee as u128 {
+                            return Err(simulate_rpc_error(
+                                -38012,
+                                format!(
+                                    "err: max fee per gas less than block base fee: address {caller}, maxFeePerGas: {max_fee}, baseFee: {} (supplied gas {})",
+                                    block_env.basefee,
+                                    request.gas.unwrap_or_default()
+                                ),
+                            ));
+                        }
+                    }
+
                     let fee_details = FeeDetails::new(
                         request.gas_price,
                         request.max_fee_per_gas,
@@ -5059,8 +5218,12 @@ impl Backend<FoundryNetwork> {
                     )?
                     .or_zero_fees();
 
+                    let mut execution_request = request.clone();
+                    if !validation {
+                        execution_request.nonce = None;
+                    }
                     let (mut evm_env, tx_env, op_deposit) = self.build_call_env(
-                        WithOtherFields::new(request.clone()),
+                        WithOtherFields::new(execution_request),
                         fee_details,
                         block_env.clone(),
                     );
@@ -5068,8 +5231,12 @@ impl Backend<FoundryNetwork> {
                     // Always disable EIP-3607
                     evm_env.cfg_env.disable_eip3607 = true;
 
-                    if !validation {
-                        evm_env.cfg_env.disable_base_fee = !validation;
+                    if validation {
+                        evm_env.cfg_env.disable_nonce_check = false;
+                        evm_env.cfg_env.disable_base_fee = false;
+                        evm_env.cfg_env.disable_block_gas_limit = false;
+                    } else {
+                        evm_env.cfg_env.disable_base_fee = true;
                         evm_env.block_env.basefee = 0;
                     }
 
@@ -5080,14 +5247,40 @@ impl Backend<FoundryNetwork> {
                         inspector = inspector.with_transfers();
                     }
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
-                    let ResultAndState { result, state } = self.transact_with_inspector_ref(
-                        &cache_db,
-                        &evm_env,
-                        &mut inspector,
-                        tx_env,
-                        op_deposit,
-                    )?;
+                    let execution_result = if precompile_moves.is_empty()
+                        || self.is_optimism()
+                        || self.is_tempo()
+                    {
+                        self.transact_with_inspector_ref(
+                            &cache_db,
+                            &evm_env,
+                            &mut inspector,
+                            tx_env,
+                            op_deposit,
+                        )
+                    } else {
+                        self.transact_eth_with_inspector_ref_and_precompile_overrides(
+                            &cache_db,
+                            &evm_env,
+                            &mut inspector,
+                            tx_env,
+                            &precompile_moves,
+                        )
+                    };
+                    let ResultAndState { result, state } = match execution_result {
+                        Err(BlockchainError::InvalidTransaction(error)) => {
+                            return Err(simulate_transaction_error(error));
+                        }
+                        result => result?,
+                    };
                     trace!(target: "backend", ?result, ?request, "simulate call");
+
+                    let selfdestruct_logs = if result.is_success() {
+                        selfdestruct_transfer_logs(&inspector)
+                    } else {
+                        Vec::new()
+                    };
+                    let attempted_log_count = simulation_log_count(&inspector);
 
                     inspector.print_logs();
                     if self.print_traces {
@@ -5097,11 +5290,16 @@ impl Backend<FoundryNetwork> {
                     // commit the transaction
                     cache_db.commit(state);
                     gas_used += result.tx_gas_used();
+                    rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
 
-                    let mut request = Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    let mut request =
+                        Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    if request.as_ref().to.is_none() {
+                        request.as_mut().to = Some(TxKind::Create);
+                    }
                     request.prep_for_submission();
 
                     let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
@@ -5117,21 +5315,50 @@ impl Backend<FoundryNetwork> {
                     );
                     transactions.push(rpc_tx);
 
-                    let return_data = result.output().cloned().unwrap_or_default();
+                    let return_data = if result.is_success() {
+                        result.output().cloned().unwrap_or_default()
+                    } else {
+                        Bytes::new()
+                    };
+                    let error = match &result {
+                        ExecutionResult::Success { .. } => None,
+                        ExecutionResult::Revert { output, .. } => {
+                            let message = RevertDecoder::new()
+                                .maybe_decode(output, None)
+                                .map(|reason| format!("execution reverted: {reason}"))
+                                .unwrap_or_else(|| "execution reverted".to_string());
+                            Some(alloy_rpc_types::simulate::SimulateError {
+                                code: alloy_rpc_types::simulate::SimulateError::EXECUTION_REVERTED_CODE,
+                                message,
+                                data: Some(output.clone()),
+                            })
+                        }
+                        ExecutionResult::Halt { reason, .. } => {
+                            let message = if matches!(reason, HaltReason::OutOfGas(_)) {
+                                "out of gas".to_string()
+                            } else {
+                                format!("vm execution error: {reason}")
+                            };
+                            Some(alloy_rpc_types::simulate::SimulateError {
+                                code: alloy_rpc_types::simulate::SimulateError::VM_EXECUTION_ERROR_CODE,
+                                message,
+                                data: None,
+                            })
+                        }
+                    };
+                    let mut result_logs = if result.is_success() {
+                        result.clone().into_logs()
+                    } else {
+                        Vec::new()
+                    };
+                    result_logs.extend(selfdestruct_logs);
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
-                        max_used_gas: None,
+                        max_used_gas: Some(result.tx_gas_used()),
                         status: result.is_success(),
-                        error: result.is_success().not().then(|| {
-                            alloy_rpc_types::simulate::SimulateError {
-                                code: -3200,
-                                message: "execution failed".to_string(),
-                                data: None,
-                            }
-                        }),
-                        logs: result.clone()
-                            .into_logs()
+                        error,
+                        logs: result_logs
                             .into_iter()
                             .enumerate()
                             .map(|(idx, log)| Log {
@@ -5148,19 +5375,21 @@ impl Backend<FoundryNetwork> {
                             .collect(),
                     };
                     logs.extend(sim_res.logs.iter().map(|log| log.inner.clone()));
-                    log_index += sim_res.logs.len();
+                    log_index += attempted_log_count;
                     call_res.push(sim_res);
                 }
 
                 let transactions_envelopes: Vec<AnyTxEnvelope> = transactions
-                .iter()
-                .map(|tx| AnyTxEnvelope::from(tx.clone()))
-                .collect();
+                    .iter()
+                    .map(|tx| AnyTxEnvelope::from(tx.clone()))
+                    .collect();
+                let blob_gas_used =
+                    transactions_envelopes.iter().filter_map(|tx| tx.blob_gas_used()).sum();
                 let header = Header {
                     logs_bloom: logs_bloom(logs.iter()),
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
                     receipts_root: calculate_receipt_root(&transactions_envelopes),
-                    parent_hash: Default::default(),
+                    parent_hash,
                     beneficiary: block_env.beneficiary,
                     state_root: Default::default(),
                     difficulty: Default::default(),
@@ -5173,8 +5402,13 @@ impl Backend<FoundryNetwork> {
                     nonce: Default::default(),
                     base_fee_per_gas: Some(block_env.basefee),
                     withdrawals_root: None,
-                    blob_gas_used: None,
-                    excess_blob_gas: None,
+                    blob_gas_used: Some(blob_gas_used),
+                    excess_blob_gas: Some(
+                        block_env
+                            .blob_excess_gas_and_price()
+                            .map(|blob| blob.excess_blob_gas)
+                            .unwrap_or_default(),
+                    ),
                     parent_beacon_block_root: None,
                     requests_hash: None,
                     ..Default::default()
@@ -5200,6 +5434,9 @@ impl Backend<FoundryNetwork> {
                         log.block_hash = Some(block.header.hash);
                     });
                 }
+
+                parent_hash = block.header.hash;
+                cache_db.cache.block_hashes.insert(block_env.number, parent_hash);
 
                 let simulated_block = SimulatedBlock {
                     inner: AnyRpcBlock::new(WithOtherFields::new(block)),
@@ -5832,6 +6069,132 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum();
     }
     false
+}
+
+fn selfdestruct_transfer_logs(inspector: &AnvilInspector) -> Vec<PrimitiveLog> {
+    let Some(transfer_inspector) = &inspector.transfer else { return Vec::new() };
+
+    transfer_inspector
+        .transfers()
+        .iter()
+        .filter(|transfer| transfer.kind == TransferKind::SelfDestruct && !transfer.value.is_zero())
+        .map(|transfer| {
+            let from = B256::from_slice(&transfer.from.abi_encode());
+            let to = B256::from_slice(&transfer.to.abi_encode());
+            let data = transfer.value.abi_encode();
+            PrimitiveLog {
+                address: TRANSFER_LOG_EMITTER,
+                data: LogData::new_unchecked(vec![TRANSFER_EVENT_TOPIC, from, to], data.into()),
+            }
+        })
+        .collect()
+}
+
+fn simulation_log_count(inspector: &AnvilInspector) -> usize {
+    let transfer_count = inspector
+        .transfer
+        .as_ref()
+        .map(|transfer_inspector| {
+            transfer_inspector
+                .transfers()
+                .iter()
+                .filter(|transfer| !transfer.value.is_zero())
+                .count()
+        })
+        .unwrap_or_default();
+    inspector.raw_log_count() + transfer_count
+}
+
+fn simulate_rpc_error(code: i64, message: impl Into<String>) -> BlockchainError {
+    BlockchainError::RpcError(RpcError {
+        code: ErrorCode::from(code),
+        message: message.into().into(),
+        data: None,
+    })
+}
+
+fn simulate_transaction_error(error: InvalidTransactionError) -> BlockchainError {
+    let code = match &error {
+        InvalidTransactionError::NonceTooLow => -38010,
+        InvalidTransactionError::NonceTooHigh => -38011,
+        InvalidTransactionError::NonceMaxValue => -32603,
+        InvalidTransactionError::FeeCapTooLow => -38012,
+        InvalidTransactionError::GasTooLow | InvalidTransactionError::GasTooHigh(_) => -38013,
+        InvalidTransactionError::InsufficientFunds
+        | InvalidTransactionError::InsufficientFundsForTransfer => -38014,
+        InvalidTransactionError::SenderNoEOA => -38024,
+        InvalidTransactionError::MaxInitCodeSizeExceeded => -38025,
+        _ => return BlockchainError::InvalidTransaction(error),
+    };
+    simulate_rpc_error(code, format!("err: {error}"))
+}
+
+fn sanitize_simulation_blocks(
+    blocks: Vec<SimBlock>,
+    base_number: u64,
+    base_timestamp: u64,
+) -> Result<Vec<SimBlock>, BlockchainError> {
+    let mut sanitized = Vec::with_capacity(blocks.len());
+    let mut previous_number = base_number;
+    let mut previous_timestamp = base_timestamp;
+
+    for mut block in blocks {
+        let mut overrides = block.block_overrides.take().unwrap_or_default();
+        let number = overrides
+            .number
+            .map(|number| number.saturating_to())
+            .unwrap_or(previous_number.saturating_add(1));
+
+        if number <= previous_number {
+            return Err(simulate_rpc_error(
+                -38020,
+                format!("block numbers must be in order: {number} <= {previous_number}"),
+            ));
+        }
+
+        for intermediate_number in previous_number.saturating_add(1)..number {
+            if sanitized.len() == MAX_SIMULATE_BLOCKS as usize {
+                return Err(simulate_rpc_error(-38026, "too many blocks"));
+            }
+            let timestamp = previous_timestamp.saturating_add(12);
+            if timestamp <= previous_timestamp {
+                return Err(simulate_rpc_error(
+                    -38021,
+                    "block timestamp overflow while filling number gap",
+                ));
+            }
+            sanitized.push(SimBlock {
+                block_overrides: Some(BlockOverrides {
+                    number: Some(U256::from(intermediate_number)),
+                    time: Some(timestamp),
+                    ..Default::default()
+                }),
+                state_overrides: None,
+                calls: Vec::new(),
+            });
+            previous_timestamp = timestamp;
+        }
+
+        let timestamp = overrides.time.unwrap_or_else(|| previous_timestamp.saturating_add(12));
+        if timestamp <= previous_timestamp {
+            return Err(simulate_rpc_error(
+                -38021,
+                format!("block timestamps must be in order: {timestamp} <= {previous_timestamp}"),
+            ));
+        }
+        if sanitized.len() == MAX_SIMULATE_BLOCKS as usize {
+            return Err(simulate_rpc_error(-38026, "too many blocks"));
+        }
+
+        overrides.number = Some(U256::from(number));
+        overrides.time = Some(timestamp);
+        block.block_overrides = Some(overrides);
+        sanitized.push(block);
+        previous_number = number;
+        previous_timestamp = timestamp;
+    }
+
+    Ok(sanitized)
 }
 
 /// Unpacks an [`ExecutionResult`] into its exit reason, gas used, output, and logs.

@@ -81,7 +81,10 @@ use anvil_core::{
     },
     types::{ReorgOptions, TransactionData},
 };
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::{ErrorCode, RpcError},
+    response::ResponseResult,
+};
 use foundry_common::{
     provider::ProviderBuilder,
     version::{COMMIT_SHA, SEMVER_VERSION},
@@ -2924,7 +2927,17 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
         node_info!("eth_simulateV1");
-        let block_request = self.block_request(block_number).await?;
+        let block_request =
+            self.block_request(block_number).await.map_err(|error| match error {
+                BlockchainError::BlockOutOfRange(_, _) | BlockchainError::BlockNotFound => {
+                    BlockchainError::RpcError(RpcError {
+                        code: ErrorCode::ServerError(-32000),
+                        message: "header not found".into(),
+                        data: None,
+                    })
+                }
+                error => error,
+            })?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()

@@ -32,6 +32,8 @@ pub struct AnvilInspector {
     pub log_collector: Option<LogCollector>,
     /// Collects all internal ETH transfers as ERC20 transfer events.
     pub transfer: Option<TransferInspector>,
+    /// Counts every raw EVM log before reverted frames are discarded.
+    raw_log_count: usize,
 }
 
 /// Configuration for per-transaction inspector lifecycle.
@@ -48,6 +50,11 @@ pub struct InspectorTxConfig {
 }
 
 impl AnvilInspector {
+    /// Returns the number of raw EVM logs observed during execution.
+    pub const fn raw_log_count(&self) -> usize {
+        self.raw_log_count
+    }
+
     /// Finish a transaction: print traces/logs, drain the tracer, and reset for the next tx.
     ///
     /// Returns the collected call trace nodes from the finished transaction.
@@ -59,6 +66,7 @@ impl AnvilInspector {
         self.print_logs();
 
         let traces = self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
+        self.raw_log_count = 0;
 
         // Reinstall tracer for next tx.
         let tracing_config = if config.enable_steps_tracing {
@@ -182,6 +190,7 @@ where
 
     #[allow(clippy::redundant_clone)]
     fn log(&mut self, ecx: &mut CTX, log: Log) {
+        self.raw_log_count += 1;
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             inspector.log(ecx, log.clone());
         });
@@ -189,6 +198,7 @@ where
 
     #[allow(clippy::redundant_clone)]
     fn log_full(&mut self, interp: &mut Interpreter, ecx: &mut CTX, log: Log) {
+        self.raw_log_count += 1;
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             inspector.log_full(interp, ecx, log.clone());
         });
