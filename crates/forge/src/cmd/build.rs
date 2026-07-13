@@ -1,7 +1,10 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use forge_lint::{linter::Linter, sol::SolidityLinter};
+use forge_lint::{
+    linter::Linter,
+    sol::{DeniedLintDiagnostics, SolidityLinter},
+};
 use foundry_cli::{
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{Git, LoadConfig, cache_local_signatures},
@@ -143,7 +146,9 @@ impl BuildArgs {
             && !output.output().errors.iter().any(|e| e.is_error())
             && let Err(err) = self.lint(&project, &config, self.paths.as_deref(), &mut output)
         {
-            emit_lint_failure_notice();
+            if err.downcast_ref::<DeniedLintDiagnostics>().is_none() {
+                emit_lint_failure_notice();
+            }
             return Err(err.wrap_err("post-build lint step failed"));
         }
 
