@@ -1315,6 +1315,24 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Cancun);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.35", "--evm-version", "amsterdam", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Osaka);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["config", "--use", "0.8.36", "--evm-version", "amsterdam", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::Amsterdam);
 });
 
 // Tests that root paths are properly resolved even if submodule specifies remappings for them.
@@ -2226,12 +2244,7 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
             "unwrapped-modifier-logic".to_string(),
         ]
     });
-    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]]);
+    cmd.args(["lint"]).assert_success().stdout_eq("");
 });
 
 // <https://github.com/foundry-rs/foundry/issues/6529>

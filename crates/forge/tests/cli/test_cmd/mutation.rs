@@ -237,6 +237,235 @@ contract CounterTest is Test {
     );
 });
 
+forgetest_init!(mutation_testing_validates_mutation_compiler_profile, |prj, cmd| {
+    fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = true\n").unwrap();
+
+    prj.add_source(
+        "StackTooDeep.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract StackTooDeep {
+    function manyLocals(uint256 x) public pure returns (uint256) {
+        uint256 a00 = x + 0;
+        uint256 a01 = x + 1;
+        uint256 a02 = x + 2;
+        uint256 a03 = x + 3;
+        uint256 a04 = x + 4;
+        uint256 a05 = x + 5;
+        uint256 a06 = x + 6;
+        uint256 a07 = x + 7;
+        uint256 a08 = x + 8;
+        uint256 a09 = x + 9;
+        uint256 a10 = x + 10;
+        uint256 a11 = x + 11;
+        uint256 a12 = x + 12;
+        uint256 a13 = x + 13;
+        uint256 a14 = x + 14;
+        uint256 a15 = x + 15;
+        uint256 a16 = x + 16;
+        uint256 a17 = x + 17;
+        uint256 a18 = x + 18;
+        uint256 a19 = x + 19;
+        return a00 + a01 + a02 + a03 + a04 + a05 + a06 + a07 + a08 + a09
+            + a10 + a11 + a12 + a13 + a14 + a15 + a16 + a17 + a18 + a19;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "StackTooDeep.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "../src/StackTooDeep.sol";
+
+contract StackTooDeepTest {
+    function test_manyLocals() public {
+        StackTooDeep target = new StackTooDeep();
+        assert(target.manyLocals(1) == 210);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--mutate", "src/StackTooDeep.sol", "--mutation-via-ir", "false", "--json"])
+        .assert_failure();
+    let stdout = output.get_output().stdout_lossy();
+    let stderr = output.get_output().stderr_lossy();
+
+    assert!(stdout.is_empty(), "unexpected stdout:\n{stdout}");
+
+    assert!(
+        stderr.contains(
+            "Mutation testing compiler profile failed to compile before applying mutations"
+        ),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
+forgetest_init!(mutation_testing_uses_mutation_profile_for_initial_compile, |prj, cmd| {
+    fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = false\n").unwrap();
+
+    prj.add_source(
+        "StackTooDeep.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract StackTooDeep {
+    function manyLocals(uint256 x) public pure returns (uint256) {
+        uint256 a00 = x + 0;
+        uint256 a01 = x + 1;
+        uint256 a02 = x + 2;
+        uint256 a03 = x + 3;
+        uint256 a04 = x + 4;
+        uint256 a05 = x + 5;
+        uint256 a06 = x + 6;
+        uint256 a07 = x + 7;
+        uint256 a08 = x + 8;
+        uint256 a09 = x + 9;
+        uint256 a10 = x + 10;
+        uint256 a11 = x + 11;
+        uint256 a12 = x + 12;
+        uint256 a13 = x + 13;
+        uint256 a14 = x + 14;
+        uint256 a15 = x + 15;
+        uint256 a16 = x + 16;
+        uint256 a17 = x + 17;
+        uint256 a18 = x + 18;
+        uint256 a19 = x + 19;
+        return a00 + a01 + a02 + a03 + a04 + a05 + a06 + a07 + a08 + a09
+            + a10 + a11 + a12 + a13 + a14 + a15 + a16 + a17 + a18 + a19;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "StackTooDeep.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "../src/StackTooDeep.sol";
+
+contract StackTooDeepTest {
+    function test_manyLocals() public {
+        StackTooDeep target = new StackTooDeep();
+        assert(target.manyLocals(1) == 210);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/StackTooDeep.sol",
+            "--mutation-via-ir",
+            "true",
+            "--mutation-jobs",
+            "1",
+            "--json",
+        ])
+        .assert_success();
+    let summary = mutation_summary(&output.get_output().stdout_lossy());
+
+    assert!(summary["total"].as_u64().unwrap() > 0, "unexpected summary:\n{summary}");
+});
+
+forgetest_init!(mutation_testing_rerun_preserves_exact_failure_filter, |prj, _cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "../src/Counter.sol";
+
+contract WeakTest {
+    function test_increment() public {
+        Counter target = new Counter();
+        target.increment();
+        assert(target.number() >= 0);
+    }
+}
+
+contract StrongTest {
+    function test_increment() public {
+        Counter target = new Counter();
+        target.increment();
+        assert(target.number() == 1);
+    }
+}
+"#,
+    );
+
+    let mut weak_cmd = prj.forge_command();
+    let weak_stdout = weak_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Counter.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-contract",
+            "WeakTest",
+            "--match-test",
+            "test_increment",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let weak_summary = mutation_summary(&weak_stdout);
+
+    let failures_file = prj.root().join("cache/test-failures");
+    fs::create_dir_all(failures_file.parent().unwrap()).unwrap();
+    fs::write(
+        failures_file,
+        r#"{"version":1,"failures":[{"contract":"test/Counter.t.sol:WeakTest","test":"test_increment()"}]}"#,
+    )
+    .unwrap();
+
+    let mut rerun_cmd = prj.forge_command();
+    let rerun_stdout = rerun_cmd
+        .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--rerun", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let rerun_summary = mutation_summary(&rerun_stdout);
+
+    for key in ["total", "killed", "survived", "invalid", "skipped", "timed_out"] {
+        assert_eq!(
+            rerun_summary[key], weak_summary[key],
+            "expected --rerun to match the exact WeakTest baseline for `{key}`: weak={weak_summary}, rerun={rerun_summary}",
+        );
+    }
+});
+
 forgetest_init!(mutation_testing_rejects_empty_mutate_path_selection, |prj, cmd| {
     prj.add_source(
         "Counter.sol",
