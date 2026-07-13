@@ -70,7 +70,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
-  - `todo`: Detects the usage of todo keyword in comments
+  - `todo-comment`: Detects the usage of todo keyword in comments
   - `unused-error`: Custom error declarations that are never referenced should be removed.
   - `internal-function-used-once`: Internal functions referenced exactly once can usually be inlined into their caller.
   - `cyclomatic-complexity`: functions with a cyclomatic complexity above 11 should be split into smaller functions.

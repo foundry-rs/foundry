@@ -52,7 +52,7 @@ mod event_fields;
 use event_fields::EVENT_FIELDS;
 
 mod todo;
-use todo::TODO;
+use todo::TODO_COMMENT;
 
 mod unused_error;
 use unused_error::UNUSED_ERROR;
@@ -88,7 +88,7 @@ register_lints!(
     (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
     (MissingInheritance, project, (MISSING_INHERITANCE)),
     (EventFields, early, (EVENT_FIELDS)),
-    (Todo, early, (TODO)),
+    (TodoComment, early, (TODO_COMMENT)),
     (UnusedError, project, (UNUSED_ERROR)),
     (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE)),
     (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY)),

@@ -1,29 +1,31 @@
-use std::collections::HashSet;
-
-use super::Todo;
+use super::TodoComment;
 use crate::{
     linter::{EarlyLintPass, Lint, LintContext},
     sol::{Severity, SolLint},
 };
-use foundry_common::comments::Comments;
+use alloy_primitives::map::HashSet;
+use foundry_common::comments::{Comment, Comments};
 use solar::ast;
 
 declare_forge_lint!(
-    TODO,
+    TODO_COMMENT,
     Severity::Info,
-    "todo",
+    "todo-comment",
     "TODO/FIXME comments should be resolved before production"
 );
 
 const MARKERS: &[&str] = &["TODO", "FIXME"];
 
-impl<'ast> EarlyLintPass<'ast> for Todo {
+/// Characters that may directly follow a marker and still count as a real marker.
+const TRAILING: &[char] = &[':', '(', ',', ';', '.', ')'];
+
+impl<'ast> EarlyLintPass<'ast> for TodoComment {
     fn check_full_source_unit(
         &mut self,
         _ctx: &LintContext<'ast, '_>,
         _ast: &'ast ast::SourceUnit<'ast>,
     ) {
-        if !_ctx.is_lint_enabled(TODO.id()) {
+        if !_ctx.is_lint_enabled(TODO_COMMENT.id()) {
             return;
         }
 
@@ -33,23 +35,52 @@ impl<'ast> EarlyLintPass<'ast> for Todo {
         let comments = Comments::new(file, _ctx.session().source_map(), false, false, None);
 
         for comment in comments.iter() {
-            let mut seen = HashSet::new();
+            if is_control_comment(comment) {
+                continue;
+            }
 
+            let mut seen = HashSet::new();
             let found: Vec<&str> = comment
                 .lines
                 .iter()
-                .flat_map(|line| line.split(|c: char| !c.is_alphanumeric()))
-                .filter(|&word| MARKERS.iter().any(|m| word.eq_ignore_ascii_case(m)))
-                .filter(|&word| seen.insert(word))
+                .flat_map(|line| strip_comment_prefix(line, comment).split_whitespace())
+                .filter_map(marker_at_start)
+                .filter(|m| seen.insert(*m))
                 .collect();
 
             if found.is_empty() {
                 continue;
             }
 
-            let markers = found.iter().map(|s| s.to_string()).collect::<Vec<String>>().join(", ");
+            let markers = found.join(", ");
             let noun = if found.len() > 1 { "comments" } else { "comment" };
-            _ctx.emit_with_msg(&TODO, comment.span, format!("unresolved `{markers}` {noun}"));
+            _ctx.emit_with_msg(
+                &TODO_COMMENT,
+                comment.span,
+                format!("unresolved `{markers}` {noun}"),
+            );
         }
     }
+}
+
+fn is_control_comment(comment: &Comment) -> bool {
+    let Some(first_line) = comment.lines.first() else { return false };
+    let content = strip_comment_prefix(first_line, comment);
+    content.starts_with('@') || content.trim_start().starts_with("forge-lint:")
+}
+
+/// If `token` begins with a marker followed by a valid boundary, return that marker.
+fn marker_at_start(token: &str) -> Option<&str> {
+    MARKERS.iter().find_map(|m| {
+        let prefix = token.get(..m.len())?;
+        if !prefix.eq_ignore_ascii_case(m) {
+            return None;
+        }
+        let after = token[m.len()..].chars().next()?;
+        if TRAILING.contains(&after) { Some(*m) } else { None }
+    })
+}
+
+fn strip_comment_prefix<'a>(line: &'a str, comment: &Comment) -> &'a str {
+    comment.prefix().and_then(|p| line.strip_prefix(p)).unwrap_or(line)
 }

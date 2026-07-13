@@ -1,16 +1,24 @@
-//@compile-flags: --only-lint todo
+//@compile-flags: --only-lint todo-comment
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
 contract Todo {
+    // see TODO_ITEMS_LIMIT for the cap
+    uint256 constant TODO_ITEM_LIST = 10;
+
+    uint8 x = 1; //TODO: validate this
+
     // ToDo: implement access control
     function unfinished() public {}
 
-    // FixMe this is broken
+    // todo-list should not be treated as an unresolved marker if whole words are required
+    function todolist() public {}
+
+    // FixMe: this is broken
     function buggy() public {}
 
-    // fixme this is broken too
+    /*TODO(alice): this one should be fixed */
     function buggy2() public {}
 
     /* ToDo: revisit this math */
@@ -19,11 +27,20 @@ contract Todo {
     /// ToDo: document this properly
     function documented() public {}
 
+    // check other tickets in todo list
+    function todoInBetween() public {}
+
     // FIXME first, TODO second, and fixme third
     function combined() public {}
 
     // a perfectly normal comment, no markers
     function clean() public {}
+
+    // TODO
+    function bareMarker() public {}
+
+    // check this later TODO
+    function trailingBare() public {}
 
     /*
         TODO: this is a block comment with a marker, should be detected

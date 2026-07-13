@@ -1,60 +1,52 @@
-note[todo]: unresolved `todo` comment
+note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
-LL │ //@compile-flags: --only-lint todo
-   │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LL │     uint8 x = 1; //TODO: validate this
+   │                  ━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
-note[todo]: unresolved `ToDo` comment
+note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
 LL │     // ToDo: implement access control
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
-note[todo]: unresolved `FixMe` comment
+note[todo-comment]: unresolved `FIXME` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
-LL │     // FixMe this is broken
-   │     ━━━━━━━━━━━━━━━━━━━━━━━
+LL │     // FixMe: this is broken
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
-note[todo]: unresolved `fixme` comment
+note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
-LL │     // fixme this is broken too
-   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LL │     /*TODO(alice): this one should be fixed */
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
-note[todo]: unresolved `ToDo` comment
+note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
 LL │     /* ToDo: revisit this math */
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
-note[todo]: unresolved `ToDo` comment
+note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
 LL │     /// ToDo: document this properly
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
-note[todo]: unresolved `FIXME, TODO, fixme` comments
-   ╭▸ ROOT/testdata/Todo.sol:LL:CC
-   │
-LL │     // FIXME first, TODO second, and fixme third
-   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
-
-note[todo]: unresolved `TODO` comment
+note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
 LL │ ┏     /*
@@ -62,13 +54,13 @@ LL │ ┃         TODO: this is a block comment with a marker, should be detect
 LL │ ┃     */
    │ ┗━━━━━━┛
    │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
-note[todo]: unresolved `TODO` comment
+note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
 LL │     /// @dev TODO: implement the actual logic here
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://getfoundry.sh/forge/linting/todo
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
