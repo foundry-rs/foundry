@@ -1134,6 +1134,77 @@ contract SymbolicTerminalRevertInvariant is Test {
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
 });
 
+// Foundry cheatcode effects are not journaled with EVM state. A top-level revert
+// therefore rolls back contract storage but keeps effects such as `vm.mockCall`
+// for the next invariant call.
+forgetest_init!(symbolic_reverted_handler_effect_is_not_reported_safe, |prj, cmd| {
+    skip_unless_z3!("symbolic_reverted_handler_effect_is_not_reported_safe");
+
+    prj.add_test(
+        "SymbolicRevertedCheatcodeEffects.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract MockedValue {
+    function read() external pure returns (uint256) {
+        return 0;
+    }
+}
+
+contract SymbolicRevertedCheatcodeEffects is Test {
+    MockedValue source;
+    bool broken;
+
+    function setUp() public {
+        source = new MockedValue();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = this.mockAndRevert.selector;
+        selectors[1] = this.breakIfMocked.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+        targetSender(address(this));
+    }
+
+    function mockAndRevert() external {
+        vm.mockCall(address(source), abi.encodeCall(source.read, ()), abi.encode(uint256(42)));
+        revert("after mock");
+    }
+
+    function breakIfMocked() external {
+        if (source.read() == 42) broken = true;
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.fail_on_revert = false
+    function invariant_notBroken() public view {
+        require(!broken, "broken after reverted mock");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_notBroken",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_notBroken()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "incomplete", "{result}");
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"],
+        "symbolic invariant counterexample did not replay"
+    );
+});
+
 forgetest_init!(symbolic_invariant_does_not_inherit_prank_into_nested_call, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_does_not_inherit_prank_into_nested_call");
 
