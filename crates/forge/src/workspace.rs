@@ -8,6 +8,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use alloy_primitives::keccak256;
 use eyre::Result;
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use foundry_config::{Config, fs_permissions::FsAccessKind};
@@ -30,11 +31,14 @@ pub fn ensure_safe_relative_path(rel: &Path, label: &str, orig: &Path) -> Result
 
 /// Compute relative path of `path` under `root`, or return the path unchanged if not under root.
 pub fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
-    path.strip_prefix(root).map(|p| p.to_path_buf()).unwrap_or_else(|_| path.to_path_buf())
+    let root = normalize_existing_ancestor(root);
+    let path = normalize_existing_ancestor(path);
+    path.strip_prefix(root).map(|p| p.to_path_buf()).unwrap_or(path)
 }
 
 fn resolve_against_root(root: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() { normalize_path(path) } else { normalize_path(&root.join(path)) }
+    let path = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    normalize_existing_ancestor(&path)
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -159,13 +163,8 @@ fn rebase_mutable_project_path(config: &Config, temp_path: &Path, path: &Path) -
 }
 
 fn isolated_mutable_path_rel(resolved: &Path) -> PathBuf {
-    let mut rel = PathBuf::from(".foundry_mutable");
-    for component in resolved.components() {
-        if let Component::Normal(component) = component {
-            rel.push(component);
-        }
-    }
-    rel
+    PathBuf::from(".foundry_mutable")
+        .join(format!("{:x}", keccak256(resolved.as_os_str().as_encoded_bytes())))
 }
 
 fn is_covered_by_symlinked_project_root(config: &Config, rel: &Path) -> bool {
@@ -187,9 +186,7 @@ fn normalize_existing_ancestor(path: &Path) -> PathBuf {
         if ancestor.exists() {
             break;
         }
-        if let Some(name) = ancestor.file_name() {
-            missing.push(name.to_owned());
-        }
+        missing.push(ancestor.strip_prefix(parent).unwrap().to_path_buf());
         ancestor = parent;
     }
 
@@ -197,7 +194,7 @@ fn normalize_existing_ancestor(path: &Path) -> PathBuf {
     for component in missing.iter().rev() {
         normalized.push(component);
     }
-    normalized
+    normalize_path(&normalized)
 }
 
 fn rebase_remapping(
@@ -555,10 +552,6 @@ fn copy_project_local_optional_path(
         ensure_within_root(root, &resolved, "corpus/frontier", path)?;
         temp_dir.join(rel)
     };
-    if target.exists() {
-        return Ok(());
-    }
-
     if resolved.is_dir() {
         if is_external {
             copy_dir_recursive(&resolved, &target)
@@ -837,6 +830,7 @@ mod tests {
         };
 
         let temp_config = rebase_config_paths(&config, &workspace);
+        let external = normalize_existing_ancestor(&external);
 
         assert_eq!(temp_config.root, workspace);
         assert_eq!(temp_config.src, workspace.join("contracts"));
@@ -926,6 +920,7 @@ mod tests {
 
         copy_project(&config, &workspace).unwrap();
         let temp_config = rebase_config_paths(&config, &workspace);
+        let external = normalize_existing_ancestor(&external);
         let remappings =
             temp_config.remappings.into_iter().map(Remapping::from).collect::<Vec<_>>();
 
@@ -1033,6 +1028,42 @@ mod tests {
     }
 
     #[test]
+    fn test_copy_project_merges_overlapping_mutable_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        create_test_dir_structure(
+            &root,
+            &[
+                "src/Target.sol",
+                "test/Target.t.sol",
+                "state/corpus/seed.json",
+                "state/frontier.json",
+            ],
+        );
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            fuzz: foundry_config::FuzzConfig {
+                corpus: foundry_config::FuzzCorpusConfig {
+                    corpus_dir: Some(PathBuf::from("state/corpus")),
+                    frontier_dir: Some(PathBuf::from("state")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+
+        assert!(workspace.join("state/corpus/seed.json").exists());
+        assert!(workspace.join("state/frontier.json").exists());
+    }
+
+    #[test]
     fn test_rebase_config_paths_isolates_external_failure_persist_dirs() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
@@ -1055,8 +1086,16 @@ mod tests {
         let fuzz_failure_dir = temp_config.fuzz.failure_persist_dir.unwrap();
         let invariant_failure_dir = temp_config.invariant.failure_persist_dir.unwrap();
 
-        assert!(fuzz_failure_dir.starts_with(workspace.join(".foundry_mutable")));
-        assert!(invariant_failure_dir.starts_with(workspace.join(".foundry_mutable")));
+        assert!(
+            fuzz_failure_dir.starts_with(workspace.join(".foundry_mutable")),
+            "{}",
+            fuzz_failure_dir.display()
+        );
+        assert!(
+            invariant_failure_dir.starts_with(workspace.join(".foundry_mutable")),
+            "{}",
+            invariant_failure_dir.display()
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1098,6 +1137,56 @@ mod tests {
         assert!(rebased_corpus.starts_with(workspace.join(".foundry_mutable")));
         assert!(rebased_corpus.join("seed.json").exists());
         assert!(!rebased_corpus.starts_with(workspace.join("lib")));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_rebase_config_paths_preserves_symlink_parent_semantics() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = temp.path().join("workspace");
+        let external = temp.path().join("external");
+        create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
+        create_test_dir_structure(
+            &external,
+            &["pkg/Dependency.sol", "include/Shared.sol", "pkg/corpus/seed.json"],
+        );
+        symlink_dir(&external.join("pkg"), &root.join("link")).unwrap();
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            libs: vec![PathBuf::from("link")],
+            include_paths: vec![PathBuf::from("link/../include")],
+            invariant: foundry_config::InvariantConfig {
+                corpus: foundry_config::FuzzCorpusConfig {
+                    corpus_dir: Some(PathBuf::from("link/corpus")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+        let temp_config = rebase_config_paths(&config, &workspace);
+        let rebased_corpus = temp_config.invariant.corpus.corpus_dir.unwrap();
+        let external = normalize_existing_ancestor(&external);
+
+        assert_eq!(temp_config.libs, vec![external.join("pkg")]);
+        assert_eq!(temp_config.include_paths, vec![external.join("include")]);
+        assert!(rebased_corpus.starts_with(workspace.join(".foundry_mutable")));
+        assert!(rebased_corpus.join("seed.json").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_isolated_mutable_paths_include_windows_prefix_in_identity() {
+        let c_drive = isolated_mutable_path_rel(Path::new(r"C:\shared\state"));
+        let d_drive = isolated_mutable_path_rel(Path::new(r"D:\shared\state"));
+
+        assert_ne!(c_drive, d_drive);
     }
 
     #[test]
@@ -1149,6 +1238,7 @@ mod tests {
 
         copy_project(&config, &workspace).unwrap();
         let temp_config = rebase_config_paths(&config, &workspace);
+        let external = normalize_existing_ancestor(&external);
 
         assert!(workspace.join("lib/Local.sol").exists());
         assert!(!workspace.join("shared-lib/External.sol").exists());
@@ -1430,6 +1520,7 @@ mod tests {
 
         copy_project(&config, &out).unwrap();
         let temp_config = rebase_config_paths(&config, &out);
+        let outside = normalize_existing_ancestor(&outside);
 
         assert_eq!(temp_config.include_paths, vec![outside]);
         assert!(!out.join("outside/Shared.sol").exists());
