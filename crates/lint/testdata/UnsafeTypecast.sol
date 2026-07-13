@@ -439,6 +439,13 @@ contract UnsafeTypecast {
 }
 
 contract Repros {
+    function downcastBoundedByMaskSafe(uint256 value, uint256 length) public pure {
+        uint8(value & 0xff);
+        uint8(0x7f & value);
+        uint8((0x80 + length) & 0xfe);
+        uint16(value & 0xffff);
+    }
+
     function longDynamicBytesDoNotPanic() public pure {
         bytes memory stringToBytes = bytes("Initializable: contract is already initialized");
     }
