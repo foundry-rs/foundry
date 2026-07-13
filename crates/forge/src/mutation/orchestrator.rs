@@ -29,7 +29,7 @@ use foundry_config::{Config, filter::GlobMatcher};
 use foundry_evm::opts::EvmOpts;
 
 use crate::{
-    cmd::test::FilterArgs,
+    cmd::test::{FilterArgs, RerunFailure},
     mutation::{
         MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
         mutant::{Mutant, MutationResult},
@@ -52,6 +52,7 @@ struct ExecutionCacheFingerprint<'a> {
     config: &'a Config,
     evm_opts: &'a EvmOpts,
     filter_args: FilterArgsFingerprint<'a>,
+    rerun_failures: Option<&'a [RerunFailure]>,
     num_workers: usize,
     artifacts: &'a [ArtifactCacheFingerprint],
 }
@@ -84,6 +85,10 @@ pub struct MutationRunConfig {
     /// applied identically to baseline and every mutant run so they exercise
     /// the same test set.
     pub filter_args: FilterArgs,
+    /// Exact contract/test pairs selected by `--rerun`, if present. These are
+    /// not representable by `FilterArgs` alone because rerun stores precise
+    /// suite identifiers in addition to a test-name regex.
+    pub rerun_failures: Option<Vec<RerunFailure>>,
     /// Project-relative source files selected for the baseline compile.
     /// Re-rooted into each per-mutant workspace so compilation and execution
     /// honor the same filtered test universe.
@@ -162,6 +167,7 @@ pub async fn run_mutation_testing(
         &execution_cache_output,
         &evm_opts,
         &mutation_config.filter_args,
+        mutation_config.rerun_failures.as_deref(),
         num_workers,
     )?;
 
@@ -293,6 +299,7 @@ pub async fn run_mutation_testing(
             progress.clone(),
             json_output,
             mutation_config.filter_args.clone(),
+            mutation_config.rerun_failures.clone(),
             Arc::new(selected_sources_relative.clone()),
             mutation_config.isolate,
             Arc::clone(&cancellation_requested),
@@ -388,6 +395,7 @@ fn mutation_execution_cache_key(
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: &EvmOpts,
     filter_args: &FilterArgs,
+    rerun_failures: Option<&[RerunFailure]>,
     num_workers: usize,
 ) -> Result<String> {
     let artifacts = output
@@ -400,13 +408,39 @@ fn mutation_execution_cache_key(
             profile: id.profile,
         })
         .collect::<Vec<_>>();
-    mutation_execution_cache_key_from_parts(config, evm_opts, filter_args, num_workers, artifacts)
+    mutation_execution_cache_key_from_parts_with_rerun_failures(
+        config,
+        evm_opts,
+        filter_args,
+        rerun_failures,
+        num_workers,
+        artifacts,
+    )
 }
 
+#[cfg(test)]
 fn mutation_execution_cache_key_from_parts(
     config: &Config,
     evm_opts: &EvmOpts,
     filter_args: &FilterArgs,
+    num_workers: usize,
+    artifacts: Vec<ArtifactCacheFingerprint>,
+) -> Result<String> {
+    mutation_execution_cache_key_from_parts_with_rerun_failures(
+        config,
+        evm_opts,
+        filter_args,
+        None,
+        num_workers,
+        artifacts,
+    )
+}
+
+fn mutation_execution_cache_key_from_parts_with_rerun_failures(
+    config: &Config,
+    evm_opts: &EvmOpts,
+    filter_args: &FilterArgs,
+    rerun_failures: Option<&[RerunFailure]>,
     num_workers: usize,
     mut artifacts: Vec<ArtifactCacheFingerprint>,
 ) -> Result<String> {
@@ -416,6 +450,7 @@ fn mutation_execution_cache_key_from_parts(
         config,
         evm_opts,
         filter_args: filter_args_fingerprint(filter_args),
+        rerun_failures,
         num_workers,
         artifacts: &artifacts,
     };
@@ -790,6 +825,43 @@ mod tests {
             &config,
             &evm_opts,
             &second_filter,
+            1,
+            artifacts,
+        )
+        .unwrap();
+
+        assert_ne!(first_key, second_key);
+    }
+
+    #[test]
+    fn execution_cache_key_changes_when_rerun_failures_change() {
+        let config = Config::default();
+        let evm_opts = EvmOpts::default();
+        let filter_args = filter_args();
+        let first_failures = vec![RerunFailure {
+            contract: "test/Counter.t.sol:WeakTest".to_string(),
+            test: "test_increment()".to_string(),
+        }];
+        let second_failures = vec![RerunFailure {
+            contract: "test/Counter.t.sol:StrongTest".to_string(),
+            test: "test_increment()".to_string(),
+        }];
+        let artifacts = vec![artifact("build-a")];
+
+        let first_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
+            &config,
+            &evm_opts,
+            &filter_args,
+            Some(&first_failures),
+            1,
+            artifacts.clone(),
+        )
+        .unwrap();
+        let second_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
+            &config,
+            &evm_opts,
+            &filter_args,
+            Some(&second_failures),
             1,
             artifacts,
         )
