@@ -897,7 +897,7 @@ pub struct TestArgs {
     )]
     pub symbolic_solver_portfolio: Option<Vec<String>>,
 
-    /// Timeout for symbolic execution in seconds.
+    /// SMT solver timeout in seconds; also bounds symbolic invariant exploration.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_TIMEOUT", value_name = "SECONDS")]
     pub symbolic_timeout: Option<u32>,
 

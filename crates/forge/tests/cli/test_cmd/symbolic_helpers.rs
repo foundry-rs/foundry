@@ -33,6 +33,14 @@ pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
     ])
 }
 
+/// Run a symbolic test while requiring symbolic engine metrics rather than invariant fuzz metrics.
+pub fn assert_symbolic_engine(cmd: &mut TestCommand) -> OutputAssert {
+    cmd.assert_with(&[
+        ("[METRICS]", r"paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?"),
+        ("[SENDER]", r"(?:sender=|addr=(?:\[[^\]]+\])?)0x[0-9a-fA-F]{40}"),
+    ])
+}
+
 /// Same as [`assert_symbolic`], plus redactions for counterexample witnesses
 /// whose exact values Z3 chooses freely (calldata bytes, args list, raw
 /// addresses inside args). Use for tests whose property only asserts that
@@ -44,6 +52,17 @@ pub fn assert_symbolic_witness(cmd: &mut TestCommand) -> OutputAssert {
         ("[CALLDATA]", r"calldata=0x[0-9a-fA-F]+"),
         // `args=[...]` may contain nested scientific-notation brackets like
         // `args=[1234 [1.2e3], 5678 [5.6e3]]`, so allow one level of nesting.
+        ("[ARGS]", r"args=\[(?:[^\[\]]|\[[^\]]*\])*\]"),
+    ])
+}
+
+/// Same as [`assert_symbolic_witness`], but requires symbolic engine metrics rather than
+/// accepting ordinary invariant fuzz campaign metrics.
+pub fn assert_symbolic_engine_witness(cmd: &mut TestCommand) -> OutputAssert {
+    cmd.assert_with(&[
+        ("[METRICS]", r"paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?"),
+        ("[SENDER]", r"(?:sender=|addr=(?:\[[^\]]+\])?)0x[0-9a-fA-F]{40}"),
+        ("[CALLDATA]", r"calldata=0x[0-9a-fA-F]+"),
         ("[ARGS]", r"args=\[(?:[^\[\]]|\[[^\]]*\])*\]"),
     ])
 }

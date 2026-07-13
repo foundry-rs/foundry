@@ -36,19 +36,17 @@ pub struct HandlerAssertionFailure {
 
 impl HandlerAssertionFailure {
     /// Builds a failure from a replayed sequence whose last call asserted.
-    pub fn from_replayed_sequence(
+    pub const fn from_replayed_sequence(
         call_sequence: Vec<BasicTxDetails>,
+        reverter: Address,
+        selector: Selector,
         edge_fingerprint: B256,
         revert_reason: String,
     ) -> Self {
-        let last = call_sequence.last().expect("replayed sequence is non-empty");
-        let reverter = last.call_details.target;
-        let selector_bytes: [u8; 4] =
-            last.call_details.calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
         let original_sequence_len = call_sequence.len();
         Self {
             reverter,
-            selector: Selector::from(selector_bytes),
+            selector,
             call_sequence,
             original_sequence_len,
             revert_reason,
