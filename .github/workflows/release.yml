@@ -32,7 +32,7 @@ jobs:
       changelog: ${{ steps.build_changelog.outputs.changelog }}
       skip_release: ${{ steps.existing_release.outputs.skip_release || 'false' }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -94,7 +94,7 @@ jobs:
       - name: Build changelog
         id: build_changelog
         if: ${{ steps.existing_release.outputs.skip_release != 'true' }}
-        uses: mikepenz/release-changelog-builder-action@348e88fab4c37338b1e803ceb2d4a7a5db6c0833 # v6.2.2
+        uses: mikepenz/release-changelog-builder-action@c9bcd8238b6f41e05561348339429d360b1c0247 # v6.2.3
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
@@ -210,10 +210,10 @@ jobs:
             platform: win32
             arch: amd64
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -230,7 +230,7 @@ jobs:
         run: |
           cargo install cross --locked \
             --git https://github.com/cross-rs/cross \
-            --rev baf457efc2555225af47963475bd70e8d2f5993f
+            --rev 64b5bb4d3d34de062552b9a2093affe77b4ad16a
 
       - name: Build binaries
         env:
@@ -242,7 +242,7 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--locked --target $TARGET --profile $RUST_PROFILE --bins
+          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE" --bins
             --no-default-features --features "$RUST_FEATURES")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
@@ -258,7 +258,7 @@ jobs:
             cargo build "${flags[@]}"
           fi
 
-          bins=(anvil cast chisel forge)
+          bins=(anvil cast chisel forge solar)
           for name in "${bins[@]}"; do
             bin="$OUT_DIR/$name$ext"
             printf '\n'
@@ -279,23 +279,26 @@ jobs:
         shell: bash
         run: |
           if [[ "$PLATFORM_NAME" == "linux" || "$PLATFORM_NAME" == "alpine" ]]; then
-            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel
-            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
+            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel solar
+            file_name="foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel
-            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> "$GITHUB_OUTPUT"
+            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C "$OUT_DIR" forge cast anvil chisel solar
+            file_name="foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
           else
             cd "$OUT_DIR"
-            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
+            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe solar.exe
             mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
-            printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> "$GITHUB_OUTPUT"
+            file_name="foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
           fi
-          printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> "$GITHUB_OUTPUT"
-          printf "foundry_sbom=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.spdx.json" >> "$GITHUB_OUTPUT"
-          printf "foundry_checksum=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sha256" >> "$GITHUB_OUTPUT"
-          printf "foundry_signature=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sigstore.json" >> "$GITHUB_OUTPUT"
+          {
+            printf "file_name=%s\n" "$file_name"
+            printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt"
+            printf "foundry_sbom=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.spdx.json"
+            printf "foundry_checksum=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sha256"
+            printf "foundry_signature=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sigstore.json"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate archive checksum
         env:
@@ -342,30 +345,33 @@ jobs:
         shell: bash
         run: |
           sudo apt-get -y install help2man
-          help2man -N $OUT_DIR/forge > forge.1
-          help2man -N $OUT_DIR/cast > cast.1
-          help2man -N $OUT_DIR/anvil > anvil.1
-          help2man -N $OUT_DIR/chisel > chisel.1
+          help2man -N "$OUT_DIR/forge" > forge.1
+          help2man -N "$OUT_DIR/cast" > cast.1
+          help2man -N "$OUT_DIR/anvil" > anvil.1
+          help2man -N "$OUT_DIR/chisel" > chisel.1
+          help2man -N "$OUT_DIR/solar" > solar.1
           gzip forge.1
           gzip cast.1
           gzip anvil.1
           gzip chisel.1
-          tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz
+          gzip solar.1
+          tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz solar.1.gz
           printf 'foundry_man=%s\n' "foundry_man_${VERSION_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Binaries and archive provenance attestation
         id: attestation
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: |
             ${{ env.anvil_bin_path }}
             ${{ env.cast_bin_path }}
             ${{ env.chisel_bin_path }}
             ${{ env.forge_bin_path }}
+            ${{ env.solar_bin_path }}
             ${{ steps.artifacts.outputs.file_name }}
 
       - name: Archive SBOM attestation
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: ${{ steps.artifacts.outputs.file_name }}
           sbom-path: ${{ steps.artifacts.outputs.foundry_sbom }}
@@ -452,7 +458,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2

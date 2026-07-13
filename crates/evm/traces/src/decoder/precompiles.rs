@@ -57,7 +57,7 @@ interface Precompiles {
 }
 use Precompiles::*;
 
-pub(super) fn is_known_precompile(
+pub(crate) fn is_known_precompile(
     address: Address,
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
@@ -93,9 +93,10 @@ pub(super) fn is_known_precompile(
         Some(hardfork) => active_tempo_precompile_addresses(hardfork).any(|addr| addr == address),
         None => TEMPO_PRECOMPILE_ADDRESSES.contains(&address),
     };
-    if chain_id.is_some_and(|id| Chain::from_id(id).is_tempo())
-        && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address))
-    {
+    let is_tempo_context = chain_id
+        .map(|id| Chain::from_id(id).is_tempo())
+        .unwrap_or_else(|| tempo_hardfork.is_some());
+    if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
         return true;
     }
     // Monad precompiles (only on Monad chains).
@@ -374,8 +375,7 @@ impl Precompile for Blake2f {
 fn decode_blake2f<'a>(data: &'a [u8]) -> alloy_sol_types::Result<Vec<String>> {
     let mut decoder = abi::Decoder::new(data);
     let rounds = u32::from_be_bytes(decoder.take_slice(4)?.try_into().unwrap());
-    let u64_le_list =
-        |x: &'a [u8]| x.chunks_exact(8).map(|x| u64::from_le_bytes(x.try_into().unwrap()));
+    let u64_le_list = |x: &'a [u8]| x.as_chunks::<8>().0.iter().map(|x| u64::from_le_bytes(*x));
     let h = u64_le_list(decoder.take_slice(64)?);
     let m = u64_le_list(decoder.take_slice(128)?);
     let t = u64_le_list(decoder.take_slice(16)?);

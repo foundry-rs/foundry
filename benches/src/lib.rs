@@ -1,18 +1,24 @@
 //! Foundry benchmark runner.
 
-use crate::results::{HyperfineOutput, HyperfineResult};
+use crate::{
+    results::{HyperfineOutput, HyperfineResult},
+    symbolic::{Fixture, Overlay, Sample, Sidecar},
+};
 use eyre::{Result, WrapErr};
 use foundry_common::{sh_eprintln, sh_println};
 use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
 use once_cell::sync::Lazy;
 use std::{
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
+    time::Instant,
 };
 
 pub mod results;
+pub mod symbolic;
 
 /// Default number of runs for benchmarks
 pub const RUNS: u32 = 5;
@@ -124,6 +130,9 @@ pub struct BenchmarkProject {
     pub root_path: PathBuf,
     /// Optional extra arguments appended to every benchmark command.
     pub extra_args: Option<String>,
+    pub org: String,
+    pub repo: String,
+    pub revision: String,
 }
 
 impl BenchmarkProject {
@@ -170,11 +179,23 @@ impl BenchmarkProject {
         Self::install_npm_dependencies(&root_path)?;
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
+        let revision = String::from_utf8(
+            Command::new("git")
+                .current_dir(&root_path)
+                .args(["rev-parse", "HEAD"])
+                .output()?
+                .stdout,
+        )?
+        .trim()
+        .to_string();
         Ok(Self {
             name: config.name.clone(),
             root_path,
             temp_project,
             extra_args: config.extra_args.clone(),
+            org: config.org.clone(),
+            repo: config.repo.clone(),
+            revision,
         })
     }
 
@@ -310,9 +331,9 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_test",
             version,
-            &self.cmd("FOUNDRY_ISOLATE=false forge test"),
+            &self.cmd("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge test"),
             runs,
-            Some("forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge build"),
             None,
             None,
             verbose,
@@ -329,10 +350,12 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_with_cache",
             version,
-            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false forge build"),
+            &self.cmd(
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build",
+            ),
             runs,
             None,
-            Some("forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge build"),
             None,
             verbose,
         )
@@ -349,11 +372,13 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_no_cache",
             version,
-            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false forge build"),
+            &self.cmd(
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build",
+            ),
             runs,
-            Some("forge clean"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge clean"),
             None,
-            Some("forge clean"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge clean"),
             verbose,
         )
     }
@@ -369,9 +394,11 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_fuzz_test",
             version,
-            &self.cmd(r#"FOUNDRY_ISOLATE=false forge test --match-test "test[^(]*\([^)]+\)""#),
+            &self.cmd(
+                r#"FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge test --match-test "test[^(]*\([^)]+\)""#,
+            ),
             runs,
-            Some("forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge build"),
             None,
             None,
             verbose,
@@ -390,7 +417,9 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_coverage",
             version,
-            &self.cmd("forge coverage --ir-minimum"),
+            &self.cmd(
+                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge coverage --ir-minimum",
+            ),
             runs,
             None,
             None,
@@ -399,7 +428,7 @@ impl BenchmarkProject {
         )
     }
 
-    /// Benchmark forge test with --isolate flag
+    /// Benchmark forge test with isolate mode
     pub fn bench_forge_isolate_test(
         &self,
         version: &str,
@@ -410,13 +439,121 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_isolate_test",
             version,
-            &self.cmd("forge test --isolate"),
+            &self.cmd("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge test"),
             runs,
-            Some("forge build"),
+            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=true forge build"),
             None,
             None,
             verbose,
         )
+    }
+
+    /// Benchmark focused symbolic checks and collect symbolic solver counters.
+    pub fn bench_forge_symbolic_test(
+        &self,
+        _version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        let fixture = Fixture::identify(&self.org, &self.repo);
+        let command = self.cmd(&fixture.test_command());
+        let build_command = fixture.build_command();
+        let overlay = Overlay::install(&self.root_path, fixture)?;
+        let benchmark = (|| -> Result<HyperfineResult> {
+            let status = Command::new("bash")
+                .current_dir(&self.root_path)
+                .args(["-lc", &build_command])
+                .status()
+                .wrap_err("Failed to build project before symbolic benchmark")?;
+            if !status.success() {
+                eyre::bail!(
+                    "forge build failed before symbolic benchmark with command: {}",
+                    build_command
+                );
+            }
+
+            let mut times = Vec::with_capacity(runs as usize);
+            let mut samples = Vec::with_capacity(runs as usize);
+            let mut exit_codes = Vec::with_capacity(runs as usize);
+
+            for _ in 0..runs {
+                let started = Instant::now();
+                let output = Command::new("bash")
+                    .current_dir(&self.root_path)
+                    .args(["-lc", &command])
+                    .output()
+                    .wrap_err("Failed to run forge symbolic benchmark")?;
+                let elapsed = started.elapsed().as_secs_f64();
+                let exit_code = output.status.code().unwrap_or(-1);
+                if !matches!(exit_code, 0 | 1) {
+                    let _ = sh_eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                    eyre::bail!(
+                        "forge symbolic benchmark exited abnormally with code {exit_code}: {command}"
+                    );
+                }
+                times.push(elapsed);
+                exit_codes.push(exit_code);
+
+                if verbose {
+                    let _ = sh_println!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+
+                let run = match symbolic::parse(&output.stdout) {
+                    Ok(summary) => summary,
+                    Err(err) => {
+                        if !output.status.success() {
+                            let _ = sh_eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                            eyre::bail!(
+                                "forge symbolic benchmark failed with command: {command}; {err}"
+                            );
+                        }
+                        return Err(err);
+                    }
+                };
+                if !output.status.success() && verbose {
+                    let _ = sh_eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+                samples.push(Sample { wall_time_seconds: elapsed, exit_code, run });
+            }
+
+            let symbolic = samples
+                .get(median_index(&times))
+                .map(|sample| symbolic::compatibility(&sample.run))
+                .ok_or_else(|| eyre::eyre!("symbolic benchmark produced no runs"))?;
+            let sidecar = Sidecar::new(
+                fixture,
+                &format!("{}/{}", self.org, self.repo),
+                &self.revision,
+                &build_command,
+                &command,
+                samples,
+            );
+
+            Ok(HyperfineResult {
+                command,
+                mean: mean(&times),
+                stddev: stddev(&times),
+                median: median(&times),
+                user: 0.0,
+                system: 0.0,
+                min: times.iter().copied().reduce(f64::min).unwrap_or_default(),
+                max: times.iter().copied().reduce(f64::max).unwrap_or_default(),
+                times,
+                exit_codes: Some(exit_codes),
+                parameters: None,
+                symbolic: Some(symbolic),
+                symbolic_sidecar: Some(sidecar),
+            })
+        })();
+        let cleanup = overlay.finish();
+        match (benchmark, cleanup) {
+            (Ok(result), Ok(())) => Ok(result),
+            (Err(err), Ok(())) => Err(err),
+            (Ok(_), Err(cleanup_err)) => Err(cleanup_err),
+            (Err(err), Err(cleanup_err)) => Err(eyre::eyre!(
+                "{err}; additionally, symbolic fixture cleanup failed: {cleanup_err}"
+            )),
+        }
     }
 
     /// Get the root path of the project
@@ -439,19 +576,51 @@ impl BenchmarkProject {
             "forge_fuzz_test" => self.bench_forge_fuzz_test(version, runs, verbose),
             "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
             "forge_isolate_test" => self.bench_forge_isolate_test(version, runs, verbose),
+            "forge_symbolic_test" => self.bench_forge_symbolic_test(version, runs, verbose),
             _ => eyre::bail!("Unknown benchmark: {}", benchmark),
         }
     }
 }
 
+fn mean(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
+fn median(values: &[f64]) -> f64 {
+    values.get(median_index(values)).copied().unwrap_or_default()
+}
+
+fn median_index(values: &[f64]) -> usize {
+    let mut indices = (0..values.len()).collect::<Vec<_>>();
+    indices.sort_by(|&left, &right| values[left].total_cmp(&values[right]));
+    indices.get(indices.len() / 2).copied().unwrap_or_default()
+}
+
+fn stddev(values: &[f64]) -> Option<f64> {
+    if values.len() < 2 {
+        return None;
+    }
+    let mean = mean(values);
+    let variance =
+        values.iter().map(|value| (value - mean).powi(2)).sum::<f64>() / values.len() as f64;
+    Some(variance.sqrt())
+}
+
 /// The workspace root, embedded at compile time.
 /// `benches/` is one level below the workspace root.
 const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+const WORKSPACE_ROOT_ENV: &str = "FOUNDRY_BENCH_WORKSPACE_ROOT";
+const LOCAL_BUILD_PROFILE_ENV: &str = "FOUNDRY_BENCH_LOCAL_BUILD_PROFILE";
+const LOCAL_BUILD_BINS_ENV: &str = "FOUNDRY_BENCH_LOCAL_BUILD_BINS";
+const DEFAULT_LOCAL_BUILD_PROFILE: &str = "dist";
+const FOUNDRY_BINS: [&str; 4] = ["forge", "cast", "anvil", "chisel"];
 
 /// Switch to a specific foundry version.
 ///
-/// The special keyword `local` builds and activates the current workspace via
-/// `foundryup --path <workspace>` instead of `foundryup --use`.
+/// The special keyword `local` builds and activates the current workspace.
 #[allow(unused_must_use)]
 pub fn switch_foundry_version(version: &str) -> Result<()> {
     if version == "local" {
@@ -480,25 +649,115 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build and activate the local workspace via `foundryup --path`.
-/// Uses cargo's incremental compilation so re-runs are fast.
+/// Build and activate the local workspace.
+/// Builds only the shipped Foundry binaries without linking unused workspace binaries.
 #[allow(unused_must_use)]
 pub fn install_local_version() -> Result<()> {
-    let workspace =
-        std::fs::canonicalize(WORKSPACE_ROOT).wrap_err("Failed to resolve workspace root")?;
-    sh_println!("  Building local workspace at {}", workspace.display());
+    let workspace = workspace_root()?;
+    let profile = local_build_profile();
+    let bins = local_build_bins()?;
+    sh_println!(
+        "  Building local workspace at {} with {} profile for {}",
+        workspace.display(),
+        profile.to_string_lossy(),
+        bins.join(", ")
+    );
 
-    let status = Command::new("foundryup")
-        .args(["--path", workspace.to_str().unwrap()])
-        .status()
-        .wrap_err("Failed to run foundryup --path")?;
-
-    if !status.success() {
-        eyre::bail!("foundryup --path failed for local workspace");
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(&workspace).args(["build", "--locked", "--profile"]).arg(&profile);
+    for bin in &bins {
+        cmd.args(["--bin", bin]);
     }
 
-    sh_println!("  Successfully activated local build");
+    let status = cmd.status().wrap_err("Failed to build local Foundry workspace")?;
+
+    if !status.success() {
+        eyre::bail!("local Foundry build failed");
+    }
+
+    activate_local_binaries(&workspace, &profile, &bins)?;
+    sh_println!("  Successfully activated local {} build", profile.to_string_lossy());
     Ok(())
+}
+
+fn workspace_root() -> Result<PathBuf> {
+    let workspace = env::var_os(WORKSPACE_ROOT_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(WORKSPACE_ROOT));
+    std::fs::canonicalize(&workspace)
+        .wrap_err_with(|| format!("Failed to resolve workspace root {}", workspace.display()))
+}
+
+fn local_build_profile() -> std::ffi::OsString {
+    env::var_os(LOCAL_BUILD_PROFILE_ENV)
+        .filter(|profile| !profile.is_empty())
+        .unwrap_or_else(|| DEFAULT_LOCAL_BUILD_PROFILE.into())
+}
+
+fn local_build_bins() -> Result<Vec<String>> {
+    let Some(raw_bins) = env::var_os(LOCAL_BUILD_BINS_ENV).filter(|bins| !bins.is_empty()) else {
+        return Ok(FOUNDRY_BINS.into_iter().map(String::from).collect());
+    };
+
+    let bins = raw_bins
+        .to_string_lossy()
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter(|bin| !bin.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    if bins.is_empty() {
+        eyre::bail!("{LOCAL_BUILD_BINS_ENV} did not contain any binary names");
+    }
+
+    Ok(bins)
+}
+
+fn activate_local_binaries(
+    workspace: &Path,
+    profile: &std::ffi::OsStr,
+    bins: &[String],
+) -> Result<()> {
+    let bin_dir = foundry_bin_dir()?;
+    fs::create_dir_all(&bin_dir).wrap_err_with(|| {
+        format!("Failed to create Foundry bin directory at {}", bin_dir.display())
+    })?;
+
+    let local_bin_dir = workspace.join("target").join(profile);
+    for bin in bins {
+        let bin_name = format!("{bin}{}", env::consts::EXE_SUFFIX);
+        let source = local_bin_dir.join(&bin_name);
+        let destination = bin_dir.join(&bin_name);
+
+        if !source.exists() {
+            eyre::bail!("local Foundry binary not found at {}", source.display());
+        }
+
+        if fs::symlink_metadata(&destination).is_ok() {
+            fs::remove_file(&destination).wrap_err_with(|| {
+                format!("Failed to remove existing binary at {}", destination.display())
+            })?;
+        }
+
+        fs::copy(&source, &destination).wrap_err_with(|| {
+            format!("Failed to activate local binary {}", destination.display())
+        })?;
+    }
+
+    Ok(())
+}
+
+fn foundry_bin_dir() -> Result<PathBuf> {
+    if let Some(foundry_dir) = env::var_os("FOUNDRY_DIR") {
+        return Ok(PathBuf::from(foundry_dir).join("bin"));
+    }
+
+    let base_dir = env::var_os("XDG_CONFIG_HOME")
+        .or_else(|| env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| eyre::eyre!("Neither FOUNDRY_DIR, XDG_CONFIG_HOME, nor HOME is set"))?;
+
+    Ok(base_dir.join(".foundry").join("bin"))
 }
 
 /// Get the current forge version

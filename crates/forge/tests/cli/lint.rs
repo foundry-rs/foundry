@@ -28,7 +28,7 @@ contract ContractWithLints {
     function unoptimizedHashGas(uint256 a, uint256 b) public view {
         keccak256(abi.encodePacked(a, b));
     }
-    function FUNCTION_MIXED_CASE_INFO() public {}
+    function FUNCTION_MIXED_CASE_INFO() public { VARIABLE_MIXED_CASE_INFO = 1; }
 }
 "#;
 
@@ -40,7 +40,7 @@ pragma solidity ^0.8.0;
 import { ContractWithLints } from "./ContractWithLints.sol";
 
 contract OtherContractWithLints {
-    function functionMIXEDCaseInfo() public {}
+    function functionMIXEDCaseInfo() public { uint256 x = 1; }
 }
 "#;
 
@@ -73,7 +73,7 @@ pragma solidity ^0.8.0;
 import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
 
 contract DefaultInfoLints {
-    function BAD_CASE() public {}
+    function BAD_CASE() public { uint256 x = 1; }
 }
 "#;
 
@@ -203,6 +203,22 @@ interface IToken {
 }
 "#;
 
+forgetest!(lint_does_not_write_artifacts, |prj, cmd| {
+    use std::fs;
+
+    prj.add_source("LintTarget", "contract LintTarget {}");
+    let artifact = prj.root().join("out/LintTarget.sol/LintTarget.json");
+
+    cmd.arg("lint").assert_success();
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.forge_fuse().arg("lint").assert_success();
+    assert_eq!(fs::read(artifact).unwrap(), b"sentinel");
+});
+
 forgetest!(can_use_config, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
@@ -248,7 +264,7 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
-9 │     function functionMIXEDCaseInfo() public {}
+9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
@@ -280,7 +296,7 @@ forgetest!(default_lint_severity_includes_info, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:8:14
   │
-8 │     function BAD_CASE() public {}
+8 │     function BAD_CASE() public { uint256 x = 1; }
   │              ━━━━━━━━ help: consider using: `badCase`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
@@ -656,7 +672,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
-9 │     function functionMIXEDCaseInfo() public {}
+9 │     function functionMIXEDCaseInfo() public { uint256 x = 1; }
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function

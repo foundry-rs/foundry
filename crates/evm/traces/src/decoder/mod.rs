@@ -1,13 +1,13 @@
 use crate::{
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedTraceStep,
     debug::DebugTraceIdentifier,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Error, Event, Function, JsonAbi};
+use alloy_json_abi::{Constructor, Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
-    map::{HashMap, HashSet},
+    map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
 use foundry_common::{
@@ -31,22 +31,26 @@ use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
 #[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
+use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
+
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
-    IStablecoinDEX, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry, IValidatorConfig,
+    IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry,
+    IValidatorConfig,
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
     RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
+    STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce,
+    tip20::ITIP20,
 };
 
 #[cfg(feature = "monad")]
 mod monad;
-mod precompiles;
+pub(crate) mod precompiles;
 
 #[cfg(feature = "monad")]
 use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
@@ -184,6 +188,10 @@ pub struct CallTraceDecoder {
     pub functions: HashMap<Selector, Vec<Function>>,
     /// Functions identified for a specific contract address.
     pub functions_by_address: HashMap<Address, HashMap<Selector, Vec<Function>>>,
+    /// Constructors identified for a specific contract address.
+    pub constructors_by_address: HashMap<Address, Constructor>,
+    /// Creation input offsets where ABI-encoded constructor arguments begin.
+    pub constructor_args_offsets: HashMap<Address, usize>,
     /// All known events.
     ///
     /// Key is: `(topics[0], topics.len() - 1)`.
@@ -204,6 +212,9 @@ pub struct CallTraceDecoder {
 
     /// The chain ID, used to determine network-specific precompiles.
     pub chain_id: Option<u64>,
+
+    /// Detailed opcodes for analysis.
+    pub opcodes: Vec<OpCode>,
 
     /// The Tempo hardfork, used to determine hardfork-specific precompiles.
     pub tempo_hardfork: Option<TempoHardfork>,
@@ -230,6 +241,7 @@ impl CallTraceDecoder {
             ITIP403Registry::abi::contract(),
             ITIP20Factory::abi::contract(),
             IStablecoinDEX::abi::contract(),
+            IStorageCredits::abi::contract(),
             INonce::abi::contract(),
             IValidatorConfig::abi::contract(),
             IAccountKeychain::abi::contract(),
@@ -275,6 +287,7 @@ impl CallTraceDecoder {
             (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
             (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
             (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
+            (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
             (PATH_USD_ADDRESS, "PathUSD".to_string()),
         ]);
         #[cfg(feature = "monad")]
@@ -288,6 +301,9 @@ impl CallTraceDecoder {
             .into_values()
             .chain(Vm::abi::functions().into_values())
             .chain(IFeeManager::abi::functions().into_values())
+            // `IStorageCredits` shares the `balanceOf(address)` selector with `ITIP20`, so it
+            // must be chained first to keep `ITIP20`'s `uint256` return as the global fallback.
+            .chain(IStorageCredits::abi::functions().into_values())
             .chain(ITIP20::abi::functions().into_values())
             .chain(ITIP403Registry::abi::functions().into_values())
             .chain(ITIP20Factory::abi::functions().into_values())
@@ -347,6 +363,8 @@ impl CallTraceDecoder {
             non_fallback_contracts: Default::default(),
             functions,
             functions_by_address: Default::default(),
+            constructors_by_address: Default::default(),
+            constructor_args_offsets: Default::default(),
             events,
             // Decode Tempo precompile custom errors by name in traces.
             revert_decoder: RevertDecoder::new().with_abis(tempo_abis.iter()),
@@ -359,6 +377,8 @@ impl CallTraceDecoder {
             disable_labels: false,
 
             chain_id: None,
+
+            opcodes: Vec::new(),
 
             tempo_hardfork: None,
         }
@@ -377,6 +397,19 @@ impl CallTraceDecoder {
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
+        self.constructors_by_address.clear();
+        self.constructor_args_offsets.clear();
+    }
+
+    /// Returns labels for precompiles active in this decoder's chain context.
+    pub fn precompile_labels(&self) -> AddressHashMap<String> {
+        self.labels
+            .iter()
+            .filter(|(address, _)| {
+                precompiles::is_known_precompile(**address, self.chain_id, self.tempo_hardfork)
+            })
+            .map(|(address, label)| (*address, label.clone()))
+            .collect()
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -498,7 +531,15 @@ impl CallTraceDecoder {
         }
 
         trace!(target: "evm::traces", len=addrs.len(), "collecting address identities");
-        for IdentifiedAddress { address, label, contract, abi, artifact_id: _ } in addrs {
+        for IdentifiedAddress {
+            address,
+            label,
+            contract,
+            abi,
+            constructor_args_offset,
+            artifact_id: _,
+        } in addrs
+        {
             let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
 
             if let Some(contract) = contract {
@@ -511,6 +552,10 @@ impl CallTraceDecoder {
 
             if let Some(abi) = abi {
                 self.collect_abi(&abi, Some(address));
+            }
+
+            if let Some(offset) = constructor_args_offset {
+                self.constructor_args_offsets.entry(address).or_insert(offset);
             }
         }
     }
@@ -526,6 +571,11 @@ impl CallTraceDecoder {
                 self.push_address_function(address, function.clone());
             }
             self.push_function(function.clone());
+        }
+        if let Some(address) = address
+            && let Some(constructor) = abi.constructor()
+        {
+            self.constructors_by_address.entry(address).or_insert_with(|| constructor.clone());
         }
         for event in abi.events() {
             self.push_event(event.clone());
@@ -553,6 +603,45 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
+            if !self.opcodes.is_empty() {
+                for step in &mut node.trace.steps {
+                    if step.decoded.is_some() {
+                        continue;
+                    }
+                    for opcode in &self.opcodes {
+                        if step.op == *opcode {
+                            let res = match &step.storage_change {
+                                Some(change) if step.op == OpCode::SSTORE => {
+                                    if let Some(had_value) = change.had_value {
+                                        format!(
+                                            "[{}] {} 0x{:x}: 0x{:x} → 0x{:x}",
+                                            step.gas_cost,
+                                            opcode,
+                                            change.key,
+                                            had_value,
+                                            change.value
+                                        )
+                                    } else {
+                                        format!(
+                                            "[{}] {} 0x{:x} → (0x{:x})",
+                                            step.gas_cost, opcode, change.key, change.value
+                                        )
+                                    }
+                                }
+                                Some(change) => format!(
+                                    "[{}] {} 0x{:x} → (0x{:x})",
+                                    step.gas_cost, opcode, change.key, change.value
+                                ),
+                                None => format!("[{}] {}", step.gas_cost, opcode),
+                            };
+
+                            step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
+                            break;
+                        }
+                    }
+                }
+            }
+
             node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
             for log in &mut node.logs {
                 log.decoded =
@@ -573,7 +662,11 @@ impl CallTraceDecoder {
             if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
 
         if trace.kind.is_any_create() {
-            return DecodedCallTrace { label, ..Default::default() };
+            return DecodedCallTrace {
+                label,
+                call_data: self.decode_constructor_input(trace),
+                return_data: None,
+            };
         }
 
         if let Some(trace) = precompiles::decode(trace, self.chain_id, self.tempo_hardfork) {
@@ -585,7 +678,7 @@ impl CallTraceDecoder {
             return DecodedCallTrace {
                 label,
                 call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
-                return_data: self.default_return_data(trace),
+                return_data: self.default_return_data(trace).await,
             };
         }
 
@@ -613,7 +706,7 @@ impl CallTraceDecoder {
                 let return_data = if trace.success {
                     None
                 } else {
-                    let revert_msg = self.revert_decoder.decode(&trace.output, trace.status);
+                    let revert_msg = self.decode_revert(&trace.output, trace.status).await;
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
                         Some(format!(
@@ -645,7 +738,7 @@ impl CallTraceDecoder {
                 return DecodedCallTrace {
                     label,
                     call_data: self.fallback_call_data(trace),
-                    return_data: self.default_return_data(trace),
+                    return_data: self.default_return_data(trace).await,
                 };
             };
 
@@ -662,13 +755,13 @@ impl CallTraceDecoder {
             DecodedCallTrace {
                 label,
                 call_data: Some(call_data),
-                return_data: self.decode_function_output(trace, contract_functions),
+                return_data: self.decode_function_output(trace, contract_functions).await,
             }
         } else {
             DecodedCallTrace {
                 label,
                 call_data: self.fallback_call_data(trace),
-                return_data: self.default_return_data(trace),
+                return_data: self.default_return_data(trace).await,
             }
         }
     }
@@ -706,6 +799,29 @@ impl CallTraceDecoder {
         }
 
         DecodedCallData { signature: func.signature(), args: args.unwrap_or_default() }
+    }
+
+    /// Decodes constructor input from a creation trace.
+    fn decode_constructor_input(&self, trace: &CallTrace) -> Option<DecodedCallData> {
+        let constructor = self.constructors_by_address.get(&trace.address)?;
+        let offset = *self.constructor_args_offsets.get(&trace.address)?;
+        let data = trace.data.get(offset..)?;
+        let decoded = constructor.abi_decode_input(data).ok()?;
+        let args = decoded
+            .iter()
+            .zip(&constructor.inputs)
+            .map(|(value, input)| {
+                self.format_param_value(
+                    Some(trace.address),
+                    "constructor",
+                    &input.name,
+                    &input.ty,
+                    value,
+                )
+            })
+            .collect();
+
+        Some(DecodedCallData { signature: constructor_signature(constructor), args })
     }
 
     /// Custom decoding for cheatcode inputs.
@@ -851,9 +967,13 @@ impl CallTraceDecoder {
     }
 
     /// Decodes a function's output into the given trace.
-    fn decode_function_output(&self, trace: &CallTrace, funcs: &[Function]) -> Option<String> {
+    async fn decode_function_output(
+        &self,
+        trace: &CallTrace,
+        funcs: &[Function],
+    ) -> Option<String> {
         if !trace.success {
-            return self.default_return_data(trace);
+            return self.default_return_data(trace).await;
         }
 
         if trace.address == CHEATCODE_ADDRESS
@@ -909,15 +1029,35 @@ impl CallTraceDecoder {
     }
 
     /// The default decoded return data for a trace.
-    fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
+    async fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
         // For calls with status None or successful status, don't decode revert data
         // This is due to trace.status is derived from the revm_interpreter::InstructionResult in
         // revm-inspectors status will `None` post revm 27, as `InstructionResult::Continue` does
         // not exists anymore.
-        if trace.status.is_none_or(|s| s.is_ok()) {
+        if trace.status.is_none_or(|s| s.is_ok()) || trace.success {
             return None;
         }
-        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, trace.status))
+        Some(self.decode_revert(&trace.output, trace.status).await)
+    }
+
+    /// Decodes revert data into a human-readable representation.
+    ///
+    /// If the revert decoder does not know the custom error, tries identifying the error selector
+    /// with the signatures identifier, like unknown function and event signatures. This resolves
+    /// errors from the local signatures cache populated by `forge build`, or from remote signature
+    /// databases.
+    async fn decode_revert(&self, output: &[u8], status: Option<InstructionResult>) -> String {
+        if let Some(reason) = self.revert_decoder.maybe_decode_known(output) {
+            return reason;
+        }
+        if let Some(identifier) = &self.signature_identifier
+            && let Some((selector, data)) = output.split_first_chunk::<SELECTOR_LEN>()
+            && let Some(error) = identifier.identify_error(Selector::from(*selector)).await
+            && let Ok(decoded) = error.abi_decode_input(data)
+        {
+            return format!("{}({})", error.name, decoded.iter().map(format_token).format(", "));
+        }
+        self.revert_decoder.decode(output, status)
     }
 
     /// Decodes an event.
@@ -1023,9 +1163,19 @@ impl CallTraceDecoder {
             })
             .filter_map(|n| n.trace.data.first_chunk().map(Selector::from))
             .filter(|selector| !self.functions.contains_key(selector));
+        let errors = nodes
+            .iter()
+            .filter(|&n| {
+                // Only consider reverted traces whose output the revert decoder cannot decode.
+                n.trace.status.is_some_and(|s| !s.is_ok())
+                    && !n.trace.success
+                    && self.revert_decoder.maybe_decode_known(&n.trace.output).is_none()
+            })
+            .filter_map(|n| n.trace.output.first_chunk().map(Selector::from));
         let selectors = events
             .map(SelectorKind::Event)
             .chain(functions.map(SelectorKind::Function))
+            .chain(errors.map(SelectorKind::Error))
             .unique()
             .collect::<Vec<_>>();
         let _ = identifier.identify(&selectors).await;
@@ -1154,13 +1304,20 @@ fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
 }
 
+fn constructor_signature(constructor: &Constructor) -> String {
+    format!(
+        "constructor({})",
+        constructor.inputs.iter().map(|input| input.selector_type()).format(",")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::{address, aliases::U96, hex};
     #[cfg(feature = "monad")]
     use alloy_sol_types::TopicList;
-    use alloy_sol_types::{SolCall, SolEvent};
+    use alloy_sol_types::{SolCall, SolError, SolEvent};
     #[cfg(feature = "monad")]
     use monad_revm::{
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
@@ -1327,6 +1484,37 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[tokio::test]
+    async fn test_decode_constructor_input() {
+        let address = Address::repeat_byte(0x12);
+        let constructor = Constructor::parse("constructor(uint256 amount, address owner)").unwrap();
+        let args = constructor
+            .abi_encode_input(&[
+                DynSolValue::Uint(U256::from(42), 256),
+                DynSolValue::Address(Address::repeat_byte(0x34)),
+            ])
+            .unwrap();
+        let mut data = vec![0x60, 0x80, 0x60, 0x40];
+        let offset = data.len();
+        data.extend_from_slice(&args);
+        let trace = CallTrace {
+            address,
+            kind: revm_inspectors::tracing::types::CallKind::Create,
+            data: data.into(),
+            ..Default::default()
+        };
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.constructors_by_address.insert(address, constructor);
+        decoder.constructor_args_offsets.insert(address, offset);
+
+        let decoded = decoder.decode_function(&trace).await;
+        let call_data = decoded.call_data.expect("constructor input should decode");
+
+        assert_eq!(call_data.signature, "constructor(uint256,address)");
+        assert_eq!(call_data.args[0], "42");
+        assert_eq!(call_data.args[1], format!("{}", Address::repeat_byte(0x34)));
     }
 
     #[test]
@@ -2078,6 +2266,52 @@ mod tests {
         B256::from(topic)
     }
 
+    #[tokio::test]
+    async fn test_t7_storage_credits_call_and_error_decode() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+
+        // A write call decodes to its signature and the precompile address is labeled.
+        let set_mode = IStorageCredits::setModeCall { newMode: IStorageCredits::Mode::Direct };
+        let trace = CallTrace {
+            address: STORAGE_CREDITS_ADDRESS,
+            data: set_mode.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("StorageCredits"));
+        assert_eq!(decoded.call_data.expect("setMode should decode").signature, "setMode(uint8)");
+
+        // A view call unique to this precompile also decodes.
+        let mode_of = IStorageCredits::modeOfCall { account: Address::repeat_byte(0x11) };
+        let trace = CallTrace {
+            address: STORAGE_CREDITS_ADDRESS,
+            data: mode_of.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.call_data.expect("modeOf should decode").signature, "modeOf(address)");
+
+        // The precompile's custom errors decode by name in reverts.
+        let revert = decoder
+            .revert_decoder
+            .decode(IStorageCredits::InvalidMode {}.abi_encode().as_slice(), None);
+        assert!(revert.contains("InvalidMode"), "{revert}");
+
+        // `balanceOf(address)` collides with `ITIP20`'s selector; the global map must keep
+        // `ITIP20`'s `uint256` return so ordinary token balances above `u64::MAX` still decode.
+        let selector = IStorageCredits::balanceOfCall::SELECTOR;
+        let funcs = decoder.functions.get(&selector).expect("balanceOf selector is registered");
+        assert!(
+            funcs.iter().any(|f| f.outputs.first().is_some_and(|o| o.ty == "uint256")),
+            "global balanceOf must return uint256"
+        );
+    }
+
     // A mock identifier that records which addresses it was asked to identify.
     struct RecordingIdentifier {
         queried: Vec<Address>,
@@ -2167,6 +2401,62 @@ mod tests {
 
         // On a Tempo chain, the Tempo precompile should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_precompile_labels_follow_tempo_hardfork_activation_boundaries() {
+        let labels_for_hardfork = |hardfork| {
+            CallTraceDecoderBuilder::new()
+                .with_tempo_hardfork(Some(hardfork))
+                .build()
+                .precompile_labels()
+        };
+
+        let t4_labels = labels_for_hardfork(TempoHardfork::T4);
+        assert_eq!(t4_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert!(!t4_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(!t4_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!t4_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t5_labels = labels_for_hardfork(TempoHardfork::T5);
+        assert_eq!(t5_labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert_eq!(
+            t5_labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert!(!t5_labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!t5_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t6_labels = labels_for_hardfork(TempoHardfork::T6);
+        assert_eq!(
+            t6_labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert_eq!(
+            t6_labels.get(&RECEIVE_POLICY_GUARD_ADDRESS),
+            Some(&"ReceivePolicyGuard".to_string())
+        );
+        assert!(!t6_labels.contains_key(&STORAGE_CREDITS_ADDRESS));
+
+        let t7_labels = labels_for_hardfork(TempoHardfork::T7);
+        assert_eq!(
+            t7_labels.get(&RECEIVE_POLICY_GUARD_ADDRESS),
+            Some(&"ReceivePolicyGuard".to_string())
+        );
+        assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+    }
+
+    #[test]
+    fn test_precompile_labels_skip_tempo_precompiles_on_other_chains() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(1))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+
+        let labels = decoder.precompile_labels();
+        assert!(!labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
+        assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+        assert!(!labels.contains_key(&STORAGE_CREDITS_ADDRESS));
     }
 
     #[test]

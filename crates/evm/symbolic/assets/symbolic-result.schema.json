@@ -53,6 +53,9 @@
         { "$ref": "#/$defs/counterexample" }
       ]
     },
+    "corpus_seeds": {
+      "$ref": "#/$defs/corpus_seeds"
+    },
     "artifact": {
       "$ref": "#/$defs/artifact_ref"
     },
@@ -388,7 +391,11 @@
         "sat_cache_hits": { "type": "integer", "minimum": 0 },
         "model_cache_hits": { "type": "integer", "minimum": 0 },
         "heuristic_witnesses": { "type": "integer", "minimum": 0 },
-        "solver_time_ms": { "type": "integer", "minimum": 0 }
+        "solver_time_ms": { "type": "integer", "minimum": 0 },
+        "smt_input_bytes": { "type": "integer", "minimum": 0 },
+        "smt_max_query_bytes": { "type": "integer", "minimum": 0 },
+        "smt_build_time_ms": { "type": "integer", "minimum": 0 },
+        "smt_max_query_time_ms": { "type": "integer", "minimum": 0 }
       }
     },
     "assumption": {
@@ -457,6 +464,47 @@
         }
       }
     },
+    "corpus_seeds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpus_dir", "limit", "loaded", "skipped", "used"],
+      "properties": {
+        "corpus_dir": {
+          "type": ["string", "null"]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "loaded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "used": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/corpus_seed" }
+        }
+      }
+    },
+    "corpus_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "calldata"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "calldata": {
+          "type": "string",
+          "pattern": "^0x([0-9a-fA-F]{2})*$"
+        }
+      }
+    },
     "artifact_ref": {
       "type": "object",
       "additionalProperties": false,
@@ -503,6 +551,14 @@
           "minimum": 0
         },
         "minimized_calldata_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "original_sequence_len": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimized_sequence_len": {
           "type": "integer",
           "minimum": 0
         }

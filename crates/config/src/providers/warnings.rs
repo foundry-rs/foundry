@@ -49,6 +49,14 @@ const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "p
 /// serialization, but they are still valid user-facing config keys.
 const SYMBOLIC_KEYS: &[&str] = &[
     "enabled",
+    "seed_corpus",
+    "use_fuzz_corpus",
+    "corpus_seed_limit",
+    "use_fuzz_frontiers",
+    "frontier_limit",
+    "frontier_ids",
+    "frontier_pcs",
+    "frontier_selectors",
     "solver",
     "solver_command",
     "solver_portfolio",
@@ -142,15 +150,13 @@ impl<P: Provider> WarningsProvider<P> {
             .filter(|(profile, _)| **profile == Config::PROFILE_SECTION)
             .map(|(_, dict)| dict);
 
-        out.extend(profiles.clone().flat_map(BTreeMap::keys).filter_map(deprecated_key_warning));
-        out.extend(
-            profiles
-                .clone()
-                .filter_map(|dict| dict.get(self.profile.as_str().as_str()))
-                .filter_map(Value::as_dict)
-                .flat_map(BTreeMap::keys)
-                .filter_map(deprecated_key_warning),
-        );
+        let deprecated_profile_keys = profiles
+            .clone()
+            .flat_map(|dict| {
+                dict.keys().chain(dict.values().filter_map(Value::as_dict).flat_map(BTreeMap::keys))
+            })
+            .collect::<BTreeSet<_>>();
+        out.extend(deprecated_profile_keys.into_iter().filter_map(deprecated_key_warning));
 
         // Add warning for unknown keys within profiles (root keys only here).
         if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()

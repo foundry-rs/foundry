@@ -4,8 +4,9 @@ use super::{
     watch::WatchArgs,
 };
 use crate::coverage::{
-    BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
-    DebugReporter, ItemAnchor, LcovReporter,
+    BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
+    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter, ResolvedHitMap,
+    ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::find_anchors,
 };
@@ -18,12 +19,17 @@ use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
 };
-use foundry_config::{Config, CoverageConfig, CoverageReportKind, parse_lcov_version};
+use foundry_config::{
+    Config, CoverageConfig, CoverageReportKind, InlineConfig, parse_lcov_version,
+};
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use globset::{Glob, GlobSetBuilder};
 use rayon::prelude::*;
 use semver::Version;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, test);
@@ -70,7 +76,8 @@ pub struct CoverageArgs {
 
     /// The path to output the report.
     ///
-    /// If not specified, the report will be stored in the root of the project.
+    /// Used only when a single file report is requested. If not specified, the
+    /// report will be stored in the root of the project.
     #[arg(
         long,
         value_hint = ValueHint::FilePath,
@@ -101,6 +108,19 @@ pub struct CoverageArgs {
 }
 
 impl CoverageArgs {
+    fn report_path(&self, root: &Path, default_file_name: &str) -> PathBuf {
+        let report_file =
+            (self.file_report_count() == 1).then_some(self.report_file.as_deref()).flatten();
+        root.join(report_file.unwrap_or_else(|| Path::new(default_file_name)))
+    }
+
+    fn file_report_count(&self) -> usize {
+        let has_lcov = self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Lcov));
+        let has_attribution =
+            self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution));
+        usize::from(has_lcov) + usize::from(has_attribution)
+    }
+
     pub async fn run(mut self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -120,11 +140,19 @@ impl CoverageArgs {
         // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
         // flags take precedence; unset CLI flags fall back to the config.
         self.resolve_with(&config.coverage);
+        self.test.ensure_mutation_mode_compatible(true)?;
 
         let (paths, mut output) = {
             let (project, output) = self.build(&config)?;
             (project.paths, output)
         };
+
+        if self.report_file.is_some() && self.file_report_count() > 1 {
+            sh_warn!(
+                "`--report-file` is ignored when multiple file reports are requested; \
+                 each report will use its default output path"
+            )?;
+        }
 
         self.populate_reporters(&paths.root);
 
@@ -170,20 +198,20 @@ impl CoverageArgs {
         self.reporters = self
             .report
             .iter()
-            .map(|report_kind| match report_kind {
+            .filter_map(|report_kind| match report_kind {
                 CoverageReportKind::Summary => {
-                    Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>
+                    Some(Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>)
                 }
                 CoverageReportKind::Lcov => {
-                    let path =
-                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
-                    Box::new(LcovReporter::new(path, self.lcov_version.clone()))
+                    let path = self.report_path(root, "lcov.info");
+                    Some(Box::new(LcovReporter::new(path, self.lcov_version.clone())))
                 }
-                CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
+                CoverageReportKind::Bytecode => Some(Box::new(BytecodeReporter::new(
                     root.to_path_buf(),
                     root.join("bytecode-coverage"),
-                )),
-                CoverageReportKind::Debug => Box::new(DebugReporter),
+                ))),
+                CoverageReportKind::Debug => Some(Box::new(DebugReporter)),
+                CoverageReportKind::Attribution => None,
             })
             .collect::<Vec<_>>();
     }
@@ -311,6 +339,7 @@ impl CoverageArgs {
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
+        let inline_config = Arc::new(InlineConfig::new_parsed(output, &config)?);
         let outcome = self
             .test
             .run_tests(
@@ -319,43 +348,57 @@ impl CoverageArgs {
                 evm_opts,
                 output,
                 &filter,
-                TestExecutionOptions::coverage(),
+                TestExecutionOptions::coverage(inline_config),
             )
             .await?;
 
-        let known_contracts = outcome.known_contracts.as_ref().unwrap().clone();
+        let known_contracts = outcome.known_contracts.as_ref().unwrap();
+        let mut resolved_hit_maps = ResolvedHitMaps::default();
 
         // Add hit data to the coverage report
-        let data = outcome.results.values().flat_map(|suite| {
-            let mut hits = Vec::new();
+        for suite in outcome.results.values() {
             for result in suite.test_results.values() {
                 let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
-                for map in hit_maps.0.values() {
-                    if let Some((id, _)) = known_contracts.find_by_deployed_code(map.bytecode()) {
-                        hits.push((id, map, true));
-                    } else if let Some((id, _)) =
-                        known_contracts.find_by_creation_code(map.bytecode())
-                    {
-                        hits.push((id, map, false));
-                    }
-                }
-            }
-            hits
-        });
 
-        for (artifact_id, map, is_deployed_code) in data {
-            if let Some(source_id) =
-                report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
-            {
-                report.add_hit_map(
-                    &ContractId {
+                for (code_hash, map) in &hit_maps.0 {
+                    if let Some(resolved) = resolved_hit_maps.get(code_hash) {
+                        report.add_hit_map(
+                            &resolved.contract_id,
+                            map,
+                            resolved.is_deployed_code,
+                        )?;
+                        continue;
+                    }
+
+                    let Some((artifact_id, is_deployed_code)) = known_contracts
+                        .find_by_deployed_code(map.bytecode())
+                        .map(|(id, _)| (id, true))
+                        .or_else(|| {
+                            known_contracts
+                                .find_by_creation_code(map.bytecode())
+                                .map(|(id, _)| (id, false))
+                        })
+                    else {
+                        continue;
+                    };
+
+                    let Some(source_id) = report
+                        .get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
+                    else {
+                        continue;
+                    };
+                    let contract_id = ContractId {
                         version: artifact_id.version.clone(),
                         source_id,
                         contract_name: artifact_id.name.as_str().into(),
-                    },
-                    map,
-                    is_deployed_code,
-                )?;
+                    };
+
+                    report.add_hit_map(&contract_id, map, is_deployed_code)?;
+
+                    resolved_hit_maps
+                        .entry(*code_hash)
+                        .or_insert(ResolvedHitMap { contract_id, is_deployed_code });
+                }
             }
         }
 
@@ -386,6 +429,13 @@ impl CoverageArgs {
 
         // Output final reports.
         self.report(&report)?;
+
+        if self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
+            let reporter = CoverageAttributionReporter::new(
+                self.report_path(project_root, "coverage-attribution.json"),
+            );
+            reporter.report(&report, &outcome, &resolved_hit_maps)?;
+        }
 
         // Check for test failures after generating coverage report.
         // This ensures coverage data is written even when tests fail.

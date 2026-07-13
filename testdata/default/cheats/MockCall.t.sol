@@ -207,6 +207,53 @@ contract MockCallTest is Test {
         assertEq(mock.add(1, 2), 10);
         mock.noReturnValue();
     }
+
+    // Ref: https://github.com/foundry-rs/foundry/issues/10703
+    function testMockCallEmptyAccountNoCodeInjection() public {
+        Mock mock = Mock(address(100));
+
+        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10), false);
+
+        // Mocked calls that return data succeed while the account remains codeless.
+        assertEq(mock.add(1, 2), 10);
+        assertEq(address(mock).code.length, 0);
+
+        // Unmocked calls to the empty account revert in the caller.
+        vm.expectRevert();
+        this.exposedCallNumberA(mock);
+    }
+
+    function testMockCallNoCodeInjectionNoReturnValue() public {
+        Mock mock = Mock(address(100));
+
+        vm.mockCall(address(mock), abi.encodeWithSelector(mock.noReturnValue.selector), abi.encode(), false);
+
+        // Mocked calls to functions without return values still revert in the caller due to the
+        // `extcodesize` check on the codeless account.
+        vm.expectRevert();
+        this.exposedCallNoReturnValue(mock);
+    }
+
+    function testMockCallEmptyAccountInjectCode() public {
+        Mock mock = Mock(address(100));
+
+        // `injectCode = true` behaves like the other overloads: code is injected into the empty
+        // account so that mocked calls to functions without return values succeed as well.
+        vm.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10), true);
+        vm.mockCall(address(mock), abi.encodeWithSelector(mock.noReturnValue.selector), abi.encode(), true);
+
+        assertEq(mock.add(1, 2), 10);
+        mock.noReturnValue();
+        assertEq(address(mock).code.length, 1);
+    }
+
+    function exposedCallNumberA(Mock mock) external view returns (uint256) {
+        return mock.numberA();
+    }
+
+    function exposedCallNoReturnValue(Mock mock) external {
+        mock.noReturnValue();
+    }
 }
 
 contract MockCallRevertTest is Test {

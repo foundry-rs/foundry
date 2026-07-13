@@ -31,7 +31,7 @@ foundry-evm-networks.workspace = true
 alloy-monad-evm = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
 foundry-primitives = { workspace = true, default-features = false }
-tempo-chainspec.workspace = true
+tempo-hardfork.workspace = true
 tempo-primitives.workspace = true
 tempo-precompiles.workspace = true
 tempo-evm.workspace = true
@@ -53,6 +53,7 @@ alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
 alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-mev.workspace = true
 alloy-serde.workspace = true
 alloy-provider = { workspace = true, features = [
     "reqwest",

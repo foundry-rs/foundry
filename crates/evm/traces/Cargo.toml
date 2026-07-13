@@ -53,6 +53,9 @@ tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 yansi.workspace = true
 
+[dev-dependencies]
+snapbox.workspace = true
+
 [features]
 default = ["optimism"]
 monad = ["dep:monad-revm", "foundry-evm-core/monad", "foundry-evm-hardforks/monad"]

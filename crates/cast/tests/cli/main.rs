@@ -3,9 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
-#[cfg(feature = "monad")]
-use alloy_network::ReceiptResponse;
-use alloy_network::{TransactionBuilder, TransactionResponse};
+use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{
@@ -96,13 +94,6 @@ Display options:
 
       --json
           Format log messages as JSON
-
-      --machine
-          Activate the agent contract: disables color and wraps CLI-runtime exits (parse / usage /
-          help / version) in a structured envelope. Per-command machine output (declared
-          `output_mode`, progress and prompt suppression, canonical exit codes) is adopted
-          incrementally — see `docs/agents/spec.md` §10. Mutually exclusive with `--json` and `--md`
-          to keep machine-mode output unambiguous
 
       --md
           Format log messages as Markdown
@@ -259,7 +250,7 @@ casttest!(block_raw_tempo, |_prj, cmd| {
 });
 
 casttest!(channel_id_defaults, async |_prj, cmd| {
-    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_hardfork::TempoHardfork;
 
     let (_api, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
@@ -3163,6 +3154,40 @@ interface Interface {
     ]);
 });
 
+casttest!(interface_local_contract_does_not_write_artifacts, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "InterfaceTarget",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract InterfaceTarget {
+    event ValueSet(uint256 value);
+
+    function setValue(uint256 value) external {
+        emit ValueSet(value);
+    }
+}
+    "#,
+    );
+
+    let source = prj.root().join("src/InterfaceTarget.sol");
+    let artifact = prj.root().join("out/InterfaceTarget.sol/InterfaceTarget.json");
+    let output =
+        cmd.cast_fuse().arg("interface").arg(&source).assert_success().get_output().stdout_lossy();
+    assert!(output.contains("interface InterfaceTarget"), "{output}");
+    assert!(output.contains("event ValueSet(uint256 value);"), "{output}");
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.cast_fuse().arg("interface").arg(&source).assert_success();
+    let after = fs::read(&artifact).unwrap();
+    assert_eq!(after, b"sentinel");
+});
+
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
 casttest!(flaky_fetch_weth_interface_from_etherscan, |_prj, cmd| {
@@ -3731,7 +3756,6 @@ contract LocalProjectScript is Script {
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling project to generate artifacts
 Nothing to compile
 
 "#]])
@@ -3773,7 +3797,6 @@ Executing previous transactions from the block.
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Compiling project to generate artifacts
 No files changed, compilation skipped
 Traces:
   [..] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
@@ -3923,6 +3946,164 @@ forgetest_async!(cast_run_prestate_tracer_matches_block_replay, |prj, cmd| {
         .stdout_lossy();
 
     assert_eq!(replay, prestate, "prestate tracer traces must match block replay traces");
+});
+
+// https://github.com/foundry-rs/foundry/issues/12336
+// `cast run --debug-trace-transaction` fetches the transaction's trace from the node via
+// `debug_traceTransaction` (callTracer) and renders it with the same decoding/rendering machinery
+// as the local replay, skipping local execution entirely: the block replay message must be absent
+// from stderr.
+forgetest_async!(cast_run_debug_trace_transaction, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "run",
+            "--debug-trace-transaction",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+    assert!(
+        !assert
+            .get_output()
+            .stderr_lossy()
+            .contains("Executing previous transactions from the block."),
+        "debug_traceTransaction path should not replay previous block transactions"
+    );
+    let receipt = api.transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert!(
+        assert.get_output().stdout_lossy().contains(&format!("Gas used: {}", receipt.gas_used())),
+        "debug_traceTransaction summary should report the receipt gas used"
+    );
+});
+
+// `cast run --debug-trace-transaction` must render a multi-node trace: the parent runtime emits a
+// LOG0 and then CALLs a child whose runtime reverts (the parent ignores the failure), exercising
+// the log/sub-call interleaving, nesting and revert rendering through the real pipeline.
+casttest!(cast_run_debug_trace_transaction_renders_nested_call_and_revert, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    // Parent runtime: LOG0(0,0); CALL(gas, 0x..bb, 0,0,0,0,0); POP; STOP.
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000000aa"),
+        "0x60006000a0600060006000600060007300000000000000000000000000000000000000bb5af15000"
+            .parse()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    // Child runtime: PUSH1 0 PUSH1 0 REVERT.
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000000bb"),
+        "0x60006000fd".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x00000000000000000000000000000000000000aa",
+            "run()",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    cmd.cast_fuse()
+        .args([
+            "run",
+            "--debug-trace-transaction",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x00000000000000000000000000000000000000AA::run()
+    ├─           data: 0x
+    ├─ [..] 0x00000000000000000000000000000000000000bb::fallback()
+    │   └─ ← [Revert] execution reverted
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `cast run --debug-trace-transaction --with-local-artifacts` labels the target contract by its
+// local artifact name (Counter::) instead of the raw address: the RPC path has no local executor,
+// so the bytecode for artifact matching must be fetched over RPC at the transaction's block.
+forgetest_async!(cast_run_debug_trace_transaction_with_local_artifacts, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "run",
+        "--debug-trace-transaction",
+        "--la",
+        format!("{tx_hash}").as_str(),
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Traces:
+  [..] Counter::setNumber(111)
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-transaction` fetches the trace from the node, so the local-execution-only flags
+// must be rejected by clap.
+casttest!(cast_run_debug_trace_transaction_conflicts_with_debug, |_prj, cmd| {
+    cmd.args([
+        "run",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "--debug-trace-transaction",
+        "--debug",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+error: the argument '--debug-trace-transaction' cannot be used with '--debug'
+...
+"#]]);
 });
 
 // tests cast can decode traces when running with verbosity level > 4
@@ -4099,89 +4280,6 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
-// `cast --machine call` emits a single envelope on stdout against an
-// empty account, returning the deterministic `0x` result.
-forgetest_async!(cast_call_machine_mode_emits_envelope, |_prj, cmd| {
-    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let http_endpoint = handle.http_endpoint();
-
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            &http_endpoint,
-        ])
-        .assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
-
-    assert_eq!(envelope["schema_version"], 1);
-    assert_eq!(envelope["success"], true);
-    assert_eq!(envelope["data"]["raw"], "0x");
-    assert_eq!(envelope["errors"], serde_json::json!([]));
-    assert_eq!(envelope["warnings"], serde_json::json!([]));
-});
-
-// `--machine` rejects flags that would corrupt the envelope-only stdout
-// contract. Asserts the stable `code` + exit code, not just message text.
-forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
-    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let http_endpoint = handle.http_endpoint();
-
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "--trace",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            &http_endpoint,
-        ])
-        .assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
-    assert_eq!(
-        envelope["errors"][0]["details"]["unsupported_flags"],
-        serde_json::json!(["--trace"]),
-        "missing structured unsupported_flags details: {envelope}"
-    );
-});
-
-// Transport/connectivity failures (here: unreachable RPC URL) emit a typed
-// `network.rpc.error` envelope and exit `Network (6)`.
-forgetest_async!(cast_call_machine_mode_rpc_failure_emits_network_envelope, |_prj, cmd| {
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            // Unreachable: port 1 is reserved and nothing accepts here.
-            "http://127.0.0.1:1",
-        ])
-        .assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "network.rpc.error");
-    assert_eq!(assert.get_output().status.code(), Some(6));
-});
-
 // https://github.com/foundry-rs/foundry/issues/10848
 forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -4285,6 +4383,412 @@ Transaction successfully executed.
 });
 
 // https://github.com/foundry-rs/foundry/issues/10189
+// `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
+// (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
+// targets the identity precompile so the test needs no deployed contract.
+casttest!(cast_call_debug_trace_call, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x0000000000000000000000000000000000000004",
+            "--data",
+            "0xdeadbeef",
+            "--debug-trace-call",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21160] PRECOMPILES::identity(0xdeadbeef)
+    └─ ← [Return] 0xdeadbeef
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call` must honour state overrides: here we override the code of an address with a
+// tiny runtime that returns storage slot 0, and override slot 0 itself, then check the traced call
+// returns the overridden value. If the overrides were not forwarded to `debug_traceCall`, the
+// address would have no code and the return would not be the overridden value, so this test can
+// fail.
+casttest!(cast_call_debug_trace_call_applies_overrides, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000aa",
+            "number()(uint256)",
+            "--debug-trace-call",
+            // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+            "--override-code",
+            "0x00000000000000000000000000000000000000aa:0x60005460005260206000f3",
+            "--override-state",
+            "0x00000000000000000000000000000000000000aa:0x0:0x1234",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [23182] 0x00000000000000000000000000000000000000AA::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call` must also forward block overrides: override an address with a runtime that
+// returns `block.number` and pass `--block.number`, then check the traced call returns that number.
+// If `with_block_overrides` were not forwarded to `debug_traceCall`, the call would run at anvil's
+// real block number and the return would differ, so this test can fail.
+casttest!(cast_call_debug_trace_call_applies_block_overrides, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000bb",
+            "number()(uint256)",
+            "--debug-trace-call",
+            // runtime: NUMBER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+            "--override-code",
+            "0x00000000000000000000000000000000000000bb:0x4360005260206000f3",
+            "--block.number",
+            "1234",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21160] 0x00000000000000000000000000000000000000bb::number()
+    └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000004d2
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call` must render a multi-node trace (a call that emits a log AND makes a
+// sub-call), exercising the log/sub-call interleaving and nesting through the real pipeline, not
+// just in the unit tests. The overridden runtime emits a LOG0 then STATICCALLs the identity
+// precompile, so the trace has a child call ordered after the log.
+casttest!(cast_call_debug_trace_call_renders_nested_call_and_log, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000cc",
+            "run()",
+            "--debug-trace-call",
+            // runtime: LOG0(0,0); STATICCALL(gas, 0x4, 0,0,0,0); POP; STOP
+            "--override-code",
+            "0x00000000000000000000000000000000000000cc:0x60006000a060006000600060007300000000000000000000000000000000000000045afa5000",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21579] 0x00000000000000000000000000000000000000cc::run()
+    ├─           data: 0x
+    ├─ [15] PRECOMPILES::identity(0x) [staticcall]
+    │   └─ ← [Return] 0x
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call` must render a reverting call as `[Revert]` (success = false), exercising
+// `status_from_frame` and the failure rendering end-to-end. The overridden runtime just reverts.
+casttest!(cast_call_debug_trace_call_renders_revert, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000dd",
+            "run()",
+            "--debug-trace-call",
+            // runtime: PUSH1 0 PUSH1 0 REVERT
+            "--override-code",
+            "0x00000000000000000000000000000000000000dd:0x60006000fd",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21160] 0x00000000000000000000000000000000000000dd::run()
+    └─ ← [Revert] execution reverted
+
+
+[GAS]
+
+"#]]);
+});
+
+// --debug-trace-call with --with-local-artifacts labels the called contract by its local
+// artifact name (Counter::) instead of the raw address. Without the RPC bytecode-map fetch the
+// trace falls back to the bare address, so this test can fail.
+forgetest_async!(cast_call_debug_trace_call_with_local_artifacts, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "call",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "number()(uint256)",
+        "--debug-trace-call",
+        "--with-local-artifacts",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [23488] Counter::number()
+    └─ ← [Return] 0
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call --with-local-artifacts` must label a contract that only exists through a
+// `--override-code` state override: the trace runs the override code, so artifact matching must
+// see that code instead of the (empty) on-chain code.
+forgetest_async!(cast_call_debug_trace_call_override_code_local_artifacts, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    // Deploy counter contract, only to read its runtime bytecode back.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    let runtime_code = cmd
+        .cast_fuse()
+        .args([
+            "code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Call an address that has no code on chain, overriding it with Counter's runtime code.
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    let output = cmd
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000aa",
+            "number()(uint256)",
+            "--debug-trace-call",
+            "--with-local-artifacts",
+            "--override-code",
+            &format!("0x00000000000000000000000000000000000000aa:{runtime_code}"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        output.contains("Counter::number()"),
+        "expected the override-code contract to be labeled from local artifacts:\n{output}"
+    );
+});
+
+// `--json --debug-trace-call --with-local-artifacts` must keep stdout machine-readable: the
+// compile banner/progress goes to stderr, so stdout is exactly one JSON document.
+forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    let output = cmd
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "number()(uint256)",
+            "--debug-trace-call",
+            "--with-local-artifacts",
+            "--json",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    serde_json::from_str::<serde_json::Value>(output.trim()).unwrap_or_else(|err| {
+        panic!("expected stdout to be a single JSON document ({err}):\n{output}")
+    });
+});
+
+// `cast call --trace` decodes custom errors through the local signatures cache that `forge build`
+// populates, without requiring `--with-local-artifacts`.
+// <https://github.com/foundry-rs/foundry/issues/11085>
+forgetest_async!(flaky_cast_call_trace_decodes_error_from_signatures_cache, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "CustomErrorContract",
+        r#"
+contract CustomErrorContract {
+    error WTF273987(uint256 a, uint256 b);
+    error PrintableError18();
+
+    function wtf2890230(uint256 a, uint128 b) external pure {
+        revert WTF273987(a, b);
+    }
+
+    function printableError() external pure {
+        revert PrintableError18();
+    }
+}
+"#,
+    );
+
+    // `forge build` caches the project's signatures, including custom errors.
+    cmd.args(["build"]).assert_success();
+
+    // Deploy the contract.
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/CustomErrorContract.sol:CustomErrorContract",
+            "--broadcast",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    // The revert reason is decoded from the cached signatures, even offline and without
+    // `--with-local-artifacts`.
+    cmd.cast_fuse().env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "wtf2890230(uint256,uint128)",
+        "42",
+        "69",
+        "--trace",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::wtf2890230(42, 69)
+    └─ ← [Revert] WTF273987(42, 69)
+
+
+[GAS]
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: Transaction failed.
+
+"#]]);
+
+    // A custom error whose selector is valid ASCII must also be decoded from the cache rather than
+    // rendered as a raw string. `PrintableError18()` has selector `0x2e2c426f` (`.,Bo`).
+    cmd.cast_fuse().env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "printableError()",
+        "--trace",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::printableError()
+    └─ ← [Revert] PrintableError18()
+
+
+[GAS]
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: Transaction failed.
+
+"#]]);
+});
+
 forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
@@ -4980,6 +5484,16 @@ contract ConstructorContract {
     assert!(
         value_output.contains("0x000000000000000000000000000000000000000000000000000000000000002a")
     );
+
+    cmd.cast_fuse()
+        .args(["--json", "call", address, "getValue()(uint256)", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[
+  "42"
+]
+
+"#]]);
 });
 
 // Test that cast estimate --create works correctly with constructor arguments
@@ -5232,6 +5746,78 @@ casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
             "expected traced Tempo TIP20 call to execute successfully for {name}, got:\n{output}"
         );
     }
+});
+
+// tests that `cast call --trace` executes the call with the gas limit given via `--gas-limit`,
+// matching a plain `cast call` rather than running with an unbounded gas limit.
+// <https://github.com/foundry-rs/foundry/issues/15357>
+forgetest_async!(cast_call_trace_respects_gas_limit, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Contract that reverts when the call is given an unrealistically large gas limit.
+    prj.add_source(
+        "GasDependent",
+        r#"
+contract GasDependent {
+    function run() external view returns (uint256) {
+        require(gasleft() < 30_000_000, "unrealistic gas limit");
+        return gasleft();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    let bytecode_path = prj.root().join("out/GasDependent.sol/GasDependent.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    let deploy_output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--json",
+            "--create",
+            bytecode,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = serde_json::from_str(&deploy_output).unwrap();
+    let address = receipt["contractAddress"].as_str().unwrap().to_string();
+
+    // A plain `cast call` (eth_call) uses a realistic gas limit, so it succeeds.
+    cmd.cast_fuse()
+        .args(["call", &address, "run()(uint256)", "--rpc-url", &endpoint])
+        .assert_success();
+
+    // `--trace` with an explicit `--gas-limit` executes the call with that limit, so it succeeds
+    // too instead of reverting.
+    let trace_output = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &address,
+            "run()(uint256)",
+            "--trace",
+            "--gas-limit",
+            "1000000",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        trace_output.contains("[Return]") && !trace_output.contains("unrealistic gas limit"),
+        "expected traced call to respect --gas-limit and succeed, got:\n{trace_output}"
+    );
 });
 
 // tests that cast call properly applies state diff override
@@ -5759,6 +6345,139 @@ casttest!(curl_call_with_jwt, |_prj, cmd| {
     secret.validate(jwt).unwrap();
 });
 
+// tests that `--debug-trace-call --curl` emits a `debug_traceCall` request with the
+// callTracer, not a plain `eth_call`
+casttest!(curl_call_debug_trace_call, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args(["call", to, "number()(uint256)", "--rpc-url", rpc, "--debug-trace-call", "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains(rpc));
+    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
+    assert!(output.contains("callTracer"), "expected callTracer tracer param:\n{output}");
+    assert!(!output.contains("eth_call"), "unexpected eth_call request:\n{output}");
+});
+
+// tests that `--debug-trace-call --curl` forwards state and block overrides in the request,
+// like the non-curl path does, so the printed request traces the same state
+casttest!(curl_call_debug_trace_call_forwards_overrides, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--rpc-url",
+            rpc,
+            "--debug-trace-call",
+            "--override-code",
+            "0x00000000000000000000000000000000000000aa:0x60005460005260206000f3",
+            "--block.number",
+            "1234",
+            "--curl",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
+    assert!(output.contains("stateOverrides"), "expected state overrides in params:\n{output}");
+    assert!(
+        output.contains("0x60005460005260206000f3"),
+        "expected the override code in params:\n{output}"
+    );
+    assert!(output.contains("blockOverrides"), "expected block overrides in params:\n{output}");
+});
+
+// tests that `--curl` forwards the scalar transaction fields into the call object, so the
+// printed request runs the same call as the non-curl command
+casttest!(curl_call_debug_trace_call_forwards_tx_fields, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--rpc-url",
+            rpc,
+            "--debug-trace-call",
+            "--from",
+            "0x000000000000000000000000000000000000beef",
+            "--value",
+            "1ether",
+            "--gas-limit",
+            "12345",
+            "--nonce",
+            "7",
+            "--curl",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
+    assert!(
+        output.contains("0x000000000000000000000000000000000000beef"),
+        "expected the from address in params:\n{output}"
+    );
+    assert!(
+        output.contains("0xde0b6b3a7640000"),
+        "expected the value (1 ether) in params:\n{output}"
+    );
+    assert!(output.contains("0x3039"), "expected the gas limit (12345) in params:\n{output}");
+    assert!(output.contains("nonce"), "expected the nonce in params:\n{output}");
+});
+
+// tests that `--labels` / `--disable-labels` are accepted with `--debug-trace-call`, which
+// forwards them to the trace renderer like `--trace` does
+casttest!(call_labels_accepted_with_debug_trace_call, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    cmd.args([
+        "call",
+        to,
+        "number()(uint256)",
+        "--rpc-url",
+        rpc,
+        "--debug-trace-call",
+        "--labels",
+        "0xdead000000000000000000000000000000000000:Counter",
+        "--disable-labels",
+        "--curl",
+    ])
+    .assert_success();
+});
+
+// tests that `--labels` still requires one of the trace modes
+casttest!(call_labels_rejected_without_trace_mode, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    cmd.args([
+        "call",
+        to,
+        "number()(uint256)",
+        "--rpc-url",
+        rpc,
+        "--labels",
+        "0xdead000000000000000000000000000000000000:Counter",
+        "--curl",
+    ])
+    .assert_failure();
+});
+
 // tests that the --jwt-secret flag outputs a valid curl command with Authorization header
 casttest!(curl_rpc_with_jwt, |_prj, cmd| {
     let rpc = "https://eth.example.com";
@@ -5938,6 +6657,36 @@ casttest!(cast_decode_tx_invalid, |_prj, cmd| {
     cmd.args(["decode-tx", "0xinvalid"]).assert_failure();
 });
 
+// Test decode-tx auto-detects the Tempo network from the `0x76` type byte without `--network`,
+// producing the same output as passing `--network tempo` explicitly.
+casttest!(cast_decode_tx_tempo_autodetect, |_prj, cmd| {
+    let tx = "0x76f8cf82a5bf1485059682f018830494e5f85ef85c9420c0000000000000000000007d9cc57068833ea780b84440c10f190000000000000000000000008a871f4189067637cfc4cc1500abd6244bf1df740000000000000000000000000000000000000000000000000000000005f5e100c08082057e80809420c000000000000000000000000000000000000080c0b841eb100c4cbd96903bf9e97968c0982670bb90fc191ee4544c7ff32d44e901dbea3f6fbdd58255051135c2fe1aa81583a270d96009cbe375f4605ef15971273a4f1b";
+
+    let auto = cmd.args(["decode-tx", tx]).assert_success().get_output().stdout.clone();
+
+    let with_flag = cmd
+        .cast_fuse()
+        .args(["decode-tx", "--network", "tempo", tx])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(auto, with_flag, "auto-detected and --network tempo output should match");
+
+    let output: String = serde_json::from_slice(&auto).unwrap();
+    let decoded: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(decoded["type"], "0x76");
+});
+
+// Test that `--network ethereum` forces Ethereum decoding and rejects a Tempo tx (type `0x76`),
+// so the flag remains a meaningful override rather than falling back to auto-detection.
+casttest!(cast_decode_tx_network_ethereum_rejects_tempo, |_prj, cmd| {
+    let tx = "0x76f8cf82a5bf1485059682f018830494e5f85ef85c9420c0000000000000000000007d9cc57068833ea780b84440c10f190000000000000000000000008a871f4189067637cfc4cc1500abd6244bf1df740000000000000000000000000000000000000000000000000000000005f5e100c08082057e80809420c000000000000000000000000000000000000080c0b841eb100c4cbd96903bf9e97968c0982670bb90fc191ee4544c7ff32d44e901dbea3f6fbdd58255051135c2fe1aa81583a270d96009cbe375f4605ef15971273a4f1b";
+
+    cmd.args(["decode-tx", "--network", "ethereum", tx]).assert_failure();
+});
+
 // Test that `--network tempo` and `-n tempo` (short form) produce identical output for decode-tx.
 // Uses a known Tempo mainnet transaction.
 casttest!(cast_decode_tx_network_flag_short_and_long_equivalent, |_prj, cmd| {
@@ -6089,9 +6838,9 @@ Virtual addresses:
 
 // End-to-end `cast vaddr` tests against a local Anvil Tempo node.
 //
-// These tests exercise the full TIP-1022 lifecycle. Mining a 4-byte PoW salt is CPU-bound;
-// we use all available CPUs so each test does not stall a nextest worker long enough to trip
-// its per-test timeout.
+// These tests exercise the full TIP-1022 lifecycle, including mining a 4-byte PoW salt.
+// Keep them out of the default local suite because the mining step is intentionally CPU-bound
+// and can saturate developer machines. Run explicitly with `--ignored` when changing this flow.
 mod vaddr_e2e {
     use super::*;
     use std::{
@@ -6099,8 +6848,8 @@ mod vaddr_e2e {
         process::Stdio,
         time::{Duration, Instant},
     };
-    use tempo_chainspec::hardfork::TempoHardfork;
     use tempo_contracts::precompiles::DEFAULT_FEE_TOKEN;
+    use tempo_hardfork::TempoHardfork;
 
     /// `cast vaddr` exercises TIP-1022, which is enabled after `TempoHardfork::T3`.
     fn tempo_t3_config() -> anvil::NodeConfig {
@@ -6148,208 +6897,252 @@ mod vaddr_e2e {
             .unwrap_or_else(|| panic!("could not parse vaddr from create output:\n{out}"))
     }
 
-    casttest!(vaddr_create_register_json_includes_tx_hash, async |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
-        let rpc = handle.http_endpoint();
-        let owner = handle.dev_wallets().next().unwrap();
-        let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
-        let owner_addr = format!("{:#x}", owner.address());
+    casttest!(
+        #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
+        vaddr_create_register_json_includes_tx_hash,
+        async |_prj, cmd| {
+            let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+            let rpc = handle.http_endpoint();
+            let owner = handle.dev_wallets().next().unwrap();
+            let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
+            let owner_addr = format!("{:#x}", owner.address());
 
-        let out = cmd
-            .cast_fuse()
-            .args([
-                "--json",
-                "vaddr",
-                "create",
-                "--owner",
-                &owner_addr,
-                "--private-key",
-                &owner_pk,
-                "-j",
-                &mining_threads(),
-                "--rpc-url",
-                &rpc,
-            ])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-
-        let envelope: serde_json::Value =
-            serde_json::from_str(out.trim()).expect("create --json output is valid JSON");
-        let tx_hash = envelope["data"]["registration_tx_hash"]
-            .as_str()
-            .expect("registration_tx_hash is a string");
-        B256::from_str(tx_hash).expect("registration_tx_hash is a valid tx hash");
-    });
-
-    // `cast vaddr create` mines a PoW salt, registers a virtual master on-chain,
-    // and `cast vaddr resolve` returns the registered owner.
-    casttest!(vaddr_create_register_and_resolve, async |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
-        let rpc = handle.http_endpoint();
-        let owner = handle.dev_wallets().next().unwrap();
-
-        let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
-
-        let resolve_out = cmd
-            .cast_fuse()
-            .args(["--json", "vaddr", "resolve", &vaddr, "--rpc-url", &rpc])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-
-        let v: serde_json::Value =
-            serde_json::from_str(resolve_out.trim()).expect("resolve --json output is valid JSON");
-        assert_eq!(
-            v["address"].as_str().unwrap().to_lowercase(),
-            vaddr.to_lowercase(),
-            "resolve.address mismatch: {resolve_out}"
-        );
-        assert_eq!(
-            v["master_address"].as_str().unwrap().to_lowercase(),
-            format!("{:#x}", owner.address()),
-            "resolve.master_address should match the registered owner: {resolve_out}"
-        );
-    });
-
-    // Transferring a TIP-20 fee token to a registered virtual address must
-    // auto-forward the deposit to the master wallet at the protocol level.
-    casttest!(vaddr_auto_forward_to_master, async |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
-        let rpc = handle.http_endpoint();
-        let owner = handle.dev_wallets().next().unwrap();
-        let sender = handle.dev_wallets().nth(1).unwrap();
-        let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
-        let owner_addr = format!("{:#x}", owner.address());
-
-        let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
-
-        let balance = |cmd: &mut foundry_test_utils::TestCommand| -> u128 {
             let out = cmd
                 .cast_fuse()
                 .args([
-                    "call",
-                    &DEFAULT_FEE_TOKEN.to_string(),
-                    "balanceOf(address)(uint256)",
+                    "--json",
+                    "vaddr",
+                    "create",
+                    "--owner",
                     &owner_addr,
+                    "--private-key",
+                    &owner_pk,
+                    "-j",
+                    &mining_threads(),
                     "--rpc-url",
                     &rpc,
                 ])
                 .assert_success()
                 .get_output()
                 .stdout_lossy();
-            // `cast call` with a typed signature prints e.g. `1000000000000 [1e12]`.
-            out.split_whitespace().next().unwrap().parse().unwrap()
-        };
 
-        let before = balance(&mut cmd);
+            let envelope: serde_json::Value =
+                serde_json::from_str(out.trim()).expect("create --json output is valid JSON");
+            let tx_hash = envelope["data"]["registration_tx_hash"]
+                .as_str()
+                .expect("registration_tx_hash is a string");
+            B256::from_str(tx_hash).expect("registration_tx_hash is a valid tx hash");
+        }
+    );
 
-        let amount: u128 = 1_000_000;
-        cmd.cast_fuse()
-            .args([
-                "send",
-                &DEFAULT_FEE_TOKEN.to_string(),
-                "transfer(address,uint256)",
-                &vaddr,
-                &amount.to_string(),
-                "--rpc-url",
-                &rpc,
-                "--private-key",
-                &sender_pk,
-            ])
-            .assert_success();
+    // `cast vaddr create` mines a PoW salt, registers a virtual master on-chain,
+    // and `cast vaddr resolve` returns the registered owner.
+    casttest!(
+        #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
+        vaddr_create_register_and_resolve,
+        async |_prj, cmd| {
+            let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+            let rpc = handle.http_endpoint();
+            let owner = handle.dev_wallets().next().unwrap();
 
-        let after = balance(&mut cmd);
-        assert_eq!(
-            after - before,
-            amount,
-            "transfer to virtual address should auto-forward to master (before={before}, after={after})"
-        );
-    });
+            let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
+
+            let resolve_out = cmd
+                .cast_fuse()
+                .args(["--json", "vaddr", "resolve", &vaddr, "--rpc-url", &rpc])
+                .assert_success()
+                .get_output()
+                .stdout_lossy();
+
+            let v: serde_json::Value = serde_json::from_str(resolve_out.trim())
+                .expect("resolve --json output is valid JSON");
+            assert_eq!(
+                v["address"].as_str().unwrap().to_lowercase(),
+                vaddr.to_lowercase(),
+                "resolve.address mismatch: {resolve_out}"
+            );
+            assert_eq!(
+                v["master_address"].as_str().unwrap().to_lowercase(),
+                format!("{:#x}", owner.address()),
+                "resolve.master_address should match the registered owner: {resolve_out}"
+            );
+        }
+    );
+
+    // Transferring a TIP-20 fee token to a registered virtual address must
+    // auto-forward the deposit to the master wallet at the protocol level.
+    casttest!(
+        #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
+        vaddr_auto_forward_to_master,
+        async |_prj, cmd| {
+            let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+            let rpc = handle.http_endpoint();
+            let owner = handle.dev_wallets().next().unwrap();
+            let sender = handle.dev_wallets().nth(1).unwrap();
+            let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
+            let owner_addr = format!("{:#x}", owner.address());
+
+            let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
+
+            let balance = |cmd: &mut foundry_test_utils::TestCommand| -> u128 {
+                let out = cmd
+                    .cast_fuse()
+                    .args([
+                        "call",
+                        &DEFAULT_FEE_TOKEN.to_string(),
+                        "balanceOf(address)(uint256)",
+                        &owner_addr,
+                        "--rpc-url",
+                        &rpc,
+                    ])
+                    .assert_success()
+                    .get_output()
+                    .stdout_lossy();
+                // `cast call` with a typed signature prints e.g. `1000000000000 [1e12]`.
+                out.split_whitespace().next().unwrap().parse().unwrap()
+            };
+
+            let before = balance(&mut cmd);
+
+            let amount: u128 = 1_000_000;
+            cmd.cast_fuse()
+                .args([
+                    "send",
+                    &DEFAULT_FEE_TOKEN.to_string(),
+                    "transfer(address,uint256)",
+                    &vaddr,
+                    &amount.to_string(),
+                    "--rpc-url",
+                    &rpc,
+                    "--private-key",
+                    &sender_pk,
+                ])
+                .assert_success();
+
+            let after = balance(&mut cmd);
+            assert_eq!(
+                after - before,
+                amount,
+                "transfer to virtual address should auto-forward to master (before={before}, after={after})"
+            );
+        }
+    );
 
     // `cast vaddr watch --from-block` must replay historical TIP-20 Transfer
     // logs targeted at the virtual address. The command then polls forever, so
     // we spawn it as a child process and kill it once we observe the expected
     // historical line (or the deadline elapses).
-    casttest!(vaddr_watch_historical, async |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
-        let rpc = handle.http_endpoint();
-        let owner = handle.dev_wallets().next().unwrap();
-        let sender = handle.dev_wallets().nth(1).unwrap();
-        let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
-        let sender_addr = format!("{:#x}", sender.address());
+    casttest!(
+        #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
+        vaddr_watch_historical,
+        async |_prj, cmd| {
+            let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+            let rpc = handle.http_endpoint();
+            let owner = handle.dev_wallets().next().unwrap();
+            let sender = handle.dev_wallets().nth(1).unwrap();
+            let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
+            let sender_addr = format!("{:#x}", sender.address());
 
-        let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
+            let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
 
-        // Capture the block before the transfer so `--from-block` replays it.
-        let block_before_out = cmd
-            .cast_fuse()
-            .args(["block-number", "--rpc-url", &rpc])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-        let block_before: u64 = block_before_out.trim().parse().unwrap();
+            // Capture the block before the transfer so `--from-block` replays it.
+            let block_before_out = cmd
+                .cast_fuse()
+                .args(["block-number", "--rpc-url", &rpc])
+                .assert_success()
+                .get_output()
+                .stdout_lossy();
+            let block_before: u64 = block_before_out.trim().parse().unwrap();
 
-        let amount: u128 = 1_000_000;
-        cmd.cast_fuse()
-            .args([
-                "send",
-                &DEFAULT_FEE_TOKEN.to_string(),
-                "transfer(address,uint256)",
+            let amount: u128 = 1_000_000;
+            cmd.cast_fuse()
+                .args([
+                    "send",
+                    &DEFAULT_FEE_TOKEN.to_string(),
+                    "transfer(address,uint256)",
+                    &vaddr,
+                    &amount.to_string(),
+                    "--rpc-url",
+                    &rpc,
+                    "--private-key",
+                    &sender_pk,
+                ])
+                .assert_success();
+
+            // Spawn `cast vaddr watch` as a child process (it loops indefinitely).
+            cmd.cast_fuse().args([
+                "vaddr",
+                "watch",
                 &vaddr,
-                &amount.to_string(),
+                "--token",
+                &DEFAULT_FEE_TOKEN.to_string(),
+                "--from-block",
+                &block_before.to_string(),
                 "--rpc-url",
                 &rpc,
-                "--private-key",
-                &sender_pk,
-            ])
-            .assert_success();
+            ]);
+            let mut child =
+                cmd.cmd().stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
 
-        // Spawn `cast vaddr watch` as a child process (it loops indefinitely).
-        cmd.cast_fuse().args([
-            "vaddr",
-            "watch",
-            &vaddr,
-            "--token",
-            &DEFAULT_FEE_TOKEN.to_string(),
-            "--from-block",
-            &block_before.to_string(),
-            "--rpc-url",
-            &rpc,
-        ]);
-        let mut child = cmd.cmd().stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+            let mut stdout = BufReader::new(child.stdout.take().unwrap());
+            let expected = format!(
+                "token={} from={} amount={}",
+                DEFAULT_FEE_TOKEN.to_string().to_lowercase(),
+                sender_addr,
+                amount
+            );
 
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        let expected = format!(
-            "token={} from={} amount={}",
-            DEFAULT_FEE_TOKEN.to_string().to_lowercase(),
-            sender_addr,
-            amount
-        );
-
-        let deadline = Instant::now() + Duration::from_secs(15);
-        let mut captured = String::new();
-        let mut found = false;
-        while Instant::now() < deadline {
-            let mut line = String::new();
-            match stdout.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {
-                    captured.push_str(&line);
-                    if line.to_lowercase().contains(&expected) {
-                        found = true;
-                        break;
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut captured = String::new();
+            let mut found = false;
+            while Instant::now() < deadline {
+                let mut line = String::new();
+                match stdout.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        captured.push_str(&line);
+                        if line.to_lowercase().contains(&expected) {
+                            found = true;
+                            break;
+                        }
                     }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
+            let _ = child.kill();
+            let _ = child.wait();
 
-        assert!(
-            found,
-            "cast vaddr watch did not emit historical transfer; expected substring `{expected}` in:\n{captured}"
-        );
+            assert!(
+                found,
+                "cast vaddr watch did not emit historical transfer; expected substring `{expected}` in:\n{captured}"
+            );
+        }
+    );
+
+    // tests that displays a sample beacon block traces in Cancun
+    // https://github.com/foundry-rs/foundry/issues/12435
+    casttest!(test_beacon_block_root_in_cancun, |prj, cmd| {
+        prj.clear();
+        let eth_rpc_url = next_http_rpc_endpoint();
+        cmd.args([
+            "run",
+            "0xae290fe8c89c3e83dff20eeb2b8e3261bcdce0d66441c7056918dfb5fafe6d96",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [45054] 0xB731392c0EB5BF2092f9f7B520DA551f70Ea9131::Claim{value: 46698476594582387}()
+    ├─ [4320] 0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02::00000000(00000000000000000000000000000000000000000000000069091d4b) [staticcall]
+    │   └─ ← [Return] 0x70c7855161ec07af782df915fb3e81702df40f34972da3d740cdfc132ac926f6
+    ├─ emit NvStuck(param0: 0x6e6C36B970f8862bA3F148DEdAB8F98f5ed8b426, param1: 46698476594582387 [4.669e16], param2: 1762205003 [1.762e9])
+    └─ ← [Stop]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
     });
 }

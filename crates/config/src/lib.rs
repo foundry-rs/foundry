@@ -108,10 +108,10 @@ pub use providers::Remappings;
 use providers::*;
 
 mod fuzz;
-pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
+pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::{InvariantConfig, InvariantWorkers};
+pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantWorkers};
 
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -478,6 +478,10 @@ pub struct Config {
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
     pub via_ir: bool,
+    /// Whether to turn on SSA CFG-based code generation via the IR.
+    /// This is an experimental feature (as of 0.8.35) that requires `experimental` to be enabled.
+    /// Enabling this option will also enable `via_ir` if it is not already enabled.
+    pub via_ssa_cfg: bool,
     /// Whether to enable Solidity's experimental mode.
     ///
     /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
@@ -830,10 +834,24 @@ impl Config {
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
-        let mut config =
-            self.to_figment(FigmentProviders::None).merge(provider).extract::<Self>()?;
+        let provider = Figment::from(provider).select(self.profile.clone());
+        let invariant_corpus_random_sequence_weight_configured =
+            self.invariant.corpus_random_sequence_weight_configured
+                || provider.contains("invariant.corpus_random_sequence_weight")
+                || provider
+                    .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+                    .unwrap_or(false);
+        let invariant_workers_configured = self.invariant.workers_configured
+            || provider.contains("invariant.workers")
+            || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
+            || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
+        let figment = self.to_figment(FigmentProviders::None).merge(provider);
+        let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
+        config.invariant.corpus_random_sequence_weight_configured =
+            invariant_corpus_random_sequence_weight_configured;
+        config.invariant.workers_configured = invariant_workers_configured;
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -859,7 +877,18 @@ impl Config {
         figment: Figment,
         strict_profile: bool,
     ) -> Result<Self, ExtractConfigError> {
+        let invariant_corpus_random_sequence_weight_configured = figment
+            .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+            .unwrap_or_else(|_| {
+                figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
+            });
+        let invariant_workers_configured = figment
+            .extract_inner::<bool>("invariant.workers_configured")
+            .unwrap_or_else(|_| figment_value_is_configured(&figment, "invariant.workers"));
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
+        config.invariant.corpus_random_sequence_weight_configured =
+            invariant_corpus_random_sequence_weight_configured;
+        config.invariant.workers_configured = invariant_workers_configured;
         let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
@@ -996,8 +1025,27 @@ impl Config {
             figment = figment.merge(remappings);
         }
 
+        let invariant_corpus_random_sequence_weight_configured = self
+            .invariant
+            .corpus_random_sequence_weight_configured
+            || figment
+                .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+                .unwrap_or_else(|_| {
+                    figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
+                });
+        let invariant_workers_configured = self.invariant.workers_configured
+            || figment.extract_inner::<bool>("invariant.workers_configured").unwrap_or_else(|_| {
+                figment.extract_inner::<InvariantWorkers>("invariant.workers").is_ok()
+            });
+
         // normalize defaults
         figment = self.normalize_defaults(figment);
+        if invariant_corpus_random_sequence_weight_configured {
+            figment = figment.merge(("invariant.corpus_random_sequence_weight_configured", true));
+        }
+        if invariant_workers_configured {
+            figment = figment.merge(("invariant.workers_configured", true));
+        }
 
         Figment::from(self).merge(figment).select(profile)
     }
@@ -1380,6 +1428,7 @@ impl Config {
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.fuzz.corpus.corpus_dir);
+        remove_test_dir(&self.fuzz.corpus.frontier_dir);
         remove_test_dir(&self.invariant.corpus.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
@@ -1858,7 +1907,10 @@ impl Config {
                 debug_info: Vec::new(),
             }),
             model_checker,
-            via_ir: Some(self.via_ir),
+            // via_ssa_cfg implies via_ir only when via_ir is omitted, so we need to set both flags
+            // to true if via_ssa_cfg is enabled.
+            via_ir: Some(self.via_ir || self.via_ssa_cfg),
+            via_ssa_cfg: Some(self.via_ssa_cfg),
             experimental: Some(self.experimental),
             // Not used.
             stop_after: None,
@@ -2545,6 +2597,10 @@ impl FigmentProviders {
     }
 }
 
+fn figment_value_is_configured(figment: &Figment, key: &str) -> bool {
+    figment.find_metadata(key).is_some_and(|metadata| metadata.name.as_ref() != "Foundry Config")
+}
+
 /// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -2660,8 +2716,12 @@ impl Provider for Config {
     #[track_caller]
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut data = Serialized::defaults(self).data()?;
+        let root = Value::serialize(self.root.clone())?;
+        if let Some(entry) = data.get_mut(&Self::DEFAULT_PROFILE) {
+            entry.insert("root".to_string(), root.clone());
+        }
         if let Some(entry) = data.get_mut(&self.profile) {
-            entry.insert("root".to_string(), Value::serialize(self.root.clone())?);
+            entry.insert("root".to_string(), root);
         }
         Ok(data)
     }
@@ -2777,6 +2837,7 @@ impl Default for Config {
             deny: DenyLevel::Never,
             deny_warnings: false,
             via_ir: false,
+            via_ssa_cfg: false,
             experimental: false,
             ast: false,
             rpc_storage_caching: Default::default(),
@@ -3007,6 +3068,11 @@ mod tests {
     // from file, causing testing problem when comparing to those created from `default()`, etc.
     fn clear_warning(config: &mut Config) {
         config.warnings = vec![];
+    }
+
+    fn mark_serialized_invariant_provenance(config: &mut Config) {
+        config.invariant.corpus_random_sequence_weight_configured = true;
+        config.invariant.workers_configured = true;
     }
 
     #[test]
@@ -4740,7 +4806,9 @@ mod tests {
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
             let mut other = Config::load().unwrap();
             clear_warning(&mut other);
-            assert_eq!(default, other);
+            let mut serialized_default = default;
+            mark_serialized_invariant_provenance(&mut serialized_default);
+            assert_eq!(serialized_default, other);
 
             Ok(())
         });
@@ -4809,6 +4877,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
+            mark_serialized_invariant_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -4859,6 +4928,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
+            mark_serialized_invariant_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -5024,12 +5094,17 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [invariant]
                 runs = 512
                 depth = 10
+                min_depth = 2
+                depth_mode = "random"
                 workers = 4
-            ",
+                corpus_random_sequence_weight = 30
+                payable_value_weight = 12
+                mutation_weight_cmp = 7
+            "#,
             )?;
 
             let loaded = Config::load().unwrap().sanitized();
@@ -5038,11 +5113,91 @@ mod tests {
                 InvariantConfig {
                     runs: 512,
                     depth: 10,
+                    min_depth: 2,
+                    depth_mode: InvariantDepthMode::Random,
                     workers: InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap()),
+                    corpus: FuzzCorpusConfig {
+                        corpus_random_sequence_weight: 30,
+                        payable_value_weight: 12,
+                        mutation_weights: FuzzCorpusMutationWeights {
+                            mutation_weight_cmp: 7,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    corpus_random_sequence_weight_configured: true,
+                    workers_configured: true,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
             );
+            assert!(loaded.invariant.corpus_random_sequence_weight_configured);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_invariant_corpus_random_sequence_weight_provenance() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                depth = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(!loaded.invariant.corpus_random_sequence_weight_configured);
+            assert!(!loaded.invariant.workers_configured);
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                corpus_random_sequence_weight = 10
+                workers = 4
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(loaded.invariant.corpus_random_sequence_weight_configured);
+            assert_eq!(
+                loaded.invariant.workers,
+                InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap())
+            );
+            assert!(loaded.invariant.workers_configured);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fuzz_corpus_random_sequence_weight_fallback_does_not_mark_invariant_configured() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                corpus_random_sequence_weight = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(!loaded.invariant.corpus_random_sequence_weight_configured);
 
             Ok(())
         });
@@ -5064,17 +5219,30 @@ mod tests {
 
             jail.set_env("FOUNDRY_FMT_LINE_LENGTH", "95");
             jail.set_env("FOUNDRY_FUZZ_DICTIONARY_WEIGHT", "99");
+            jail.set_env("FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_VALUES", "max");
             jail.set_env("FOUNDRY_INVARIANT_DEPTH", "5");
+            jail.set_env("FOUNDRY_INVARIANT_MIN_DEPTH", "2");
+            jail.set_env("FOUNDRY_INVARIANT_DEPTH_MODE", "random");
             jail.set_env("FOUNDRY_INVARIANT_WORKERS", "3");
+            jail.set_env("FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", "30");
+            jail.set_env("FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", "12");
+            jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
             assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
+            assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, usize::MAX);
             assert_eq!(config.invariant.depth, 5);
+            assert_eq!(config.invariant.min_depth, 2);
+            assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
             assert_eq!(
                 config.invariant.workers,
                 InvariantWorkers::Fixed(NonZeroUsize::new(3).unwrap())
             );
+            assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 30);
+            assert!(config.invariant.corpus_random_sequence_weight_configured);
+            assert_eq!(config.invariant.corpus.payable_value_weight, 12);
+            assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
 
             Ok(())
         });
@@ -5177,6 +5345,23 @@ mod tests {
         let settings = config.solc_settings().unwrap();
         assert_eq!(settings.settings.experimental, Some(false));
         assert_eq!(settings.cli_settings.extra_args, vec!["--experimental".to_string()]);
+    }
+
+    #[test]
+    fn solc_settings_include_via_ssa_cfg_setting() {
+        let config = Config { via_ssa_cfg: true, ..Config::default() };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.via_ssa_cfg, Some(true));
+        assert!(settings.cli_settings.extra_args.is_empty());
+
+        let config = Config {
+            via_ssa_cfg: false,
+            extra_args: vec!["--via-ssa-cfg".to_string()],
+            ..Config::default()
+        };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.via_ssa_cfg, Some(false));
+        assert_eq!(settings.cli_settings.extra_args, vec!["--via-ssa-cfg".to_string()]);
     }
 
     #[test]
@@ -6905,6 +7090,58 @@ mod tests {
 
             // Assert that the deprecated flag is correctly interpreted
             assert_eq!(config.deny, DenyLevel::Warnings);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_deprecated_keys_in_inactive_profiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.ci]
+                deny_warnings = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "deny_warnings" && new == "deny = warnings"
+                )),
+                "Expected deprecated key warning for inactive profile, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn warns_on_deprecated_profile_names() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.cancun]
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::DeprecatedKey { old, new }
+                    if old == "cancun" && new == "evm_version = Cancun"
+                )),
+                "Expected deprecated profile-name warning, got: {:?}",
+                cfg.warnings
+            );
             Ok(())
         });
     }

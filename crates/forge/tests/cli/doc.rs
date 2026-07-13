@@ -4,6 +4,7 @@ use foundry_test_utils::{
     str,
     util::{RemoteProject, setup_forge_remote},
 };
+use std::fs;
 
 #[test]
 fn can_generate_solmate_docs() {
@@ -11,6 +12,34 @@ fn can_generate_solmate_docs() {
         setup_forge_remote(RemoteProject::new("transmissions11/solmate").set_build(false));
     prj.forge_command().args(["doc"]).assert_success();
 }
+
+forgetest_init!(doc_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source(
+        "DocTarget.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract DocTarget {
+    /// @notice Returns a value.
+    function value() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    let artifact = prj.root().join("out/DocTarget.sol/DocTarget.json");
+    cmd.args(["doc"]).assert_success();
+    assert!(!artifact.exists());
+
+    fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+    fs::write(&artifact, b"sentinel").unwrap();
+
+    cmd.forge_fuse().args(["doc"]).assert_success();
+    let after = fs::read(&artifact).unwrap();
+    assert_eq!(after, b"sentinel");
+});
 
 // Test that overloaded functions in interfaces inherit the correct NatSpec comments
 // fixes <https://github.com/foundry-rs/foundry/issues/11823>
@@ -629,6 +658,122 @@ Configure by account.
     );
 });
 
+// Test that @inheritdoc parameter descriptions are matched when an implementation
+// prefixes or suffixes interface parameter names with underscores.
+forgetest_init!(inheritdoc_matches_underscore_wrapped_param_names, |prj, cmd| {
+    prj.add_source(
+        "I.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface I {
+    /// @notice Mints tokens.
+    /// @param recipient The account receiving minted tokens.
+    /// @param amount The number of tokens to mint.
+    function mint(address recipient, uint256 amount) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function mint(address recipient_, uint256 _amount) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+### mint
+
+Mints tokens.
+
+```solidity
+function mint(address recipient_, uint256 _amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| recipient_ | `address` | The account receiving minted tokens. |
+| _amount | `uint256` | The number of tokens to mint. |
+...
+"#]],
+    );
+});
+
+// If two inherited params normalize to the same underscore-trimmed name, fuzzy matching must not
+// let the first inherited param steal the exact current param's docs.
+forgetest_init!(inheritdoc_does_not_fuzzy_match_ambiguous_inherited_params, |prj, cmd| {
+    prj.add_source(
+        "I.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface I {
+    /// @notice Updates values.
+    /// @param amount Docs for first param.
+    /// @param _amount Docs for second param.
+    function update(uint256 amount, uint256 _amount) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function update(uint256 other, uint256 _amount) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+### update
+
+Updates values.
+
+```solidity
+function update(uint256 other, uint256 _amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| other | `uint256` |  |
+| _amount | `uint256` | Docs for second param. |
+...
+"#]],
+    );
+});
+
 // Test that overload matching uses canonical HIR/ABI parameter types so that
 // `Base.batch(uint[])` is correctly matched by `Child.batch(uint256[])`.
 forgetest_init!(inheritdoc_overload_matches_uint_array_alias, |prj, cmd| {
@@ -1030,7 +1175,7 @@ Recover the signer address from `v`, `r`, `s` components.
 
 <i>
 
-Overload of [ECDSA.tryRecover](/src/library.ECDSA#tryrecover-bytes32-bytes) that receives the `v`,
+Overload of [ECDSA.tryRecover](#tryrecover-bytes32-bytes) that receives the `v`,
 `r` and `s` signature fields separately.
 
 Documentation for signature generation:
@@ -1125,6 +1270,181 @@ uint256 public totalSupply;
 // when another contract with the same name lives in a directory closer to the
 // consumer. Without exact-id resolution, the proximity heuristic in
 // `resolve_page` would (wrongly) link to the same-directory namesake.
+// Test that references naming a member of the current contract resolve to anchor-only
+// links on the same page ({member} and {Contract-member} self-references), and that
+// same-file inheritance links to the same-file base instead of a same-named decoy.
+// fixes <https://github.com/foundry-rs/foundry/issues/11677>
+forgetest_init!(same_contract_references_resolve_to_anchors, |prj, cmd| {
+    // Decoys: same-named library and interface in a sibling directory that sorts
+    // first; references in `external/OlympusERC20.sol` must not resolve to them.
+    prj.add_source(
+        "decoys/Decoys.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+library ECDSA {
+    function tryRecover(bytes32 hash) internal pure returns (address) {}
+}
+
+interface IERC20 {
+    function balanceOf(address owner) external view returns (uint256);
+}
+"#,
+    );
+
+    prj.add_source(
+        "external/OlympusERC20.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+library ECDSA {
+    /// @dev A safe way to ensure this is by receiving a hash of the original
+    /// message and then calling {toEthSignedMessageHash} on it.
+    function recover(bytes32 hash) internal pure returns (address) {}
+
+    /// @dev Overload of {ECDSA-tryRecover} that receives the fields separately.
+    function tryRecover(bytes32 hash, bytes32 r) internal pure returns (address) {}
+
+    function toEthSignedMessageHash(bytes32 hash) internal pure returns (bytes32) {}
+}
+
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+}
+
+interface IOHM is IERC20 {
+    function mint(address account_) external;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    // Same-contract member references become anchor-only links.
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/external/library.ECDSA.mdx"), None),
+        str![[r#"
+---
+title: "ECDSA"
+---
+
+# ECDSA
+
+## Functions
+
+<a id="recover-bytes32"></a>
+
+### recover
+
+<i>
+
+A safe way to ensure this is by receiving a hash of the original
+message and then calling [toEthSignedMessageHash](#toethsignedmessagehash) on it.
+
+</i>
+
+```solidity
+function recover(bytes32 hash) internal pure returns (address);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| hash | `bytes32` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `address` |  |
+
+<a id="tryrecover-bytes32-bytes32"></a>
+
+### tryRecover
+
+<i>
+
+Overload of [ECDSA.tryRecover](#tryrecover) that receives the fields separately.
+
+</i>
+
+```solidity
+function tryRecover(bytes32 hash, bytes32 r) internal pure returns (address);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| hash | `bytes32` |  |
+| r | `bytes32` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `address` |  |
+
+<a id="toethsignedmessagehash-bytes32"></a>
+
+### toEthSignedMessageHash
+
+```solidity
+function toEthSignedMessageHash(bytes32 hash) internal pure returns (bytes32);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| hash | `bytes32` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `bytes32` |  |
+
+
+"#]],
+    );
+
+    // Same-file inheritance links to the same-file interface, not the decoy.
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/external/interface.IOHM.mdx"), None),
+        str![[r#"
+---
+title: "IOHM"
+---
+
+# IOHM
+
+**Inherits:** [IERC20](/src/external/interface.IERC20)
+
+## Functions
+
+<a id="mint-address"></a>
+
+### mint
+
+```solidity
+function mint(address account_) external;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| account_ | `address` |  |
+
+
+"#]],
+    );
+});
+
 forgetest_init!(inheritance_links_use_exact_base_id, |prj, cmd| {
     // Two unrelated `Token` contracts in sibling directories.
     prj.add_source(

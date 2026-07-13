@@ -22,7 +22,7 @@ monad-revm = { workspace = true, optional = true }
 op-revm = { workspace = true, optional = true }
 revm.workspace = true
 serde = { workspace = true, features = ["derive"] }
-tempo-chainspec.workspace = true
+tempo-hardfork.workspace = true
 foundry-compilers.workspace = true
 
 [features]

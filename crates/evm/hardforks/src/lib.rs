@@ -21,7 +21,7 @@ pub use alloy_hardforks::EthereumHardfork;
 pub use alloy_op_hardforks::OpHardfork;
 #[cfg(feature = "monad")]
 pub use monad_revm::MonadHardfork;
-pub use tempo_chainspec::hardfork::TempoHardfork;
+pub use tempo_hardfork::TempoHardfork;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(into = "String")]
@@ -531,7 +531,7 @@ mod tests {
     use alloy_hardforks::ethereum::mainnet::*;
     #[cfg(feature = "monad")]
     use monad_revm::{MONAD_MAINNET_CHAIN_ID, MONAD_TESTNET_CHAIN_ID};
-    use tempo_chainspec::constants::{mainnet::*, moderato::*};
+    use tempo_hardfork::constants::{mainnet::*, moderato::*};
 
     #[test]
     fn test_ethereum_spec_id_mapping() {
@@ -596,11 +596,11 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T6))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T7))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T6))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T7))
         );
 
         assert_eq!(
@@ -612,12 +612,28 @@ mod tests {
             Some(FoundryHardfork::Tempo(TempoHardfork::T6))
         );
         assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T7_TIMESTAMP - 1),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T6))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T7_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T7))
+        );
+        assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T6_TIMESTAMP - 1),
             Some(FoundryHardfork::Tempo(TempoHardfork::T5))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T6_TIMESTAMP),
             Some(FoundryHardfork::Tempo(TempoHardfork::T6))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T7_TIMESTAMP - 1),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T6))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T7_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T7))
         );
     }
 

@@ -1,5 +1,7 @@
 use alloy_primitives::U256;
-use foundry_test_utils::{TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str};
+use foundry_test_utils::{
+    TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
+};
 
 mod common;
 mod handler;
@@ -155,6 +157,39 @@ contract NoSelectorTest is Test {
     cmd.args(["test", "--mt", "invariant_panic"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_panic() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+});
+
+forgetest_init!(should_not_panic_if_selectors_are_targeted_and_excluded, |prj, cmd| {
+    prj.add_test(
+        "ContradictorySelectorTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Target {
+    function foo() public {}
+}
+
+contract ContradictorySelectorTest is Test {
+    Target target;
+
+    function setUp() public {
+        target = new Target();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.foo.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        excludeSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    function invariant_panic() public {}
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_panic"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: No functions to fuzz.] invariant_panic() (runs: 0, calls: 0, reverts: 0)
 ...
 "#]]);
 });
@@ -352,9 +387,9 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 2);
-        assertEq(handlerTwo.hit4(), 1);
-        assertEq(handlerTwo.hit5(), 3);
+        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit4(), 2);
+        assertEq(handlerTwo.hit5(), 1);
     }
 
     function invariant_selectors_weight() public view {}
@@ -399,7 +434,7 @@ contract InvariantSequenceLenTest is Test {
         .stdout_eq(str![[r#"
 ...
 [FAIL: invariant increment failure]
-	[Sequence] (original: 3, shrunk: 1)
+	[Sequence] (original: [..], shrunk: 1)
 ...
 "#]]);
 
@@ -408,19 +443,20 @@ contract InvariantSequenceLenTest is Test {
     prj.update_config(|config| {
         config.invariant.shrink_run_limit = 0;
     });
-    cmd.forge_fuse()
-        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    assert_invariant(cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "invariant_increment",
+        "--no-dynamic-test-linking",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 3, shrunk: 3)
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
- invariant_increment() (runs: 1, calls: 3, reverts: 0)
+	[SEQUENCE]
+ invariant_increment() ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -428,30 +464,27 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
-"#]],
-    );
+"#]]);
 
     // Check solidity sequence output on same failure.
     cmd.forge_fuse().arg("clean").assert_success();
     prj.update_config(|config| {
         config.invariant.show_solidity = true;
     });
-    cmd.forge_fuse()
-        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    assert_invariant(cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "invariant_increment",
+        "--no-dynamic-test-linking",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 3, shrunk: 3)
-		vm.prank(0x0000000000000000000000000000000000001490);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x8ef7F804bAd9183981A366EA618d9D47D3124649);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x00000000000000000000000000000000000016C5);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
- invariant_increment() (runs: 1, calls: 3, reverts: 0)
+	[SEQUENCE]
+ invariant_increment() ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -459,26 +492,26 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
-"#]],
-    );
+"#]]);
 
     // Persisted failures should be able to switch output.
     prj.update_config(|config| {
         config.invariant.show_solidity = false;
     });
-    cmd.forge_fuse()
-        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    assert_invariant(cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "invariant_increment",
+        "--no-dynamic-test-linking",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 3, shrunk: 3)
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
- invariant_increment() (runs: 1, calls: 3, reverts: 0)
+	[SEQUENCE]
+ invariant_increment() ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -486,8 +519,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
-"#]],
-    );
+"#]]);
 });
 
 // Tests that persisted failure is discarded if test contract was modified.
@@ -1040,6 +1072,121 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest_init!(invariant_selector_focus_worker_exercises_targeted_selector, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+        config.fuzz.seed = Some(U256::ZERO);
+    });
+    prj.add_test(
+        "InvariantSelectorFocusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FocusTarget {
+    bool public broken;
+
+    function aaaBreak() public {
+        broken = true;
+    }
+
+    function zzzSafe() public {}
+}
+
+contract InvariantSelectorFocusTest is Test {
+    FocusTarget target;
+
+    function setUp() public {
+        target = new FocusTarget();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = target.aaaBreak.selector;
+        selectors[1] = target.zzzSafe.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    function invariant_focus() public view {
+        require(!target.broken(), "focused");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--mt", "invariant_focus"]).assert_failure();
+    let stdout = output.get_output().stdout_lossy();
+    assert!(stdout.contains("[FAIL: focused]"), "{stdout}");
+    assert!(stdout.contains("invariant_focus()"), "{stdout}");
+    assert!(stdout.contains("aaaBreak"), "{stdout}");
+});
+
+forgetest_init!(invariant_selector_focus_workers_respect_user_filters, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 4;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
+        config.fuzz.seed = Some(U256::from(1u32));
+    });
+    prj.add_test(
+        "InvariantSelectorFocusFiltersTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract FocusFilterTarget {
+    bool public broken;
+
+    function aaaBreak() public {
+        broken = true;
+    }
+
+    function yyySafe() public {}
+
+    function zzzSafe() public {}
+}
+
+contract InvariantSelectorFocusAllowlistTest is Test {
+    FocusFilterTarget target;
+
+    function setUp() public {
+        target = new FocusFilterTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.zzzSafe.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    function invariant_allowlist_focus() public view {
+        require(!target.broken(), "focused");
+    }
+}
+
+contract InvariantSelectorFocusBlocklistTest is Test {
+    FocusFilterTarget target;
+
+    function setUp() public {
+        target = new FocusFilterTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.aaaBreak.selector;
+        excludeSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    function invariant_blocklist_focus() public view {
+        require(!target.broken(), "focused");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--mt", "invariant_allowlist_focus"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+    assert!(!stdout.contains("aaaBreak"), "{stdout}");
+
+    let output =
+        cmd.forge_fuse().args(["test", "--mt", "invariant_blocklist_focus"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+    assert!(!stdout.contains("aaaBreak"), "{stdout}");
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11453>

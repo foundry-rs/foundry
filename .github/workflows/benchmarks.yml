@@ -34,6 +34,11 @@ env:
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
+  SYMBOLIC_REPOS: >-
+    Vectorized/solady:v0.1.26,
+    SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5,
+    farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b
+
   BUILD_REPOS: >-
     ithacaxyz/account:v0.5.7,
     vectorized/solady:v0.1.26,
@@ -43,7 +48,7 @@ env:
   COVERAGE_REPOS: >-
     ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
-    sparkdotfi/spark-psm:v1.0.0
+    sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
   RUSTC_WRAPPER: "sccache"
 
@@ -55,17 +60,17 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config
+          sudo apt-get install -y build-essential pkg-config z3
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
 
@@ -116,6 +121,21 @@ jobs:
             --output-file forge_isolate_test_bench.md \
             --verbose
 
+      # Temporarily disabled as long as the previous stable benchmark baseline
+      # does not support symbolic execution.
+      # - name: Run forge symbolic benchmarks
+      #   env:
+      #     FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+      #     VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+      #     REPOS: ${{ github.event.inputs.repos || env.SYMBOLIC_REPOS }}
+      #   run: |
+      #     ./target/release/foundry-bench --output-dir ./benches \
+      #       --versions "$VERSIONS" \
+      #       --repos "$REPOS" \
+      #       --benchmarks forge_symbolic_test \
+      #       --output-file forge_symbolic_bench.md \
+      #       --verbose
+
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -152,6 +172,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: benchmark-results
+          # The symbolic benchmark artifact is omitted while the symbolic step is disabled.
           path: |
             benches/forge_test_bench.md
             benches/forge_isolate_test_bench.md
@@ -170,9 +191,10 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        # persist-credentials defaults to true so we can push.
+      - name: Checkout repository # zizmor: ignore[artipacked] persists credentials to push benchmark data
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: true
 
       - name: Download benchmark results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

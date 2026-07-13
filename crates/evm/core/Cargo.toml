@@ -37,6 +37,7 @@ alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-monad-evm = { workspace = true, optional = true }
+alloy-eips.workspace = true
 alloy-op-evm = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
@@ -62,7 +63,7 @@ op-alloy-rpc-types = { workspace = true, optional = true }
 op-revm = { workspace = true, optional = true }
 tempo-revm.workspace = true
 tempo-alloy.workspace = true
-tempo-chainspec.workspace = true
+tempo-hardfork.workspace = true
 tempo-contracts.workspace = true
 tempo-evm.workspace = true
 tempo-precompiles.workspace = true

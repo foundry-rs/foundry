@@ -30,6 +30,7 @@ pub mod rpc;
 pub mod run;
 pub mod send;
 pub mod storage;
+pub mod storage_credits;
 pub mod tempo;
 pub(crate) mod tempo_policy_args;
 pub mod tip20;

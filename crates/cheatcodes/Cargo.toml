@@ -70,12 +70,13 @@ walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
 
-tempo-chainspec.workspace = true
+tempo-hardfork.workspace = true
 tempo-contracts.workspace = true
 tempo-precompiles.workspace = true
 tempo-primitives.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 tempo-precompiles = { workspace = true, features = ["test-utils"] }
 
 [features]

@@ -28,10 +28,12 @@ use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS,
     RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
+    STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
+    VALIDATOR_CONFIG_V2_ADDRESS,
 };
 
+pub mod arbitrum;
 pub mod celo;
 
 #[cfg(feature = "optimism")]
@@ -50,6 +52,7 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("AddressRegistry", ADDRESS_REGISTRY_ADDRESS),
     ("TIP20ChannelReserve", TIP20_CHANNEL_RESERVE_ADDRESS),
     ("ReceivePolicyGuard", RECEIVE_POLICY_GUARD_ADDRESS),
+    ("StorageCredits", STORAGE_CREDITS_ADDRESS),
 ];
 
 #[cfg(feature = "monad")]
@@ -74,6 +77,7 @@ pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     ADDRESS_REGISTRY_ADDRESS,
     TIP20_CHANNEL_RESERVE_ADDRESS,
     RECEIVE_POLICY_GUARD_ADDRESS,
+    STORAGE_CREDITS_ADDRESS,
 ];
 
 /// Returns whether a well-known Tempo precompile address is active at `hardfork`.
@@ -82,6 +86,8 @@ pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) 
         hardfork.is_t5()
     } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
         hardfork.is_t6()
+    } else if address == STORAGE_CREDITS_ADDRESS {
+        hardfork.is_t7()
     } else if address == ADDRESS_REGISTRY_ADDRESS || address == SIGNATURE_VERIFIER_ADDRESS {
         hardfork.is_t3()
     } else {
@@ -599,6 +605,18 @@ mod tests {
             !cfg.precompiles_label(None, Some(MonadHardfork::MonadEight))
                 .contains_key(&RESERVE_BALANCE_ADDRESS)
         );
+    }
+
+    #[test]
+    fn storage_credits_precompile_activates_at_t7() {
+        assert!(!is_tempo_precompile_active_at(STORAGE_CREDITS_ADDRESS, TempoHardfork::T6));
+        assert!(is_tempo_precompile_active_at(STORAGE_CREDITS_ADDRESS, TempoHardfork::T7));
+        assert!(TEMPO_PRECOMPILE_ADDRESSES.contains(&STORAGE_CREDITS_ADDRESS));
+
+        // The hardfork-filtered precompile map must honor the same T7 activation.
+        let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
+        assert!(!cfg.precompiles(Some(TempoHardfork::T6), None).contains_key("StorageCredits"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T7), None).contains_key("StorageCredits"));
     }
 
     // --- resolved() / active_network_name ---
