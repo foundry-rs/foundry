@@ -483,5 +483,35 @@ contract Repros {
         value = type(uint256).max;
         return uint128(value); //~WARN: typecasts that can truncate values should be checked
     }
+
+    function incrementedAfterCheck(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) revert AmountOverflow();
+        ++value;
+        return uint128(value); //~WARN: typecasts that can truncate values should be checked
+    }
+
+    function nestedAssignmentAfterCheck(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) revert AmountOverflow();
+        bool assigned = (value = type(uint256).max) > 0;
+        assigned;
+        return uint128(value); //~WARN: typecasts that can truncate values should be checked
+    }
+
+    function signedUpperBoundIsInsufficient(int256 value) public pure returns (uint128) {
+        if (value <= 100) {
+            return uint128(value); //~WARN: typecasts that can truncate values should be checked
+        }
+        revert AmountOverflow();
+    }
+
+    function checkedDowncastWithBuiltinRevert(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) revert();
+        return uint128(value);
+    }
+
+    function checkedDowncastWithRequireFalse(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) require(false);
+        return uint128(value);
+    }
 }
 // forge-lint: disable-end(mixed-case-variable)

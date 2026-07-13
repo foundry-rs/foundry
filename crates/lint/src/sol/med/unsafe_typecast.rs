@@ -1,17 +1,23 @@
 use super::UnsafeTypecast;
 use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::primitives::branch_always_exits},
 };
+use alloy_primitives::{U256, map::HashMap};
 use solar::{
-    ast::{BinOpKind, LitKind, StrKind},
+    ast::{BinOpKind, LitKind, StrKind, UnOpKind},
+    interface::{Span, data_structures::Never},
     sema::{
-        Gcx,
+        Gcx, Hir,
         eval::ConstantEvaluator,
-        hir::{self, ElementaryType, ExprKind, Res, StmtKind, TypeKind},
+        hir::{
+            self, Contract, ElementaryType, Expr, ExprKind, Function, ItemId, Res, SourceId, Stmt,
+            StmtKind, TypeKind, VariableId, Visit,
+        },
         ty::TyKind,
     },
 };
+use std::ops::ControlFlow;
 
 declare_forge_lint!(
     UNSAFE_TYPECAST,
@@ -21,231 +27,321 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
-    fn check_expr(
+    fn check_nested_source(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
+        hir: &'hir Hir<'hir>,
+        id: SourceId,
     ) {
-        // Check for type cast expressions: Type(value)
+        for &item in hir.source(id).items {
+            if let ItemId::Variable(id) = item
+                && let Some(initializer) = hir.variable(id).initializer
+            {
+                emit_findings(ctx, Checker::check_expr(gcx, hir, initializer));
+            }
+        }
+    }
+
+    fn check_contract(
+        &mut self,
+        ctx: &LintContext,
+        gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        contract: &'hir Contract<'hir>,
+    ) {
+        for &item in contract.items {
+            if let ItemId::Variable(id) = item
+                && let Some(initializer) = hir.variable(id).initializer
+            {
+                emit_findings(ctx, Checker::check_expr(gcx, hir, initializer));
+            }
+        }
+        for modifier in contract.bases_args {
+            emit_findings(ctx, Checker::check_call_args(gcx, hir, &modifier.args));
+        }
+    }
+
+    fn check_function(
+        &mut self,
+        ctx: &LintContext,
+        gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        func: &'hir Function<'hir>,
+    ) {
+        emit_findings(ctx, Checker::check_function(gcx, hir, func));
+    }
+}
+
+fn emit_findings(ctx: &LintContext<'_, '_>, findings: Vec<(Span, ElementaryType)>) {
+    for (span, ty) in findings {
+        ctx.emit_with_suggestion(
+            &UNSAFE_TYPECAST,
+            span,
+            Suggestion::example(
+                format!(
+                    "// casting to '{abi_ty}' is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)",
+                    abi_ty = ty.to_abi_str()
+                ),
+            )
+            .with_desc("consider disabling this lint if you're certain the cast is safe"),
+        );
+    }
+}
+
+/// Performs one structured forward pass over a function while carrying proven unsigned upper
+/// bounds. Facts are intersected at joins and invalidated before every possible local mutation.
+struct Checker<'hir> {
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    upper_bounds: HashMap<VariableId, U256>,
+    findings: Vec<(Span, ElementaryType)>,
+}
+
+impl<'hir> Checker<'hir> {
+    fn new(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>) -> Self {
+        Self { gcx, hir, upper_bounds: HashMap::default(), findings: Vec::new() }
+    }
+
+    fn check_function(
+        gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        func: &'hir Function<'hir>,
+    ) -> Vec<(Span, ElementaryType)> {
+        let mut this = Self::new(gcx, hir);
+        for modifier in func.modifiers {
+            let _ = this.visit_call_args(&modifier.args);
+        }
+        if let Some(body) = func.body {
+            this.visit_block(body);
+        }
+        this.findings
+    }
+
+    fn check_expr(
+        gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        expr: &'hir Expr<'hir>,
+    ) -> Vec<(Span, ElementaryType)> {
+        let mut this = Self::new(gcx, hir);
+        let _ = this.visit_expr(expr);
+        this.findings
+    }
+
+    fn check_call_args(
+        gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        args: &'hir hir::CallArgs<'hir>,
+    ) -> Vec<(Span, ElementaryType)> {
+        let mut this = Self::new(gcx, hir);
+        let _ = this.visit_call_args(args);
+        this.findings
+    }
+
+    fn visit_block(&mut self, block: hir::Block<'hir>) {
+        for stmt in block.stmts {
+            let _ = self.visit_stmt(stmt);
+            if branch_always_exits(stmt) {
+                break;
+            }
+        }
+    }
+
+    fn refine(&mut self, fact: Option<(VariableId, U256)>) {
+        let Some((id, upper)) = fact else { return };
+        if !self.is_unsigned_local(id) {
+            return;
+        }
+        self.upper_bounds
+            .entry(id)
+            .and_modify(|current| *current = (*current).min(upper))
+            .or_insert(upper);
+    }
+
+    fn merge_bounds(
+        lhs: &HashMap<VariableId, U256>,
+        rhs: &HashMap<VariableId, U256>,
+    ) -> HashMap<VariableId, U256> {
+        lhs.iter()
+            .filter_map(|(&id, &left)| rhs.get(&id).map(|&right| (id, left.max(right))))
+            .collect()
+    }
+
+    fn is_unsigned_local(&self, id: VariableId) -> bool {
+        let var = self.hir.variable(id);
+        var.parent.is_some() && matches!(var.ty.kind, TypeKind::Elementary(ElementaryType::UInt(_)))
+    }
+
+    fn cast_is_bounded(&self, source: &Expr<'hir>, target: &ElementaryType) -> bool {
+        let ElementaryType::UInt(size) = target else { return false };
+        let Some(id) = resolved_variable(source) else { return false };
+        self.is_unsigned_local(id)
+            && self.upper_bounds.get(&id).is_some_and(|&upper| upper <= uint_max(size.bits()))
+    }
+
+    fn invalidate_lvalue(&mut self, expr: &Expr<'hir>) {
+        match &expr.peel_parens().kind {
+            ExprKind::Ident(reses) => {
+                for res in *reses {
+                    if let Res::Item(ItemId::Variable(id)) = res {
+                        self.upper_bounds.remove(id);
+                    }
+                }
+            }
+            ExprKind::Tuple(exprs) => {
+                for expr in exprs.iter().flatten() {
+                    self.invalidate_lvalue(expr);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<'hir> Visit<'hir> for Checker<'hir> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'hir Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        match &stmt.kind {
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                self.visit_block(*block);
+                return ControlFlow::Continue(());
+            }
+            StmtKind::If(cond, then_stmt, else_stmt) => {
+                let _ = self.visit_expr(cond);
+                let before = self.upper_bounds.clone();
+
+                self.refine(comparison_upper_bound(self.gcx, cond, true));
+                let _ = self.visit_stmt(then_stmt);
+                let after_then = self.upper_bounds.clone();
+
+                self.upper_bounds = before;
+                self.refine(comparison_upper_bound(self.gcx, cond, false));
+                if let Some(else_stmt) = else_stmt {
+                    let _ = self.visit_stmt(else_stmt);
+                }
+                let after_else = self.upper_bounds.clone();
+
+                let then_exits = branch_always_exits(then_stmt);
+                let else_exits = else_stmt.is_some_and(branch_always_exits);
+                self.upper_bounds = match (then_exits, else_exits) {
+                    (true, false) => after_else,
+                    (false, true) => after_then,
+                    (false, false) => Self::merge_bounds(&after_then, &after_else),
+                    (true, true) => HashMap::default(),
+                };
+                return ControlFlow::Continue(());
+            }
+            // Repeated or multi-way control flow needs a fixed point to retain facts soundly.
+            // Until that is shared by the HIR analyses, discard facts conservatively.
+            StmtKind::Loop(..)
+            | StmtKind::AssemblyBlock(..)
+            | StmtKind::Switch(..)
+            | StmtKind::Try(..) => {
+                self.upper_bounds.clear();
+                let result = self.walk_stmt(stmt);
+                self.upper_bounds.clear();
+                return result;
+            }
+            _ => {}
+        }
+        self.walk_stmt(stmt)
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         if let ExprKind::Call(call, args, _) = &expr.kind
             && let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) = &call.kind
             && args.len() == 1
-            && let Some(call_arg) = args.exprs().next()
-            && is_unsafe_typecast_hir(gcx, call_arg, ty)
-            && !is_bounded_by_dominating_check(gcx, _hir, expr, call_arg, ty)
+            && let Some(source) = args.exprs().next()
+            && is_unsafe_typecast_hir(self.gcx, source, ty)
+            && !self.cast_is_bounded(source, ty)
         {
-            ctx.emit_with_suggestion(
-                &UNSAFE_TYPECAST,
-                expr.span,
-                Suggestion::example(
-                    format!(
-                        "// casting to '{abi_ty}' is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)",
-                        abi_ty = ty.to_abi_str()
-            )).with_desc("consider disabling this lint if you're certain the cast is safe"));
-        }
-    }
-}
-
-/// Returns whether every path to the cast is constrained to the target unsigned integer range.
-///
-/// This is a small forward dataflow analysis over Solar's structured HIR. A conditional whose
-/// out-of-range edge terminates contributes an upper-bound fact to the surviving edge. Assigning
-/// to the tracked variable invalidates that fact.
-fn is_bounded_by_dominating_check<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    cast: &'hir hir::Expr<'hir>,
-    source: &'hir hir::Expr<'hir>,
-    target: &ElementaryType,
-) -> bool {
-    let ElementaryType::UInt(size) = target else { return false };
-    let Some(var) = resolved_variable(source) else { return false };
-    let max = if size.bits() == 256 {
-        alloy_primitives::U256::MAX
-    } else {
-        (alloy_primitives::U256::from(1) << size.bits()) - alloy_primitives::U256::from(1)
-    };
-
-    hir.all_functions().any(|id| {
-        hir.function(id).body.is_some_and(|body| {
-            body.span.contains(cast.span) && block_proves_bound(gcx, body, cast, var, max, false)
-        })
-    })
-}
-
-fn block_proves_bound<'hir>(
-    gcx: Gcx<'hir>,
-    block: hir::Block<'hir>,
-    cast: &'hir hir::Expr<'hir>,
-    var: hir::VariableId,
-    max: alloy_primitives::U256,
-    mut bounded: bool,
-) -> bool {
-    for stmt in block.stmts {
-        if stmt.span.contains(cast.span) {
-            return stmt_proves_bound(gcx, stmt, cast, var, max, bounded);
+            self.findings.push((expr.span, *ty));
         }
 
-        if let StmtKind::If(cond, then_stmt, else_stmt) = stmt.kind {
-            let then_terminates = stmt_always_terminates(then_stmt);
-            let else_terminates = else_stmt.is_some_and(stmt_always_terminates);
-            if then_terminates && else_stmt.is_none() && false_edge_bounds(gcx, cond, var, max) {
-                bounded = true;
-            } else if else_terminates && true_edge_bounds(gcx, cond, var, max) {
-                bounded = true;
+        match &expr.kind {
+            ExprKind::Assign(lhs, _, _) | ExprKind::Delete(lhs) => {
+                self.invalidate_lvalue(lhs);
             }
-        }
-
-        if stmt_assigns_var(stmt, var) {
-            bounded = false;
-        }
-    }
-    false
-}
-
-fn stmt_proves_bound<'hir>(
-    gcx: Gcx<'hir>,
-    stmt: &'hir hir::Stmt<'hir>,
-    cast: &'hir hir::Expr<'hir>,
-    var: hir::VariableId,
-    max: alloy_primitives::U256,
-    bounded: bool,
-) -> bool {
-    match stmt.kind {
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block_proves_bound(gcx, block, cast, var, max, bounded)
-        }
-        StmtKind::If(cond, then_stmt, else_stmt) => {
-            if then_stmt.span.contains(cast.span) {
-                stmt_proves_bound(
-                    gcx,
-                    then_stmt,
-                    cast,
-                    var,
-                    max,
-                    bounded || true_edge_bounds(gcx, cond, var, max),
-                )
-            } else if let Some(else_stmt) = else_stmt
-                && else_stmt.span.contains(cast.span)
+            ExprKind::Unary(op, target)
+                if matches!(
+                    op.kind,
+                    UnOpKind::PreInc | UnOpKind::PostInc | UnOpKind::PreDec | UnOpKind::PostDec
+                ) =>
             {
-                stmt_proves_bound(
-                    gcx,
-                    else_stmt,
-                    cast,
-                    var,
-                    max,
-                    bounded || false_edge_bounds(gcx, cond, var, max),
-                )
-            } else {
-                false
+                self.invalidate_lvalue(target);
             }
+            _ => {}
         }
-        StmtKind::Loop(..)
-        | StmtKind::AssemblyBlock(..)
-        | StmtKind::Switch(..)
-        | StmtKind::Try(..) => false,
-        _ => bounded,
+        self.walk_expr(expr)
     }
 }
 
-fn true_edge_bounds(
+fn comparison_upper_bound(
     gcx: Gcx<'_>,
-    cond: &hir::Expr<'_>,
-    var: hir::VariableId,
-    max: alloy_primitives::U256,
-) -> bool {
-    comparison_bounds(gcx, cond, var, max, true)
-}
-
-fn false_edge_bounds(
-    gcx: Gcx<'_>,
-    cond: &hir::Expr<'_>,
-    var: hir::VariableId,
-    max: alloy_primitives::U256,
-) -> bool {
-    comparison_bounds(gcx, cond, var, max, false)
-}
-
-fn comparison_bounds(
-    gcx: Gcx<'_>,
-    cond: &hir::Expr<'_>,
-    var: hir::VariableId,
-    max: alloy_primitives::U256,
+    cond: &Expr<'_>,
     truthy: bool,
-) -> bool {
-    let ExprKind::Binary(lhs, op, rhs) = &cond.peel_parens().kind else { return false };
+) -> Option<(VariableId, U256)> {
+    let ExprKind::Binary(lhs, op, rhs) = &cond.peel_parens().kind else { return None };
 
-    let (value, limit, op) = if resolved_variable(lhs) == Some(var) {
-        (*lhs, *rhs, op.kind)
-    } else if resolved_variable(rhs) == Some(var) {
+    let (id, limit, op) = if let Some(id) = resolved_variable(lhs) {
+        (id, *rhs, op.kind)
+    } else {
+        let id = resolved_variable(rhs)?;
         let reversed = match op.kind {
             BinOpKind::Lt => BinOpKind::Gt,
             BinOpKind::Le => BinOpKind::Ge,
             BinOpKind::Gt => BinOpKind::Lt,
             BinOpKind::Ge => BinOpKind::Le,
-            _ => return false,
+            _ => return None,
         };
-        (*rhs, *lhs, reversed)
-    } else {
-        return false;
+        (id, *lhs, reversed)
     };
-    debug_assert_eq!(resolved_variable(value), Some(var));
 
-    let Ok(limit) = ConstantEvaluator::new(gcx).try_eval(limit) else { return false };
-    let Some(limit) = limit.as_u256() else { return false };
-    match (op, truthy) {
-        (BinOpKind::Le, true) | (BinOpKind::Gt, false) => limit <= max,
-        (BinOpKind::Lt, true) | (BinOpKind::Ge, false) => {
-            limit.checked_sub(alloy_primitives::U256::from(1)).is_some_and(|limit| limit <= max)
-        }
-        _ => false,
-    }
+    let limit = eval_u256(gcx, limit)?;
+    let upper = match (op, truthy) {
+        (BinOpKind::Le, true) | (BinOpKind::Gt, false) => limit,
+        (BinOpKind::Lt, true) | (BinOpKind::Ge, false) => limit.checked_sub(U256::from(1))?,
+        _ => return None,
+    };
+    Some((id, upper))
 }
 
-fn resolved_variable(expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
-    let ExprKind::Ident([Res::Item(hir::ItemId::Variable(id))]) = expr.peel_parens().kind else {
+fn eval_u256(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<U256> {
+    if let Ok(value) = ConstantEvaluator::new(gcx).try_eval(expr)
+        && let Some(value) = value.as_u256()
+    {
+        return Some(value);
+    }
+
+    let ExprKind::Member(receiver, member) = &expr.peel_parens().kind else { return None };
+    let ExprKind::TypeCall(hir::Type { kind: TypeKind::Elementary(ty), .. }) = &receiver.kind
+    else {
         return None;
     };
-    Some(id)
-}
-
-fn stmt_always_terminates(stmt: &hir::Stmt<'_>) -> bool {
-    match stmt.kind {
-        StmtKind::Revert(_) | StmtKind::Return(_) => true,
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block.stmts.last().is_some_and(stmt_always_terminates)
+    match (member.name.as_str(), ty) {
+        ("max", ElementaryType::UInt(size)) => Some(uint_max(size.bits())),
+        ("max", ElementaryType::Int(size)) => {
+            Some((U256::from(1) << (size.bits() - 1)) - U256::from(1))
         }
-        StmtKind::If(_, then_stmt, Some(else_stmt)) => {
-            stmt_always_terminates(then_stmt) && stmt_always_terminates(else_stmt)
-        }
-        _ => false,
+        ("min", ElementaryType::UInt(_)) => Some(U256::ZERO),
+        _ => None,
     }
 }
 
-fn stmt_assigns_var(stmt: &hir::Stmt<'_>, var: hir::VariableId) -> bool {
-    match stmt.kind {
-        StmtKind::Expr(expr) => expr_assigns_var(expr, var),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block.stmts.iter().any(|stmt| stmt_assigns_var(stmt, var))
-        }
-        StmtKind::Loop(block, _) => block.stmts.iter().any(|stmt| stmt_assigns_var(stmt, var)),
-        // Inline assembly and try/switch control flow are conservatively treated as clobbers.
-        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Try(_) => true,
-        StmtKind::If(_, then_stmt, else_stmt) => {
-            stmt_assigns_var(then_stmt, var)
-                || else_stmt.is_some_and(|stmt| stmt_assigns_var(stmt, var))
-        }
-        _ => false,
-    }
+fn uint_max(bits: u16) -> U256 {
+    if bits == 256 { U256::MAX } else { (U256::from(1) << bits) - U256::from(1) }
 }
 
-fn expr_assigns_var(expr: &hir::Expr<'_>, var: hir::VariableId) -> bool {
-    matches!(
-        expr.peel_parens().kind,
-        ExprKind::Assign(lhs, _, _) if resolved_variable(lhs) == Some(var)
-    )
+fn resolved_variable(expr: &Expr<'_>) -> Option<VariableId> {
+    let ExprKind::Ident([Res::Item(ItemId::Variable(id))]) = expr.peel_parens().kind else {
+        return None;
+    };
+    Some(*id)
 }
 
 /// Determines if a typecast is potentially unsafe (could lose data or precision).
