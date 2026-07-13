@@ -5,11 +5,12 @@ pragma solidity ^0.8.18;
 import {EnumerableSet as ES} from "./auxiliary/EnumerableSetLib.sol";
 
 // Tests for `enumerable-loop-removal`: EnumerableSet removal is swap-and-pop, so calling
-// `remove` inside a loop that also iterates the same set with `at` at a varying index skips
-// elements or reads out-of-bounds indices. Calls resolve through the type checker, so the
-// method-call form and the library-qualified form are both covered. Clean patterns:
-// collect-then-remove (the `remove` loop has no `at`), draining at a literal index, `at` on
-// a different set instance, and same-name functions that are not EnumerableSet's.
+// `remove` inside a loop that also iterates the same set with `at` at an index the loop
+// advances skips elements or reads out-of-bounds indices. Calls resolve through the type
+// checker, so the method-call form and the library-qualified form are both covered. Clean
+// patterns: collect-then-remove (the `remove` loop has no `at`), draining at an index the loop
+// never moves, walking downward only, removing and leaving the loop, `at` on a different set
+// instance, and same-name functions that are not EnumerableSet's.
 
 // Minimal mirror of OpenZeppelin's EnumerableSet: swap-and-pop removal, index access via `at`.
 library EnumerableSet {
@@ -114,6 +115,7 @@ contract EnumerableLoopRemoval {
     mapping(uint256 => EnumerableSet.AddressSet) internal keyed;
     address internal pending;
     uint256 internal cursor;
+    uint256 internal position;
 
     function hasMoreToVisit() internal view returns (bool) {
         return cursor < holders.length();
@@ -263,6 +265,35 @@ contract EnumerableLoopRemoval {
             if (holders.at(i) == target) {
                 holders.remove(target); //~WARN: EnumerableSet
                 continue;
+            }
+        }
+    }
+
+    // `remove` answers true exactly when it took the value out, so a removal deciding an
+    // exiting branch mutates only on the path that leaves: nothing iterates after the set
+    // shrank, and the continuing path left it untouched.
+    function removeAsExitingCondition(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            if (holders.remove(target)) break;
+        }
+    }
+
+    // Another operand rides along: execution can pass the exit after the set shrank.
+    function removeConditionCarriesAnotherOperand(address target, bool flag) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            if (holders.remove(target) && flag) break; //~WARN: EnumerableSet
+        }
+    }
+
+    // The branch the mutating answer takes does not leave, so the iteration continues on the
+    // shrunk set.
+    function removeAsConditionWithoutExit(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            if (holders.remove(target)) { //~WARN: EnumerableSet
+                pending = address(0);
             }
         }
     }
@@ -472,9 +503,9 @@ contract EnumerableLoopRemoval {
 
     uint256 internal constant FIRST = 0;
 
-    // A fixed index is a safe drain wherever its value is settled at compile time: a named
-    // `constant` or a cast of a literal reads position zero, which swap-and-pop keeps refilling,
-    // just as the bare literal `at(0)` does.
+    // A literal, a cast of one, or a named `constant` never names the loop's cadence: the read
+    // drains position zero, which swap-and-pop keeps refilling, just as the bare literal
+    // `at(0)` does.
     function removeAtNamedConstantIndex() public {
         while (holders.length() > 0) {
             holders.remove(holders.at(FIRST));
@@ -487,16 +518,88 @@ contract EnumerableLoopRemoval {
         }
     }
 
-    // Constant arithmetic is not folded, so a fixed index written as an expression is treated as
-    // varying and reported: a conservative report on a drain that is in fact safe.
+    // Constant arithmetic names no variable at all, so it is not the loop's cadence either:
+    // the drain reads the same way as the folded literal would.
     function removeAtConstantArithmeticIndex() public {
         while (holders.length() > 0) {
-            holders.remove(holders.at(0 + 0)); //~WARN: EnumerableSet
+            holders.remove(holders.at(0 + 0));
         }
     }
 
-    // The function binds the reference again, so its initializer no longer says which set it
-    // names: it may be any of them.
+    // A cursor the loop never advances is not its cadence either: the read drains the position
+    // that swap-and-pop keeps refilling, and the loop ends when the length comes down to it.
+    function removeAtStationaryCursor() public {
+        while (holders.length() > position) {
+            holders.remove(holders.at(position));
+        }
+    }
+
+    // The same shape with the cursor advanced by the loop walks the set, and the removal skips
+    // the elements swapped into the slots behind the cursor.
+    function removeAtAdvancingStateCursor() public {
+        while (cursor < holders.length()) {
+            holders.remove(holders.at(cursor)); //~WARN: EnumerableSet
+            cursor++;
+        }
+    }
+
+    // A cadence only stepped downward drains from the top: removing at the walk's own index
+    // moves the tail into the slot just read, which a descending walk never returns to.
+    function removeAtDescendingIndex() public {
+        for (uint256 i = holders.length(); i > 0; i--) {
+            holders.remove(holders.at(i - 1));
+        }
+    }
+
+    // The downward step written as a plain assignment reads the same way.
+    function removeAtDescendingAssignedIndex() public {
+        uint256 i = holders.length();
+        while (i > 0) {
+            i = i - 1;
+            holders.remove(holders.at(i));
+        }
+    }
+
+    // One upward step anywhere breaks the downward walk: the direction is no longer known, so
+    // the index is kept as the loop's cadence.
+    function removeAtDescendingIndexAlsoSteppedUp(bool skipTwo) public {
+        for (uint256 i = holders.length(); i > 0; i--) {
+            holders.remove(holders.at(i - 1)); //~WARN: EnumerableSet
+            if (skipTwo) {
+                i += 2;
+            }
+        }
+    }
+
+    // A straight-line copy of the cadence walks the loop exactly as the cadence does.
+    function removeAtCopiedIndex() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            uint256 idx = i;
+            holders.remove(holders.at(idx)); //~WARN: EnumerableSet
+        }
+    }
+
+    // An index derived from the cadence may hold any position as the loop turns, so it is read
+    // as walking the loop even when its arithmetic happens to walk downward: a conservative
+    // report on a mirror that drains safely.
+    function removeAtIndexComputedFromCadence() public {
+        uint256 count = holders.length();
+        for (uint256 i = 0; i < count; i++) {
+            uint256 mirrored = count - 1 - i;
+            holders.remove(holders.at(mirrored)); //~WARN: EnumerableSet
+        }
+    }
+
+    // A copy of a cursor the loop never moves carries no cadence either.
+    function removeAtCopyOfStationaryCursor() public {
+        while (holders.length() > position) {
+            uint256 idx = position;
+            holders.remove(holders.at(idx));
+        }
+    }
+
+    // The straight-line rebinding stands where the loop runs: `alias_` names `holders` here,
+    // the very set the loop removes from.
     function removeThroughReassignedStorageAlias() public {
         EnumerableSet.AddressSet storage alias_ = others;
         alias_ = holders;
@@ -505,14 +608,77 @@ contract EnumerableLoopRemoval {
         }
     }
 
-    // The same unreadable reference, read against a set the loop does not remove from. Matching it
-    // against every set reports a removal that is in fact safe, rather than missing an unsafe one.
+    // The same reference read against the set it stopped naming: at the loop `alias_` is
+    // `holders`, so removing from `others` touches nothing the loop iterates.
     function removeAnotherSetThroughReassignedStorageAlias() public {
         EnumerableSet.AddressSet storage alias_ = others;
         alias_ = holders;
         for (uint256 i = 0; i < holders.length(); i++) {
+            others.remove(alias_.at(i));
+        }
+    }
+
+    // The reference is rebound only after the loop: where the loop runs it still names
+    // `others`, so removing from `holders` corrupts nothing the loop iterates.
+    function removeThroughAliasReboundAfterTheLoop() public {
+        EnumerableSet.AddressSet storage alias_ = others;
+        for (uint256 i = 0; i < alias_.length(); i++) {
+            holders.remove(alias_.at(i));
+        }
+        alias_ = holders;
+    }
+
+    // Rebound under a condition, the reference has no one binding where the loop reads it, so
+    // it may name the removed set.
+    function removeThroughConditionallyReboundAlias(bool swap) public {
+        EnumerableSet.AddressSet storage alias_ = others;
+        if (swap) {
+            alias_ = holders;
+        }
+        for (uint256 i = 0; i < alias_.length(); i++) {
+            holders.remove(alias_.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    // Rebound inside the loop itself, the reference may name either set on any turn.
+    function removeThroughAliasReboundInsideTheLoop(bool swap) public {
+        EnumerableSet.AddressSet storage alias_ = others;
+        for (uint256 i = 0; i < holders.length(); i++) {
+            if (swap) {
+                alias_ = holders;
+            }
+            holders.remove(alias_.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    // A reference bound to another reference takes what that one named right then: the later
+    // rebinding of `source` does not reach back, so `alias_` still walks `others`, the set
+    // being removed from.
+    function removeThroughAliasBoundToEarlierAlias() public {
+        EnumerableSet.AddressSet storage source = others;
+        EnumerableSet.AddressSet storage alias_ = source;
+        source = holders;
+        for (uint256 i = 0; i < alias_.length(); i++) {
             others.remove(alias_.at(i)); //~WARN: EnumerableSet
         }
+    }
+
+    // A tuple-destructured reference never got a binding the walk can read and carries no
+    // initializer, so it may name the removed set, the same way a single unreadable reference
+    // does.
+    function removeThroughTupleBoundAlias() public {
+        (EnumerableSet.AddressSet storage first,) = twoSets();
+        for (uint256 i = 0; i < first.length(); i++) {
+            holders.remove(first.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    function twoSets()
+        internal
+        view
+        returns (EnumerableSet.AddressSet storage, EnumerableSet.AddressSet storage)
+    {
+        return (holders, holders);
     }
 
     // Both clauses of the `try` leave the function, so the shrunk set is never read again.
@@ -528,18 +694,55 @@ contract EnumerableLoopRemoval {
         }
     }
 
-    // The `catch` falls through, so the loop comes round again on the shrunk set.
+    // The removal on the success path is followed by that clause's own `return`; the `catch`
+    // falls through only when the tried call reverted, before anything was removed, so no path
+    // iterates on a shrunk set.
     function removeAndFallThroughACatch() public {
         for (uint256 i = 0; i < holders.length(); i++) {
             address value = holders.at(i);
             try this.probe() {
-                holders.remove(value); //~WARN: EnumerableSet
+                holders.remove(value);
                 return;
             } catch {}
         }
     }
 
+    // A removal inside the `catch` that falls through comes round on the shrunk set.
+    function removeInsideFallingCatch() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            address value = holders.at(i);
+            try this.probe() {
+                return;
+            } catch {
+                holders.remove(value); //~WARN: EnumerableSet
+            }
+        }
+    }
+
+    // A success clause that falls through iterates after the removal all the same.
+    function removeAndFallThroughSuccessClause() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            address value = holders.at(i);
+            try this.probe() {
+                holders.remove(value); //~WARN: EnumerableSet
+            } catch {
+                return;
+            }
+        }
+    }
+
+    // The tried call's own arguments run before any clause is dispatched: a removal there is
+    // followed by whichever clause runs, and a falling clause iterates on the shrunk set.
+    function removeInsideTriedCall(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            try this.probeFlag(holders.remove(target)) {} catch {} //~WARN: EnumerableSet
+        }
+    }
+
     function probe() external {}
+
+    function probeFlag(bool) external {}
 
     function customSetIsNotEnumerableSet() public {
         // Same `at`/`remove` names on a non-EnumerableSet type: out of scope.
@@ -554,6 +757,32 @@ contract EnumerableLoopRemoval {
         for (uint256 i = 0; i < holders.length(); i++) {
             if (holders.at(i) == address(0)) holders.remove(i);
         }
+    }
+
+    // A single storage-reference parameter is one set wherever the caller took it from:
+    // walking and removing through it reports.
+    function removeThroughSameStorageParameter(EnumerableSet.AddressSet storage set) internal {
+        for (uint256 i = 0; i < set.length(); i++) {
+            set.remove(set.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    // A documented limit: two storage-reference parameters are read as two distinct sets, so a
+    // helper walking one and removing through the other goes unreported when a caller hands it
+    // the same set twice. Judging that would take reading every call site, an interprocedural
+    // pass this detector does not run; reading the parameters as aliased instead would report
+    // every helper its callers use with two distinct sets.
+    function walkOneRemoveOther(
+        EnumerableSet.AddressSet storage walked,
+        EnumerableSet.AddressSet storage pruned
+    ) internal {
+        for (uint256 i = 0; i < walked.length(); i++) {
+            pruned.remove(walked.at(i));
+        }
+    }
+
+    function helperHandedTheSameSetTwiceIsMissed() public {
+        walkOneRemoveOther(holders, holders);
     }
 }
 
