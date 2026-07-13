@@ -487,6 +487,39 @@ mod tests {
         assert!(!different_path.preserves(&expected));
     }
 
+    #[test]
+    fn symbolic_handler_storage_requires_the_same_sequence() {
+        let expected = vec![BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::with_last_byte(1),
+            call_details: CallDetails {
+                target: Address::with_last_byte(2),
+                calldata: Bytes::from_static(&[1]),
+                value: None,
+            },
+        }];
+        let different = vec![BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::with_last_byte(1),
+            call_details: CallDetails {
+                target: Address::with_last_byte(2),
+                calldata: Bytes::from_static(&[2]),
+                value: None,
+            },
+        }];
+        let assignment = SymbolicStorageAssignment {
+            address: Address::with_last_byte(3),
+            slot: U256::ZERO,
+            value: U256::from(42),
+        };
+        let storage = SymbolicHandlerReplayStorage::new(expected.clone(), vec![assignment.clone()]);
+
+        assert_eq!(storage.assignments_for(&expected), [assignment]);
+        assert!(storage.assignments_for(&different).is_empty());
+    }
+
     fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
         let config = Config::default();
         count_runnable_invariant_campaign_anchors(
@@ -4152,6 +4185,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                                 .iter()
                                                 .map(base_counterexample_to_tx)
                                                 .collect::<Vec<_>>();
+                                            let replay_storage = SymbolicHandlerReplayStorage::new(
+                                                call_sequence.clone(),
+                                                storage,
+                                            );
                                             persisted_handler_failures.insert(
                                                 (reverter, selector),
                                                 InvariantFuzzError::HandlerAssertion(
@@ -4172,7 +4209,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                             );
                                             symbolic_handler_storage.insert(
                                                 (reverter, selector, fingerprint),
-                                                storage.clone(),
+                                                replay_storage,
                                             );
                                             let mut symbolic_result =
                                                 SymbolicResult::fail_counterexample_sequence(
@@ -4556,7 +4593,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     invariant_handler_failure_name(identified_contracts_ro, reverter, selector);
                 let storage_key = (reverter, selector, failure.edge_fingerprint);
                 let symbolic_storage =
-                    symbolic_handler_storage.get(&storage_key).map(Vec::as_slice).unwrap_or(&[]);
+                    if let Some(storage) = symbolic_handler_storage.get(&storage_key) {
+                        storage.assignments_for(&failure.call_sequence)
+                    } else {
+                        &[]
+                    };
 
                 let counterexample_calls = failure
                     .call_sequence
@@ -5093,7 +5134,38 @@ type CheckSequenceResult = eyre::Result<CheckSequenceOutcome>;
 type HandlerFailureKey = (Address, Selector);
 type HandlerFailureStorageKey = (Address, Selector, B256);
 type HandlerFailureMap = std::collections::HashMap<HandlerFailureKey, InvariantFuzzError>;
-type SymbolicHandlerStorageMap = HashMap<HandlerFailureStorageKey, Vec<SymbolicStorageAssignment>>;
+type SymbolicHandlerStorageMap = HashMap<HandlerFailureStorageKey, SymbolicHandlerReplayStorage>;
+
+struct SymbolicHandlerReplayStorage {
+    call_sequence: Vec<BasicTxDetails>,
+    assignments: Vec<SymbolicStorageAssignment>,
+}
+
+impl SymbolicHandlerReplayStorage {
+    const fn new(
+        call_sequence: Vec<BasicTxDetails>,
+        assignments: Vec<SymbolicStorageAssignment>,
+    ) -> Self {
+        Self { call_sequence, assignments }
+    }
+
+    fn assignments_for(&self, call_sequence: &[BasicTxDetails]) -> &[SymbolicStorageAssignment] {
+        if self.call_sequence.len() == call_sequence.len()
+            && self.call_sequence.iter().zip(call_sequence).all(|(expected, actual)| {
+                expected.warp == actual.warp
+                    && expected.roll == actual.roll
+                    && expected.sender == actual.sender
+                    && expected.call_details.target == actual.call_details.target
+                    && expected.call_details.calldata == actual.call_details.calldata
+                    && expected.call_details.value == actual.call_details.value
+            })
+        {
+            &self.assignments
+        } else {
+            &[]
+        }
+    }
+}
 
 /// Borrowed context shared by primary-invariant and handler-side replay helpers.
 struct ReplayContext<'a> {
@@ -5607,8 +5679,10 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
                         existing.call_sequence.len() <= failure.call_sequence.len()
                     });
                 if !already_shorter {
+                    let replay_storage =
+                        SymbolicHandlerReplayStorage::new(failure.call_sequence.clone(), storage);
                     replayed.insert(expected_site, InvariantFuzzError::HandlerAssertion(failure));
-                    replayed_storage.insert(storage_key, storage);
+                    replayed_storage.insert(storage_key, replay_storage);
                 }
             }
             // Stale: anchor doesn't assert or earlier call asserts.
