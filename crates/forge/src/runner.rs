@@ -185,26 +185,12 @@ fn symbolic_invariant_failure_site_matches(
 fn symbolic_artifact_predicate_failure_matches(
     failure: Option<&SymbolicInvariantArtifactFailure>,
     outcome: &CheckSequenceOutcome,
-    fail_on_revert: bool,
 ) -> bool {
-    let Some(SymbolicInvariantArtifactFailure::Predicate { site, .. }) = failure else {
+    let Some(SymbolicInvariantArtifactFailure::Predicate { site: Some(expected), .. }) = failure
+    else {
         return false;
     };
-
-    if let Some(site) = *site {
-        return symbolic_invariant_failure_site_matches(site, outcome.failure_site);
-    }
-
-    match outcome.failure_site {
-        Some(
-            CheckSequenceFailureSite::Invariant { .. }
-            | CheckSequenceFailureSite::AfterInvariant { .. },
-        ) => true,
-        Some(CheckSequenceFailureSite::SequenceCall { .. }) => {
-            fail_on_revert && !outcome.sequence_assertion_failure
-        }
-        None => false,
-    }
+    symbolic_invariant_failure_site_matches(*expected, outcome.failure_site)
 }
 
 const FUZZ_BRANCH_FRONTIER_SCHEMA: &str = "foundry:fuzz.branch-frontiers@v1";
@@ -2884,6 +2870,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 }
                 let artifact_failure = artifact.invariant_failure.as_ref();
+                if matches!(
+                    artifact_failure,
+                    Some(SymbolicInvariantArtifactFailure::Predicate { site: None, .. })
+                ) {
+                    self.result.single_fail(Some(
+                        "sequence symbolic artifact does not identify an exact predicate failure site"
+                            .to_string(),
+                    ));
+                    return self.result;
+                }
                 let is_handler_artifact = matches!(
                     artifact_failure,
                     Some(SymbolicInvariantArtifactFailure::Handler { .. })
@@ -2918,7 +2914,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             ) && !symbolic_artifact_predicate_failure_matches(
                                 artifact_failure,
                                 &outcome,
-                                artifact.replay_semantics.fail_on_revert,
                             ) {
                                 self.result.single_fail(Some(format!(
                                     "sequence symbolic artifact replayed a different failure \
@@ -3677,6 +3672,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 mut call_sequence,
                 assertion_failure,
                 storage,
+                failure_site,
                 ..
             }) = persisted_invariant_failure(&failure_dir, replay_invariant, &current_settings)
             else {
@@ -3716,6 +3712,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if let Ok(replay) = replay
                 && !replay.success
             {
+                let Some(mut confirmed_failure_site) =
+                    replay.failure_site.map(symbolic_invariant_failure_site)
+                else {
+                    continue;
+                };
+                if failure_site.is_some_and(|expected| expected != confirmed_failure_site) {
+                    continue;
+                }
                 let mut replayed_entirely = replay.replayed_entirely;
                 let mut replay_reason = replay.reason;
                 let mut calls_count = replay.calls_count;
@@ -3764,6 +3768,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     Ok(replay) if !replay.counterexample_sequence.is_empty() => {
                         call_sequence = replay.counterexample_sequence;
                         if let Some(updated_replay) = replay.check_result {
+                            let Some(updated_failure_site) =
+                                updated_replay.failure_site.map(symbolic_invariant_failure_site)
+                            else {
+                                continue;
+                            };
+                            if updated_failure_site != confirmed_failure_site {
+                                continue;
+                            }
+                            confirmed_failure_site = updated_failure_site;
                             replayed_entirely = updated_replay.replayed_entirely;
                             replay_reason = updated_replay.reason;
                             calls_count = updated_replay.calls_count;
@@ -3777,7 +3790,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &current_settings,
                             assertion_failure,
                             &storage,
-                            None,
+                            Some(confirmed_failure_site),
                         );
                     }
                     Ok(_) => {}
@@ -3805,7 +3818,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &storage,
                         Some(SymbolicInvariantArtifactFailure::Predicate {
                             name: replay_contract.anchor().name.clone(),
-                            site: None,
+                            site: Some(confirmed_failure_site),
                         }),
                     )
                 {

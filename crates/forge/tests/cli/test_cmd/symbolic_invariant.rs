@@ -189,8 +189,13 @@ contract SymbolicInvariantSetupStorage is Test {
     let artifact = read_artifact_ref(artifact_ref);
     assert_eq!(artifact["invariant_failure"]["kind"], "predicate");
     assert_eq!(artifact["invariant_failure"]["name"], "invariant_notHit");
+    assert!(artifact["invariant_failure"]["site"].is_object());
     assert_eq!(artifact["storage"].as_array().expect("storage assignments").len(), 1);
     assert_eq!(artifact["storage"][0]["value"], "0x2a");
+
+    let persisted_failure_path = prj
+        .root()
+        .join("cache/invariant/failures/SymbolicInvariantSetupStorage/invariants/invariant_notHit");
 
     let fuzz_replay_stdout = cmd
         .forge_fuse()
@@ -204,6 +209,9 @@ contract SymbolicInvariantSetupStorage is Test {
 [FAIL: hit]
 "#]],
     );
+    let persisted_failure: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted_failure_path).unwrap()).unwrap();
+    assert_eq!(persisted_failure["failure_site"], artifact["invariant_failure"]["site"]);
 
     let rerun_stdout =
         cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().get_output().stdout_lossy();
@@ -294,6 +302,31 @@ contract SymbolicPredicateArtifactOrigin is Test {
         .as_str()
         .expect("predicate artifact path")
         .to_string();
+    let artifact = read_artifact_ref(&result["invariant_failures"][0]["artifact"]);
+
+    let mut missing_site_artifact = artifact.clone();
+    missing_site_artifact["invariant_failure"]
+        .as_object_mut()
+        .expect("predicate failure object")
+        .remove("site");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&missing_site_artifact).unwrap())
+        .unwrap();
+    let missing_site_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let missing_site_result = json_test_result(&missing_site_output, "invariant_notHit()");
+    assert!(
+        missing_site_result["reason"]
+            .as_str()
+            .expect("missing-site replay mismatch reason")
+            .contains("does not identify an exact predicate failure site"),
+        "{missing_site_result}"
+    );
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
 
     std::fs::write(
         test_path,
