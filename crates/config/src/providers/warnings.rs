@@ -243,6 +243,8 @@ impl<P: Provider> WarningsProvider<P> {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
             } else if *section_name == "doc" {
                 DOC_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if *section_name == "symbolic" {
+                SYMBOLIC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
                 let Some(default_section_value) = default_dict.get(*section_name) else {
                     continue;
