@@ -313,6 +313,12 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     copy_project_local_optional_path(
         &config.root,
         temp_dir,
+        &config.fuzz.failure_persist_dir,
+        &handled_extra_roots,
+    )?;
+    copy_project_local_optional_path(
+        &config.root,
+        temp_dir,
         &config.fuzz.corpus.corpus_dir,
         &handled_extra_roots,
     )?;
@@ -320,6 +326,12 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         &config.root,
         temp_dir,
         &config.fuzz.corpus.frontier_dir,
+        &handled_extra_roots,
+    )?;
+    copy_project_local_optional_path(
+        &config.root,
+        temp_dir,
+        &config.invariant.failure_persist_dir,
         &handled_extra_roots,
     )?;
     copy_project_local_optional_path(
@@ -1064,24 +1076,32 @@ mod tests {
     }
 
     #[test]
-    fn test_rebase_config_paths_isolates_external_failure_persist_dirs() {
+    fn test_copy_project_isolates_external_failure_persist_dirs() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("project");
         let workspace = temp.path().join("workspace");
+        let fuzz_failures = temp.path().join("shared-fuzz-failures");
+        let invariant_failures = temp.path().join("shared-invariant-failures");
+        create_test_dir_structure(&root, &["src/Target.sol", "test/Target.t.sol"]);
+        create_test_dir_structure(&fuzz_failures, &["Target/test/fuzz-failure"]);
+        create_test_dir_structure(&invariant_failures, &["Target/invariant/invariant-failure"]);
 
         let config = Config {
-            root,
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
             fuzz: foundry_config::FuzzConfig {
-                failure_persist_dir: Some(PathBuf::from("../shared-fuzz-failures")),
+                failure_persist_dir: Some(fuzz_failures),
                 ..Default::default()
             },
             invariant: foundry_config::InvariantConfig {
-                failure_persist_dir: Some(PathBuf::from("../shared-invariant-failures")),
+                failure_persist_dir: Some(invariant_failures),
                 ..Default::default()
             },
             ..Default::default()
         };
 
+        copy_project(&config, &workspace).unwrap();
         let temp_config = rebase_config_paths(&config, &workspace);
         let fuzz_failure_dir = temp_config.fuzz.failure_persist_dir.unwrap();
         let invariant_failure_dir = temp_config.invariant.failure_persist_dir.unwrap();
@@ -1096,6 +1116,8 @@ mod tests {
             "{}",
             invariant_failure_dir.display()
         );
+        assert!(fuzz_failure_dir.join("Target/test/fuzz-failure").exists());
+        assert!(invariant_failure_dir.join("Target/invariant/invariant-failure").exists());
     }
 
     #[cfg(not(target_os = "windows"))]
