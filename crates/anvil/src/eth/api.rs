@@ -76,7 +76,7 @@ use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         EthRequest,
-        block::BlockInfo,
+        block::{BlockInfo, canonical_block, canonical_block_transaction},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
     types::{ReorgOptions, TransactionData},
@@ -3353,7 +3353,12 @@ impl EthApi<FoundryNetwork> {
         let Some(block) = self.backend.get_block(block) else {
             return Ok(Vec::new());
         };
-        Ok(block.body.transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect())
+        Ok(block
+            .body
+            .transactions
+            .into_iter()
+            .map(|tx| canonical_block_transaction(tx.into_inner()).encoded_2718().into())
+            .collect())
     }
 
     /// Returns RLP encoded raw block header.
@@ -3371,7 +3376,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn raw_block(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawBlock");
         let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
-        Ok(alloy_rlp::encode(&block).into())
+        Ok(alloy_rlp::encode(canonical_block(block)).into())
     }
 
     /// Returns EIP-2718 encoded raw transaction by block hash and index

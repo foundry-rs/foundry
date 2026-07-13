@@ -1963,6 +1963,20 @@ mod tests {
     }
 
     #[test]
+    fn current_storage_access_line_uses_next_stack_snapshot_for_tload() {
+        let mut step = trace_step(vec![U256::from(1)]);
+        step.op = OpCode::TLOAD;
+        let next_step = trace_step(vec![U256::from(42)]);
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![step, next_step])]);
+        let tui = TUIContext::new(&mut context);
+
+        assert_eq!(
+            line_text(&tui.current_storage_access_line().unwrap()),
+            "transient storage TLOAD slot 0x1 = 0x2a"
+        );
+    }
+
+    #[test]
     fn variable_name_falls_back_for_unnamed_values() {
         let variable = DebugVariable { name: None, declaration: 0..1, scope: 0..2 };
 
