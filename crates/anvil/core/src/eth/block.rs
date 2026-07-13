@@ -86,7 +86,7 @@ where
 mod tests {
     use alloy_consensus::{
         BlobTransactionSidecar, BlobTransactionSidecarVariant, BlockHeader, SignableTransaction,
-        TxEip4844, proofs::calculate_transaction_root, transaction::eip4844::TxEip4844Variant,
+        TxEip4844, proofs::calculate_transaction_root,
     };
     use alloy_primitives::{
         Address, B64, B256, Bloom, Signature, U256, b256,
