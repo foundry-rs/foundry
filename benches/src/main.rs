@@ -50,6 +50,10 @@ struct Cli {
     #[clap(long)]
     json_output: Option<PathBuf>,
 
+    /// Filename for the opt-in versioned symbolic benchmark sidecar.
+    #[clap(long)]
+    symbolic_sidecar_output: Option<PathBuf>,
+
     /// Run only specific benchmarks (comma-separated:
     /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage,
     /// forge_symbolic_test)
@@ -110,6 +114,9 @@ fn main() -> Result<()> {
     } else {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };
+    if cli.symbolic_sidecar_output.is_some() && versions.len() != 1 {
+        eyre::bail!("--symbolic-sidecar-output requires exactly one --versions entry");
+    }
 
     // Get repo configurations
     let repos = if let Some(repo_specs) = cli.repos.clone() {
@@ -276,6 +283,31 @@ fn main() -> Result<()> {
         let json_path = cli.output_dir.join(json_filename);
         fs::write(&json_path, json).wrap_err("Failed to write JSON summary")?;
         sh_println!("✅ JSON summary written to: {}", json_path.display());
+    }
+
+    if let Some(filename) = cli.symbolic_sidecar_output {
+        let mut sidecars = std::collections::BTreeMap::new();
+        for (benchmark, version_data) in &results.data {
+            if benchmark != "forge_symbolic_test" {
+                continue;
+            }
+            for version in &versions {
+                if let Some(repo_data) = version_data.get(version) {
+                    for (repo, result) in repo_data {
+                        if let Some(sidecar) = &result.symbolic_sidecar {
+                            sidecars.insert(format!("forge_symbolic_test/{repo}"), sidecar);
+                        }
+                    }
+                }
+            }
+        }
+        if sidecars.is_empty() {
+            eyre::bail!("symbolic sidecar requested but no symbolic results were produced");
+        }
+        let path = cli.output_dir.join(filename);
+        fs::create_dir_all(path.parent().unwrap_or(&cli.output_dir))?;
+        fs::write(&path, serde_json::to_string_pretty(&sidecars)?)?;
+        sh_println!("✅ Symbolic sidecar written to: {}", path.display());
     }
 
     Ok(())
