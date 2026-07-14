@@ -1,6 +1,10 @@
 //! Tests for the `forge compiler` command.
 
-use foundry_test_utils::snapbox::IntoData;
+use foundry_compilers::compilers::solc::Solc;
+use foundry_test_utils::{
+    snapbox::IntoData,
+    util::{SOLC_VERSION, get_vyper},
+};
 
 const CONTRACT_A: &str = r#"
 // SPDX-license-identifier: MIT
@@ -85,6 +89,35 @@ Solidity:
 
 
 "#]]);
+});
+
+forgetest_init!(can_print_resolved_compiler_path, |prj, cmd| {
+    prj.add_source("Contract", "contract Contract {}");
+    let solc = Solc::find_svm_installed_version(&SOLC_VERSION.parse().unwrap()).unwrap().unwrap();
+
+    cmd.args(["compiler", "resolve", "--path"])
+        .assert_success()
+        .stdout_eq(format!("{}\n", solc.solc.display()));
+});
+
+forgetest!(can_print_resolved_vyper_path, |prj, cmd| {
+    let vyper = get_vyper();
+    prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE);
+    prj.add_raw_source("Counter.vy", VYPER_CONTRACT);
+    prj.update_config(|config| config.vyper.path = Some(vyper.path.clone()));
+
+    cmd.args(["compiler", "resolve", "--path"])
+        .assert_success()
+        .stdout_eq(format!("{}\n", vyper.path.display()));
+});
+
+forgetest!(compiler_path_requires_single_version, |prj, cmd| {
+    prj.add_source("ContractA", CONTRACT_A);
+    prj.add_source("ContractB", CONTRACT_B);
+
+    cmd.args(["compiler", "resolve", "--path"]).assert_failure().stdout_eq("").stderr_eq(
+        "Error: multiple compilers resolved; use `forge compiler resolve` to inspect them\n",
+    );
 });
 
 forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
