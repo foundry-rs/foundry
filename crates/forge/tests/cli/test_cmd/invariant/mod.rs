@@ -1436,6 +1436,46 @@ contract JsonInvariantReportTest is Test {
     assert!(safe.get("reason").is_none());
 });
 
+forgetest_init!(forge_test_defaults_invariant_workers_to_auto, |prj, cmd| {
+    prj.add_test(
+        "AutoInvariantWorkers.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract AutoInvariantWorkersHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract AutoInvariantWorkersTest is Test {
+    AutoInvariantWorkersHandler handler;
+
+    function setUp() public {
+        handler = new AutoInvariantWorkersHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_break() public view {
+        require(handler.counter() == 0, "broken");
+    }
+}
+   "#,
+    );
+
+    cmd.unset_env("FOUNDRY_INVARIANT_WORKERS");
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "20000");
+    cmd.env("FOUNDRY_INVARIANT_DEPTH", "500");
+    cmd.env("FOUNDRY_INVARIANT_SHRINK_RUN_LIMIT", "0");
+    let output = cmd.args(["test", "--json", "--threads", "2"]).assert_failure();
+    let json: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let suite = json.as_object().unwrap().values().next().unwrap();
+    let result = suite["test_results"].as_object().unwrap().values().next().unwrap();
+    assert_eq!(result["kind"]["Invariant"]["workers"], 2, "{json}");
+});
+
 forgetest_init!(invariant_campaign_reports_secondary_skip, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
