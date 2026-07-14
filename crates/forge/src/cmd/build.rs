@@ -139,6 +139,9 @@ impl BuildArgs {
         if format_json && !self.names && !self.sizes {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
+        if format_json && output.has_compiler_errors() {
+            std::process::exit(1);
+        }
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
         if !self.no_lint

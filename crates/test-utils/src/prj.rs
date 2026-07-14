@@ -738,10 +738,23 @@ impl TestCommand {
     /// Runs the command and asserts that it resulted in success, with expected JSON data.
     #[track_caller]
     pub fn assert_json_stdout(&mut self, expected: impl IntoData) {
+        self.assert_json_stdout_with_status(true, expected);
+    }
+
+    /// Runs the command, asserts that it resulted in the expected outcome and JSON stdout, and
+    /// returns the output assertion.
+    #[track_caller]
+    pub fn assert_json_stdout_with_status(
+        &mut self,
+        success: bool,
+        expected: impl IntoData,
+    ) -> OutputAssert {
         let expected = expected.is(snapbox::data::DataFormat::Json).unordered();
-        let stdout = self.assert_success().get_output().stdout.clone();
+        let assert = if success { self.assert_success() } else { self.assert_failure() };
+        let stdout = assert.get_output().stdout.clone();
         let actual = stdout.into_data().is(snapbox::data::DataFormat::Json).unordered();
         assert_data_eq!(actual, expected);
+        assert
     }
 
     /// Runs the command and asserts that it resulted in the expected outcome and JSON data.

@@ -39,6 +39,7 @@ foundry_config::impl_figment_convert!(LintArgs, build);
 
 impl LintArgs {
     pub fn run(self) -> Result<()> {
+        let format_json = shell::is_json();
         let config = self.load_config()?;
         let project = config.ephemeral_project()?;
         let path_config = config.project_paths();
@@ -102,7 +103,8 @@ impl LintArgs {
         }
 
         let linter = SolidityLinter::new(path_config)
-            .with_json_emitter(shell::is_json())
+            .with_json_emitter(format_json)
+            .with_json_emitter_stdout(format_json)
             .with_description(true)
             .with_lints(include)
             .without_lints(exclude)
@@ -111,9 +113,20 @@ impl LintArgs {
 
         let mut opts = solar::interface::config::CompileOpts::default();
         opts.unstable.typeck = true;
-        let mut compiler = solar::sema::Compiler::new(
-            solar::interface::Session::builder().opts(opts).with_stderr_emitter().build(),
-        );
+        if format_json {
+            opts.error_format = solar::interface::config::ErrorFormat::RustcJson;
+        }
+        let session = solar::interface::Session::builder().opts(opts);
+        let session =
+            if format_json { session.build() } else { session.with_stderr_emitter().build() };
+        if format_json {
+            let writer = Box::new(std::io::BufWriter::new(std::io::stdout()));
+            let emitter =
+                solar::interface::diagnostics::JsonEmitter::new(writer, session.clone_source_map())
+                    .rustc_like(true);
+            session.dcx.set_emitter(Box::new(emitter));
+        }
+        let mut compiler = solar::sema::Compiler::new(session);
 
         // Load the solar-compatible sources to the pcx before linting
         let has_sources = compiler.enter_mut(|compiler| -> Result<bool> {
@@ -127,7 +140,13 @@ impl LintArgs {
         if !has_sources {
             return Err(eyre!("unable to lint. Solar only supports Solidity versions >=0.8.0"));
         }
-        linter.lint(&input, config.deny, &mut compiler)?;
+        if let Err(err) = linter.lint(&input, config.deny, &mut compiler) {
+            if format_json && compiler.dcx().has_errors().is_err() {
+                // Solar already emitted the error, so bypass the top-level error printer.
+                std::process::exit(1);
+            }
+            return Err(err);
+        }
 
         Ok(())
     }

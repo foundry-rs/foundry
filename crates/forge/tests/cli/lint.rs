@@ -1128,8 +1128,11 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     });
 
     // should produce clean JSON without ANSI escape sequences (for the url nor the snippets)
-    cmd.arg("lint").arg("--json").assert_json_stderr(true,
-        str![[r#"
+    cmd.arg("lint")
+        .arg("--json")
+        .assert_json_stdout_with_status(
+            true,
+            str![[r#"
 {
     "$message_type": "diagnostic",
     "message": "wrap modifier logic to reduce code size",
@@ -1240,7 +1243,56 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
 }
 "#]],
-);
+        )
+        .stderr_eq("");
+});
+
+forgetest!(lint_json_compiler_error, |prj, cmd| {
+    prj.add_source(
+        "Broken",
+        r#"pragma solidity ^0.8.30;
+
+contract Broken {
+    function f() public {
+        uint256 value = missing;
+    }
+}
+"#,
+    );
+
+    cmd.args(["lint", "--json"])
+        .assert_json_stdout_with_status(false, str![[r#"
+{
+  "$message_type": "diagnostic",
+  "message": "unresolved symbol `missing`",
+  "code": null,
+  "level": "error",
+  "spans": [
+    {
+      "file_name": "src/Broken.sol",
+      "byte_start": 140,
+      "byte_end": 147,
+      "line_start": 6,
+      "line_end": 6,
+      "column_start": 25,
+      "column_end": 32,
+      "is_primary": true,
+      "text": [
+        {
+          "text": "        uint256 value = missing;",
+          "highlight_start": 25,
+          "highlight_end": 32
+        }
+      ],
+      "label": null,
+      "suggested_replacement": null
+    }
+  ],
+  "children": [],
+  "rendered": "error: unresolved symbol `missing`\n  ╭▸ src/Broken.sol:6:25\n  │\n6 │         uint256 value = missing;\n  ╰╴                        ━━━━━━━\n\n"
+}
+"#]])
+        .stderr_eq("");
 });
 
 forgetest!(can_fail_on_lints, |prj, cmd| {
