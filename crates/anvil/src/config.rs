@@ -11,7 +11,7 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
-    mem::{self, in_memory_db::MemDb},
+    mem::{self, in_memory_db::StateRootDb},
 };
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
@@ -1217,7 +1217,7 @@ impl NodeConfig {
             if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
                 self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
-                (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
+                (Arc::new(TokioRwLock::new(Box::<StateRootDb>::default())), None)
             };
 
         // if provided use all settings of `genesis.json`
@@ -1398,6 +1398,10 @@ latest block number: {latest_block}"
         let gas_limit = self.fork_gas_limit(&block);
         self.gas_limit = Some(gas_limit);
 
+        // Cache identity must describe the remote fork block, not local execution overrides that
+        // can change after mining (for example, the locally advanced base fee).
+        let cache_block_env: BlockEnv = block_env_from_header(&block.header);
+
         evm_env.block_env = BlockEnv {
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
@@ -1494,7 +1498,7 @@ latest block number: {latest_block}"
             self.networks,
         );
 
-        let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {

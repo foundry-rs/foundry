@@ -13,7 +13,7 @@ use alloy_eips::eip4895::Withdrawals;
 use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
-    map::{AddressMap, HashMap},
+    map::{AddressMap, HashMap, U256Map},
 };
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
@@ -42,10 +42,28 @@ use serde_json::Value;
 
 use crate::mem::storage::MinedTransaction;
 
+/// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
+pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
+
+/// Inserts a block hash while discarding the entry that left the EVM-visible cache.
+pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, hash: B256) {
+    let head = block_hashes.keys().copied().max().map_or(number, |head| head.max(number));
+    let min_number = head.saturating_sub(U256::from(BLOCKHASH_HISTORY));
+    block_hashes.retain(|cached, _| *cached >= min_number && *cached <= head);
+    if number >= min_number {
+        block_hashes.insert(number, hash);
+    }
+}
+
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         None
+    }
+
+    /// Returns whether snapshots of this database use structural sharing.
+    fn is_persistent(&self) -> bool {
+        false
     }
 
     /// Clear the state and move it into a new `StateSnapshot`.
@@ -69,6 +87,10 @@ where
 {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         T::maybe_as_full_db(self)
+    }
+
+    fn is_persistent(&self) -> bool {
+        T::is_persistent(self)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
@@ -216,6 +238,9 @@ pub trait Db:
     /// inserts a blockhash for the given number
     fn insert_block_hash(&mut self, number: U256, hash: B256);
 
+    /// Replaces all cached block hashes.
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>);
+
     /// Write all chain data to serialized bytes buffer
     fn dump_state(
         &self,
@@ -290,7 +315,11 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.cache.block_hashes.insert(number, hash);
+        cache_block_hash(&mut self.cache.block_hashes, number, hash);
+    }
+
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
+        self.cache.block_hashes = block_hashes.into_iter().collect();
     }
 
     fn dump_state(
@@ -428,6 +457,10 @@ impl DatabaseRef for StateDb {
 impl MaybeFullDatabase for StateDb {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         self.0.maybe_as_full_db()
+    }
+
+    fn is_persistent(&self) -> bool {
+        self.0.is_persistent()
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
