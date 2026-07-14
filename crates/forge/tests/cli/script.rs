@@ -2781,7 +2781,7 @@ to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 EIP-1559
 value                0
 contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
-data (decoded): run(uint256,uint256)(
+data (decoded): function run(uint256 _x, uint256 _y)(
   123,
   456
 )
