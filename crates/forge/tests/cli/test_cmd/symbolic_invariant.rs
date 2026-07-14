@@ -693,9 +693,10 @@ contract SymbolicInvariantInitialState is Test {
 "#,
     );
 
-    let stdout = assert_symbolic_engine(cmd.args([
+    let output = assert_symbolic_engine(cmd.args([
         "test",
         "--symbolic",
+        "--json",
         "--fuzz-runs",
         "0",
         "--match-test",
@@ -703,21 +704,40 @@ contract SymbolicInvariantInitialState is Test {
     ]))
     .failure()
     .get_output()
-    .stdout_lossy();
+    .stdout
+    .clone();
+    let result = json_test_result(&output, "invariant_xIsOne()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["invariant_failures"][0]["counterexample"]["Sequence"][0], 1);
+    assert!(
+        result["invariant_failures"][0]["counterexample"]["Sequence"][1]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[FAIL: assertion failed: 0 != 1]
-"#]],
+    let artifact_ref = &result["invariant_failures"][0]["artifact"];
+    assert_eq!(result["symbolic"]["artifact"], *artifact_ref);
+    let artifact_path = artifact_ref["path"].as_str().unwrap();
+    assert!(result["symbolic"].get("minimization").is_none());
+    assert!(result["invariant_failures"][0].get("minimization").is_none());
+    let artifact = read_artifact_ref(artifact_ref);
+    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
+
+    let replay_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let replay_result = json_test_result(&replay_output, "invariant_xIsOne()");
+    assert_eq!(replay_result["status"], "Failure");
+    assert!(
+        replay_result["reason"].as_str().unwrap().contains("assertion failed"),
+        "{replay_result}"
     );
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[Sequence] (original: 1, shrunk: 0)
-"#]],
-    );
-    assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
 });
 
 forgetest_init!(symbolic_after_invariant_runs_only_at_terminal_depth, |prj, cmd| {

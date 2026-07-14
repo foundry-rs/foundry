@@ -1792,8 +1792,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 storage,
                 invariant_failure,
             );
+        // Schema v1 cannot persist an empty sequence; retain the confirmed original artifact.
+        let primary_artifact = if call_sequence.is_empty() {
+            original_artifact.clone()
+        } else {
+            minimized_artifact.clone()
+        };
 
-        let metadata = match (original_artifact, minimized_artifact.clone()) {
+        let metadata = match (original_artifact, minimized_artifact) {
             (Some(original), Some(minimized)) => Some(
                 SymbolicCounterexampleMinimization::new(
                     original,
@@ -1811,7 +1817,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             _ => None,
         };
 
-        (minimized_artifact, metadata)
+        (primary_artifact, metadata)
     }
 
     #[expect(clippy::too_many_arguments)]

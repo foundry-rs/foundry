@@ -1,7 +1,7 @@
 use crate::{RepoConfig, symbolic::Sidecar};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, process::Command, thread};
+use std::{collections::HashMap, path::Path, process::Command, thread};
 
 /// Hyperfine benchmark result
 #[derive(Debug, Deserialize, Serialize)]
@@ -299,6 +299,18 @@ fn get_benchmark_cell_content(
     "N/A".to_string()
 }
 
+/// Insert `version` before the extension of the `--json-output` filename, e.g.
+/// `summary.json` + `local` -> `summary-local.json`.
+pub fn versioned_summary_filename(json_output: &Path, version: &str) -> String {
+    let stem =
+        json_output.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = if stem.is_empty() { "summary" } else { &stem };
+    match json_output.extension() {
+        Some(ext) => format!("{stem}-{version}.{}", ext.to_string_lossy()),
+        None => format!("{stem}-{version}"),
+    }
+}
+
 pub fn format_benchmark_name(name: &str) -> String {
     match name {
         "forge_test" => "Forge Test",
@@ -380,6 +392,43 @@ mod tests {
             symbolic: None,
             symbolic_sidecar: None,
         }
+    }
+
+    #[test]
+    fn versioned_summary_filename_inserts_version() {
+        assert_eq!(
+            versioned_summary_filename(Path::new("forge_test_bench.json"), "local"),
+            "forge_test_bench-local.json"
+        );
+        assert_eq!(
+            versioned_summary_filename(Path::new("summary.json"), "stable"),
+            "summary-stable.json"
+        );
+        assert_eq!(versioned_summary_filename(Path::new("summary"), "nightly"), "summary-nightly");
+    }
+
+    #[test]
+    fn json_summaries_are_isolated_by_version() {
+        let mut results = BenchmarkResults::new();
+        results.add_result("forge_test", "master", "solady", hyperfine_result("forge test", 1.0));
+        results.add_result("forge_test", "local", "solady", hyperfine_result("forge test", 2.0));
+
+        let dir = tempfile::tempdir().unwrap();
+        let output = Path::new("summary.json");
+        for version in ["master", "local"] {
+            let summary = results.generate_json_summary(&[version.to_string()]);
+            let path = dir.path().join(versioned_summary_filename(output, version));
+            std::fs::write(path, serde_json::to_vec(&summary).unwrap()).unwrap();
+        }
+
+        let master: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("summary-master.json")).unwrap())
+                .unwrap();
+        let local: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("summary-local.json")).unwrap())
+                .unwrap();
+        assert_eq!(master["forge_test/solady"]["mean"], 1.0);
+        assert_eq!(local["forge_test/solady"]["mean"], 2.0);
     }
 
     #[test]
