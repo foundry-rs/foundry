@@ -1,5 +1,39 @@
 //! Tests for the `forge test` with preprocessed cache.
 
+#[cfg(unix)]
+forgetest_init!(filtered_tests_reuse_preprocessed_cache, |prj, cmd| {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    prj.initialize_default_contracts();
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    cmd.arg("build").assert_success();
+
+    let solc = prj.root().join("fake-solc");
+    let invoked = prj.root().join("fake-solc.invoked");
+    fs::write(
+        &solc,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.35+commit.69074fbd"
+    exit 0
+fi
+touch "$0.invoked"
+exit 1
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&solc).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&solc, permissions).unwrap();
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc));
+    });
+
+    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+    assert!(!invoked.exists(), "filtered test compilation did not reuse the preprocessed cache");
+});
+
 // Test cache is invalidated when `forge build` if optimize test option toggled.
 forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
     prj.initialize_default_contracts();
