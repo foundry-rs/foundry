@@ -11,6 +11,8 @@ use crate::inspectors::{
     cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
+use alloy_evm::Evm;
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
@@ -28,24 +30,29 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
+    eip2935::{
+        HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, history_storage_slot, history_storage_value,
+        history_window_start,
+    },
     evm::{
-        EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor,
-        TxEnvFor,
+        EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor,
+        IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::ObservedCall;
-use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
-    context::Transaction,
+    context::{Block, Transaction},
     context_interface::{
         result::{ExecutionResult, Output, ResultAndState},
         transaction::SignedAuthorization,
     },
-    database::{DatabaseCommit, DatabaseRef},
+    database::{Database, DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
+    primitives::hardfork::SpecId,
 };
 use sancov::SancovGuard;
 use std::{
@@ -72,8 +79,15 @@ mod sancov;
 mod showmap;
 mod trace;
 
-pub use corpus::DynamicTargetCtx;
-pub use showmap::{ShowmapDomain, ShowmapOpts, ShowmapStats, replay_corpus_to_showmap};
+pub use corpus::{DynamicTargetCtx, StatelessReplayTarget, persist_corpus_seed};
+pub use corpus_io::{
+    CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
+};
+pub use showmap::{
+    InvariantReplayOptions, MinimizationReplayInput, ReplayFailure, ReplayObservation,
+    ShowmapDomain, ShowmapOpts, ShowmapReplayTarget, ShowmapStats, replay_corpus_to_showmap,
+    replay_sequence_for_minimization,
+};
 pub use trace::TracingExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
@@ -145,6 +159,25 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 ..Default::default()
             },
         );
+
+        if !backend.is_in_forking_mode() && evm_env.cfg_env.spec.into() >= SpecId::PRAGUE {
+            let mut account =
+                backend.basic_ref(HISTORY_STORAGE_ADDRESS).unwrap_or_default().unwrap_or_default();
+            account.code_hash = keccak256(&HISTORY_STORAGE_CODE);
+            account.code = Some(Bytecode::new_raw(HISTORY_STORAGE_CODE.clone()));
+            backend.insert_account_info(HISTORY_STORAGE_ADDRESS, account);
+
+            let current_block = evm_env.block_env.number();
+            let mut block_number = history_window_start(current_block);
+            while block_number < current_block {
+                let block_hash =
+                    backend.block_hash(block_number.saturating_to()).unwrap_or_default();
+                let slot = history_storage_slot(block_number);
+                let value = history_storage_value(block_hash);
+                let _ = backend.insert_account_storage(HISTORY_STORAGE_ADDRESS, slot, value);
+                block_number += U256::from(1);
+            }
+        }
 
         Self {
             backend: Arc::new(backend),
@@ -365,8 +398,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     #[inline]
-    pub fn set_tracing(&mut self, mode: TraceMode) -> &mut Self {
-        self.inspector_mut().tracing(mode);
+    pub fn set_trace_requirements(&mut self, requirements: TraceRequirements) -> &mut Self {
+        self.inspector_mut().tracing_requirements(requirements);
         self
     }
 
@@ -570,6 +603,35 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env.set_signed_authorization(authorization_list);
         tx_env.set_tx_type(4);
         self.transact_with_env(evm_env, tx_env)
+    }
+
+    /// Applies the EIP-4788 beacon roots system call (Cancun+).
+    /// <https://eips.ethereum.org/EIPS/eip-4788>
+    pub fn apply_beacon_root(
+        &mut self,
+        parent_beacon_block_root: alloy_primitives::B256,
+    ) -> eyre::Result<()> {
+        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let mut evm_env = self.evm_env.clone();
+        let inspector = self.inspector().clone();
+        let mut state = {
+            let mut backend = CowBackend::new_borrowed(self.backend());
+            let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
+                &mut backend,
+                evm_env.clone(),
+                inspector,
+            );
+            let result =
+                evm.transact_system_call(SYSTEM_ADDRESS, BEACON_ROOTS_ADDRESS, calldata)?;
+            evm_env = evm.finish().1;
+            result.state
+        };
+        state.retain(|address, _| *address == BEACON_ROOTS_ADDRESS);
+
+        self.backend_mut().commit(state);
+        self.inspector_mut().set_block(evm_env.block_env);
+
+        Ok(())
     }
 
     /// Execute the transaction configured in `tx_env`.
@@ -1001,6 +1063,8 @@ impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for RawCallResult<FEN> {
 pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The status of the call
     pub exit_reason: Option<InstructionResult>,
+    /// Whether the call was halted by the execution cancellation inspector.
+    pub execution_cancelled: bool,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// Whether the call includes a snapshot failure
@@ -1058,6 +1122,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
     fn default() -> Self {
         Self {
             exit_reason: None,
+            execution_cancelled: false,
             reverted: false,
             has_state_snapshot_failure: false,
             result: Bytes::new(),
@@ -1168,10 +1233,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
                     for hit in hits.drain(..) {
                         let edge_index = edge_indices.edge_index(hit.edge);
                         if history_map.len() <= edge_index {
-                            debug_assert_eq!(history_map.len(), edge_index);
-                            // `Vec::push` already amortizes geometric growth; no need
-                            // to pre-reserve a single slot.
-                            history_map.push(0);
+                            history_map.resize(edge_index + 1, 0);
                         }
                         Self::merge_edge_count(
                             hit.count,
@@ -1297,6 +1359,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult<FEN>> {
+    let execution_cancelled = inspector.execution_cancelled();
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas, output, logs } => {
             (reason.into(), gas.final_refunded(), gas.tx_gas_used(), Some(output), logs)
@@ -1348,6 +1411,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
 
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
+        execution_cancelled,
         reverted: !matches!(exit_reason, return_ok!()),
         has_state_snapshot_failure,
         result,
@@ -1456,6 +1520,58 @@ impl EarlyExit {
     }
 }
 
+/// Shared cancellation state for an active EVM execution.
+#[derive(Clone, Debug)]
+pub(crate) enum EvmExecutionCancellation {
+    /// Cancellation driven only by the process-wide early-exit signal.
+    EarlyExit(EarlyExit),
+    /// Cancellation driven by the complete invariant campaign stop condition.
+    Campaign { early_exit: EarlyExit, stop: Arc<AtomicBool>, deadline: Option<Instant> },
+}
+
+impl EvmExecutionCancellation {
+    pub(crate) const fn early_exit(early_exit: EarlyExit) -> Self {
+        Self::EarlyExit(early_exit)
+    }
+
+    pub(crate) const fn campaign(
+        early_exit: EarlyExit,
+        stop: Arc<AtomicBool>,
+        deadline: Option<Instant>,
+    ) -> Self {
+        Self::Campaign { early_exit, stop, deadline }
+    }
+
+    /// Returns whether execution should stop, optionally polling a campaign deadline.
+    pub(crate) fn should_stop(&self, poll_deadline: bool) -> bool {
+        match self {
+            Self::EarlyExit(early_exit) => early_exit.should_stop(),
+            Self::Campaign { early_exit, stop, deadline } => {
+                if early_exit.should_stop() || stop.load(Ordering::Relaxed) {
+                    return true;
+                }
+                if poll_deadline && deadline.is_some_and(|deadline| Instant::now() > deadline) {
+                    stop.store(true, Ordering::Relaxed);
+                    return true;
+                }
+                false
+            }
+        }
+    }
+
+    pub(crate) fn request_stop(&self) {
+        if let Self::Campaign { stop, .. } = self {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) const fn early_exit_ref(&self) -> &EarlyExit {
+        match self {
+            Self::EarlyExit(early_exit) | Self::Campaign { early_exit, .. } => early_exit,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1467,10 +1583,8 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
-    use revm::{
-        context::{Cfg, TxEnv},
-        primitives::hardfork::SpecId,
-    };
+    use revm::context::{Cfg, TxEnv};
+    use std::{sync::mpsc, thread};
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
         RawCallResult {
@@ -1505,6 +1619,24 @@ mod tests {
             (false, false)
         );
         assert_eq!(history, [1, 1]);
+    }
+
+    #[test]
+    fn collision_free_edge_merge_handles_sparse_observation_indices() {
+        let first =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+        let second =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(20) };
+        let mut edge_indices = EdgeIndexMap::default();
+        edge_indices.edge_index(first);
+        edge_indices.edge_index(second);
+        let mut history = Vec::new();
+
+        assert_eq!(
+            dense_call(second).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [0, 1]);
     }
 
     #[test]
@@ -1567,6 +1699,113 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    #[test]
+    fn early_exit_interrupts_active_evm_execution() {
+        const GAS_LIMIT: u64 = 1 << 24;
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let early_exit = EarlyExit::new(false);
+        executor.inspector_mut().set_early_exit(early_exit.clone());
+
+        let target = Address::repeat_byte(0x11);
+        // JUMPDEST; PUSH1 0; JUMP loops until the inspector observes the interrupt.
+        executor
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])))
+            .unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO);
+            let _ = result_tx.send(result);
+        });
+
+        started_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(1));
+        early_exit.record_ctrl_c();
+
+        let result = result_rx.recv_timeout(Duration::from_secs(1));
+        handle.join().unwrap();
+        let result = result.expect("active EVM execution did not observe early exit").unwrap();
+        assert!(result.execution_cancelled);
+        assert!(!result.reverted);
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert!(result.gas_used > 21_000, "interrupt fired before EVM execution started");
+        assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of exiting");
+    }
+
+    #[test]
+    fn completed_execution_is_not_retroactively_cancelled() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(1 << 24).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let early_exit = EarlyExit::new(false);
+        executor.inspector_mut().set_early_exit(early_exit.clone());
+
+        let target = Address::repeat_byte(0x11);
+        executor.set_code(target, Bytecode::new_raw(Bytes::from_static(&[0x00]))).unwrap();
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        early_exit.record_ctrl_c();
+
+        assert!(!result.execution_cancelled);
+        assert!(!result.reverted);
+    }
+
+    #[test]
+    fn campaign_deadline_interrupts_active_evm_execution() {
+        const GAS_LIMIT: u64 = 1 << 24;
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let cancellation = EvmExecutionCancellation::campaign(
+            EarlyExit::new(false),
+            Arc::new(AtomicBool::new(false)),
+            Some(Instant::now()),
+        );
+        executor.inspector_mut().set_execution_cancellation(cancellation);
+
+        let target = Address::repeat_byte(0x11);
+        executor
+            .set_code(target, Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])))
+            .unwrap();
+
+        let result = executor.transact_raw(CALLER, target, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.execution_cancelled);
+        assert!(!result.reverted);
+        assert_eq!(result.exit_reason, Some(InstructionResult::Stop));
+        assert!(result.gas_used < GAS_LIMIT, "execution ran out of gas instead of timing out");
+    }
+
+    #[test]
+    fn beacon_root_system_call_does_not_persist_system_address() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().spec_id(SpecId::CANCUN).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+        let before = executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap();
+
+        executor.apply_beacon_root(B256::repeat_byte(0x11)).unwrap();
+
+        assert_eq!(
+            executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap(),
+            before,
+            "EIP-4788 system calls must not persist the system caller account",
+        );
     }
 
     /// Regression test for `pre_override_blob_hashes` restoration.

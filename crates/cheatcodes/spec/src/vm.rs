@@ -96,7 +96,7 @@ interface Vm {
         address emitter;
     }
 
-    /// Gas used. Returned by `lastCallGas`.
+    /// Gas used. Returned by `lastCallGas` and `lastFrameGas`.
     struct Gas {
         /// The gas limit of the call.
         uint64 gasLimit;
@@ -627,6 +627,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function coolSlot(address target, bytes32 slot) external;
 
+    /// Returns true if isolated test execution is enabled.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isIsolateMode() external view returns (bool result);
+
     /// Returns the test or script execution evm version.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
@@ -683,6 +687,21 @@ interface Vm {
     /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;
+
+    /// Mocks a call to an address, returning specified data.
+    /// Calldata can either be strict or a partial match, e.g. if you only
+    /// pass a Solidity selector to the expected calldata, then the entire Solidity
+    /// function will be mocked.
+    ///
+    /// Overload to control whether code is injected into `callee`. The other overloads etch a
+    /// single byte into an empty account to circumvent Solidity's `extcodesize` check, with the
+    /// side effect that unmocked calls to it no longer revert; `injectCode = false` leaves the
+    /// account codeless, so unmocked calls to it revert in the caller. Mocked calls that return
+    /// data still succeed, as Solidity checks `returndatasize()` instead of `extcodesize()` when
+    /// return data is expected, but mocked calls to functions without return values may still
+    /// revert in the caller due to the `extcodesize` check.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData, bool injectCode) external;
 
     /// Mocks multiple calls to an address, returning specified data for each call.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -778,13 +797,23 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
@@ -1012,9 +1041,14 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
+    /// DEPRECATED: use `lastFrameGas` instead.
     /// Gets the gas used in the last call from the callee perspective.
-    #[cheatcode(group = Evm, safety = Safe)]
+    #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
+
+    /// Gets the gas used in the last call or create from the callee perspective.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastFrameGas() external view returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 

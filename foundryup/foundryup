@@ -7,7 +7,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.8.7"
+FOUNDRYUP_INSTALLER_VERSION="1.9.2"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -19,16 +19,39 @@ FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 FOUNDRYUP_JOBS=""
 FOUNDRYUP_IGNORE_VERIFICATION=false
 
+# ----------------------------------------------------------------------------
+# Rust foundryup migration shim
+#
+# The bash foundryup is being replaced by the Rust rewrite
+# (https://github.com/foundry-rs/foundryup). When opted in, this script
+# bootstraps the Rust `foundryup` binary into a sidecar location and execs it,
+# migrating the caller (including GitHub Actions that re-fetch this script).
+#
+# Migration is OPT-IN for now: set FOUNDRYUP_MIGRATE=1 to use the Rust
+# foundryup. The default path remains the legacy bash implementation until the
+# migration is proven, after which the default will flip.
+# ----------------------------------------------------------------------------
+
+# Pinned Rust foundryup installer version to bootstrap from.
+FOUNDRYUP_BOOTSTRAP_VERSION="${FOUNDRYUP_BOOTSTRAP_VERSION:-0.0.5}"
+# `foundryup-init.sh` for the pinned bootstrap version.
+FOUNDRYUP_INIT_URL="https://raw.githubusercontent.com/foundry-rs/foundryup/v${FOUNDRYUP_BOOTSTRAP_VERSION}/foundryup-init.sh"
+# Sidecar home for the Rust foundryup binary. Kept separate from the bash shim
+# at $FOUNDRY_BIN_DIR/foundryup so the installer never overwrites this script.
+FOUNDRYUP_RUST_HOME="${FOUNDRYUP_RUST_HOME:-"$FOUNDRY_DIR/foundryup"}"
+
 # Retry/backoff settings used for `fetch` (GitHub API calls).
 # Recovers from transient HTTP 403/429/5xx responses returned by
 # api.github.com under heavy load or per-IP rate limiting.
 FOUNDRYUP_MAX_RETRIES=5
 FOUNDRYUP_RETRY_DELAY=2
 FOUNDRYUP_RETRY_MAX_TIME=60
+FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT=5
 
-BINS=(forge cast anvil chisel)
+BINS=(forge cast anvil chisel solar)
 HASH_NAMES=()
 HASH_VALUES=()
+FOUNDRYUP_NIGHTLY_CANDIDATES=()
 
 export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
 
@@ -100,11 +123,15 @@ main() {
     # Enter local repo and build
     say "installing from $FOUNDRYUP_LOCAL_REPO"
     cd "$FOUNDRYUP_LOCAL_REPO"
+    clear_built_bins "$PWD/target/release"
     ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
 
     for bin in "${BINS[@]}"; do
       # Remove prior installations if they exist
       rm -f "$FOUNDRY_BIN_DIR/$bin"
+      if is_optional_bin "$bin" && [ ! -f "$PWD/target/release/$bin" ]; then
+        continue
+      fi
       # Symlink from local repo binaries to bin dir
       ensure ln -s "$PWD/target/release/$bin" "$FOUNDRY_BIN_DIR/$bin"
     done
@@ -122,12 +149,18 @@ main() {
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-latest}
+    FOUNDRYUP_REQUESTED_VERSION="$FOUNDRYUP_VERSION"
     resolve_version_and_tag
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
 
     # Detect platform and architecture.
     detect_platform_arch
+
+    if [[ "$FOUNDRYUP_REQUESTED_VERSION" == "nightly" && ${#FOUNDRYUP_NIGHTLY_CANDIDATES[@]} -gt 1 ]]; then
+      FOUNDRYUP_TAG=$(select_installable_nightly_tag)
+      say "resolved installable nightly release tag: ${FOUNDRYUP_TAG}"
+    fi
 
     # Compute the URL of the release tarball in the Foundry repository.
     RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
@@ -140,7 +173,7 @@ main() {
     # If `--force` is set, skip the SHA verification.
     if [ "$FOUNDRYUP_IGNORE_VERIFICATION" = false ]; then
       # Check if the version is already installed by downloading the attestation file.
-      say "checking if forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version are already installed"
+      say "checking if forge, cast, anvil, chisel, and solar for $FOUNDRYUP_TAG version are already installed"
 
       # Create a temporary directory to store the attestation link and artifact.
       tmp_dir="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
@@ -205,7 +238,15 @@ main() {
 
           path="$version_dir/$bin"
 
-          if [ -z "$expected" ] || [ ! -x "$path" ]; then
+          if [ -z "$expected" ]; then
+            if is_missing_optional_bin "$bin" "$expected" "$path"; then
+              continue
+            fi
+            all_match=false
+            break
+          fi
+
+          if [ ! -x "$path" ]; then
             all_match=false
             break
           fi
@@ -231,23 +272,22 @@ main() {
     fi
 
     # Download and extract the binaries archive
-    say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
+    say "downloading forge, cast, anvil, chisel, and solar for $FOUNDRYUP_TAG version"
+    archive_tmp_dir="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+    staged_dir="$archive_tmp_dir/extracted"
+    ensure mkdir -p "$staged_dir"
     if [ "$PLATFORM" = "win32" ]; then
-      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
-      tmp="$tmp/foundry.zip"
+      tmp="$archive_tmp_dir/foundry.zip"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
-      ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-      rm -f "$tmp"
+      ensure unzip "$tmp" -d "$staged_dir"
     else
-      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
-      tmp="$tmp/foundry.tar.gz"
+      tmp="$archive_tmp_dir/foundry.tar.gz"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
       # Make sure it's a valid tar archive.
       ensure tar tf "$tmp" 1> /dev/null
-      ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
-      rm -f "$tmp"
+      ensure tar -C "$staged_dir" -xvf "$tmp"
     fi
+    validate_staged_bins "$staged_dir"
 
     # Optionally download the manuals
     if check_cmd tar; then
@@ -280,9 +320,12 @@ main() {
             fi
           done
 
-          path="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin"
+          path="$staged_dir/$bin"
 
           if [ -z "$expected" ]; then
+            if is_missing_optional_bin "$bin" "$expected" "$path"; then
+              continue
+            fi
             say "no expected hash for $bin"
             failed=true
             continue
@@ -310,6 +353,9 @@ main() {
         fi
       fi
     fi
+
+    replace_version_bins "$staged_dir" "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
+    cleanup_staged_bins "$archive_tmp_dir" "$staged_dir" "$tmp"
 
     # Use newly installed version.
     FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
@@ -354,10 +400,14 @@ main() {
     say "installing version $FOUNDRYUP_VERSION"
 
     # Build the repo.
+    clear_built_bins "$PWD/target/release"
     ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
     # Create foundry custom version directory.
     ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
     for bin in "${BINS[@]}"; do
+      rm -f \
+        "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION/$bin" \
+        "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION/$bin.exe"
       for try_path in target/release/$bin target/release/$bin.exe; do
         if [ -f "$try_path" ]; then
           mv -f "$try_path" "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_VERSION"
@@ -457,6 +507,9 @@ list() {
       say "${VERSION##*/}"
       for bin in "${BINS[@]}"; do
         bin_path="$VERSION/$bin"
+        if is_optional_bin "$bin" && [ ! -e "$bin_path" ]; then
+          continue
+        fi
         say "- $(ensure "$bin_path" -V)"
       done
       printf "\n"
@@ -464,6 +517,9 @@ list() {
   else
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
+      if is_optional_bin "$bin" && [ ! -e "$bin_path" ]; then
+        continue
+      fi
       say "- $(ensure "$bin_path" -V)"
     done
   fi
@@ -499,6 +555,9 @@ use() {
       # workspace and silently makes the next `--path` activation use the
       # downloaded release binary instead of a fresh local build.
       ensure rm -f "$bin_path"
+      if is_optional_bin "$bin" && [ ! -e "$FOUNDRY_VERSION_DIR/$bin" ]; then
+        continue
+      fi
       ensure cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
       # Print usage msg
       say "use - $(ensure "$bin_path" -V)"
@@ -557,6 +616,58 @@ need_cmd() {
 
 check_cmd() {
   command -v "$1" &>/dev/null
+}
+
+is_optional_bin() {
+  [ "$1" = "solar" ]
+}
+
+is_missing_optional_bin() {
+  is_optional_bin "$1" && [ -z "$2" ] && [ ! -e "$3" ]
+}
+
+clear_version_bins() {
+  ensure mkdir -p "$1"
+  for bin in "${BINS[@]}"; do
+    rm -f "$1/$bin" "$1/$bin.exe"
+  done
+}
+
+clear_built_bins() {
+  for bin in "${BINS[@]}"; do
+    rm -f "$1/$bin" "$1/$bin.exe"
+  done
+}
+
+validate_staged_bins() {
+  for bin in "${BINS[@]}"; do
+    path="$1/$bin"
+    if is_optional_bin "$bin" && [ ! -e "$path" ]; then
+      continue
+    fi
+    [ -x "$path" ] || err "binary $bin not found at $path"
+  done
+}
+
+replace_version_bins() {
+  staged_dir="$1"
+  version_dir="$2"
+  clear_version_bins "$version_dir"
+  for bin in "${BINS[@]}"; do
+    if [ -f "$staged_dir/$bin" ]; then
+      ensure cp "$staged_dir/$bin" "$version_dir/$bin"
+    elif ! is_optional_bin "$bin"; then
+      err "binary $bin not found at $staged_dir/$bin"
+    fi
+  done
+}
+
+cleanup_staged_bins() {
+  for bin in "${BINS[@]}"; do
+    rm -f "$2/$bin" "$2/$bin.exe"
+  done
+  rm -f "$3"
+  rmdir "$2" "$1" 2>/dev/null || true
 }
 
 detect_platform_arch() {
@@ -692,27 +803,16 @@ resolve_version_and_tag() {
     FOUNDRYUP_VERSION="$FOUNDRYUP_TAG"
   elif [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
     # Nightlies are published as immutable `nightly-<sha>` releases. Resolve the
-    # most recent one from GitHub's public releases Atom feed, which lists
-    # releases newest-first, works unauthenticated, and is not subject to the
-    # `api.github.com` REST rate limit (60 req/hr per IP). Shared CI IPs exhaust
-    # that limit and fail with HTTP 403. Falls back to the API only when the
-    # feed cannot be parsed.
+    # most recent one from GitHub's public releases Atom feed, which works
+    # unauthenticated and is not subject to the `api.github.com` REST rate limit.
     say "fetching latest nightly release tag from ${FOUNDRYUP_REPO}..."
-    FOUNDRYUP_TAG=$(resolve_nightly_tag_via_feed "$FOUNDRYUP_REPO")
+    FOUNDRYUP_NIGHTLY_CANDIDATES=()
+    while IFS= read -r nightly_candidate; do
+      FOUNDRYUP_NIGHTLY_CANDIDATES+=("$nightly_candidate")
+    done < <(resolve_nightly_tags_via_feed "$FOUNDRYUP_REPO")
+    FOUNDRYUP_TAG="${FOUNDRYUP_NIGHTLY_CANDIDATES[0]:-}"
     if [ -z "$FOUNDRYUP_TAG" ]; then
-      # The GitHub API does not guarantee that releases are returned in
-      # chronological order, so we collect all matching nightlies along with
-      # their `published_at` timestamps and sort them ourselves.
-      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases" | awk '
-        /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
-        /"published_at"[[:space:]]*:[[:space:]]*"/ {
-          pub=$0
-          gsub(/.*"published_at"[[:space:]]*:[[:space:]]*"/, "", pub)
-          gsub(/".*/, "", pub)
-          if (tag ~ /^nightly-/) print pub "\t" tag
-          tag=""
-        }
-      ' | sort -r | awk -F '\t' 'NR==1 { print $2 }') || err "failed to fetch release tags from GitHub API"
+      FOUNDRYUP_TAG=$(resolve_nightly_tag_via_api "$FOUNDRYUP_REPO") || err "failed to fetch release tags from GitHub API"
     fi
     if [ -z "$FOUNDRYUP_TAG" ]; then
       err "could not find a nightly release tag for ${FOUNDRYUP_REPO}"
@@ -730,6 +830,23 @@ resolve_version_and_tag() {
   else
     FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
   fi
+}
+
+resolve_nightly_tag_via_api() {
+  local _repo="$1"
+  # The GitHub API does not guarantee that releases are returned in
+  # chronological order, so collect matching nightlies with their published_at
+  # timestamps and sort them explicitly.
+  fetch "https://api.github.com/repos/${_repo}/releases" | awk '
+    /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
+    /"published_at"[[:space:]]*:[[:space:]]*"/ {
+      pub=$0
+      gsub(/.*"published_at"[[:space:]]*:[[:space:]]*"/, "", pub)
+      gsub(/".*/, "", pub)
+      if (tag ~ /^nightly-/) print pub "\t" tag
+      tag=""
+    }
+  ' | sort -r | awk -F '\t' 'NR==1 { print $2 }'
 }
 
 # Resolves the latest release tag for repo $1 by following the `releases/latest`
@@ -762,12 +879,13 @@ resolve_latest_tag_via_redirect() {
   esac
 }
 
-# Resolves the latest nightly tag for repo $1 from GitHub's public releases
-# Atom feed (`releases.atom`), which lists releases newest-first, works
-# unauthenticated, and is not subject to the api.github.com REST rate limit.
-# Prints `nightly-<sha>` for the most recent nightly, or nothing if it cannot
-# be resolved so the caller can fall back to the API.
-resolve_nightly_tag_via_feed() {
+# Resolves recent nightly tags for repo $1 from GitHub's public releases
+# Atom feed (`releases.atom`), which works unauthenticated and is not subject to
+# the api.github.com REST rate limit.
+# Prints up to `FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT` unique `nightly-<sha>` tags,
+# newest-first by entry `<updated>` timestamp, or nothing if the feed cannot be
+# resolved.
+resolve_nightly_tags_via_feed() {
   local _repo="$1"
   local _url="https://github.com/${_repo}/releases.atom"
   local _feed=""
@@ -784,14 +902,62 @@ resolve_nightly_tag_via_feed() {
       --retry-on-http-error=403,408,429,500,502,503,504 \
       -qO- "$_url" 2>/dev/null) || return 0
   fi
-  # The feed is newest-first, so the first `nightly-<40-hex-sha>` reference is
-  # the most recent nightly release. Validate the SHA before returning it.
-  local _tag=""
-  _tag=$(printf '%s\n' "$_feed" | grep -oE 'nightly-[0-9a-f]{40}' | head -n1) || return 0
-  case "$_tag" in
-    nightly-*) printf '%s\n' "$_tag" ;;
-    *) return 0 ;;
-  esac
+  # Return a small unique candidate set so callers can skip draft or
+  # still-uploading immutable nightly releases. Restrict matching to each Atom
+  # entry's release link; changelog compare links in the content can also contain
+  # nightly tags and are not release candidates.
+  printf '%s\n' "$_feed" \
+    | awk '
+      /<entry>/ { updated=""; tag="" }
+      /<updated>/ {
+        updated=$0
+        gsub(/.*<updated>/, "", updated)
+        gsub(/<\/updated>.*/, "", updated)
+      }
+      /href="[^"]*\/releases\/tag\/nightly-[0-9a-f]{40}"/ {
+        tag=$0
+        gsub(/.*\/releases\/tag\//, "", tag)
+        gsub(/".*/, "", tag)
+      }
+      /<\/entry>/ && updated != "" && tag ~ /^nightly-[0-9a-f]{40}$/ {
+        print updated "\t" tag
+      }
+    ' \
+    | sort -r \
+    | awk -F '\t' '!seen[$2]++ { print $2; count++ } count >= limit { exit }' limit="$FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT"
+}
+
+# Backwards-compatible helper for tests/callers that only need the newest
+# candidate from the feed.
+resolve_nightly_tag_via_feed() {
+  resolve_nightly_tags_via_feed "$1" | head -n1
+}
+
+select_installable_nightly_tag() {
+  local _tag _release_url _archive_url _tmp
+  for _tag in "${FOUNDRYUP_NIGHTLY_CANDIDATES[@]}"; do
+    _release_url="https://github.com/${FOUNDRYUP_REPO}/releases/download/${_tag}/"
+    _archive_url="${_release_url}foundry_nightly_${PLATFORM}_${ARCHITECTURE}.${EXT}"
+    _tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+    if [ "$PLATFORM" = "win32" ]; then
+      _tmp="$_tmp/foundry.zip"
+      if download "$_archive_url" "$_tmp" && unzip -t "$_tmp" >/dev/null 2>&1; then
+        rm -f "$_tmp"
+        printf '%s\n' "$_tag"
+        return 0
+      fi
+    else
+      _tmp="$_tmp/foundry.tar.gz"
+      if download "$_archive_url" "$_tmp" && tar tf "$_tmp" >/dev/null 2>&1; then
+        rm -f "$_tmp"
+        printf '%s\n' "$_tag"
+        return 0
+      fi
+    fi
+    rm -f "$_tmp"
+    warn "nightly ${_tag} is not installable yet, trying previous nightly"
+  done
+  err "could not find an installable nightly release for ${FOUNDRYUP_REPO}"
 }
 
 # Silently fetches $1 to stdout.
@@ -854,7 +1020,83 @@ Contribute : https://github.com/foundry-rs/foundry/blob/HEAD/CONTRIBUTING.md
 }
 
 
+# Absolute path to the sidecar Rust foundryup binary (with `.exe` on Windows).
+rust_foundryup_bin() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s\n' "$FOUNDRYUP_RUST_HOME/bin/foundryup.exe" ;;
+    *)                    printf '%s\n' "$FOUNDRYUP_RUST_HOME/bin/foundryup" ;;
+  esac
+}
+
+# Prints the version of the sidecar Rust foundryup at $1 (e.g. `0.0.5`), or
+# nothing if it is not installed or the version cannot be determined. The
+# trailing `|| true` keeps a failing/unparsable `--version` from aborting under
+# `set -eo pipefail`, so the caller falls through to a reinstall instead.
+sidecar_version() {
+  [ -x "$1" ] || return 0
+  "$1" --version 2>/dev/null \
+    | sed -nE 's/^foundryup[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+    | head -1 || true
+}
+
+# Downloads `foundryup-init.sh` and installs the Rust foundryup into the
+# sidecar home, leaving the executable at $1.
+install_rust_foundryup() {
+  local _bin="$1"
+
+  local _init
+  _init="$(mktemp)"
+  ensure download "$FOUNDRYUP_INIT_URL" "$_init"
+
+  # Run the installer with:
+  #  - FOUNDRY_DIR pointed at the sidecar home, so it installs to
+  #    $FOUNDRYUP_RUST_HOME/bin/foundryup instead of overwriting this shim.
+  #  - FOUNDRYUP_VERSION scoped to the installer invocation only (it means the
+  #    installer version here, but the Foundry tool version to the Rust binary),
+  #    so it never leaks into the user's environment.
+  ensure env FOUNDRY_DIR="$FOUNDRYUP_RUST_HOME" FOUNDRYUP_VERSION="$FOUNDRYUP_BOOTSTRAP_VERSION" \
+    sh "$_init" -y
+  rm -f "$_init"
+
+  # The v0.0.5 installer writes the Windows binary without a `.exe` extension;
+  # normalize it so the exec below resolves correctly.
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      if [ ! -x "$_bin" ] && [ -f "$FOUNDRYUP_RUST_HOME/bin/foundryup" ]; then
+        mv -f "$FOUNDRYUP_RUST_HOME/bin/foundryup" "$_bin"
+      fi
+      ;;
+  esac
+
+  [ -x "$_bin" ] || err "failed to bootstrap the Rust foundryup binary"
+}
+
+# Ensures a Rust foundryup of at least $FOUNDRYUP_BOOTSTRAP_VERSION is present
+# in the sidecar home, (re)installing it otherwise. Reusing the sidecar only
+# when it is recent enough means a later $FOUNDRYUP_BOOTSTRAP_VERSION bump
+# actually migrates users who already bootstrapped an older binary, while a
+# self-updated newer binary is never downgraded.
+ensure_rust_foundryup() {
+  local _bin _have
+  _bin="$(rust_foundryup_bin)"
+  _have="$(sidecar_version "$_bin")"
+  if [ -n "$_have" ] && ! version_gt "$FOUNDRYUP_BOOTSTRAP_VERSION" "$_have"; then
+    return 0
+  fi
+
+  say "migrating to the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..."
+  install_rust_foundryup "$_bin"
+}
+
 # Skip execution when sourced by tests.
 if [ "${FOUNDRYUP_TEST:-0}" != "1" ]; then
-  main "$@"
+  # Opt-in migration to the Rust foundryup. When enabled, the user's
+  # environment (including FOUNDRY_DIR and any FOUNDRYUP_VERSION) is preserved
+  # for the exec, so the Rust binary installs Foundry into the usual location.
+  if [ "${FOUNDRYUP_MIGRATE:-0}" = "1" ]; then
+    ensure_rust_foundryup
+    exec "$(rust_foundryup_bin)" "$@"
+  else
+    main "$@"
+  fi
 fi

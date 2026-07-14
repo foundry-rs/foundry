@@ -27,11 +27,15 @@ use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
+    eip2935::{
+        HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
+        history_storage_slot, history_storage_value,
+    },
     env::FoundryContextExt,
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
-use foundry_evm_traces::TraceMode;
+use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
 use rand::Rng;
 use revm::{
@@ -247,10 +251,11 @@ impl Display for AccountStateDiffs {
 }
 
 impl Cheatcode for addrCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
-        let wallet = super::crypto::parse_wallet(privateKey)?;
-        Ok(wallet.address().abi_encode())
+        super::crypto::with_private_key_signer(state, privateKey, |wallet| {
+            Ok(wallet.address().abi_encode())
+        })
     }
 }
 
@@ -283,7 +288,10 @@ impl Cheatcode for loadCall {
             if ccx.state.has_arbitrary_storage(&target) {
                 // If storage slot is untouched and load from a target with arbitrary storage,
                 // then set random value for current slot.
-                let rand_value = ccx.state.rng().random();
+                let rand_value = ccx
+                    .state
+                    .cached_arbitrary_storage_value(target, slot.into())
+                    .unwrap_or_else(|| ccx.state.rng().random());
                 ccx.state.arbitrary_storage.as_mut().unwrap().save(
                     ccx.ecx,
                     target,
@@ -470,6 +478,16 @@ impl Cheatcode for lastCallGasCall {
     }
 }
 
+impl Cheatcode for lastFrameGasCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self {} = self;
+        let Some(last_frame_gas) = &state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        Ok(last_frame_gas.abi_encode())
+    }
+}
+
 impl Cheatcode for getChainIdCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
@@ -598,6 +616,16 @@ impl Cheatcode for getBlobhashesCall {
 impl Cheatcode for rollCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newHeight } = self;
+        let current_height = ccx.ecx.block().number();
+        if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE && *newHeight > current_height {
+            let mut block_number = forward_fill_start(current_height, *newHeight);
+            while block_number < *newHeight {
+                let block_hash =
+                    ccx.ecx.db_mut().block_hash(block_number.saturating_to()).unwrap_or_default();
+                set_eip2935_blockhash(ccx.ecx, block_number, block_hash)?;
+                block_number += U256::from(1);
+            }
+        }
         ccx.ecx.block_mut().set_number(*newHeight);
         Ok(Default::default())
     }
@@ -689,6 +717,16 @@ impl Cheatcode for etchCall {
         ccx.ecx.journal_mut().load_account(*target)?;
         let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
+        if *target == HISTORY_STORAGE_ADDRESS
+            && bytecode.hash_slow() != keccak256(&HISTORY_STORAGE_CODE)
+        {
+            let account =
+                ccx.ecx.journal_mut().evm_state_mut().get_mut(target).expect("account is loaded");
+            if account.info.code_hash == keccak256(&HISTORY_STORAGE_CODE) {
+                account.storage.clear();
+                account.mark_created();
+            }
+        }
         ccx.ecx.journal_mut().set_code(*target, bytecode);
         Ok(Default::default())
     }
@@ -814,6 +852,13 @@ impl Cheatcode for coolSlotCall {
     }
 }
 
+impl Cheatcode for isIsolateModeCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self {} = self;
+        Ok(state.config.isolate.abi_encode())
+    }
+}
+
 impl Cheatcode for readCallersCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
@@ -856,6 +901,31 @@ impl Cheatcode for snapshotGasLastCall_1Call {
             Some(group.clone()),
             Some(name.clone()),
             last_call_gas.gasTotalUsed,
+        )
+    }
+}
+
+impl Cheatcode for snapshotGasLastFrame_0Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { name } = self;
+        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_frame_gas.gasTotalUsed)
+    }
+}
+
+impl Cheatcode for snapshotGasLastFrame_1Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { name, group } = self;
+        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        inner_last_gas_snapshot(
+            ccx,
+            Some(group.clone()),
+            Some(name.clone()),
+            last_frame_gas.gasTotalUsed,
         )
     }
 }
@@ -1061,9 +1131,12 @@ impl Cheatcode for getStorageSlotsCall {
                 )
             })?;
             let num_slots = num_bytes.div_ceil(U256::from(32));
+            let num_slots = usize::try_from(num_slots).map_err(|_| {
+                fmt_err!("number_of_bytes {} exceeds host usize", storage_type.number_of_bytes)
+            })?;
 
             // Start from 1 since base slot is already added
-            for i in 1..num_slots.to::<usize>() {
+            for i in 1..num_slots {
                 slots.push(slot + U256::from(i));
             }
         }
@@ -1078,7 +1151,9 @@ impl Cheatcode for getStorageSlotsCall {
                 if length_byte & 1 == 1 {
                     // Calculate data slots for long bytes/string
                     let length: U256 = value.data >> 1;
-                    let num_data_slots = length.to::<usize>().div_ceil(32);
+                    let length = usize::try_from(length)
+                        .map_err(|_| fmt_err!("long bytes/string length exceeds host usize"))?;
+                    let num_data_slots = length.div_ceil(32);
                     let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
 
                     for i in 0..num_data_slots {
@@ -1143,6 +1218,13 @@ impl Cheatcode for setBlockhashCall {
         );
 
         ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
+        let current_block = U256::from(ccx.ecx.block().number());
+        if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE
+            && blockNumber < current_block
+            && current_block - blockNumber <= U256::from(HISTORY_SERVE_WINDOW)
+        {
+            set_eip2935_blockhash(ccx.ecx, blockNumber, blockHash)?;
+        }
 
         Ok(Default::default())
     }
@@ -1313,7 +1395,8 @@ impl Cheatcode for startDebugTraceRecordingCall {
         };
 
         // turn on tracer debug configuration for recording
-        *tracer.config_mut() = TraceMode::Debug.into_config().expect("cannot be None");
+        *tracer.config_mut() =
+            TraceRequirements::none().with_debug(true).into_config().expect("cannot be None");
 
         // track where the recording starts
         if let Some(last_node) = tracer.traces().nodes().last() {
@@ -1696,6 +1779,52 @@ pub(super) fn ensure_loaded_account<CTX: ContextTr<Db: Database<Error = Database
     Ok(())
 }
 
+fn set_eip2935_blockhash<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+>(
+    ecx: &mut CTX,
+    block_number: U256,
+    block_hash: B256,
+) -> Result<()> {
+    let account_was_cold = ecx.journal_mut().load_account(HISTORY_STORAGE_ADDRESS)?.is_cold;
+    let account =
+        ecx.journal_mut().evm_state().get(&HISTORY_STORAGE_ADDRESS).expect("account is loaded");
+    if account.info.code_hash != keccak256(&HISTORY_STORAGE_CODE) {
+        restore_eip2935_cold_state(ecx, account_was_cold, None);
+        return Ok(());
+    }
+
+    let slot = history_storage_slot(block_number);
+    let slot_was_cold = ecx
+        .journal_mut()
+        .sstore(HISTORY_STORAGE_ADDRESS, slot, history_storage_value(block_hash))
+        .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {:?}", e))?
+        .is_cold;
+    restore_eip2935_cold_state(ecx, account_was_cold, Some((slot, slot_was_cold)));
+    Ok(())
+}
+
+fn restore_eip2935_cold_state<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+>(
+    ecx: &mut CTX,
+    account_was_cold: bool,
+    slot_state: Option<(U256, bool)>,
+) {
+    let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&HISTORY_STORAGE_ADDRESS) else {
+        return;
+    };
+    if account_was_cold {
+        account.mark_cold();
+    }
+    if let Some((slot, slot_was_cold)) = slot_state
+        && slot_was_cold
+        && let Some(storage_slot) = account.storage.get_mut(&slot)
+    {
+        storage_slot.is_cold = true;
+    }
+}
+
 // Tempo TIP-1026 stores logoURI in TIP-20 storage slot 5, reusing the
 // previously-unused domainSeparator slot. This mirrors Tempo's
 // crates/precompiles/tests/storage_tests/solidity/testdata/tip20.layout.json
@@ -1808,7 +1937,7 @@ const fn is_long_string(slot_value: U256) -> bool {
 
 fn long_string_length(slot_value: U256) -> Option<usize> {
     let length: U256 = (slot_value - U256::ONE) >> 1;
-    (length <= U256::from(TIP20_MAX_LOGO_URI_BYTES)).then(|| length.to::<usize>())
+    usize::try_from(length).ok().filter(|length| *length <= TIP20_MAX_LOGO_URI_BYTES)
 }
 
 const fn string_chunks(byte_length: usize) -> usize {
@@ -1895,7 +2024,8 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
             .filter(|account_access| {
                 !account_access.storageAccesses.is_empty()
                     || account_access.oldBalance != account_access.newBalance
-                    || account_access.oldNonce != account_access.newNonce
+                    || (!account_access.reverted
+                        && account_access.oldNonce != account_access.newNonce)
             })
             .for_each(|account_access| {
                 // Record account balance diffs.
@@ -1920,7 +2050,7 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
                 }
 
                 // Record account nonce diffs.
-                if account_access.oldNonce != account_access.newNonce {
+                if account_access.oldNonce != account_access.newNonce && !account_access.reverted {
                     let account_diff =
                         state_diffs.entry(account_access.account).or_insert_with(|| {
                             AccountStateDiffs {

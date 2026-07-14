@@ -70,7 +70,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
@@ -203,14 +203,23 @@ impl CorpusEntry {
         }
     }
 
-    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<()> {
+    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<PathBuf> {
         let file_name = self.file_name(can_gzip);
-        let path = dir.join(file_name);
+        let path = dir.join(&file_name);
+        let temp_path = dir.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+
         if self.should_gzip(can_gzip) {
-            foundry_common::fs::write_json_gzip_file(&path, &self.tx_seq)
+            foundry_common::fs::write_json_gzip_file(&temp_path, &self.tx_seq)?;
         } else {
-            foundry_common::fs::write_json_file(&path, &self.tx_seq)
+            foundry_common::fs::write_json_file(&temp_path, &self.tx_seq)?;
         }
+
+        if let Err(err) = std::fs::rename(&temp_path, &path) {
+            let _ = foundry_common::fs::remove_file(&temp_path);
+            return Err(foundry_common::errors::FsPathError::write(err, &path));
+        }
+
+        Ok(path)
     }
 
     fn file_name(&self, can_gzip: bool) -> String {
@@ -234,6 +243,42 @@ pub(crate) struct CampaignCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
+/// Persists one call sequence as a corpus seed in the canonical worker0 corpus directory.
+pub fn persist_corpus_seed(
+    config: &FuzzCorpusConfig,
+    tx_seq: Vec<BasicTxDetails>,
+) -> foundry_common::fs::Result<Option<PathBuf>> {
+    let Some(root) = &config.corpus_dir else {
+        return Ok(None);
+    };
+    for dir in canonical_replay_dirs(root) {
+        for entry in read_corpus_dir(&dir) {
+            match entry.read_tx_seq() {
+                Ok(existing) if same_tx_sequence(&existing, &tx_seq) => {
+                    return Ok(Some(entry.path));
+                }
+                Ok(_) => {}
+                Err(err) => debug!(%err, path = ?entry.path, "failed to read corpus seed"),
+            }
+        }
+    }
+    let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
+    foundry_common::fs::create_dir_all(&corpus_dir)?;
+    CorpusEntry::new(tx_seq).write_to_disk_in(&corpus_dir, config.corpus_gzip).map(Some)
+}
+
+fn same_tx_sequence(left: &[BasicTxDetails], right: &[BasicTxDetails]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.warp == right.warp
+                && left.roll == right.roll
+                && left.sender == right.sender
+                && left.call_details.target == right.call_details.target
+                && left.call_details.calldata == right.call_details.calldata
+                && left.call_details.value == right.call_details.value
+        })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CorpusInsertionMode {
     Live,
@@ -244,13 +289,32 @@ pub(crate) enum CorpusInsertionMode {
 struct ReplayOutcome {
     keep_entry: bool,
     new_coverage: bool,
+    /// Whether replay hit a first-time edge (advances the per-worker "time since new edge" timer).
+    new_edge: bool,
     cmp_seq: Vec<Vec<CmpOperands>>,
     failed_replays: usize,
 }
 
 #[derive(Clone, Copy)]
+pub struct StatelessReplayTarget<'a> {
+    pub function: &'a Function,
+    pub address: Address,
+}
+
+impl StatelessReplayTarget<'_> {
+    fn can_replay(self, tx: &BasicTxDetails) -> bool {
+        tx.call_details.target == self.address
+            && tx
+                .call_details
+                .calldata
+                .get(..4)
+                .is_some_and(|selector| self.function.selector() == selector)
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct ReplayTarget<'a> {
-    pub(crate) fuzzed_function: Option<&'a Function>,
+    pub(crate) stateless: Option<StatelessReplayTarget<'a>>,
     pub(crate) fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
     pub(crate) dynamic: Option<&'a DynamicTargetCtx<'a>>,
 }
@@ -277,6 +341,9 @@ pub(crate) struct WorkerCorpusSeed {
     failed_replays: usize,
     optimization_best_value: Option<I256>,
     optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Set if persisted-corpus replay hit a first-time edge, so the timer starts at the baseline
+    /// load instead of reading "never" while `cumulative_edges_seen` is non-zero.
+    last_new_edge_at: Option<Instant>,
 }
 
 impl WorkerCorpusSeed {
@@ -334,15 +401,30 @@ impl WorkerCorpusSeed {
             failed_replays: self.failed_replays,
             optimization_best_value: self.optimization_best_value,
             optimization_best_sequence: self.optimization_best_sequence.clone(),
+            last_new_edge_at: self.last_new_edge_at,
+        }
+    }
+
+    pub(crate) fn retain_replayable(&mut self, targeted_contracts: &TargetedContracts) {
+        let is_replayable =
+            |tx_seq: &[BasicTxDetails]| tx_seq.iter().all(|tx| targeted_contracts.can_replay(tx));
+        self.in_memory_corpus.retain(|entry| is_replayable(&entry.tx_seq));
+        self.metrics.corpus_count = self.in_memory_corpus.len();
+        self.metrics.favored_items =
+            self.in_memory_corpus.iter().filter(|entry| entry.is_favored).count();
+
+        if !self.optimization_best_sequence.is_empty()
+            && !is_replayable(&self.optimization_best_sequence)
+        {
+            self.optimization_best_value = None;
+            self.optimization_best_sequence.clear();
         }
     }
 
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
         config: &FuzzCorpusConfig,
         executor: Option<&Executor<FEN>>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
     ) -> Result<Self> {
         let mut seed = Self::empty(config).with_optimization_state(config);
         let Some(corpus_dir) = &config.corpus_dir else {
@@ -356,7 +438,7 @@ impl WorkerCorpusSeed {
             seed.metrics.corpus_count += 1;
         }
 
-        if fuzzed_contracts.is_some() && has_legacy_invariant_corpus_dirs(corpus_dir) {
+        if target.fuzzed_contracts.is_some() && has_legacy_invariant_corpus_dirs(corpus_dir) {
             let _ = sh_warn!(
                 "Ignoring legacy invariant corpus directories under {}; new corpus entries are persisted under the contract-level corpus directory.",
                 corpus_dir.display(),
@@ -368,9 +450,18 @@ impl WorkerCorpusSeed {
         };
         let mut seen_entries =
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
-        let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
         for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
-            let tx_seq = entry.read_tx_seq()?;
+            // A corrupt or truncated corpus file (e.g. a process killed mid-write, since entries
+            // are persisted non-atomically) must not abort the whole campaign startup: skip it
+            // and keep loading the rest of the corpus.
+            let tx_seq = match entry.read_tx_seq() {
+                Ok(tx_seq) => tx_seq,
+                Err(err) => {
+                    let _ =
+                        sh_warn!("Skipping unreadable corpus file {}: {err}", entry.path.display());
+                    continue;
+                }
+            };
             if tx_seq.is_empty() {
                 continue;
             }
@@ -381,9 +472,13 @@ impl WorkerCorpusSeed {
                 sancov_history_map: &mut seed.sancov_history_map,
                 metrics: Some(&mut seed.metrics),
             };
-            let ReplayOutcome { keep_entry, cmp_seq, failed_replays, .. } =
+            let ReplayOutcome { keep_entry, new_edge, cmp_seq, failed_replays, .. } =
                 replay_corpus_sequence(&tx_seq, executor, target, coverage)?;
             seed.failed_replays += failed_replays;
+            // Start the timer at the baseline load if replay hit a first-time edge.
+            if new_edge {
+                seed.last_new_edge_at = Some(Instant::now());
+            }
             if !keep_entry {
                 continue;
             }
@@ -561,6 +656,12 @@ pub struct WorkerCorpus {
     optimization_best_value: Option<I256>,
     /// Optimization mode: the call sequence that produced the best value.
     optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Monotonic time the worker's local map last gained a first-time edge; `None` until then.
+    ///
+    /// Updated wherever the map grows: live fuzzing, startup replay, and cross-worker sync. Tracks
+    /// *local* discovery (an edge new to this worker), not globally unique discovery. Kept out of
+    /// [`CorpusMetrics`] since a timestamp is neither additive across workers nor serializable.
+    last_new_edge_at: Option<Instant>,
 }
 
 /// Refs used during corpus replay to register contracts deployed mid-sequence as fuzz targets,
@@ -654,10 +755,11 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     let mut cmp_seq = Vec::with_capacity(tx_seq.len());
     let mut failed_replays = 0;
     let mut new_coverage_for_entry = false;
+    let mut new_edge_for_entry = false;
     let mut created: Vec<Address> = Vec::new();
 
     for tx in tx_seq {
-        if WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
+        if WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
             let mut call_result = execute_tx(executor, tx)?;
             cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
             let (new_coverage, is_edge) = call_result.merge_all_coverage(
@@ -667,6 +769,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             );
             if new_coverage {
                 new_coverage_for_entry = true;
+                new_edge_for_entry |= is_edge;
                 if let Some(metrics) = coverage.metrics.as_deref_mut() {
                     metrics.update_seen(is_edge);
                 }
@@ -696,11 +799,12 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             cmp_seq.push(Vec::new());
             failed_replays += 1;
 
-            if reject_unmatched_function && target.fuzzed_function.is_some() {
+            if reject_unmatched_function && target.stateless.is_some() {
                 rollback_replay_created(target.fuzzed_contracts, created);
                 return Ok(ReplayOutcome {
                     keep_entry: false,
                     new_coverage: new_coverage_for_entry,
+                    new_edge: new_edge_for_entry,
                     cmp_seq,
                     failed_replays,
                 });
@@ -712,6 +816,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     Ok(ReplayOutcome {
         keep_entry: true,
         new_coverage: new_coverage_for_entry,
+        new_edge: new_edge_for_entry,
         cmp_seq,
         failed_replays,
     })
@@ -724,18 +829,10 @@ impl WorkerCorpus {
         tx_generator: BoxedStrategy<BasicTxDetails>,
         // Only required by master worker (id = 0) to replay existing corpus.
         executor: Option<&Executor<FEN>>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
     ) -> Result<Self> {
         let seed = if id == 0 {
-            WorkerCorpusSeed::load_from_disk(
-                &config,
-                executor,
-                fuzzed_function,
-                fuzzed_contracts,
-                dynamic,
-            )?
+            WorkerCorpusSeed::load_from_disk(&config, executor, target)?
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
@@ -808,6 +905,7 @@ impl WorkerCorpus {
             last_sync_metrics: Default::default(),
             optimization_best_value: seed.optimization_best_value,
             optimization_best_sequence: seed.optimization_best_sequence,
+            last_new_edge_at: seed.last_new_edge_at,
         })
     }
 
@@ -871,7 +969,6 @@ impl WorkerCorpus {
                 );
             }
         }
-
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -1000,8 +1097,19 @@ impl WorkerCorpus {
         );
         if new_coverage {
             self.metrics.update_seen(is_edge);
+            // Only a first-time edge (not a new hitcount bucket, i.e. a "feature") resets the
+            // timer.
+            if is_edge {
+                self.last_new_edge_at = Some(Instant::now());
+            }
         }
         new_coverage
+    }
+
+    /// Time since this worker last gained a first-time edge; `None` until it has seen one. See
+    /// [`WorkerCorpus::last_new_edge_at`] for the local-vs-global caveat.
+    pub(crate) fn time_since_new_edge(&self) -> Option<Duration> {
+        self.last_new_edge_at.map(|at| at.elapsed())
     }
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
@@ -1061,14 +1169,17 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
                     let start = rng.random_range(0..corpus.tx_seq.len());
                     let end = rng.random_range(start..corpus.tx_seq.len());
                     let item_idx = rng.random_range(0..corpus.tx_seq.len());
-                    let repeated = new_seq[item_idx].clone();
-                    for tx in &mut new_seq[start..end] {
-                        *tx = repeated.clone();
+                    let repeated = corpus.tx_seq[item_idx].clone();
+
+                    new_seq.reserve(corpus.tx_seq.len());
+                    new_seq.extend_from_slice(&corpus.tx_seq[..start]);
+                    for _ in start..end {
+                        new_seq.push(repeated.clone());
                     }
+                    new_seq.extend_from_slice(&corpus.tx_seq[end..]);
                 }
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
@@ -1092,10 +1203,12 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
-                    for i in 0..rng.random_range(0..=new_seq.len()) {
-                        new_seq[i] = self.new_tx(test_runner)?;
+                    let prefix_len = rng.random_range(0..=corpus.tx_seq.len());
+                    new_seq.reserve(corpus.tx_seq.len());
+                    for _ in 0..prefix_len {
+                        new_seq.push(self.new_tx(test_runner)?);
                     }
+                    new_seq.extend_from_slice(&corpus.tx_seq[prefix_len..]);
                 }
                 MutationType::Suffix => {
                     let (corpus_index, corpus) = if rng.random::<bool>() {
@@ -1107,10 +1220,12 @@ impl WorkerCorpus {
 
                     self.current_mutated_index = Some(corpus_index);
 
-                    new_seq = corpus.tx_seq.clone();
-                    for i in new_seq.len() - rng.random_range(0..new_seq.len())..corpus.tx_seq.len()
-                    {
-                        new_seq[i] = self.new_tx(test_runner)?;
+                    let suffix_len = rng.random_range(0..corpus.tx_seq.len());
+                    let retained_len = corpus.tx_seq.len() - suffix_len;
+                    new_seq.reserve(corpus.tx_seq.len());
+                    new_seq.extend_from_slice(&corpus.tx_seq[..retained_len]);
+                    for _ in retained_len..corpus.tx_seq.len() {
+                        new_seq.push(self.new_tx(test_runner)?);
                     }
                 }
                 MutationType::Abi => {
@@ -1262,14 +1377,14 @@ impl WorkerCorpus {
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
             match weighted_arg_mutation(test_runner.rng(), self.arg_mutation_distribution.as_ref())
             {
-                Some(true) => {
+                Some(true)
                     if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
                         && self.mutation_weights.mutation_weight_abi > 0
-                        && !function.inputs.is_empty()
-                    {
-                        self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
-                    }
+                        && !function.inputs.is_empty() =>
+                {
+                    self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
                 }
+                Some(true) => {}
                 Some(false)
                     if self.mutation_weights.mutation_weight_abi > 0
                         && !function.inputs.is_empty() =>
@@ -1663,7 +1778,14 @@ impl WorkerCorpus {
             if entry.timestamp <= self.last_sync_timestamp {
                 continue;
             }
-            let tx_seq = entry.read_tx_seq()?;
+            // A corrupt or truncated sync file must not abort the whole sync pass: skip it.
+            let tx_seq = match entry.read_tx_seq() {
+                Ok(tx_seq) => tx_seq,
+                Err(err) => {
+                    warn!(target: "corpus", "skipping unreadable corpus file {}: {err}", entry.path.display());
+                    continue;
+                }
+            };
             if tx_seq.is_empty() {
                 warn!(target: "corpus", "skipping empty corpus entry: {}", entry.path.display());
                 continue;
@@ -1684,9 +1806,7 @@ impl WorkerCorpus {
     fn calibrate<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<&DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
     ) -> Result<()> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(());
@@ -1695,14 +1815,13 @@ impl WorkerCorpus {
 
         let mut executor = executor.clone();
         for (entry, tx_seq) in self.load_sync_corpus()? {
-            let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic };
             let coverage = ReplayCoverage {
                 history_map: &mut self.history_map,
                 edge_indices: &mut self.edge_indices,
                 sancov_history_map: &mut self.sancov_history_map,
                 metrics: Some(&mut self.metrics),
             };
-            let ReplayOutcome { keep_entry, new_coverage, cmp_seq, .. } =
+            let ReplayOutcome { keep_entry, new_coverage, new_edge, cmp_seq, .. } =
                 replay_corpus_sequence_with_executor(
                     &tx_seq,
                     &mut executor,
@@ -1711,6 +1830,11 @@ impl WorkerCorpus {
                     true,
                     false,
                 )?;
+
+            // A synced edge is new to this worker's local map, so it advances the timer.
+            if new_edge {
+                self.last_new_edge_at = Some(Instant::now());
+            }
 
             let sync_path = &entry.path;
             if keep_entry && new_coverage {
@@ -1886,16 +2010,14 @@ impl WorkerCorpus {
         &mut self,
         num_workers: usize,
         executor: &Executor<FEN>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<&DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
         global_corpus_metrics: &GlobalCorpusMetrics,
     ) -> Result<()> {
         trace!(target: "corpus", "syncing");
 
         self.sync_metrics(global_corpus_metrics);
 
-        self.calibrate(executor, fuzzed_function, fuzzed_contracts, dynamic)?;
+        self.calibrate(executor, target)?;
         if self.id == 0 {
             self.export_to_workers(num_workers)?;
         } else {
@@ -1915,16 +2037,11 @@ impl WorkerCorpus {
     /// Helper to check if a tx can be replayed.
     pub(crate) fn can_replay_tx(
         tx: &BasicTxDetails,
-        fuzzed_function: Option<&Function>,
+        stateless: Option<StatelessReplayTarget<'_>>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> bool {
         fuzzed_contracts.is_some_and(|contracts| contracts.targets().can_replay(tx))
-            || fuzzed_function.is_some_and(|function| {
-                tx.call_details
-                    .calldata
-                    .get(..4)
-                    .is_some_and(|selector| function.selector() == selector)
-            })
+            || stateless.is_some_and(|target| target.can_replay(tx))
     }
 }
 
@@ -2045,6 +2162,7 @@ fn unique_corpus_entries<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey};
     use alloy_dyn_abi::DynSolValue;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::prelude::Just;
@@ -2417,6 +2535,38 @@ mod tests {
         assert_eq!(manager.current_mutated_index, Some(0));
     }
 
+    // A corrupt/truncated corpus file (valid name, unparsable content — e.g. a process killed
+    // mid-write, since entries are persisted non-atomically) must surface as a per-entry read
+    // error rather than break directory scanning, so the load/sync loops can skip it instead of
+    // aborting the whole campaign.
+    #[test]
+    fn corrupt_corpus_file_surfaces_as_error_for_load_to_skip() {
+        let dir = temp_corpus_dir();
+
+        // A valid entry round-trips through the on-disk format.
+        let valid = CorpusEntry::new(vec![basic_tx()]);
+        valid.write_to_disk_in(&dir, false).unwrap();
+
+        // A file with a valid corpus name but garbage content.
+        let corrupt_path = dir.join(format!("{}-123.json", Uuid::new_v4()));
+        fs::write(&corrupt_path, b"{ not valid json").unwrap();
+
+        let entries = read_corpus_dir(&dir).collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2, "directory scan should surface both files");
+
+        let (mut ok, mut err) = (0u32, 0u32);
+        for entry in &entries {
+            match entry.read_tx_seq() {
+                Ok(seq) => {
+                    ok += 1;
+                    assert_eq!(seq.len(), 1);
+                }
+                Err(_) => err += 1,
+            }
+        }
+        assert_eq!((ok, err), (1, 1), "the corrupt file must read as Err, the valid one as Ok");
+    }
+
     #[test]
     fn campaign_processing_returns_corpus_without_writing_worker_file() {
         let corpus_root = temp_corpus_dir();
@@ -2430,6 +2580,47 @@ mod tests {
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.metrics.corpus_count, 1);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+    }
+
+    /// `RawCallResult` carrying a single edge hit, to drive `merge_edge_coverage` without the EVM.
+    fn edge_call(edge: EdgeKey, count: u8) -> RawCallResult {
+        RawCallResult {
+            edge_coverage: Some(EdgeCoverage::CollisionFree(vec![EdgeCovHit { edge, count }])),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_edge_coverage_advances_timer_only_for_new_edges() {
+        let corpus_root = temp_corpus_dir();
+        let mut manager = empty_worker_corpus(1, corpus_root);
+
+        // No edge seen yet.
+        assert!(manager.time_since_new_edge().is_none());
+        assert_eq!(manager.metrics.cumulative_edges_seen, 0);
+
+        let edge =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+
+        // First-time edge starts the timer.
+        assert!(manager.merge_edge_coverage(&mut edge_call(edge, 1)));
+        let first = manager.last_new_edge_at.expect("timer set after first new edge");
+        assert_eq!(manager.metrics.cumulative_edges_seen, 1);
+
+        // Same edge, higher bucket = a feature, not an edge: timer must not advance.
+        assert!(manager.merge_edge_coverage(&mut edge_call(edge, 8)));
+        assert_eq!(manager.last_new_edge_at, Some(first));
+        assert_eq!(manager.metrics.cumulative_edges_seen, 1);
+        assert_eq!(manager.metrics.cumulative_features_seen, 1);
+
+        // A distinct edge advances the timer.
+        let other =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 1, jump_dest: U256::from(20) };
+        assert!(manager.merge_edge_coverage(&mut edge_call(other, 1)));
+        let second = manager.last_new_edge_at.expect("timer present");
+        assert!(second >= first);
+        assert_eq!(manager.metrics.cumulative_edges_seen, 2);
+        assert!(manager.time_since_new_edge().is_some());
     }
 
     #[test]
@@ -2515,6 +2706,37 @@ mod tests {
     }
 
     #[test]
+    fn corpus_entry_write_uses_unparsable_temp_file() {
+        let corpus_dir = temp_corpus_dir();
+        let corpus = CorpusEntry::new(vec![basic_tx()]);
+        let temp_path =
+            corpus_dir.join(format!(".{}.{}.tmp", corpus.file_name(false), Uuid::new_v4()));
+        fs::write(&temp_path, b"{").unwrap();
+
+        let path = corpus.write_to_disk_in(&corpus_dir, false).unwrap();
+        let entries = read_corpus_dir(&corpus_dir).collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, path);
+        assert!(temp_path.exists());
+    }
+
+    #[test]
+    fn persist_corpus_seed_skips_duplicate_sequence() {
+        let corpus_root = temp_corpus_dir();
+        let config = corpus_config(corpus_root.clone());
+        let sequence = vec![basic_tx_with_calldata(vec![0x12, 0x34])];
+
+        let first = persist_corpus_seed(&config, sequence.clone()).unwrap().unwrap();
+        let second = persist_corpus_seed(&config, sequence).unwrap().unwrap();
+        let entries =
+            read_corpus_dir(&corpus_root.join("worker0").join(CORPUS_DIR)).collect::<Vec<_>>();
+
+        assert_eq!(first, second);
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
     fn non_master_campaign_worker_uses_persisted_optimization_baseline() {
         let corpus_root = temp_corpus_dir();
         let persisted_sequence = vec![basic_tx()];
@@ -2532,9 +2754,7 @@ mod tests {
             corpus_config(corpus_root),
             Just(basic_tx()).boxed(),
             None,
-            None,
-            None,
-            None,
+            ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )
         .unwrap();
 
@@ -2575,6 +2795,7 @@ mod tests {
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: tx_seq,
+            last_new_edge_at: None,
         };
 
         let manager =
@@ -2617,6 +2838,7 @@ mod tests {
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: vec![basic_tx()],
+            last_new_edge_at: None,
         };
 
         let worker_count = 3;
@@ -2681,6 +2903,47 @@ mod tests {
 
         assert!(with_cmp.in_memory_corpus.iter().all(|entry| !entry.cmp_seq[0].is_empty()));
         assert!(without_cmp.in_memory_corpus.iter().all(|entry| entry.cmp_seq.is_empty()));
+    }
+
+    #[test]
+    fn retain_replayable_removes_off_target_corpus_entries() {
+        let target = Address::from([0x11; 20]);
+        let foo = Function::parse("foo()").unwrap();
+        let bar = Function::parse("bar()").unwrap();
+        let foo_selector = foo.selector();
+        let foo_tx = tx_for_function(target, &foo, &[]);
+        let bar_tx = tx_for_function(target, &bar, &[]);
+        let mut foo_entry = CorpusEntry::new(vec![foo_tx.clone()]);
+        foo_entry.is_favored = true;
+        let mut bar_entry = CorpusEntry::new(vec![bar_tx.clone()]);
+        bar_entry.is_favored = true;
+        let mut seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![foo_entry, bar_entry],
+            metrics: CorpusMetrics { corpus_count: 2, favored_items: 2, ..Default::default() },
+            optimization_best_value: Some(I256::try_from(17).unwrap()),
+            optimization_best_sequence: vec![bar_tx],
+            ..Default::default()
+        };
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
+        let targets = targeted_contracts.targets();
+
+        seed.retain_replayable(&targets);
+
+        assert_eq!(seed.in_memory_corpus.len(), 1);
+        assert_eq!(seed.in_memory_corpus[0].tx_seq.len(), 1);
+        assert_eq!(
+            seed.in_memory_corpus[0].tx_seq[0].call_details.target,
+            foo_tx.call_details.target
+        );
+        assert_eq!(
+            seed.in_memory_corpus[0].tx_seq[0].call_details.calldata,
+            foo_tx.call_details.calldata
+        );
+        assert_eq!(seed.metrics.corpus_count, 1);
+        assert_eq!(seed.metrics.favored_items, 1);
+        assert!(seed.optimization_best_value.is_none());
+        assert!(seed.optimization_best_sequence.is_empty());
     }
 
     #[test]

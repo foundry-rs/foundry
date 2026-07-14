@@ -3,12 +3,15 @@
 use crate::{
     TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
+use alloy_json_abi::JsonAbi;
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
-    artifacts::{BytecodeObject, Contract, Source, remappings::Remapping},
+    artifacts::{
+        BytecodeObject, Contract, Source, output_selection::OutputSelection, remappings::Remapping,
+    },
     compilers::{
         Compiler,
         solc::{Solc, SolcCompiler},
@@ -20,8 +23,13 @@ use foundry_compilers::{
     solc::SolcSettings,
 };
 use num_format::{Locale, ToFormattedString};
+use solar::{
+    ast::{Arena, ContractKind, ItemKind},
+    interface::{Session, source_map::FileName},
+    parse::Parser,
+};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
     path::{Path, PathBuf},
@@ -280,8 +288,40 @@ impl ProjectCompiler {
                 artifacts.entry(id.name.clone()).or_default().push((id.source.clone(), artifact));
             }
 
+            // Internal libraries are inlined into consumers and never deployed; skip them.
+            // Only artifacts whose ABI has no functions can be internal libraries, so restrict the
+            // solar parse to those sources to avoid a second full parse pass.
+            let abs_source = |path: &Path| -> PathBuf {
+                if path.is_absolute() { path.to_path_buf() } else { self.project_root.join(path) }
+            };
+            let source_paths = artifacts
+                .values()
+                .flatten()
+                .filter(|(_, artifact)| {
+                    artifact.abi.as_ref().is_some_and(|abi| abi.functions().next().is_none())
+                })
+                .map(|(path, _)| abs_source(path))
+                .collect::<BTreeSet<_>>();
+            let libraries = collect_libraries(&source_paths);
+
             for (name, artifact_list) in artifacts {
-                for (path, artifact) in &artifact_list {
+                // A library with no functions in its ABI is internal-only; fail open if the ABI is
+                // missing. Filter first so the duplicate-name suffix below reflects kept contracts.
+                let kept = artifact_list
+                    .iter()
+                    .filter(|(path, artifact)| {
+                        let is_library = libraries
+                            .get(&abs_source(path))
+                            .is_some_and(|libs| libs.contains(&name));
+                        let has_no_abi_functions = artifact
+                            .abi
+                            .as_ref()
+                            .is_some_and(|abi| abi.functions().next().is_none());
+                        !(is_library && has_no_abi_functions)
+                    })
+                    .collect::<Vec<_>>();
+
+                for (path, artifact) in &kept {
                     let runtime_size = contract_size(*artifact, false).unwrap_or_default();
                     let init_size = contract_size(*artifact, true).unwrap_or_default();
 
@@ -296,7 +336,7 @@ impl ProjectCompiler {
                         })
                         .unwrap_or(false);
 
-                    let unique_name = if artifact_list.len() > 1 {
+                    let unique_name = if kept.len() > 1 {
                         format!(
                             "{} ({})",
                             name,
@@ -528,6 +568,44 @@ impl SizeReport {
     }
 }
 
+/// Parses each source file with solar and returns the library names declared in it.
+///
+/// Files that fail to parse are skipped, so a missing entry means "unknown", not "no libraries".
+fn collect_libraries(sources: &BTreeSet<PathBuf>) -> HashMap<PathBuf, HashSet<String>> {
+    let mut result: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let sess = Session::builder().with_silent_emitter(None).build();
+    let _ = sess.enter(|| -> solar::interface::Result<()> {
+        for path in sources {
+            let arena = Arena::new();
+            let mut parser = match Parser::from_lazy_source_code(
+                &sess,
+                &arena,
+                FileName::from(path.clone()),
+                || std::fs::read_to_string(path),
+            ) {
+                Ok(parser) => parser,
+                Err(_) => continue,
+            };
+            let Ok(ast) = parser.parse_file() else { continue };
+            let libs = ast
+                .items
+                .iter()
+                .filter_map(|item| match &item.kind {
+                    ItemKind::Contract(c) if c.kind == ContractKind::Library => {
+                        Some(c.name.as_str().to_string())
+                    }
+                    _ => None,
+                })
+                .collect::<HashSet<_>>();
+            if !libs.is_empty() {
+                result.insert(path.clone(), libs);
+            }
+        }
+        Ok(())
+    });
+    result
+}
+
 /// Returns the deployed or init size of the contract.
 fn contract_size<T: Artifact>(artifact: &T, initcode: bool) -> Option<usize> {
     let bytecode = if initcode {
@@ -579,6 +657,39 @@ where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
 {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
+}
+
+/// Compiles the project requesting only ABI output.
+pub fn compile_abi_project<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+    compiler: ProjectCompiler,
+) -> Result<ProjectCompileOutput<C>>
+where
+    DynamicTestLinkingPreprocessor: Preprocessor<C>,
+{
+    project.update_output_selection(|selection| {
+        // Request ABI so compilers populate `contracts` without producing bytecode outputs.
+        *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+    });
+    compiler.compile(project)
+}
+
+/// Compiles the target contract requesting only ABI output and returns its ABI.
+pub fn compile_target_abi(
+    project: &mut Project<MultiCompiler>,
+    target_path: &Path,
+    target_name: &str,
+) -> Result<JsonAbi> {
+    let target_path = dunce::canonicalize(target_path)?;
+    let output = compile_abi_project(
+        project,
+        ProjectCompiler::new().quiet(true).files([target_path.clone()]),
+    )?;
+
+    let artifact = output
+        .find(&target_path, target_name)
+        .ok_or_eyre("failed to find target artifact when compiling for abi")?;
+    artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
 }
 
 /// Creates a [Project] from an Etherscan source.

@@ -4,9 +4,13 @@ use crate::cmd::{install, watch::WatchArgs};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_doc::DocBuilder;
-use foundry_cli::{opts::GH_REPO_PREFIX_REGEX, utils::Git};
+use foundry_cli::{
+    opts::{GH_REPO_PREFIX_REGEX, configure_pcx_all_sources_with_status},
+    utils::Git,
+};
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_config::{Config, load_config_with_root};
+use solar::{interface::Session, sema::Compiler};
 use std::{path::PathBuf, time::Instant};
 
 #[derive(Clone, Debug, Parser)]
@@ -63,14 +67,26 @@ impl DocArgs {
         }
 
         let root = &config.root;
-        let project = config.project()?;
+        let project = config.ephemeral_project()?;
+        let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
+        let source_status = compiler.enter_mut(|compiler| -> Result<_> {
+            let mut pcx = compiler.parse();
+            pcx.set_resolve_imports(true);
+            let status =
+                configure_pcx_all_sources_with_status(&mut pcx, &config, Some(&project), None)?;
+            pcx.parse();
+            Ok(status)
+        })?;
 
-        // Compile the project first so the doc renderer has access to a fully
-        // resolved HIR (needed for `@inheritdoc`, cross-references, etc.).
-        // We let the standard compilation reporter print progress so users get
-        // the same visual feedback as `forge build`; pass `--quiet` to silence.
-        let mut output = ProjectCompiler::new().compile(&project)?;
-        let compiler = output.parser_mut().solc_mut().compiler_mut();
+        // Solar does not support Solidity versions prior to 0.8.0. Preserve support for old,
+        // mixed-version, and Solidity-free projects by using the existing compiler-backed parser.
+        let mut output = if source_status.is_fully_supported() {
+            None
+        } else {
+            let mut compile_project = config.solar_project()?;
+            compile_project.no_artifacts = true;
+            Some(ProjectCompiler::new().compile(&compile_project)?)
+        };
 
         let mut doc_cfg = config.doc;
         if let Some(out) = self.out.clone() {
@@ -90,7 +106,7 @@ impl DocArgs {
         }
 
         let git = Git::new(root);
-        let commit = git.commit_hash(false, "HEAD").ok();
+        let commit = doc_cfg.commit.clone().or_else(|| git.commit_hash(false, "HEAD").ok());
         // Best-effort branch detection for editLink. May yield "HEAD" when in
         // detached HEAD state; treat that as unknown.
         let branch = git.current_rev_branch(root).ok().map(|(_, b)| b).filter(|b| b != "HEAD");
@@ -112,6 +128,11 @@ impl DocArgs {
             sh_println!("Generating documentation...")?;
         }
         let started = Instant::now();
+        let compiler = if let Some(output) = &mut output {
+            output.parser_mut().solc_mut().compiler_mut()
+        } else {
+            &mut compiler
+        };
         let stats = builder.build(compiler)?;
         let elapsed = started.elapsed();
 

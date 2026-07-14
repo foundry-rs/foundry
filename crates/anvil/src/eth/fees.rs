@@ -13,9 +13,10 @@ use alloy_primitives::B256;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
+use tempo_hardfork::{TempoHardfork, constants::gas::tempo_t7_next_block_base_fee};
 
 use crate::eth::{
-    backend::{info::StorageInfo, notifications::NewBlockNotifications},
+    backend::{info::StorageInfo, notifications::ChainNotifications},
     error::BlockchainError,
 };
 
@@ -58,9 +59,15 @@ pub struct FeeManager {
     elasticity: Arc<RwLock<f64>>,
     /// Network-specific base fee params for EIP-1559 calculations
     base_fee_params: BaseFeeParams,
+    /// The active Tempo hardfork, set only when running a Tempo chain.
+    ///
+    /// Tempo replaces EIP-1559: pre-T7 the base fee is fixed, and T7+ uses the TIP-1067 dynamic
+    /// controller. It is updated once after a fork's hardfork is auto-detected.
+    tempo_hardfork: Arc<RwLock<Option<TempoHardfork>>>,
 }
 
 impl FeeManager {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         spec_id: SpecId,
         base_fee: u64,
@@ -69,6 +76,7 @@ impl FeeManager {
         blob_excess_gas_and_price: BlobExcessGasAndPrice,
         blob_params: BlobParams,
         base_fee_params: BaseFeeParams,
+        tempo_hardfork: Option<TempoHardfork>,
     ) -> Self {
         let elasticity = 1f64 / base_fee_params.elasticity_multiplier as f64;
         Self {
@@ -80,12 +88,18 @@ impl FeeManager {
             blob_excess_gas_and_price: Arc::new(RwLock::new(blob_excess_gas_and_price)),
             elasticity: Arc::new(RwLock::new(elasticity)),
             base_fee_params,
+            tempo_hardfork: Arc::new(RwLock::new(tempo_hardfork)),
         }
     }
 
-    /// Returns the base fee params used for EIP-1559 calculations
-    pub const fn base_fee_params(&self) -> BaseFeeParams {
-        self.base_fee_params
+    /// Returns the active Tempo hardfork, if running a Tempo chain.
+    pub fn tempo_hardfork(&self) -> Option<TempoHardfork> {
+        *self.tempo_hardfork.read()
+    }
+
+    /// Sets the active Tempo hardfork, used after a fork's hardfork is auto-detected.
+    pub fn set_tempo_hardfork(&self, hardfork: Option<TempoHardfork>) {
+        *self.tempo_hardfork.write() = hardfork;
     }
 
     pub fn elasticity(&self) -> f64 {
@@ -160,6 +174,10 @@ impl FeeManager {
         if self.base_fee() == 0 {
             return 0;
         }
+        // Tempo replaces EIP-1559 with its own hardfork-specific base fee rules.
+        if let Some(hardfork) = self.tempo_hardfork() {
+            return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
+        }
         calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, self.base_fee_params)
     }
 
@@ -189,6 +207,18 @@ impl FeeManager {
     }
 }
 
+/// Computes the next block's base fee for a Tempo chain.
+///
+/// - T7+: the TIP-1067 dynamic controller, an EIP-1559 update against a fixed 10M gas target
+///   clamped to `[floor, cap]`.
+/// - Pre-T7: the fixed hardfork base fee (10 gwei pre-T1, 20 gwei T1+).
+fn tempo_next_block_base_fee(hardfork: TempoHardfork, gas_used: u64, parent_base_fee: u64) -> u64 {
+    if hardfork.is_t7() {
+        return tempo_t7_next_block_base_fee(parent_base_fee, gas_used);
+    }
+    crate::config::tempo_default_base_fee(hardfork)
+}
+
 /// An async service that takes care of the `FeeHistory` cache
 pub struct FeeHistoryService<N: Network>
 where
@@ -197,7 +227,7 @@ where
     /// blob parameters for the current spec
     blob_params: BlobParams,
     /// incoming notifications about new blocks
-    new_blocks: NewBlockNotifications,
+    new_blocks: ChainNotifications,
     /// contains all fee history related entries
     cache: FeeHistoryCache,
     /// number of items to consider
@@ -212,7 +242,7 @@ where
 {
     pub const fn new(
         blob_params: BlobParams,
-        new_blocks: NewBlockNotifications,
+        new_blocks: ChainNotifications,
         cache: FeeHistoryCache,
         storage_info: StorageInfo<N>,
     ) -> Self {
@@ -361,7 +391,9 @@ where
 
         while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
             // add the imported block.
-            pin.insert_cache_entry_for_block(notification.hash, notification.header.as_ref());
+            if let Some(block) = notification.as_new_block() {
+                pin.insert_cache_entry_for_block(block.hash, block.header.as_ref());
+            }
         }
 
         Poll::Pending

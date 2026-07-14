@@ -33,6 +33,46 @@ Build and install the benchmark runner:
 cargo build --release --bin foundry-bench
 ```
 
+### Run CI benchmark suites locally
+
+The canonical CI and nightly benchmark definitions live in
+`benches/scripts/run-benchmark-suite.sh`. List the available profiles and suites
+with:
+
+```bash
+benches/scripts/run-benchmark-suite.sh --list
+```
+
+| Profile | Suites run by CI |
+| --- | --- |
+| `ci` | `test`, `isolate`, `build`, `coverage` |
+| `nightly` | `test`, `fuzz`, `build`, `coverage`, `symbolic` for both stable and nightly |
+
+The `ci:symbolic` suite is also defined for local use but is currently disabled
+in the regular workflow because the previous stable baseline does not support
+symbolic execution.
+
+After building the runner, invoke a suite from the repository root. These are
+the same definitions used by CI, including pinned repositories, exclusions,
+benchmark IDs, installation behavior, and output filenames:
+
+```bash
+# Run the regular CI test suite against a local Foundry build.
+benches/scripts/run-benchmark-suite.sh ci test \
+  --versions local \
+  --output-dir ./benches
+
+# Run the stable side of the nightly symbolic suite.
+benches/scripts/run-benchmark-suite.sh nightly symbolic \
+  --versions stable \
+  --output-dir ./benches
+```
+
+Use `--dry-run` before the profile name to print the exact argument vector
+without running the benchmark. Pass `--repos "org/repo[:rev][ <extra args>]"`
+to replace a suite's repository list, matching the manual benchmark workflow's
+override. An empty `--repos` value uses the suite default.
+
 To install `foundry-bench` to your PATH:
 
 ```bash
@@ -67,6 +107,9 @@ foundry-bench --benchmarks forge_fuzz_test
 # Run coverage benchmark
 foundry-bench --benchmarks forge_coverage
 
+# Run focused symbolic tests and report solver counters
+foundry-bench --repos Vectorized/solady:v0.1.26,SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5,farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b --benchmarks forge_symbolic_test
+
 # Combine options
 foundry-bench \
   --versions stable,nightly \
@@ -82,6 +125,103 @@ foundry-bench --verbose
 # Output to specific directory
 foundry-bench --output-dir ./results --output-file LATEST_RESULTS.md
 ```
+
+`forge_symbolic_test` keeps the existing focused commands for Solady, Angstrom, and Farcaster
+and uses the generic symbolic command for other repositories.
+Use `--symbolic-sidecar-output <FILE>` with exactly one `--versions` value to capture the
+versioned per-run results. Like `--json-output`, the sidecar path is relative to `--output-dir`.
+
+## Branch vs master PR-body workflow
+
+Use this workflow when preparing performance numbers for a PR body. It keeps the
+baseline and candidate builds isolated and makes the final table easy to audit.
+
+### Command timing with foundry-bench
+
+Use `foundry-bench` when the performance claim is about elapsed time for a
+Foundry command on an existing Solidity repository. It answers questions like:
+
+- Did this branch make `forge build` faster or slower?
+- Did cached rebuilds change?
+- Did `forge test` or `forge test --isolate` change?
+- Did fuzz-test execution time change?
+- Did `forge coverage --ir-minimum` change?
+- Did focused symbolic test wall time or solver counters change?
+
+Do not use `foundry-bench` for long-running invariant campaign quality,
+throughput, corpus, showmap, or differential-coverage comparisons. Use
+`foundry-scfuzzbench` for those.
+
+Pick `BENCHMARKS` from the changed path:
+
+| Changed path | Suggested `BENCHMARKS` |
+| --- | --- |
+| Compiler, artifact caching, project graph, dependency resolution | `forge_build_no_cache,forge_build_with_cache` |
+| Test runner, EVM execution, cheatcodes, traces used by tests | `forge_test` |
+| Isolation semantics or per-test state reset | `forge_isolate_test` |
+| Fuzz runner execution overhead, fuzz fixtures, corpus replay behavior | `forge_fuzz_test` |
+| Coverage instrumentation or report generation | `forge_coverage` |
+| Symbolic executor or SMT solving | `forge_symbolic_test` |
+
+Pick `REPOS` so the external project actually exercises the changed path. Use a
+single focused repo first, then add more only if the result would otherwise be
+unconvincing. The workflow accepts the same repo syntax as normal
+`foundry-bench`: `org/repo[:rev][ <extra forge args>]`.
+
+Examples:
+
+```bash
+# Test-runner or EVM execution change.
+BENCHMARKS=forge_test
+REPOS="ithacaxyz/account:v0.5.7"
+
+# Build/cache change.
+BENCHMARKS=forge_build_no_cache,forge_build_with_cache
+REPOS="vectorized/solady:v0.1.26"
+
+# Coverage change.
+BENCHMARKS=forge_coverage
+REPOS="uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75"
+
+# Symbolic change with focused counters.
+BENCHMARKS=forge_symbolic_test
+REPOS="Vectorized/solady:v0.1.26"
+```
+
+Run the matched branch-vs-base timing comparison:
+
+```bash
+BASE_REF=origin/master \
+BENCHMARKS=forge_test \
+REPOS="ithacaxyz/account:v0.5.7,vectorized/solady:v0.1.26" \
+benches/scripts/pr-bench.sh
+```
+
+The script builds the `foundry-bench` harness from the current checkout once,
+then points it at each checked-out workspace with
+`FOUNDRY_BENCH_WORKSPACE_ROOT`. The `local` version builds and activates that
+workspace with `FOUNDRY_BENCH_LOCAL_BUILD_PROFILE=profiling` before each run.
+By default, the PR script sets `FOUNDRY_BENCH_LOCAL_BUILD_BINS=forge` so forge
+benchmarks do not build unused targets. Set it to a comma- or whitespace-
+separated list such as `forge,cast,anvil,chisel` when a run needs more binaries.
+Keep `REPOS`, `BENCHMARKS`, and any per-repo extra arguments identical for
+`master` and `candidate`. Override `CANDIDATE_REF`, `RUN_ID`, or `BENCH_ROOT`
+when needed.
+
+For PR bodies, reduce the two JSON/Markdown outputs into a concise table:
+
+```md
+### Results
+
+| Benchmark | master | this PR | delta |
+| --- | ---: | ---: | ---: |
+| `forge_test/ithacaxyz-account` wall time | ... | ... | ... |
+```
+
+Include domain counters next to wall time when the benchmark produces them, for
+example symbolic solver queries, reported solver time, invariant throughput, or
+coverage relscore/relcov. If the delta is within noise, describe it as neutral
+or inconclusive.
 
 ## Running scfuzzbench Campaigns
 
@@ -99,6 +239,28 @@ cargo run -p foundry-bench --bin foundry-scfuzzbench -- \
   --output-dir /tmp/foundry-scfuzzbench-aave \
   --foundry-bin "$(command -v forge)"
 ```
+
+To compare a feature branch against `master` locally, run two matched campaigns:
+one with a `forge` binary built from `master`, and one with a `forge` binary
+built from the candidate branch. The runner intentionally records each campaign
+separately; compare the resulting artifact bundles when drafting the PR body.
+
+```bash
+TARGET_REPO=https://github.com/Recon-Fuzz/aave-v4-scfuzzbench.git \
+TARGET_REF=v0.5.6-recon \
+BENCHMARK_TYPE=property \
+TIMEOUT_SECONDS=3600 \
+WORKERS=1 \
+benches/scripts/pr-scfuzzbench.sh
+```
+
+Use the same `TARGET_REPO`, `TARGET_REF`, `BENCHMARK_TYPE`,
+`TIMEOUT_SECONDS`, `WORKERS`, and `FOUNDRY_TEST_ARGS` for both runs. For
+optimization campaigns, pass the same `PROPERTIES_PATH` to both runs. Summarize
+the PR body from `llm_summary.md`, `REPORT.md`, `summary.csv`,
+`cumulative.csv`, and the differential coverage artifacts in each output
+directory. Override `BASE_REF`, `CANDIDATE_REF`, `RUN_ID`, or `BENCH_ROOT` when
+needed.
 
 By default the runner pins `https://github.com/tempoxyz/scfuzzbench.git@main`. Override that with
 `--scfuzzbench-repo` and `--scfuzzbench-ref` while the scfuzzbench changes are being upstreamed.
@@ -132,12 +294,14 @@ The artifact bundle exposes:
 #### Command-line Options
 
 - `--versions <VERSIONS>` - Comma-separated list of Foundry versions (default: stable,nightly)
-- `--repos <REPOS>` - Comma-separated list of repos in org/repo[:rev] format (default: ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22)
+- `--repos <REPOS>` - Comma-separated list of repos in org/repo[:rev] format
 - `--benchmarks <BENCHMARKS>` - Comma-separated list of benchmarks to run
 - `--force-install` - Force installation of Foundry versions
 - `--verbose` - Show detailed benchmark output
-- `--output-dir <DIR>` - Directory for output files (default: benches)
-- `--output-file <FILE_NAME.md>` - Name of the output file (default: LATEST.md)
+- `--output-dir <DIR>` - Directory for output files (default: current working directory)
+- `--output-file <FILE_NAME.md>` - Name of the Markdown output file. Defaults to `LATEST.md`
+  unless `--json-output` is set, in which case Markdown is omitted unless explicitly requested
+- `--symbolic-sidecar-output <FILE.json>` - Write the opt-in v1 symbolic samples sidecar (requires exactly one version)
 
 ## Benchmark Structure
 
@@ -147,19 +311,19 @@ The artifact bundle exposes:
 - `forge_fuzz_test` - Benchmarks non-isolated `forge test` with only fuzz tests (tests with parameters)
 - `forge_coverage` - Benchmarks `forge coverage --ir-minimum` command across repos
 - `forge_isolate_test` - Benchmarks isolated `forge test` command across repos
+- `forge_symbolic_test` - Benchmarks `forge test --symbolic` for any repository, with focused recipes for Solady, Angstrom, and Farcaster. Compatibility JSON retains the median-wall-run counter projection; the optional sidecar records all five aligned samples, exact tests/statuses, and solver counters.
 
 ## Configuration
 
-The benchmark binary uses command-line arguments to configure which repositories and versions to test. The default repositories are:
-
-- `ithacaxyz/account:v0.3.2`
-- `Vectorized/solady:v0.1.22`
-
-You can override these using the `--repos` flag with the format `org/repo[:rev]`.
+The benchmark binary uses command-line arguments to configure which repositories and versions to
+test. Its generic defaults track the main branches of Account and Solady. Reproducible CI repository
+pins and per-repository arguments are defined by `run-benchmark-suite.sh`; use `--list` to discover
+those suites. You can override repositories using `--repos` with the format `org/repo[:rev]`.
 
 ## Results
 
-Benchmark results are saved to `benches/LATEST.md` (or custom output file specified with `--output-file`). The report includes:
+Benchmark results are saved to `<output-dir>/LATEST.md` unless a custom output file is specified or
+Markdown output is suppressed by `--json-output`. The report includes:
 
 - Summary of versions and repositories tested
 - Performance comparison tables for each benchmark type showing:

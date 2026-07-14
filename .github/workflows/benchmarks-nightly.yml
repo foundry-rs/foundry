@@ -8,7 +8,6 @@ on:
   workflow_dispatch: # allow manual triggering for testing
 
 env:
-  AAVE_V4_REPO: "aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
   RUSTC_WRAPPER: "sccache"
 
 jobs:
@@ -21,17 +20,17 @@ jobs:
       has_regression: ${{ steps.compare.outputs.has_regression }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config
+          sudo apt-get install -y build-essential pkg-config z3
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
 
@@ -67,53 +66,31 @@ jobs:
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          DATE=$(date -u +%Y-%m-%d)
-          ./target/release/foundry-bench --output-dir ./benches --force-install \
-            --versions stable \
-            --repos "$AAVE_V4_REPO" \
-            --benchmarks forge_test \
-            --json-output "stable-${DATE}-forge_test.json" \
-            --verbose
+        run: benches/scripts/run-benchmark-suite.sh nightly test --versions stable --output-dir ./benches
 
       - name: Run forge fuzz test benchmarks (stable)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          DATE=$(date -u +%Y-%m-%d)
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions stable \
-            --repos "$AAVE_V4_REPO" \
-            --benchmarks forge_fuzz_test \
-            --json-output "stable-${DATE}-forge_fuzz_test.json" \
-            --verbose
+        run: benches/scripts/run-benchmark-suite.sh nightly fuzz --versions stable --output-dir ./benches
 
       - name: Run forge build benchmarks (stable)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          DATE=$(date -u +%Y-%m-%d)
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions stable \
-            --repos "$AAVE_V4_REPO" \
-            --benchmarks forge_build_no_cache,forge_build_with_cache \
-            --json-output "stable-${DATE}-forge_build.json" \
-            --verbose
+        run: benches/scripts/run-benchmark-suite.sh nightly build --versions stable --output-dir ./benches
 
       - name: Run forge coverage benchmarks (stable)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          DATE=$(date -u +%Y-%m-%d)
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions stable \
-            --repos "$AAVE_V4_REPO" \
-            --benchmarks forge_coverage \
-            --json-output "stable-${DATE}-forge_coverage.json" \
-            --verbose
+        run: benches/scripts/run-benchmark-suite.sh nightly coverage --versions stable --output-dir ./benches
+
+      - name: Run forge symbolic benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly symbolic --versions stable --output-dir ./benches
 
       # --- Nightly benchmarks ---
 
@@ -121,61 +98,39 @@ jobs:
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          DATE=$(date -u +%Y-%m-%d)
-          ./target/release/foundry-bench --output-dir ./benches --force-install \
-            --versions nightly \
-            --repos "$AAVE_V4_REPO" \
-            --benchmarks forge_test \
-            --json-output "nightly-${DATE}-forge_test.json" \
-            --verbose
+        run: benches/scripts/run-benchmark-suite.sh nightly test --versions nightly --output-dir ./benches
 
       - name: Run forge fuzz test benchmarks (nightly)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          DATE=$(date -u +%Y-%m-%d)
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions nightly \
-            --repos "$AAVE_V4_REPO" \
-            --benchmarks forge_fuzz_test \
-            --json-output "nightly-${DATE}-forge_fuzz_test.json" \
-            --verbose
+        run: benches/scripts/run-benchmark-suite.sh nightly fuzz --versions nightly --output-dir ./benches
 
       - name: Run forge build benchmarks (nightly)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          DATE=$(date -u +%Y-%m-%d)
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions nightly \
-            --repos "$AAVE_V4_REPO" \
-            --benchmarks forge_build_no_cache,forge_build_with_cache \
-            --json-output "nightly-${DATE}-forge_build.json" \
-            --verbose
+        run: benches/scripts/run-benchmark-suite.sh nightly build --versions nightly --output-dir ./benches
 
       - name: Run forge coverage benchmarks (nightly)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          DATE=$(date -u +%Y-%m-%d)
-          ./target/release/foundry-bench --output-dir ./benches \
-            --versions nightly \
-            --repos "$AAVE_V4_REPO" \
-            --benchmarks forge_coverage \
-            --json-output "nightly-${DATE}-forge_coverage.json" \
-            --verbose
+        run: benches/scripts/run-benchmark-suite.sh nightly coverage --versions nightly --output-dir ./benches
+
+      - name: Run forge symbolic benchmarks (nightly)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: benches/scripts/run-benchmark-suite.sh nightly symbolic --versions nightly --output-dir ./benches
 
       - name: Merge benchmark JSON results
         run: |
           DATE=$(date -u +%Y-%m-%d)
           shopt -s nullglob
 
-          stable_parts=( benches/stable-${DATE}-*.json )
-          nightly_parts=( benches/nightly-${DATE}-*.json )
+          stable_parts=( "benches/stable-${DATE}-"*.json )
+          nightly_parts=( "benches/nightly-${DATE}-"*.json )
 
           if [[ ${#stable_parts[@]} -eq 0 && ${#nightly_parts[@]} -eq 0 ]]; then
             echo "No benchmark results produced — all steps failed."
@@ -198,12 +153,22 @@ jobs:
           DATE=$(date -u +%Y-%m-%d)
           STABLE_JSON="benches/stable-${DATE}.json"
           NIGHTLY_JSON="benches/nightly-${DATE}.json"
-          if ./.github/scripts/compare-nightly.sh "$STABLE_JSON" "$NIGHTLY_JSON" > regression.md 2>&1; then
+          set +e
+          python3 ./.github/scripts/compare-benchmark-thresholds.py \
+            "$STABLE_JSON" "$NIGHTLY_JSON" \
+            .github/benchmark-regression-thresholds.json > regression.md 2>&1
+          status=$?
+          set -e
+          if [[ $status -eq 0 ]]; then
             echo "has_regression=false" >> "$GITHUB_OUTPUT"
-          else
+          elif [[ $status -eq 1 ]]; then
             echo "has_regression=true" >> "$GITHUB_OUTPUT"
+          else
+            cat regression.md
+            exit "$status"
           fi
           cat regression.md
+          cat regression.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -218,7 +183,7 @@ jobs:
   report-regression:
     name: Report Regression
     needs: run-benchmarks
-    if: needs.run-benchmarks.outputs.has_regression == 'true'
+    if: needs.run-benchmarks.outputs.has_regression == 'true' && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -242,7 +207,7 @@ jobs:
           **Run**: [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
           **Date**: ${DATE}
           **Repo benchmarked**: \`aave/aave-v4\` (pinned commit)
-          **Threshold**: 🔴 >=3% regression, 🟡 >=1% warning"
+          **Threshold**: Per-benchmark calibrated thresholds from \`.github/benchmark-regression-thresholds.json\`"
 
           gh issue create \
             --title "[Nightly Regression] ${DATE}" \

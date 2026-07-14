@@ -7,7 +7,10 @@ Flags numeric literals containing five or more consecutive zeros, which are easy
 
 ## What it does
 
-Reports decimal numeric literals that contain a run of 5 or more `0` characters.
+Reports Solidity and Yul numeric literals that contain a run of 5 or more `0` characters. Decimal
+literals with scientific notation, literals with a sub-denomination, and 40-digit hexadecimal
+address literals are skipped. Other hexadecimal literals remain in scope because long padded masks
+and bit patterns are also difficult to review.
 
 ## Why is this bad?
 

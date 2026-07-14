@@ -1,7 +1,6 @@
 use crate::utils::generate_large_init_contract;
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
 use globset::Glob;
-use serde_json::Value;
 use std::fs;
 
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
@@ -370,6 +369,119 @@ contract Counter {
     );
 });
 
+// tests that `--sizes` filters out internal libraries (libraries without any external/public
+// functions), which are never deployed on their own.
+// <https://github.com/foundry-rs/foundry/issues/1356>
+forgetest!(build_sizes_filters_internal_libraries, |prj, cmd| {
+    prj.add_source(
+        "Libraries",
+        r"
+// Internal library: all functions internal, never deployed on its own.
+library InternalLib {
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a + b;
+    }
+}
+
+// Internal library that declares an event and error but no external functions.
+library EventLib {
+    event Ping(uint256 x);
+    error Boom();
+    function ping(uint256 a) internal pure returns (uint256) {
+        return a;
+    }
+}
+
+// Public library: deployed and linked.
+library PublicLib {
+    function sub(uint256 a, uint256 b) public pure returns (uint256) {
+        return a - b;
+    }
+}
+
+contract Consumer {
+    using InternalLib for uint256;
+    function run(uint256 x) external pure returns (uint256) {
+        return x.add(1);
+    }
+}
+",
+    );
+
+    // `InternalLib` and `EventLib` must not appear; `PublicLib` and `Consumer` must.
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+...
+
+╭-----------+------------------+-------------------+--------------------+---------------------╮
+| Contract  | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
++=============================================================================================+
+| Consumer  | 430              | 458               | 24,146             | 48,694              |
+|-----------+------------------+-------------------+--------------------+---------------------|
+| PublicLib | 432              | 509               | 24,144             | 48,643              |
+╰-----------+------------------+-------------------+--------------------+---------------------╯
+
+
+"#]]);
+
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "Consumer": {
+    "runtime_size": 430,
+    "init_size": 458,
+    "runtime_margin": 24146,
+    "init_margin": 48694
+  },
+  "PublicLib": {
+    "runtime_size": 432,
+    "init_size": 509,
+    "runtime_margin": 24144,
+    "init_margin": 48643
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+// tests that when a filtered internal library shares a name with a kept contract, the survivor is
+// unique and prints without the `(path)` disambiguation suffix.
+// <https://github.com/foundry-rs/foundry/issues/1356>
+forgetest!(build_sizes_filtered_internal_library_frees_unique_name, |prj, cmd| {
+    prj.add_source(
+        "a/Foo",
+        r"
+library Foo {
+    function add(uint256 a) internal pure returns (uint256) {
+        return a + 1;
+    }
+}
+",
+    );
+    prj.add_source(
+        "b/Foo",
+        r"
+contract Foo {
+    function f() external pure returns (uint256) {
+        return 1;
+    }
+}
+",
+    );
+
+    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+...
+
+╭----------+------------------+-------------------+--------------------+---------------------╮
+| Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
++============================================================================================+
+| Foo      | 175              | 201               | 24,401             | 48,951              |
+╰----------+------------------+-------------------+--------------------+---------------------╯
+
+
+"#]]);
+});
+
 // tests that skip key in config can be used to skip non-compilable contract
 forgetest_init!(test_can_skip_contract, |prj, cmd| {
     prj.add_source(
@@ -461,7 +573,7 @@ contract ContractB {
 
     cmd.args(["build", "src/ContractWithInvalidNatspec.sol"]).assert_success().stderr_eq(str![[
         r#"
-warning: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
+warning[6546]: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
   [FILE]:5:5
   │
 5 │     /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
@@ -469,7 +581,7 @@ warning: invalid natspec tag '@deprecated', custom tags must use format '@custom
   │
 ...
 
-warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
+warning[6546]: invalid natspec tag '@note', custom tags must use format '@custom:name'
   [FILE]:9:1
   │
 9 │ /// @note foo bar
@@ -510,138 +622,6 @@ forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
 "#]]);
-});
-
-// `forge --machine build` emits a single envelope on stdout and nothing on stderr.
-forgetest_init!(machine_mode_emits_envelope, |prj, cmd| {
-    prj.initialize_default_contracts();
-    let assert = cmd.args(["--machine", "build", "--force"]).assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
-    assert!(stderr.is_empty(), "expected empty stderr under --machine, got: {stderr}");
-    let envelope: Value =
-        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
-
-    assert_eq!(envelope["schema_version"], 1);
-    assert_eq!(envelope["success"], true);
-    assert!(envelope["data"]["artifacts"].as_u64().is_some(), "missing artifacts: {envelope}");
-    assert!(envelope["data"]["errors"].as_u64().is_some(), "missing errors: {envelope}");
-    assert!(envelope["data"]["warnings"].as_u64().is_some(), "missing warnings: {envelope}");
-    assert!(envelope["data"]["unchanged"].as_bool().is_some(), "missing unchanged: {envelope}");
-    assert_eq!(envelope["errors"], serde_json::json!([]));
-    assert_eq!(envelope["warnings"], serde_json::json!([]));
-});
-
-// `--machine` rejects flags that would corrupt the envelope-only stdout
-// contract. Asserts the stable `code` + exit code, not just message text.
-forgetest_init!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
-    prj.initialize_default_contracts();
-    let assert = cmd.args(["--machine", "build", "--names"]).assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("--names"), "missing --names mention: {envelope}");
-    assert_eq!(
-        envelope["errors"][0]["details"]["unsupported_flags"],
-        serde_json::json!(["--names"]),
-        "missing structured unsupported_flags details: {envelope}"
-    );
-});
-
-// `--quiet` must not suppress the machine envelope.
-forgetest_init!(machine_mode_envelope_survives_quiet, |prj, cmd| {
-    prj.initialize_default_contracts();
-    let assert = cmd.args(["--machine", "--quiet", "build", "--force"]).assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim())
-        .expect("stdout is exactly one JSON envelope, even under --quiet");
-
-    assert_eq!(envelope["schema_version"], 1);
-    assert_eq!(envelope["success"], true);
-});
-
-// `--machine` refuses configs where lint-on-build + non-`Never` deny would diverge
-// human and machine success outcomes.
-forgetest_init!(machine_mode_rejects_lint_deny_divergence, |prj, cmd| {
-    prj.initialize_default_contracts();
-    let toml = "\
-[profile.default]\n\
-deny = \"warnings\"\n\
-[lint]\n\
-lint_on_build = true\n\
-";
-    std::fs::write(prj.root().join("foundry.toml"), toml).unwrap();
-    let assert = cmd.args(["--machine", "build", "--force"]).assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-});
-
-// `--machine` rejects `--watch` even though the watch path normally short-circuits before
-// `BuildArgs::run`.
-forgetest_init!(machine_mode_rejects_watch, |prj, cmd| {
-    prj.initialize_default_contracts();
-    let assert = cmd.args(["--machine", "build", "--watch"]).assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("--watch"), "missing --watch mention: {envelope}");
-});
-
-// Compile failures under `--machine` emit a typed `compiler.solc.error` envelope and exit `Build
-// (4)`.
-forgetest!(machine_mode_compile_failure_emits_typed_envelope, |prj, cmd| {
-    prj.add_source(
-        "BadSyntax",
-        r"
-contract Dummy {
-    uint256 public number;
-    function something(uint256 newNumber) public {
-        number = newnumber;
-    }
-}
-",
-    );
-
-    let assert = cmd.args(["--machine", "build", "--force"]).assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value = serde_json::from_str(stdout.trim()).expect("failure envelope on stdout");
-
-    assert_eq!(envelope["schema_version"], 1);
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["data"], serde_json::Value::Null);
-    let errors = envelope["errors"].as_array().expect("errors array");
-    assert!(!errors.is_empty(), "expected at least one error: {envelope}");
-    assert_eq!(errors[0]["code"], "compiler.solc.error");
-    assert_eq!(assert.get_output().status.code(), Some(4));
-});
-
-// Empty project under `--machine` emits a success envelope (artifacts=0), not "Nothing to compile".
-forgetest!(machine_mode_empty_project_emits_envelope, |_prj, cmd| {
-    let assert = cmd.args(["--machine", "build"]).assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: Value =
-        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
-
-    assert_eq!(envelope["schema_version"], 1);
-    assert_eq!(envelope["success"], true);
-    assert_eq!(envelope["data"]["artifacts"], 0);
-    assert_eq!(envelope["data"]["errors"], 0);
-    assert_eq!(envelope["data"]["warnings"], 0);
-    assert_eq!(envelope["errors"], serde_json::json!([]));
-    assert_eq!(envelope["warnings"], serde_json::json!([]));
-    assert_eq!(assert.get_output().status.code(), Some(0));
 });
 
 // tests that build warns when foundry.lock revision differs from actual submodule revision

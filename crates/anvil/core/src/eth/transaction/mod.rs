@@ -51,6 +51,14 @@ impl<T> MaybeImpersonatedTransaction<T> {
     pub fn into_inner(self) -> T {
         self.transaction
     }
+
+    /// Maps the inner transaction while preserving impersonation metadata.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> MaybeImpersonatedTransaction<U> {
+        MaybeImpersonatedTransaction {
+            transaction: f(self.transaction),
+            impersonated_sender: self.impersonated_sender,
+        }
+    }
 }
 
 impl<T: SignerRecoverable + TxHashRef + Encodable> MaybeImpersonatedTransaction<T> {

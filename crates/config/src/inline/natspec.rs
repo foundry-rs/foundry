@@ -1,5 +1,4 @@
 use super::{INLINE_CONFIG_PREFIX, InlineConfigError, InlineConfigErrorKind};
-use crate::split_quoted_args;
 use figment::Profile;
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -149,67 +148,15 @@ fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), S
     let tokens = split_halmos_args(args)?;
     let mut idx = 0;
     while idx < tokens.len() {
-        let token = tokens[idx].as_str();
-        if token == "--array-lengths" {
-            idx += 1;
-            let Some(value) = tokens.get(idx) else {
-                return Err("missing value for --array-lengths".to_string());
+        let token = &tokens[idx];
+        if let Some((arg, value)) = halmos_arg(token) {
+            let value = if let Some(value) = value {
+                value
+            } else {
+                idx += 1;
+                tokens.get(idx).ok_or_else(|| format!("missing value for {}", arg.flag))?
             };
-            push_halmos_array_lengths(values, value)?;
-        } else if let Some(value) = token.strip_prefix("--array-lengths=") {
-            push_halmos_array_lengths(values, value)?;
-        } else if token == "--default-array-lengths" {
-            idx += 1;
-            let Some(value) = tokens.get(idx) else {
-                return Err("missing value for --default-array-lengths".to_string());
-            };
-            push_halmos_lengths(values, "default_array_lengths", value, "--default-array-lengths")?;
-        } else if let Some(value) = token.strip_prefix("--default-array-lengths=") {
-            push_halmos_lengths(values, "default_array_lengths", value, "--default-array-lengths")?;
-        } else if token == "--default-bytes-lengths" {
-            idx += 1;
-            let Some(value) = tokens.get(idx) else {
-                return Err("missing value for --default-bytes-lengths".to_string());
-            };
-            push_halmos_lengths(values, "default_bytes_lengths", value, "--default-bytes-lengths")?;
-        } else if let Some(value) = token.strip_prefix("--default-bytes-lengths=") {
-            push_halmos_lengths(values, "default_bytes_lengths", value, "--default-bytes-lengths")?;
-        } else if let Some(field) = halmos_numeric_symbolic_field(token) {
-            idx += 1;
-            let Some(value) = tokens.get(idx) else {
-                return Err(format!("missing value for {token}"));
-            };
-            push_halmos_u32(values, field, value, token)?;
-        } else if let Some(value) = token.strip_prefix("--invariant-depth=") {
-            push_halmos_u32(values, "invariant_depth", value, "--invariant-depth")?;
-        } else if let Some(value) = token.strip_prefix("--loop=") {
-            push_halmos_u32(values, "loop", value, "--loop")?;
-        } else if let Some(value) = token.strip_prefix("--width=") {
-            push_halmos_u32(values, "width", value, "--width")?;
-        } else if let Some(value) = token.strip_prefix("--depth=") {
-            push_halmos_u32(values, "depth", value, "--depth")?;
-        } else if let Some(value) = token.strip_prefix("--solver-timeout=") {
-            push_halmos_u32(values, "timeout", value, "--solver-timeout")?;
-        } else if let Some(value) = token.strip_prefix("--solver-timeout-branching=") {
-            push_halmos_u32(values, "timeout", value, "--solver-timeout-branching")?;
-        } else if let Some(value) = token.strip_prefix("--solver-timeout-assertion=") {
-            push_halmos_u32(values, "timeout", value, "--solver-timeout-assertion")?;
-        } else if token == "--solver" {
-            idx += 1;
-            let Some(value) = tokens.get(idx) else {
-                return Err("missing value for --solver".to_string());
-            };
-            push_halmos_string(values, "solver", value);
-        } else if let Some(value) = token.strip_prefix("--solver=") {
-            push_halmos_string(values, "solver", value);
-        } else if token == "--solver-command" {
-            idx += 1;
-            let Some(value) = tokens.get(idx) else {
-                return Err("missing value for --solver-command".to_string());
-            };
-            push_halmos_string(values, "solver_command", value);
-        } else if let Some(value) = token.strip_prefix("--solver-command=") {
-            push_halmos_string(values, "solver_command", value);
+            emit_halmos_arg(values, arg, value)?;
         } else if token.starts_with("--")
             && tokens.get(idx + 1).is_some_and(|next| !next.starts_with("--"))
         {
@@ -221,20 +168,85 @@ fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), S
 }
 
 fn split_halmos_args(args: &str) -> Result<Vec<String>, String> {
-    split_quoted_args(args)
-        .map_err(|quote_ch| format!("unterminated {quote_ch} quote in @custom:halmos config"))
+    shlex::split(args).ok_or_else(|| "invalid shell quoting in @custom:halmos config".to_string())
 }
 
-fn halmos_numeric_symbolic_field(flag: &str) -> Option<&'static str> {
-    match flag {
-        "--loop" => Some("loop"),
-        "--width" => Some("width"),
-        "--depth" => Some("depth"),
-        "--invariant-depth" => Some("invariant_depth"),
-        "--solver-timeout" | "--solver-timeout-branching" | "--solver-timeout-assertion" => {
-            Some("timeout")
+#[derive(Clone, Copy)]
+struct HalmosArg {
+    flag: &'static str,
+    parser: HalmosArgParser,
+    foundry_field: &'static str,
+}
+
+#[derive(Clone, Copy)]
+enum HalmosArgParser {
+    ArrayLengths,
+    Lengths,
+    U32,
+    String,
+}
+
+const HALMOS_ARGS: &[HalmosArg] = &[
+    HalmosArg {
+        flag: "--array-lengths",
+        parser: HalmosArgParser::ArrayLengths,
+        foundry_field: "array_lengths",
+    },
+    HalmosArg {
+        flag: "--default-array-lengths",
+        parser: HalmosArgParser::Lengths,
+        foundry_field: "default_array_lengths",
+    },
+    HalmosArg {
+        flag: "--default-bytes-lengths",
+        parser: HalmosArgParser::Lengths,
+        foundry_field: "default_bytes_lengths",
+    },
+    HalmosArg { flag: "--loop", parser: HalmosArgParser::U32, foundry_field: "loop" },
+    HalmosArg {
+        flag: "--invariant-depth",
+        parser: HalmosArgParser::U32,
+        foundry_field: "invariant_depth",
+    },
+    HalmosArg { flag: "--width", parser: HalmosArgParser::U32, foundry_field: "width" },
+    HalmosArg { flag: "--depth", parser: HalmosArgParser::U32, foundry_field: "depth" },
+    HalmosArg { flag: "--solver-timeout", parser: HalmosArgParser::U32, foundry_field: "timeout" },
+    HalmosArg {
+        flag: "--solver-timeout-branching",
+        parser: HalmosArgParser::U32,
+        foundry_field: "timeout",
+    },
+    HalmosArg {
+        flag: "--solver-timeout-assertion",
+        parser: HalmosArgParser::U32,
+        foundry_field: "timeout",
+    },
+    HalmosArg { flag: "--solver", parser: HalmosArgParser::String, foundry_field: "solver" },
+    HalmosArg {
+        flag: "--solver-command",
+        parser: HalmosArgParser::String,
+        foundry_field: "solver_command",
+    },
+];
+
+fn halmos_arg(token: &str) -> Option<(HalmosArg, Option<&str>)> {
+    let (flag, value) =
+        token.split_once('=').map_or((token, None), |(flag, value)| (flag, Some(value)));
+    HALMOS_ARGS.iter().copied().find(|arg| arg.flag == flag).map(|arg| (arg, value))
+}
+
+fn emit_halmos_arg(values: &mut Vec<String>, arg: HalmosArg, value: &str) -> Result<(), String> {
+    match arg.parser {
+        HalmosArgParser::ArrayLengths => push_halmos_array_lengths(values, value),
+        HalmosArgParser::Lengths => push_halmos_lengths(values, arg.foundry_field, value, arg.flag),
+        HalmosArgParser::U32 => {
+            push_halmos_u32(values, arg.foundry_field, parse_halmos_u32(value, arg.flag)?);
+            Ok(())
         }
-        _ => None,
+        HalmosArgParser::String => {
+            push_halmos_string(values, arg.foundry_field, value);
+            Ok(())
+        }
     }
 }
 
@@ -272,14 +284,8 @@ fn push_halmos_lengths(
     Ok(())
 }
 
-fn push_halmos_u32(
-    values: &mut Vec<String>,
-    field: &str,
-    value: &str,
-    flag: &str,
-) -> Result<(), String> {
-    values.push(format!("default.symbolic.{field} = {}", parse_halmos_u32(value, flag)?));
-    Ok(())
+fn push_halmos_u32(values: &mut Vec<String>, field: &str, value: u32) {
+    values.push(format!("default.symbolic.{field} = {value}"));
 }
 
 fn push_halmos_string(values: &mut Vec<String>, field: &str, value: &str) {
@@ -990,6 +996,22 @@ contract FuzzInlineConf is DSTest {
     }
 
     #[test]
+    fn ignores_unsupported_halmos_flags_while_translating_supported_ones() {
+        let natspec = NatSpec {
+            contract: "dir/TestContract.t.sol:SymbolicContract".to_string(),
+            function: Some("checkBytes".to_string()),
+            line: "10:1".to_string(),
+            docs: "@custom:halmos --unsupported value --loop 10 --another --array-lengths 2"
+                .to_string(),
+        };
+
+        assert_eq!(
+            natspec.halmos_config_values().unwrap(),
+            vec!["default.symbolic.loop = 10", "default.symbolic.array_lengths = [2]",]
+        );
+    }
+
+    #[test]
     fn parse_solar_legacy_halmos_only_config() {
         let src = r#"
 contract SymbolicHalmosLengths {
@@ -1017,6 +1039,6 @@ contract SymbolicHalmosLengths {
     #[test]
     fn split_halmos_args_rejects_unterminated_quote() {
         let err = split_halmos_args(r#"--width "unterm"#).unwrap_err();
-        assert_eq!(err, r#"unterminated " quote in @custom:halmos config"#);
+        assert_eq!(err, "invalid shell quoting in @custom:halmos config");
     }
 }

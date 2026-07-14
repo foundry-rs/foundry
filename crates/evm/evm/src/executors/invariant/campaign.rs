@@ -2,7 +2,7 @@ use super::{
     FailureKey, InvariantFailureMetrics, InvariantFailures, InvariantFuzzError,
     InvariantFuzzTestResult, InvariantMetrics,
 };
-use crate::executors::{EarlyExit, corpus::CampaignCorpusEntry};
+use crate::executors::{EarlyExit, EvmExecutionCancellation, corpus::CampaignCorpusEntry};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
@@ -10,7 +10,7 @@ use foundry_evm_fuzz::BasicTxDetails;
 use std::{
     collections::{HashMap, HashSet},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -74,12 +74,11 @@ pub struct InvariantWorkerPlan {
 /// Shared state used only to coordinate invariant worker execution.
 pub struct InvariantCampaignState {
     started_at: Instant,
-    timeout: Option<Duration>,
+    timed: bool,
     total_runs: AtomicU32,
     total_txs: AtomicU64,
     total_gas: AtomicU64,
-    terminal_stop: AtomicBool,
-    global_early_exit: EarlyExit,
+    cancellation: EvmExecutionCancellation,
     last_metrics_report: Mutex<Instant>,
     failure_metrics: Mutex<CampaignFailureMetrics>,
 }
@@ -93,14 +92,20 @@ struct CampaignFailureMetrics {
 impl InvariantCampaignState {
     pub fn new(early_exit: EarlyExit, timeout: Option<u32>) -> Self {
         let started_at = Instant::now();
+        let deadline = timeout
+            .map(|timeout| Duration::from_secs(timeout.into()))
+            .and_then(|timeout| started_at.checked_add(timeout));
         Self {
             started_at,
-            timeout: timeout.map(|timeout| Duration::from_secs(timeout.into())),
+            timed: timeout.is_some(),
             total_runs: AtomicU32::new(0),
             total_txs: AtomicU64::new(0),
             total_gas: AtomicU64::new(0),
-            terminal_stop: AtomicBool::new(false),
-            global_early_exit: early_exit,
+            cancellation: EvmExecutionCancellation::campaign(
+                early_exit,
+                Arc::new(AtomicBool::new(false)),
+                deadline,
+            ),
             last_metrics_report: Mutex::new(started_at),
             failure_metrics: Mutex::new(CampaignFailureMetrics::default()),
         }
@@ -129,21 +134,15 @@ impl InvariantCampaignState {
     }
 
     pub const fn is_timed_campaign(&self) -> bool {
-        self.timeout.is_some()
-    }
-
-    pub fn is_timed_out(&self) -> bool {
-        self.timeout.is_some_and(|duration| self.elapsed() > duration)
+        self.timed
     }
 
     pub fn should_stop(&self) -> bool {
-        self.global_early_exit.should_stop()
-            || self.terminal_stop.load(Ordering::Relaxed)
-            || self.is_timed_out()
+        self.cancellation.should_stop(true)
     }
 
     pub fn request_terminal_stop(&self) {
-        self.terminal_stop.store(true, Ordering::Relaxed);
+        self.cancellation.request_stop();
     }
 
     pub fn should_emit_metrics_report(&self, interval: Duration) -> bool {
@@ -173,11 +172,17 @@ impl InvariantCampaignState {
     pub(super) fn sync_handler_failures(&self, failures: &InvariantFailures) {
         let mut failure_metrics =
             self.failure_metrics.lock().expect("failure metrics lock poisoned");
-        for key in failures.failures.keys() {
+        for (key, error) in &failures.failures {
             let FailureKey::Handler(addr, selector) = key else { continue };
-            failure_metrics.handler_sites.insert((*addr, *selector));
+            if failure_metrics.handler_sites.insert((*addr, *selector)) {
+                let reason = error.revert_reason().unwrap_or_default();
+                failure_metrics.metrics.record_handler_failure(*addr, *selector, &reason);
+            }
         }
-        failure_metrics.metrics.broken_handlers = failure_metrics.handler_sites.len();
+        debug_assert_eq!(
+            failure_metrics.metrics.broken_handlers,
+            failure_metrics.handler_sites.len()
+        );
     }
 
     pub(super) fn failure_metrics(&self) -> InvariantFailureMetrics {
@@ -185,7 +190,11 @@ impl InvariantCampaignState {
     }
 
     pub const fn early_exit(&self) -> &EarlyExit {
-        &self.global_early_exit
+        self.cancellation.early_exit_ref()
+    }
+
+    pub const fn cancellation(&self) -> &EvmExecutionCancellation {
+        &self.cancellation
     }
 }
 
@@ -633,6 +642,30 @@ mod tests {
         assert_eq!(state.throughput_totals(), (2, 50));
         assert_eq!(state.increment_runs(), 1);
         assert_eq!(state.total_runs(), 1);
+    }
+
+    #[test]
+    fn campaign_state_deduplicates_handler_failure_events_across_workers() {
+        let state = InvariantCampaignState::new(EarlyExit::new(false), None);
+        let target = Address::repeat_byte(0x11);
+        let selector = Selector::from([0xde, 0xad, 0xbe, 0xef]);
+        let mut first_worker = InvariantFailures::new();
+        first_worker.seed_handler_failure(
+            target,
+            selector,
+            handler_error(target, selector, 2, "assertion failed"),
+        );
+        let mut second_worker = InvariantFailures::new();
+        second_worker.seed_handler_failure(
+            target,
+            selector,
+            handler_error(target, selector, 1, "assertion failed"),
+        );
+
+        state.sync_handler_failures(&first_worker);
+        state.sync_handler_failures(&second_worker);
+
+        assert_eq!(state.failure_metrics().broken_handlers, 1);
     }
 
     #[test]

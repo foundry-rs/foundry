@@ -12,7 +12,13 @@ use foundry_config::InvariantConfig;
 use parking_lot::RwLock;
 use proptest::prelude::*;
 use rand::seq::IteratorRandom;
-use std::{rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+#[derive(Default)]
+struct PlannedFuzzedCalls {
+    generation: u64,
+    calls: Vec<BoxedStrategy<CallDetails>>,
+}
 
 /// Given a target address, we generate random calldata.
 pub fn override_call_strat(
@@ -94,6 +100,7 @@ pub fn invariant_strat(
     let senders = Rc::new(senders);
     let dictionary_weight = config.dictionary.dictionary_weight;
     let payable_value_weight = config.corpus.payable_value_weight;
+    let planned_calls = Rc::new(RefCell::new(PlannedFuzzedCalls::default()));
 
     // Strategy to generate values for tx warp and roll.
     let warp_roll_strat = |cond: bool| {
@@ -102,20 +109,30 @@ pub fn invariant_strat(
 
     any::<prop::sample::Selector>()
         .prop_flat_map(move |selector| {
-            let contracts = contracts.targets();
-            let functions = contracts.fuzzed_functions();
-            let (target_address, target_function) = selector.select(functions);
-
             let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
-
-            let call_details = fuzz_contract_with_calldata(
-                &fuzz_state,
-                &fuzz_fixtures,
-                *target_address,
-                target_function.clone(),
-                dictionary_weight,
-                payable_value_weight,
-            );
+            let call_details = {
+                let generation = contracts.fuzzed_functions_generation();
+                let mut planned_calls = planned_calls.borrow_mut();
+                if planned_calls.generation != generation || planned_calls.calls.is_empty() {
+                    let functions = contracts.fuzzed_functions();
+                    planned_calls.calls = functions
+                        .iter()
+                        .map(|(target_address, target_function)| {
+                            fuzz_contract_with_calldata(
+                                &fuzz_state,
+                                &fuzz_fixtures,
+                                *target_address,
+                                target_function.clone(),
+                                dictionary_weight,
+                                payable_value_weight,
+                            )
+                            .boxed()
+                        })
+                        .collect();
+                    planned_calls.generation = generation;
+                }
+                selector.select(planned_calls.calls.iter()).clone()
+            };
 
             let warp = warp_roll_strat(config.max_time_delay.is_some());
             let roll = warp_roll_strat(config.max_block_delay.is_some());
@@ -184,7 +201,7 @@ pub fn fuzz_contract_with_calldata<S: FuzzStateReader>(
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
     let calldata_strategy = prop_oneof![
         100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-        dictionary_weight => fuzz_calldata_from_state(func, fuzz_state),
+        dictionary_weight => fuzz_calldata_from_state(func, fuzz_state, fuzz_fixtures),
     ];
 
     // For payable functions, generate random value using shared strategy.
