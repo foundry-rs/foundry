@@ -1,9 +1,15 @@
-# require-revert-in-loop
+# Require or revert inside a loop
 
-## Description
+**Severity**: `Low`
+**ID**: `require-revert-in-loop`
 
-Detects `require` calls and `revert` statements inside loops, including checks reached through
-internal helper calls, modifier placeholders, and inline assembly `revert`.
+Flags `require` calls and `revert` statements inside loops because one invalid item can abort the
+entire batch.
+
+## What it does
+
+Reports Solidity `require`/`revert`, revert statements, and Yul `revert` inside loops. The analysis
+also follows modifiers and internal helper calls reached from a loop.
 
 ## Why is this bad?
 
@@ -11,6 +17,8 @@ A single invalid item can revert the entire loop, which can make batched operati
 one element fails validation.
 
 ## Example
+
+### Bad
 
 ```solidity
 contract Batch {
@@ -22,7 +30,15 @@ contract Batch {
 }
 ```
 
-## Recommended
+### Good
 
-Validate inputs before the loop, skip invalid entries explicitly, or split work into smaller calls
-when one failing element should not revert the whole batch.
+```solidity
+contract Batch {
+    function process(uint256[] calldata values) external {
+        for (uint256 i; i < values.length; ++i) {
+            if (values[i] == 0) continue;
+            // Process valid entries.
+        }
+    }
+}
+```
