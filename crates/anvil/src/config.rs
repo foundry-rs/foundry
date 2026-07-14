@@ -1247,7 +1247,9 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
-        let mut decoder_builder = CallTraceDecoderBuilder::new();
+        let mut decoder_builder = CallTraceDecoderBuilder::new().with_tempo_hardfork(
+            self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork())),
+        );
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
@@ -1396,6 +1398,10 @@ latest block number: {latest_block}"
         let gas_limit = self.fork_gas_limit(&block);
         self.gas_limit = Some(gas_limit);
 
+        // Cache identity must describe the remote fork block, not local execution overrides that
+        // can change after mining (for example, the locally advanced base fee).
+        let cache_block_env: BlockEnv = block_env_from_header(&block.header);
+
         evm_env.block_env = BlockEnv {
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
@@ -1492,7 +1498,7 @@ latest block number: {latest_block}"
             self.networks,
         );
 
-        let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
