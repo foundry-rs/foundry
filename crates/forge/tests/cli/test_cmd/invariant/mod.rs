@@ -1465,6 +1465,9 @@ contract AutoInvariantWorkersTest is Test {
    "#,
     );
 
+    prj.update_config(|config| {
+        config.invariant.workers = foundry_config::InvariantWorkers::default();
+    });
     cmd.unset_env("FOUNDRY_INVARIANT_WORKERS");
     cmd.env("FOUNDRY_INVARIANT_RUNS", "20000");
     cmd.env("FOUNDRY_INVARIANT_DEPTH", "500");
