@@ -1224,12 +1224,18 @@ impl<N: Network> Backend<N> {
 
     /// Injects all configured precompiles into the given precompile map.
     ///
-    /// This applies three layers:
+    /// This applies four layers:
     /// 1. Network-specific precompiles (e.g. Tempo, OP)
-    /// 2. User-provided precompiles via [`PrecompileFactory`]
-    /// 3. Cheatcode ecrecover overrides (if active)
-    fn inject_precompiles(&self, precompiles: &mut PrecompilesMap) {
+    /// 2. Chain- and timestamp-specific precompiles
+    /// 3. User-provided precompiles via [`PrecompileFactory`]
+    /// 4. Cheatcode ecrecover overrides (if active)
+    fn inject_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         self.networks.inject_precompiles(precompiles);
+        self.networks.inject_chain_precompiles(
+            precompiles,
+            evm_env.cfg_env.chain_id,
+            evm_env.block_env.timestamp.saturating_to(),
+        );
 
         if let Some(factory) = &self.precompile_factory {
             factory.install(precompiles);
@@ -1254,12 +1260,15 @@ impl<N: Network> Backend<N> {
         });
     }
 
-    fn inject_tempo_precompiles<DB, I>(&self, evm: &mut tempo_evm::evm::TempoEvm<DB, I>)
-    where
+    fn inject_tempo_precompiles<DB, I>(
+        &self,
+        evm: &mut tempo_evm::evm::TempoEvm<DB, I>,
+        evm_env: &EvmEnv,
+    ) where
         DB: Database,
         I: Inspector<TempoContext<DB>>,
     {
-        self.inject_precompiles(evm.precompiles_mut());
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
         // Re-extend Tempo precompiles, preserving shared non-creditable slots.
         let cfg = evm.ctx().cfg.clone();
         let non_creditable_slots = evm.non_creditable_slots();
@@ -1321,7 +1330,7 @@ impl<N: Network> Backend<N> {
             evm_env.clone(),
             inspector,
         );
-        self.inject_precompiles(evm.precompiles_mut());
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
         self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         Ok(evm.transact(tx_env)?)
     }
@@ -1396,7 +1405,7 @@ impl<N: Network> Backend<N> {
             tempo_env,
             inspector,
         );
-        self.inject_tempo_precompiles(&mut evm);
+        self.inject_tempo_precompiles(&mut evm, evm_env);
         let result = evm.transact(tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {
@@ -1431,7 +1440,7 @@ impl<N: Network> Backend<N> {
 
         macro_rules! run {
             ($evm:expr) => {{
-                self.inject_precompiles($evm.precompiles_mut());
+                self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
