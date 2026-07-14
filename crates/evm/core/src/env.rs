@@ -12,6 +12,7 @@ use revm::{
     context::{Block, BlockEnv, Cfg, CfgEnv, Transaction, TxEnv},
     context_interface::{
         ContextTr,
+        block::BlobExcessGasAndPrice,
         either::Either,
         transaction::{AccessList, RecoveredAuthorization, SignedAuthorization},
     },
@@ -51,6 +52,9 @@ pub trait FoundryBlock: Block {
         _excess_blob_gas: u64,
         _base_fee_update_fraction: u64,
     );
+
+    /// Sets the blob gas price directly.
+    fn set_blob_gasprice(&mut self, _blob_gasprice: u128) {}
 
     // Tempo methods
 
@@ -98,6 +102,12 @@ impl FoundryBlock for BlockEnv {
         base_fee_update_fraction: u64,
     ) {
         self.set_blob_excess_gas_and_price(excess_blob_gas, base_fee_update_fraction);
+    }
+
+    fn set_blob_gasprice(&mut self, blob_gasprice: u128) {
+        self.blob_excess_gas_and_price
+            .get_or_insert(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice })
+            .blob_gasprice = blob_gasprice;
     }
 }
 

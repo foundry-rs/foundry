@@ -4374,6 +4374,51 @@ Transaction successfully executed.
 "#]]);
 });
 
+// Block context overrides are forwarded to `eth_call` and applied when executing a local trace.
+casttest!(cast_call_applies_block_context_overrides, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let args = [
+        "call",
+        "0x00000000000000000000000000000000000000cc",
+        "context()(address,uint256,uint256,uint256)",
+        "--override-code",
+        "0x00000000000000000000000000000000000000cc:0x4160005245602052486040524a60605260806000f3",
+        "--block.gas-limit",
+        "100000",
+        "--block.fee-recipient",
+        "0x000000000000000000000000000000000000beef",
+        "--block.base-fee",
+        "5",
+        "--block.blob-base-fee",
+        "6",
+        "--rpc-url",
+        &rpc,
+    ];
+
+    cmd.cast_fuse().args(args).assert_success().stdout_eq(str![[r#"
+0x000000000000000000000000000000000000bEEF
+100000 [1e5]
+5
+6
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(args.into_iter().chain(["--trace"]))
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x00000000000000000000000000000000000000cc::context()
+    └─ ← [Return] 0x000000000000000000000000000000000000000000000000000000000000beef00000000000000000000000000000000000000000000000000000000000186a000000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000006
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/10189
 // `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
 // (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
@@ -4439,10 +4484,7 @@ Transaction successfully executed.
 "#]]);
 });
 
-// `--debug-trace-call` must also forward block overrides: override an address with a runtime that
-// returns `block.number` and pass `--block.number`, then check the traced call returns that number.
-// If `with_block_overrides` were not forwarded to `debug_traceCall`, the call would run at anvil's
-// real block number and the return would differ, so this test can fail.
+// `--debug-trace-call` forwards the configured block context to the remote execution.
 casttest!(cast_call_debug_trace_call_applies_block_overrides, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
@@ -4450,21 +4492,29 @@ casttest!(cast_call_debug_trace_call_applies_block_overrides, async |_prj, cmd| 
         .args([
             "call",
             "0x00000000000000000000000000000000000000bb",
-            "number()(uint256)",
+            "context()(uint256,uint256,address,uint256,uint256)",
             "--debug-trace-call",
-            // runtime: NUMBER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+            // Return NUMBER, GASLIMIT, COINBASE, BASEFEE, and BLOBBASEFEE.
             "--override-code",
-            "0x00000000000000000000000000000000000000bb:0x4360005260206000f3",
+            "0x00000000000000000000000000000000000000bb:0x436000524560205241604052486060524a60805260a06000f3",
             "--block.number",
             "1234",
+            "--block.gas-limit",
+            "100000",
+            "--block.fee-recipient",
+            "0x000000000000000000000000000000000000beef",
+            "--block.base-fee",
+            "5",
+            "--block.blob-base-fee",
+            "6",
             "--rpc-url",
             &handle.http_endpoint(),
         ])
         .assert_success()
         .stdout_eq(str![[r#"
 Traces:
-  [21160] 0x00000000000000000000000000000000000000bb::number()
-    └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000004d2
+  [..] 0x00000000000000000000000000000000000000bb::context()
+    └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000004d200000000000000000000000000000000000000000000000000000000000186a0000000000000000000000000000000000000000000000000000000000000beef00000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000006
 
 
 Transaction successfully executed.
@@ -6322,6 +6372,10 @@ casttest!(curl_call_debug_trace_call_forwards_overrides, |_prj, cmd| {
             "0x00000000000000000000000000000000000000aa:0x60005460005260206000f3",
             "--block.number",
             "1234",
+            "--block.fee-recipient",
+            "0x000000000000000000000000000000000000beef",
+            "--block.base-fee",
+            "5",
             "--curl",
         ])
         .assert_success()
@@ -6335,6 +6389,77 @@ casttest!(curl_call_debug_trace_call_forwards_overrides, |_prj, cmd| {
         "expected the override code in params:\n{output}"
     );
     assert!(output.contains("blockOverrides"), "expected block overrides in params:\n{output}");
+    assert!(output.contains("feeRecipient"), "expected fee recipient in params:\n{output}");
+    assert!(output.contains("baseFeePerGas"), "expected base fee in params:\n{output}");
+    assert!(!output.contains("coinbase"), "unexpected legacy fee recipient field:\n{output}");
+    assert!(!output.contains("baseFee\""), "unexpected legacy base fee field:\n{output}");
+});
+
+// A plain `eth_call` curl request retains both override parameters and uses the execution-client
+// field names for the block context.
+casttest!(curl_call_forwards_overrides, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args([
+            "call",
+            to,
+            "--data",
+            "0x",
+            "--rpc-url",
+            rpc,
+            "--override-balance",
+            "0x00000000000000000000000000000000000000aa:1",
+            "--block.number",
+            "1",
+            "--block.time",
+            "2",
+            "--block.gas-limit",
+            "3",
+            "--block.fee-recipient",
+            "0x0000000000000000000000000000000000000004",
+            "--block.base-fee",
+            "5",
+            "--block.blob-base-fee",
+            "6",
+            "--curl",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let payload = output
+        .split("--data-raw '")
+        .nth(1)
+        .and_then(|payload| payload.split("' '").next())
+        .expect("missing curl JSON payload");
+    let request: serde_json::Value = serde_json::from_str(payload).unwrap();
+
+    assert_eq!(
+        request,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [
+                { "to": to, "data": "0x" },
+                "latest",
+                {
+                    "0x00000000000000000000000000000000000000aa": {
+                        "balance": "0x1"
+                    }
+                },
+                {
+                    "number": "0x1",
+                    "time": "0x2",
+                    "gasLimit": "0x3",
+                    "feeRecipient": "0x0000000000000000000000000000000000000004",
+                    "baseFeePerGas": "0x5",
+                    "blobBaseFee": "0x6"
+                }
+            ],
+            "id": 1
+        })
+    );
 });
 
 // tests that `--curl` forwards the scalar transaction fields into the call object, so the
