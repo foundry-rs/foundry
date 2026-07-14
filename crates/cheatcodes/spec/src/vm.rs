@@ -688,6 +688,21 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;
 
+    /// Mocks a call to an address, returning specified data.
+    /// Calldata can either be strict or a partial match, e.g. if you only
+    /// pass a Solidity selector to the expected calldata, then the entire Solidity
+    /// function will be mocked.
+    ///
+    /// Overload to control whether code is injected into `callee`. The other overloads etch a
+    /// single byte into an empty account to circumvent Solidity's `extcodesize` check, with the
+    /// side effect that unmocked calls to it no longer revert; `injectCode = false` leaves the
+    /// account codeless, so unmocked calls to it revert in the caller. Mocked calls that return
+    /// data still succeed, as Solidity checks `returndatasize()` instead of `extcodesize()` when
+    /// return data is expected, but mocked calls to functions without return values may still
+    /// revert in the caller due to the `extcodesize` check.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData, bool injectCode) external;
+
     /// Mocks multiple calls to an address, returning specified data for each call.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;

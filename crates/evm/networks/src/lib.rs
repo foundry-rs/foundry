@@ -17,13 +17,14 @@ use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS,
-    RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
-    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
-    VALIDATOR_CONFIG_V2_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CURRENT_COMMITTEE_ADDRESS,
+    NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
+    STABLECOIN_DEX_ADDRESS, STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+    TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
 };
 
+pub mod arbitrum;
 pub mod celo;
 
 #[cfg(feature = "optimism")]
@@ -43,6 +44,7 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("TIP20ChannelReserve", TIP20_CHANNEL_RESERVE_ADDRESS),
     ("ReceivePolicyGuard", RECEIVE_POLICY_GUARD_ADDRESS),
     ("StorageCredits", STORAGE_CREDITS_ADDRESS),
+    ("CurrentCommittee", CURRENT_COMMITTEE_ADDRESS),
 ];
 
 /// All well-known Tempo precompile addresses.
@@ -60,11 +62,14 @@ pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     TIP20_CHANNEL_RESERVE_ADDRESS,
     RECEIVE_POLICY_GUARD_ADDRESS,
     STORAGE_CREDITS_ADDRESS,
+    CURRENT_COMMITTEE_ADDRESS,
 ];
 
 /// Returns whether a well-known Tempo precompile address is active at `hardfork`.
 pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
-    if address == TIP20_CHANNEL_RESERVE_ADDRESS {
+    if address == CURRENT_COMMITTEE_ADDRESS {
+        hardfork.is_t8()
+    } else if address == TIP20_CHANNEL_RESERVE_ADDRESS {
         hardfork.is_t5()
     } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
         hardfork.is_t6()
@@ -448,6 +453,17 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
         assert!(!cfg.precompiles(Some(TempoHardfork::T6)).contains_key("StorageCredits"));
         assert!(cfg.precompiles(Some(TempoHardfork::T7)).contains_key("StorageCredits"));
+    }
+
+    #[test]
+    fn current_committee_precompile_activates_at_t8() {
+        assert!(!is_tempo_precompile_active_at(CURRENT_COMMITTEE_ADDRESS, TempoHardfork::T7));
+        assert!(is_tempo_precompile_active_at(CURRENT_COMMITTEE_ADDRESS, TempoHardfork::T8));
+        assert!(TEMPO_PRECOMPILE_ADDRESSES.contains(&CURRENT_COMMITTEE_ADDRESS));
+
+        let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
+        assert!(!cfg.precompiles(Some(TempoHardfork::T7)).contains_key("CurrentCommittee"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T8)).contains_key("CurrentCommittee"));
     }
 
     // --- resolved() / active_network_name ---

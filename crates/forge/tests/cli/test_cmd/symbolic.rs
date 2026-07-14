@@ -111,14 +111,14 @@ contract SymbolicIgnored {
 "#,
     );
 
-    let stdout = cmd
+    let stderr = cmd
         .args(["test", "--match-test", "checkWouldFail"])
         .assert_success()
         .get_output()
-        .stdout_lossy();
+        .stderr_lossy();
 
     assert_relevant_lines(
-        &stdout,
+        &stderr,
         foundry_test_utils::str![[r#"
 No tests found
 "#]],
@@ -1690,11 +1690,10 @@ contract SymbolicInvariantSequenceArtifact is Test {
     assert_eq!(failure["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
     let minimization = &failure["minimization"];
     assert_eq!(failure["artifact"], minimization["minimized"]);
+    assert_eq!(minimization["original_sequence_len"], 1);
     assert_eq!(minimization["minimized_sequence_len"], 1);
-    assert!(
-        minimization["original_sequence_len"].as_u64().unwrap()
-            > minimization["minimized_sequence_len"].as_u64().unwrap()
-    );
+    assert_eq!(minimization["accepted"], 0);
+    assert_eq!(minimization["original_calldata_bytes"], minimization["minimized_calldata_bytes"]);
     let artifacts = result["counterexample_artifacts"].as_array().unwrap();
     assert_eq!(artifacts.len(), 2);
     assert_eq!(artifacts[0], failure["artifact"]);
@@ -1703,10 +1702,7 @@ contract SymbolicInvariantSequenceArtifact is Test {
 
     let original = read_artifact_ref(&minimization["original"]);
     assert_eq!(original["replay"]["status"], "confirmed");
-    assert!(
-        original["calls"].as_array().unwrap().len()
-            > minimization["minimized_sequence_len"].as_u64().unwrap() as usize
-    );
+    assert_eq!(original["calls"].as_array().unwrap().len(), 1);
     let artifact = read_artifact_ref(&failure["artifact"]);
     assert_eq!(artifact["schema_version"], 1);
     assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
@@ -2359,13 +2355,10 @@ contract SymbolicInvariantSequenceMinimize is Test {
     let failure = failures.first().expect("invariant failure");
     let minimization = &failure["minimization"];
     assert_eq!(failure["artifact"], minimization["minimized"]);
-    assert_eq!(minimization["original_sequence_len"], 20);
+    assert_eq!(minimization["original_sequence_len"], 2);
     assert_eq!(minimization["minimized_sequence_len"], 2);
     assert!(minimization["accepted"].as_u64().unwrap() > 0);
-    assert!(
-        minimization["minimized_calldata_bytes"].as_u64().unwrap()
-            < minimization["original_calldata_bytes"].as_u64().unwrap()
-    );
+    assert_eq!(minimization["original_calldata_bytes"], minimization["minimized_calldata_bytes"]);
     let artifacts = result["counterexample_artifacts"].as_array().unwrap();
     assert_eq!(artifacts.len(), 2);
     assert!(artifacts.contains(&failure["artifact"]));
@@ -2375,8 +2368,9 @@ contract SymbolicInvariantSequenceMinimize is Test {
     let minimized = read_artifact_ref(&minimization["minimized"]);
     assert_eq!(original["replay"]["status"], "confirmed");
     assert_eq!(minimized["replay"]["status"], "confirmed");
-    assert_eq!(original["calls"].as_array().unwrap().len(), 20);
+    assert_eq!(original["calls"].as_array().unwrap().len(), 2);
     assert_eq!(minimized["calls"].as_array().unwrap().len(), 2);
+    assert_ne!(original["calls"], minimized["calls"]);
 
     let calls = minimized["calls"].as_array().unwrap();
     let prime = calls.iter().find(|call| call["function_name"] == "prime").unwrap();

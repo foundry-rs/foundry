@@ -186,8 +186,8 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
-) -> Result<Option<&'a Function>> {
-    let inner_sequence = invariant_inner_sequence(executor);
+) -> Result<(Option<&'a Function>, bool)> {
+    let mut inner_sequence = None;
     let mut first_broken: Option<&'a Function> = None;
     let ctx = InvariantRunCtx {
         contract: invariant_contract,
@@ -207,9 +207,14 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
             invariant_contract.address,
             invariant.abi_encode_input(&[])?.into(),
         )?;
+        if call_result.execution_cancelled {
+            return Ok((first_broken, true));
+        }
         if !success {
+            let inner_sequence =
+                inner_sequence.get_or_insert_with(|| invariant_inner_sequence(executor));
             let case =
-                ctx.failed_case(invariant, *fail_on_revert, false, call_result, &inner_sequence);
+                ctx.failed_case(invariant, *fail_on_revert, false, call_result, inner_sequence);
             invariant_failures.record_failure(invariant, InvariantFuzzError::BrokenInvariant(case));
             if first_broken.is_none() {
                 first_broken = Some(*invariant);
@@ -217,7 +222,7 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
         }
     }
 
-    Ok(first_broken)
+    Ok((first_broken, false))
 }
 
 /// Helper function to initialize invariant inner sequence.
@@ -235,12 +240,11 @@ fn invariant_inner_sequence<FEN: FoundryEvmNetwork>(
 
 /// Outcome of a per-call invariant check.
 #[derive(Debug)]
-pub(crate) struct ContinueOutcome<'a> {
+pub(crate) struct ContinueOutcome {
     /// Whether the invariant campaign should keep running after this call.
     pub continues: bool,
-    /// First newly-broken invariant produced by this call, in declaration order. Used by the
-    /// executor to record the failure event without re-scanning the failures map.
-    pub broken: Option<&'a Function>,
+    /// Whether an invariant or optimization call was halted by cancellation.
+    pub cancelled: bool,
 }
 
 /// Returns if invariant test can continue and last successful call result of the invariant test
@@ -263,9 +267,8 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     handler_selector: Selector,
     assertion_failure: bool,
     pre_merge_edges_hash: Option<B256>,
-) -> Result<ContinueOutcome<'a>> {
+) -> Result<ContinueOutcome> {
     let is_optimization = invariant_contract.is_optimization();
-    let mut broken: Option<&'a Function> = None;
 
     // Use the handler-gate variant so a stale committed `GLOBAL_FAIL_SLOT` from a
     // previously-recorded handler bug doesn't poison this gate (which would otherwise silently
@@ -301,11 +304,13 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 invariant_contract.address,
                 invariant_contract.anchor().abi_encode_input(&[])?.into(),
             )?;
+            if inv_result.execution_cancelled {
+                return Ok(ContinueOutcome { continues: true, cancelled: true });
+            }
             if success
                 && inv_result.result.len() >= 32
                 && let Some(value) = I256::try_from_be_slice(&inv_result.result[..32])
             {
-                invariant_test.update_optimization_value(value, &invariant_run.inputs);
                 // Track the best value and its prefix length for this run
                 // (used for corpus persistence — materialized once at run end).
                 if invariant_run.optimization_value.is_none_or(|prev| value > prev) {
@@ -315,7 +320,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             }
         } else {
             // Check mode: assert invariants and fail if broken.
-            broken = assert_invariants(
+            let (_, cancelled) = assert_invariants(
                 invariant_contract,
                 invariant_config,
                 &invariant_test.targeted_contracts,
@@ -323,6 +328,9 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 &invariant_run.inputs,
                 &mut invariant_test.test_data.failures,
             )?;
+            if cancelled {
+                return Ok(ContinueOutcome { continues: true, cancelled: true });
+            }
         }
     } else {
         let is_assert_failure = assertion_failure;
@@ -354,7 +362,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 .test_data
                 .failures
                 .can_continue(invariant_contract.invariant_fns.len());
-            return Ok(ContinueOutcome { continues, broken: None });
+            return Ok(ContinueOutcome { continues, cancelled: false });
         }
 
         // Non-assertion revert: per-invariant `fail_on_revert` still marks affected
@@ -368,7 +376,6 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             .collect();
 
         if let Some((first_invariant, _)) = failing_invariants.first() {
-            broken = Some(*first_invariant);
             // Build a base case_data attributed to the first failing invariant; clone it for
             // each subsequent broken invariant, retagging name/selector/`fail_on_revert` so
             // every recorded failure points at its own invariant body.
@@ -417,7 +424,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
 
     let continues =
         invariant_test.test_data.failures.can_continue(invariant_contract.invariant_fns.len());
-    Ok(ContinueOutcome { continues, broken })
+    Ok(ContinueOutcome { continues, cancelled: false })
 }
 
 /// Given the executor state, asserts conditions within `afterInvariant` function.
@@ -429,12 +436,15 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     invariant_test: &mut InvariantTest,
     invariant_run: &InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
-) -> Result<Option<&'a Function>> {
+) -> Result<(Option<&'a Function>, bool)> {
     let (call_result, success) =
         call_after_invariant_function(&invariant_run.executor, invariant_contract.address)?;
+    if call_result.execution_cancelled {
+        return Ok((None, true));
+    }
     // Fail the test case if `afterInvariant` doesn't succeed.
     if success {
-        return Ok(None);
+        return Ok((None, false));
     }
     // `afterInvariant` failures are contract-wide (no specific invariant body executed),
     // so attribute to the campaign anchor.
@@ -450,20 +460,109 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
         .test_data
         .failures
         .record_failure(anchor, InvariantFuzzError::BrokenInvariant(case_data));
-    Ok(Some(anchor))
+    Ok((Some(anchor), false))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
-    use foundry_evm_core::evm::EthEvmNetwork;
+    use crate::executors::{EarlyExit, ExecutorBuilder};
+    use alloy_primitives::{Bytes, U256};
+    use alloy_sol_types::SolCall;
+    use foundry_cheatcodes::{CheatsConfig, Vm::expectRevert_0Call};
+    use foundry_config::Config;
+    use foundry_evm_core::{
+        backend::Backend,
+        constants::CALLER,
+        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
+        opts::EvmOpts,
+    };
+    use foundry_evm_fuzz::invariant::TargetedContracts;
+    use revm::bytecode::Bytecode;
+    use std::sync::Arc;
 
     fn panic_payload(code: u8) -> Bytes {
         let mut payload = vec![0_u8; 36];
         payload[..4].copy_from_slice(&[0x4e, 0x48, 0x7b, 0x71]);
         payload[35] = code;
         payload.into()
+    }
+
+    #[test]
+    fn cancellation_does_not_record_call_end_rewrite_as_invariant_failure() {
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &Config::default(),
+            EvmOpts::default(),
+            None,
+            None,
+            None,
+            false,
+        ));
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .gas_limit(1 << 24)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+            );
+        let invariant_address = Address::repeat_byte(0x11);
+        executor
+            .set_code(
+                invariant_address,
+                Bytecode::new_raw(Bytes::from_static(&[0x5b, 0x60, 0x00, 0x56])),
+            )
+            .unwrap();
+        let expect_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                expectRevert_0Call {}.abi_encode().into(),
+                U256::ZERO,
+            )
+            .unwrap();
+        assert!(!expect_result.reverted);
+
+        let early_exit = EarlyExit::new(false);
+        executor.inspector_mut().set_early_exit(early_exit.clone());
+        early_exit.record_ctrl_c();
+
+        let invariant = Function::parse("invariant_ok() view returns (bool)").unwrap();
+        let mut abi = alloy_json_abi::JsonAbi::new();
+        abi.functions.entry(invariant.name.clone()).or_default().push(invariant.clone());
+        let invariant_contract = InvariantContract::new(
+            invariant_address,
+            "InvariantTest",
+            vec![(&invariant, false)],
+            0,
+            false,
+            &abi,
+        );
+
+        let (_, success) = call_invariant_function(
+            &executor.clone(),
+            invariant_address,
+            invariant.abi_encode_input(&[]).unwrap().into(),
+        )
+        .unwrap();
+        assert!(!success, "pending expectRevert should rewrite the interrupted call");
+
+        let targets = FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false);
+        let mut failures = InvariantFailures::new();
+        let broken = assert_invariants(
+            &invariant_contract,
+            &InvariantConfig::default(),
+            &targets,
+            &executor,
+            &[],
+            &mut failures,
+        )
+        .unwrap();
+
+        assert!(broken.0.is_none());
+        assert!(broken.1);
+        assert_eq!(failures.invariant_count(), 0);
     }
 
     #[test]

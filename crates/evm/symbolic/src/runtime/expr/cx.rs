@@ -7,6 +7,7 @@ pub(crate) struct SymCx {
     bools: HashCons<SymBoolExprKind>,
     bytes: HashCons<SymBytesKind>,
     symbols: Interner<Symbol, DefaultHashBuilder>,
+    concrete_keccak_preimages: HashMap<U256, Arc<[SymExpr]>>,
     cache: SymCxCache,
 }
 
@@ -36,6 +37,7 @@ impl SymCx {
             bools,
             bytes,
             symbols: Interner::with_hasher(DefaultHashBuilder::default()),
+            concrete_keccak_preimages: HashMap::default(),
             cache: SymCxCache { zero, one, bool_true, bool_false, bytes_empty },
         }
     }
@@ -78,6 +80,21 @@ impl SymCx {
 
     pub(crate) fn symbol_name(&self, symbol: Symbol) -> &str {
         self.symbols.resolve(symbol)
+    }
+
+    pub(in crate::runtime::expr) fn record_concrete_keccak_preimage(
+        &mut self,
+        hash: U256,
+        bytes: Arc<[SymExpr]>,
+    ) {
+        self.concrete_keccak_preimages.entry(hash).or_insert(bytes);
+    }
+
+    pub(in crate::runtime::expr) fn concrete_keccak_preimage(
+        &self,
+        hash: U256,
+    ) -> Option<Arc<[SymExpr]>> {
+        self.concrete_keccak_preimages.get(&hash).cloned()
     }
 }
 

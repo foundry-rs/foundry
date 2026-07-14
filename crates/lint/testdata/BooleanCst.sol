@@ -18,6 +18,7 @@ contract BooleanCst {
 
     function allowedBareConstants(bool flag) public pure returns (bool) {
         takesBool(true);
+        takesBool(false);
         return true;
     }
 

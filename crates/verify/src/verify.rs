@@ -359,6 +359,11 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub watch: bool,
 
+    /// Print the submission ID and URL to stdout. Only set for standalone `verify-contract`, so
+    /// embedded verification (`forge create`/`script --verify`) keeps stdout clean.
+    #[arg(skip)]
+    pub print_submission_result_to_stdout: bool,
+
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,

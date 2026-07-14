@@ -41,8 +41,10 @@ const VYPER_KEYS: &[&str] = &[
 
 /// Allowed keys for DocConfig.
 /// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
-/// (`repository`, `path`), whose defaults are `None` and thus excluded from serialization.
-const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "path", "ignore"];
+/// (`repository`, `commit`, `path`), whose defaults are `None` and thus excluded from
+/// serialization.
+const DOC_KEYS: &[&str] =
+    &["out", "title", "book", "homepage", "repository", "commit", "path", "ignore"];
 
 /// Allowed keys for SymbolicConfig.
 /// Required because some compatibility aliases and empty length collections are skipped by default
@@ -150,15 +152,13 @@ impl<P: Provider> WarningsProvider<P> {
             .filter(|(profile, _)| **profile == Config::PROFILE_SECTION)
             .map(|(_, dict)| dict);
 
-        out.extend(profiles.clone().flat_map(BTreeMap::keys).filter_map(deprecated_key_warning));
-        out.extend(
-            profiles
-                .clone()
-                .filter_map(|dict| dict.get(self.profile.as_str().as_str()))
-                .filter_map(Value::as_dict)
-                .flat_map(BTreeMap::keys)
-                .filter_map(deprecated_key_warning),
-        );
+        let deprecated_profile_keys = profiles
+            .clone()
+            .flat_map(|dict| {
+                dict.keys().chain(dict.values().filter_map(Value::as_dict).flat_map(BTreeMap::keys))
+            })
+            .collect::<BTreeSet<_>>();
+        out.extend(deprecated_profile_keys.into_iter().filter_map(deprecated_key_warning));
 
         // Add warning for unknown keys within profiles (root keys only here).
         if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
@@ -245,6 +245,8 @@ impl<P: Provider> WarningsProvider<P> {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
             } else if *section_name == "doc" {
                 DOC_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if *section_name == "symbolic" {
+                SYMBOLIC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
                 let Some(default_section_value) = default_dict.get(*section_name) else {
                     continue;

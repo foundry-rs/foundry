@@ -1,7 +1,10 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use forge_lint::{linter::Linter, sol::SolidityLinter};
+use forge_lint::{
+    linter::Linter,
+    sol::{DeniedLintDiagnostics, SolidityLinter},
+};
 use foundry_cli::{
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{Git, LoadConfig, cache_local_signatures},
@@ -27,7 +30,7 @@ use foundry_config::{
 };
 use serde::Serialize;
 use solar::{
-    interface::{Session, config::Opts},
+    interface::{Session, config::CompileOpts},
     sema::Compiler,
 };
 use std::path::PathBuf;
@@ -143,7 +146,9 @@ impl BuildArgs {
             && !output.output().errors.iter().any(|e| e.is_error())
             && let Err(err) = self.lint(&project, &config, self.paths.as_deref(), &mut output)
         {
-            emit_lint_failure_notice();
+            if err.downcast_ref::<DeniedLintDiagnostics>().is_none() {
+                emit_lint_failure_notice();
+            }
             return Err(err.wrap_err("post-build lint step failed"));
         }
 
@@ -213,7 +218,7 @@ impl BuildArgs {
 
             // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
             // compiler, we should reuse the parser from the project output.
-            let mut opts = Opts::default();
+            let mut opts = CompileOpts::default();
             opts.unstable.typeck = true;
             let mut compiler =
                 Compiler::new(Session::builder().opts(opts).with_stderr_emitter().build());

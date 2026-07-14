@@ -204,6 +204,43 @@ async fn test_spawn_fork() {
     assert_eq!(head, U256::from(BLOCK_NUMBER))
 }
 
+// <https://github.com/foundry-rs/foundry/issues/9743>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_set_storage_visible_to_call() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+
+    let target = Address::random();
+    let slot = uint!(0x9f19e10bccde41c24f53ff4dbf7bb5ee2063896e54351d7230ecd1f7e361cb74_U256);
+    let value = b256!("0000000000000000000000000000000000000000000000000000000000000001");
+
+    // Return the value at `slot`, matching the storage read performed by ENS.resolver(bytes32).
+    origin_api
+        .anvil_set_code(
+            target,
+            bytes!(
+                "7f9f19e10bccde41c24f53ff4dbf7bb5ee2063896e54351d7230ecd1f7e361cb74545f5260205ff3"
+            ),
+        )
+        .await
+        .unwrap();
+
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = fork_handle.http_provider();
+
+    let updated: bool =
+        provider.raw_request("anvil_setStorageAt".into(), (target, slot, value)).await.unwrap();
+    assert!(updated);
+    assert_eq!(provider.get_storage_at(target, slot - U256::ONE).await.unwrap(), U256::ZERO);
+
+    let tx = TransactionRequest::default().to(target);
+    for _ in 0..10 {
+        assert_eq!(provider.get_storage_at(target, slot).await.unwrap(), U256::ONE);
+        let output = provider.call(tx.clone().into()).await.unwrap();
+        assert_eq!(output.as_ref(), value.as_slice());
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_balance() {
     let (api, handle) = spawn(fork_config()).await;

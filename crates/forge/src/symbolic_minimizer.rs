@@ -59,6 +59,7 @@ pub(crate) struct MinimizedSequence {
 }
 
 impl MinimizedSequence {
+    #[cfg(test)]
     pub(crate) fn changed(&self) -> bool {
         self.original_calls != self.minimized_calls
     }

@@ -25,7 +25,7 @@ pub struct RerunFailures {
 /// The filter to use during testing.
 ///
 /// See also `FileFilter`.
-#[derive(Clone, Parser)]
+#[derive(Clone, Default, Parser)]
 #[command(next_help_heading = "Test filtering")]
 pub struct FilterArgs {
     /// Only run test functions matching the specified regex pattern.
@@ -221,6 +221,11 @@ impl ProjectPathsAwareFilter {
     /// Sets exact contract/test pairs persisted by `forge test --rerun`.
     pub fn set_rerun_failures(&mut self, failures: Vec<RerunFailure>) {
         self.rerun_failures = Some(failures);
+    }
+
+    /// Returns exact contract/test pairs persisted by `forge test --rerun`.
+    pub fn rerun_failures(&self) -> Option<&[RerunFailure]> {
+        self.rerun_failures.as_deref()
     }
 
     fn matches_rerun_contract(&self, failure_contract: &str, contract_id: &str) -> bool {

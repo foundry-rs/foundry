@@ -315,6 +315,45 @@ set, generates symbolic arguments with the same ABI model used for stateless
 tests, preserves symbolic world state between calls, and replays a concrete
 sequence before reporting a counterexample.
 
+Some invariant harnesses deploy dependency contracts in `setUp`, then rely on
+those dependencies having satisfiable environment state during the campaign. For
+example, a lending invariant may call an ERC20 mock for balances and allowances,
+or an oracle mock for a price, without exposing target functions that write
+those values first. In that case the dependency storage remains the concrete
+state produced by `setUp`, and symbolic execution can only explore paths
+reachable from that concrete dependency state.
+
+Use Foundry's existing `vm.setArbitraryStorage(address)` cheatcode to mark those
+environment dependency contracts as symbolic storage targets:
+
+```solidity
+function setUp() public {
+    loanToken = new ERC20Mock();
+    collateralToken = new ERC20Mock();
+    oracle = new OracleMock();
+
+    vm.setArbitraryStorage(address(loanToken));
+    vm.setArbitraryStorage(address(collateralToken));
+    vm.setArbitraryStorage(address(oracle));
+
+    targetContract(address(this));
+}
+```
+
+If the harness imports a smaller Hevm interface that does not expose this
+cheatcode, declare a local interface with `setArbitraryStorage(address)` and
+cast it to `address(vm)`.
+
+Keep this scoped to external dependencies that model the environment, such as
+token balances, token allowances, and oracle prices. Do not blanket-mark the
+invariant harness or protocol state as arbitrary; that can create unreachable
+states and counterexamples that concrete replay rejects.
+
+Replay currently materializes only concrete storage slots observed during
+symbolic execution. Dependency storage keyed by symbolic calldata is still
+explored symbolically, but it can replay-filter to `Incomplete` or `mismatch`
+instead of a confirmed counterexample if the required slot is not concrete.
+
 ## Configuration
 
 The primary configuration path is native Foundry config.
@@ -588,7 +627,7 @@ Known incomplete, bounded, or approximate surfaces include:
 | Symbolic hashing and `KECCAK256` | Concrete hashes are computed exactly. Symbolic `KECCAK256` is represented by deterministic opaque terms plus Solidity-storage-layout heuristics for common mapping and dynamic-array keys. Proof obligations that depend on cryptographic facts such as non-zero hashes, collision resistance, or preimage resistance are not proof-grade and may report incomplete or produce replay-filtered candidates. |
 | Symbolic storage base values | Writes and later reads through symbolic keys are modeled, with Solidity-layout heuristics for common mapping/dynamic-array keys. Reads of previously-unwritten symbolic keys are abstract storage variables by default, or zero under the zero-init storage layout; the engine does not enumerate arbitrary concrete backend storage slots for a symbolic key. Proofs involving unknown existing storage are scoped to the selected `symbolic.storage_layout`. |
 | Precompiles | Canonical precompiles are recognized according to the active EVM version; KZG `0x0a` is Cancun+ only and falls back to normal empty-account behavior on earlier hardforks. Concrete inputs for modeled precompiles execute the corresponding revm precompile with effectively unlimited gas. Symbolic identity is byte-precise; symbolic hash/ecrecover/modexp outputs are deterministic opaque terms or fixed-length symbolic outputs, not full cryptographic/algebraic models. Symbolic BN254 inputs and symbolic BLAKE2f final flags report incomplete because precompile success depends on validity checks the symbolic model does not prove. KZG `0x0a` concrete inputs execute the revm KZG precompile exactly. Symbolic KZG calls model broad exact failures such as invalid input length and version/hash mismatches where known, plus selected replayable success/failure witnesses. Any remaining feasible symbolic KZG space reports incomplete rather than being treated as proved safe. Symbolic length headers, symbolic modexp output lengths, out-of-bounds symbolic inputs, future/custom precompiles, and precompile gas/OOG behavior are not fully modeled. |
-| Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Some expensive arithmetic has bounded helpers, but unsupported `EXP` base/exponent shapes and other solver-intractable forms can report incomplete or timeout. |
+| Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Forge proves unsigned monotonic product and same-divisor quotient comparisons when path bounds show that every product fits in 256 bits. Other expensive arithmetic has bounded helpers, but unsupported `EXP` base/exponent shapes and solver-intractable nonlinear identities can report incomplete or timeout. |
 | Cheatcode surface | The common testing cheatcodes listed below are modeled for safe concrete/symbolic forms. Unsupported Foundry/VM compatibility cheatcodes, value-bearing cheatcode calls, delegatecall prank forms, symbolic `expectCall` gas, unsupported symbolic `vm.bound` ranges, and unsupported symbolic `assumeNoRevert` decodes/overlaps report incomplete. |
 | Approximate/no-op cheatcodes | Some recognized Foundry helpers are accepted but not semantically checked under symbolic execution, including non-observable gas metering helpers, access-list/warm/cool helpers, `allowCheatcodes`, `sleep`, and breakpoints. Observable EVM-version helpers, gas snapshot/read helpers, and safe-memory expectation helpers report incomplete instead of fabricating results or silently accepting assertions. |
 | Fork mutation during symbolic execution | Fork-backed setup is allowed before symbolic execution. Creating forks, selecting a different fork, or rolling/mutating fork blocks during symbolic execution is restricted and reports incomplete unless it stays on the already active fork in the supported form. |

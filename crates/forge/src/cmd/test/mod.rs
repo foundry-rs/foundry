@@ -1,4 +1,4 @@
-use super::{install, watch::WatchArgs};
+use super::{fuzz::FuzzRunArgs, install, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, brutalizer,
     decode::decode_console_logs,
@@ -72,7 +72,7 @@ use foundry_evm::{
 };
 use rand::Rng;
 use regex::Regex;
-use revm::context::Transaction;
+use revm::{bytecode::opcode::OpCode, context::Transaction};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -91,12 +91,32 @@ use crate::{
     runner::{count_runnable_invariant_campaign_anchors, function_matches_network_pass},
     traces::render_trace_arena_inner,
 };
-pub use filter::{FilterArgs, ProjectPathsAwareFilter};
-use filter::{RerunFailure, RerunFailures};
+use filter::RerunFailures;
+pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
+const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
+const AUTO_CORPUS_DIR: &str = "corpus";
+
+#[derive(Clone, Copy, Debug, Default)]
+enum FuzzOnlyMode {
+    #[default]
+    Disabled,
+    Enabled,
+    WithAutoFuzzCorpus,
+}
+
+impl FuzzOnlyMode {
+    const fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    const fn uses_auto_fuzz_corpus(self) -> bool {
+        matches!(self, Self::WithAutoFuzzCorpus)
+    }
+}
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -313,6 +333,7 @@ pub(crate) struct TestExecutionOptions {
     pub(crate) multi_network: MultiNetworkConfig,
     pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     pub(crate) inline_config: Arc<InlineConfig>,
+    pub(crate) selected_sources: BTreeSet<PathBuf>,
 }
 
 impl TestExecutionOptions {
@@ -324,6 +345,7 @@ impl TestExecutionOptions {
             multi_network: MultiNetworkConfig::default(),
             replay_symbolic_artifact: None,
             inline_config,
+            selected_sources: BTreeSet::new(),
         }
     }
 
@@ -336,6 +358,17 @@ impl TestExecutionOptions {
 struct FuzzMinimizeNetworkPassOptions {
     inline_config: Arc<InlineConfig>,
     multi_network: MultiNetworkConfig,
+}
+
+struct CompiledTestProject {
+    project_root: PathBuf,
+    config: Config,
+    evm_opts: EvmOpts,
+    output: ProjectCompileOutput,
+    filter: ProjectPathsAwareFilter,
+    inline_config: Arc<InlineConfig>,
+    replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+    selected_sources: BTreeSet<PathBuf>,
 }
 
 fn sources_to_compile_from_artifacts(
@@ -362,13 +395,117 @@ fn sources_to_compile_from_artifacts(
         .collect()
 }
 
-/// CLI arguments for `forge test`.
+/// Shared campaign arguments for `forge fuzz run`.
 #[derive(Clone, Debug, Parser)]
+#[command(next_help_heading = "Campaign options")]
+pub struct CampaignArgs {
+    /// Number of runs to execute for each fuzz or invariant campaign.
+    #[arg(long, value_name = "RUNS")]
+    pub runs: Option<u64>,
+
+    /// Campaign-global timeout in seconds.
+    #[arg(long, value_name = "TIMEOUT")]
+    pub timeout: Option<u32>,
+
+    /// Set seed used to generate randomness during fuzz runs.
+    #[arg(long)]
+    pub seed: Option<U256>,
+
+    /// Number of calls executed to try to break invariants in one run.
+    #[arg(long, value_name = "DEPTH")]
+    pub depth: Option<u32>,
+
+    /// Minimum sampled invariant depth when `--depth-mode random` is active.
+    #[arg(long, value_name = "DEPTH")]
+    pub min_depth: Option<u32>,
+
+    /// How invariant run depth is selected.
+    #[arg(long, value_name = "fixed|random")]
+    pub depth_mode: Option<InvariantDepthMode>,
+
+    /// Number of workers to use for invariant test campaigns, or `auto` to derive from `--jobs`.
+    #[arg(long, value_name = "WORKERS")]
+    pub workers: Option<InvariantWorkers>,
+
+    /// Directory for fuzz and invariant corpus persistence.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub corpus_dir: Option<PathBuf>,
+
+    /// Percent of calldata generated from the dictionary.
+    #[arg(long, value_name = "PERCENT")]
+    pub dictionary_weight: Option<u32>,
+
+    /// Maximum dictionary addresses, or `max`.
+    #[arg(long, value_name = "N|max")]
+    pub dictionary_addresses: Option<String>,
+
+    /// Maximum dictionary values, or `max`.
+    #[arg(long, value_name = "N|max")]
+    pub dictionary_values: Option<String>,
+
+    /// Maximum dictionary literals, or `max`.
+    #[arg(long, value_name = "N|max")]
+    pub dictionary_literals: Option<String>,
+
+    /// Percent chance that coverage-guided fuzzing generates fresh input instead of mutating
+    /// corpus input.
+    #[arg(long, value_name = "PERCENT")]
+    pub corpus_random_sequence_weight: Option<u32>,
+
+    /// Percent chance that fuzzed payable calls carry non-zero msg.value.
+    #[arg(long, value_name = "PERCENT")]
+    pub payable_value_weight: Option<u32>,
+
+    /// Corpus mutation weight for splice.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_splice: Option<u32>,
+
+    /// Corpus mutation weight for repeat.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_repeat: Option<u32>,
+
+    /// Corpus mutation weight for interleave.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_interleave: Option<u32>,
+
+    /// Corpus mutation weight for prefix replacement.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_prefix: Option<u32>,
+
+    /// Corpus mutation weight for suffix replacement.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_suffix: Option<u32>,
+
+    /// Corpus mutation weight for ABI argument mutation.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_abi: Option<u32>,
+
+    /// Corpus mutation weight for comparison-operand mutation.
+    #[arg(long, value_name = "WEIGHT")]
+    pub mutation_weight_cmp: Option<u32>,
+
+    /// Directory for fuzz branch frontier artifacts.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub frontier_dir: Option<PathBuf>,
+
+    /// Maximum number of fuzz branch frontier records to write per test.
+    #[arg(long, value_name = "COUNT")]
+    pub frontier_limit: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MatchedEngineCounts {
+    fuzz: usize,
+    invariant: usize,
+}
+
+/// CLI arguments for `forge test`.
+#[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
     /// Internal mode used by `forge fuzz`.
     #[arg(skip)]
-    pub(crate) fuzz_only: bool,
+    fuzz_only: FuzzOnlyMode,
 
     /// Internal showmap/replay override used by `forge fuzz replay`.
     #[arg(skip)]
@@ -377,6 +514,14 @@ pub struct TestArgs {
     /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
     #[arg(skip)]
     pub(crate) fuzz_failure_replay: bool,
+
+    /// Internal override used by `forge fuzz run --runs` for invariant campaigns.
+    #[arg(skip)]
+    pub(crate) invariant_runs_override: Option<u64>,
+
+    /// Internal override used by `forge fuzz run --timeout` for invariant campaigns.
+    #[arg(skip)]
+    pub(crate) invariant_timeout_override: Option<u32>,
 
     // Include global options for users of this struct.
     #[command(flatten)]
@@ -752,7 +897,7 @@ pub struct TestArgs {
     )]
     pub symbolic_solver_portfolio: Option<Vec<String>>,
 
-    /// Timeout for symbolic execution in seconds.
+    /// SMT solver timeout in seconds; also bounds symbolic invariant exploration.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_TIMEOUT", value_name = "SECONDS")]
     pub symbolic_timeout: Option<u32>,
 
@@ -830,6 +975,15 @@ pub struct TestArgs {
     /// If no failure recorded then regular test run is performed.
     #[arg(long)]
     pub rerun: bool,
+
+    /// Print the given opcodes in trace output, with their gas
+    /// cost and the storage slot and value, if available.
+    ///
+    /// Accepts a comma-separated list of opcode names, e.g.
+    /// `--opcodes SLOAD,MLOAD,SSTORE`. Names are in uppercase.
+    /// Requires `-vvvvv` to render.
+    #[arg(long, value_parser = parse_opcode, value_delimiter(','), conflicts_with_all = ["json", "junit", "list", "debug"])]
+    pub opcodes: Vec<OpCode>,
 
     /// Print test summary table.
     #[arg(long, help_heading = "Display options")]
@@ -971,6 +1125,53 @@ impl TestArgs {
         self.compile_and_run().await
     }
 
+    pub(crate) fn ensure_mutation_mode_compatible(&self, coverage: bool) -> Result<()> {
+        if self.mutate.is_none() {
+            return Ok(());
+        }
+
+        // Mutation testing has bespoke orchestration that is not compatible with these modes.
+        // Run this before compiling when the caller owns the build step so project errors do not
+        // mask CLI conflicts.
+        let mut conflicts = Vec::new();
+        if self.list {
+            conflicts.push("--list");
+        }
+        if self.debug {
+            conflicts.push("--debug");
+        }
+        if self.flamegraph {
+            conflicts.push("--flamegraph");
+        }
+        if self.flamechart {
+            conflicts.push("--flamechart");
+        }
+        if self.evm_profile.is_some() {
+            conflicts.push("--evm-profile");
+        }
+        if self.junit {
+            conflicts.push("--junit");
+        }
+        if coverage {
+            conflicts.push("coverage");
+        }
+        if self.showmap_out.is_some() {
+            conflicts.push("--showmap-out");
+        }
+        if self.replay_symbolic_artifact.is_some() {
+            conflicts.push("--replay-symbolic-artifact");
+        }
+        if !conflicts.is_empty() {
+            bail!(
+                "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
+                 mutation testing.",
+                conflicts.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
     fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
         if let Some(showmap) = self.showmap_override.clone() {
@@ -1003,7 +1204,26 @@ impl TestArgs {
 
     /// Restricts this test invocation to fuzz and invariant tests.
     pub(crate) const fn enable_fuzz_only(&mut self) {
-        self.fuzz_only = true;
+        self.fuzz_only = FuzzOnlyMode::Enabled;
+    }
+
+    /// Restricts this test invocation to fuzz and invariant tests and enables a default fuzz corpus
+    /// dir after user config is loaded.
+    pub(crate) const fn enable_fuzz_only_with_auto_fuzz_corpus(&mut self) {
+        self.fuzz_only = FuzzOnlyMode::WithAutoFuzzCorpus;
+    }
+
+    fn apply_auto_fuzz_corpus_dir(&self, config: &mut Config) {
+        if !self.fuzz_only.uses_auto_fuzz_corpus() {
+            return;
+        }
+
+        if config.fuzz.corpus.corpus_dir.is_none() {
+            config.fuzz.corpus.corpus_dir = Some(match &config.fuzz.failure_persist_dir {
+                Some(root) => root.join(AUTO_CORPUS_DIR),
+                None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
+            });
+        }
     }
 
     /// Overrides showmap config for callers that reuse replay mode without the
@@ -1029,6 +1249,148 @@ impl TestArgs {
     /// Replays persisted fuzz failures without running a new fuzz campaign.
     pub(crate) const fn enable_fuzz_failure_replay(&mut self) {
         self.fuzz_failure_replay = true;
+    }
+
+    fn warn_unsupported_engine_flags(
+        &self,
+        output: &ProjectCompileOutput,
+        config: &Config,
+        inline_config: &InlineConfig,
+        filter: &ProjectPathsAwareFilter,
+        multi_network: &MultiNetworkConfig,
+    ) -> Result<()> {
+        if !self.fuzz_only.is_enabled() {
+            return Ok(());
+        }
+        let counts = matched_engine_counts(output, config, inline_config, filter, multi_network);
+        if counts.fuzz == 0 && counts.invariant == 0 {
+            return Ok(());
+        }
+
+        if counts.fuzz == 0 && counts.invariant > 0 {
+            if self.fuzz_frontier_dir.is_some() {
+                sh_warn!(
+                    "`--frontier-dir` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
+            if self.fuzz_frontier_limit.is_some() {
+                sh_warn!(
+                    "`--frontier-limit` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
+            if self.fuzz_run.is_some() {
+                sh_warn!(
+                    "`--fuzz-run` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
+            if self.fuzz_input_file.is_some() {
+                sh_warn!(
+                    "`--fuzz-input-file` only applies to fuzz tests; no matched fuzz tests were found."
+                )?;
+            }
+        }
+
+        if counts.invariant == 0 && counts.fuzz > 0 {
+            if self.invariant_depth.is_some() {
+                sh_warn!(
+                    "`--depth` only applies to invariant tests; no matched invariant tests were found."
+                )?;
+            }
+            if self.invariant_min_depth.is_some() {
+                sh_warn!(
+                    "`--min-depth` only applies to invariant tests; no matched invariant tests were found."
+                )?;
+            }
+            if self.invariant_depth_mode.is_some() {
+                sh_warn!(
+                    "`--depth-mode` only applies to invariant tests; no matched invariant tests were found."
+                )?;
+            }
+            if self.invariant_workers.is_some() {
+                sh_warn!(
+                    "`--workers` only applies to invariant tests; no matched invariant tests were found."
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Builds the delegated `forge test` invocation for `forge fuzz run`.
+    pub(crate) fn from_fuzz_run(args: FuzzRunArgs) -> Self {
+        let mut test = Self {
+            fuzz_only: FuzzOnlyMode::Enabled,
+            global: args.global,
+            path: args.path,
+            gas_report: args.gas_report,
+            allow_failure: args.allow_failure,
+            junit: args.junit,
+            fail_fast: args.fail_fast,
+            etherscan_api_key: args.etherscan_api_key,
+            list: args.list,
+            fuzz_input_file: args.fuzz_input_file,
+            show_progress: args.show_progress,
+            rerun: args.rerun,
+            showmap_out: args.showmap_out,
+            showmap_per_input: args.showmap_per_input,
+            showmap_domain: args.showmap_domain,
+            showmap_approach: args.showmap_approach,
+            showmap_trial: args.showmap_trial,
+            showmap_corpus_dir: args.showmap_corpus_dir,
+            filter: args.filter,
+            evm: args.evm,
+            build: args.build,
+            ..Self::default()
+        };
+        test.apply_fuzz_run_campaign(args.campaign);
+        test
+    }
+
+    fn apply_fuzz_run_campaign(&mut self, campaign: CampaignArgs) {
+        self.fuzz_seed = campaign.seed;
+        self.fuzz_runs = campaign.runs;
+        self.invariant_runs_override = campaign.runs;
+
+        self.fuzz_timeout = campaign.timeout.map(u64::from);
+        self.invariant_timeout_override = campaign.timeout;
+
+        self.fuzz_dictionary_weight = campaign.dictionary_weight;
+        self.invariant_dictionary_weight = campaign.dictionary_weight;
+        self.fuzz_dictionary_addresses = campaign.dictionary_addresses.clone();
+        self.invariant_dictionary_addresses = campaign.dictionary_addresses;
+        self.fuzz_dictionary_values = campaign.dictionary_values.clone();
+        self.invariant_dictionary_values = campaign.dictionary_values;
+        self.fuzz_dictionary_literals = campaign.dictionary_literals.clone();
+        self.invariant_dictionary_literals = campaign.dictionary_literals;
+
+        self.fuzz_corpus_random_sequence_weight = campaign.corpus_random_sequence_weight;
+        self.invariant_corpus_random_sequence_weight = campaign.corpus_random_sequence_weight;
+        self.fuzz_corpus_dir = campaign.corpus_dir.clone();
+        self.invariant_corpus_dir = campaign.corpus_dir;
+
+        self.fuzz_payable_value_weight = campaign.payable_value_weight;
+        self.invariant_payable_value_weight = campaign.payable_value_weight;
+        self.fuzz_mutation_weight_splice = campaign.mutation_weight_splice;
+        self.invariant_mutation_weight_splice = campaign.mutation_weight_splice;
+        self.fuzz_mutation_weight_repeat = campaign.mutation_weight_repeat;
+        self.invariant_mutation_weight_repeat = campaign.mutation_weight_repeat;
+        self.fuzz_mutation_weight_interleave = campaign.mutation_weight_interleave;
+        self.invariant_mutation_weight_interleave = campaign.mutation_weight_interleave;
+        self.fuzz_mutation_weight_prefix = campaign.mutation_weight_prefix;
+        self.invariant_mutation_weight_prefix = campaign.mutation_weight_prefix;
+        self.fuzz_mutation_weight_suffix = campaign.mutation_weight_suffix;
+        self.invariant_mutation_weight_suffix = campaign.mutation_weight_suffix;
+        self.fuzz_mutation_weight_abi = campaign.mutation_weight_abi;
+        self.invariant_mutation_weight_abi = campaign.mutation_weight_abi;
+        self.fuzz_mutation_weight_cmp = campaign.mutation_weight_cmp;
+        self.invariant_mutation_weight_cmp = campaign.mutation_weight_cmp;
+
+        self.fuzz_frontier_dir = campaign.frontier_dir;
+        self.fuzz_frontier_limit = campaign.frontier_limit;
+        self.invariant_depth = campaign.depth;
+        self.invariant_min_depth = campaign.min_depth;
+        self.invariant_depth_mode = campaign.depth_mode;
+        self.invariant_workers = campaign.workers;
     }
 
     fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
@@ -1175,24 +1537,19 @@ impl TestArgs {
             return self.compile_and_run_brutalized().await;
         }
 
-        let (
-            project_root,
-            config,
-            evm_opts,
-            output,
-            filter,
-            inline_config,
-            replay_symbolic_artifact,
-        ) = self.compile_project().await?;
+        self.ensure_mutation_mode_compatible(false)?;
+
+        let compiled = self.compile_project().await?;
         self.run_tests(
-            &project_root,
-            config,
-            evm_opts,
-            &output,
-            &filter,
+            &compiled.project_root,
+            compiled.config,
+            compiled.evm_opts,
+            &compiled.output,
+            &compiled.filter,
             TestExecutionOptions {
-                replay_symbolic_artifact,
-                ..TestExecutionOptions::default_run(inline_config)
+                replay_symbolic_artifact: compiled.replay_symbolic_artifact,
+                selected_sources: compiled.selected_sources,
+                ..TestExecutionOptions::default_run(compiled.inline_config)
             },
         )
         .await
@@ -1232,6 +1589,7 @@ impl TestArgs {
         let test_failures_file = config.test_failures_file.clone();
         let mut config = workspace::rebase_config_paths(&config, temp_path).sanitized();
         config.test_failures_file = test_failures_file;
+        self.apply_auto_fuzz_corpus_dir(&mut config);
         let project = config.project()?;
         let project_root = project.paths.root.clone();
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1242,7 +1600,7 @@ impl TestArgs {
         let output = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit)
-            .files(files)
+            .files(files.clone())
             .compile(&project)?;
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
@@ -1257,39 +1615,38 @@ impl TestArgs {
             &filter,
             TestExecutionOptions {
                 replay_symbolic_artifact,
+                selected_sources: files,
                 ..TestExecutionOptions::default_run(inline_config)
             },
         )
         .await
     }
 
-    async fn compile_project(
-        &mut self,
-    ) -> Result<(
-        PathBuf,
-        Config,
-        EvmOpts,
-        ProjectCompileOutput,
-        ProjectPathsAwareFilter,
-        Arc<InlineConfig>,
-        Option<SymbolicArtifactReplayConfig>,
-    )> {
+    async fn compile_project(&mut self) -> Result<CompiledTestProject> {
+        let should_default_fuzz_run_workers_to_auto =
+            self.fuzz_only.is_enabled() && self.invariant_workers.is_none();
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         let should_mutate = self.mutate.is_some();
-
-        // Force dyn test linking for mutation testing
-        if should_mutate {
-            config.dynamic_test_linking = true;
-            config.cache = true;
-        }
 
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
+        if should_default_fuzz_run_workers_to_auto && !config.invariant.workers_configured {
+            config.invariant.workers = InvariantWorkers::Auto;
+        }
+
+        if should_mutate {
+            // Force dyn test linking and cache usage for mutation testing after any config reload.
+            config.dynamic_test_linking = true;
+            config.cache = true;
+            apply_mutation_compiler_overrides(&mut config);
+        }
+
+        self.apply_auto_fuzz_corpus_dir(&mut config);
 
         // Set up the project.
         let mut project = config.project()?;
@@ -1330,7 +1687,7 @@ impl TestArgs {
                 ProjectCompiler::new().dynamic_test_linking(dynamic_test_linking).quiet(quiet),
             )?;
             let inline_config = Arc::new(InlineConfig::new_parsed(&output, &config)?);
-            return Ok((
+            return Ok(CompiledTestProject {
                 project_root,
                 config,
                 evm_opts,
@@ -1338,7 +1695,8 @@ impl TestArgs {
                 filter,
                 inline_config,
                 replay_symbolic_artifact,
-            ));
+                selected_sources: BTreeSet::new(),
+            });
         }
 
         let compile = |files| {
@@ -1349,15 +1707,21 @@ impl TestArgs {
                 .compile(&project)
         };
 
-        let (files, inline_config) =
+        let (selected_sources, inline_config) =
             self.get_sources_to_compile(&config, &filter, None, replay_symbolic_artifact.as_ref())?;
-        let output = compile(files)?;
+        let mut output = compile(selected_sources.clone());
+        if should_mutate {
+            output = output.wrap_err(
+                "Mutation testing compiler profile failed to compile before applying mutations",
+            );
+        }
+        let output = output?;
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
             None => Arc::new(InlineConfig::new_parsed(&output, &config)?),
         };
 
-        Ok((
+        Ok(CompiledTestProject {
             project_root,
             config,
             evm_opts,
@@ -1365,15 +1729,17 @@ impl TestArgs {
             filter,
             inline_config,
             replay_symbolic_artifact,
-        ))
+            selected_sources,
+        })
     }
 
     pub(crate) async fn prepare_fuzz_minimize_replay(
         &mut self,
         corpus_dir: &Path,
     ) -> Result<FuzzMinimizeReplaySession> {
-        let (_, mut config, mut evm_opts, output, filter, inline_config, _) =
-            self.compile_project().await?;
+        let compiled = self.compile_project().await?;
+        let CompiledTestProject { mut config, mut evm_opts, output, filter, inline_config, .. } =
+            compiled;
 
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -1476,54 +1842,19 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         mut execution: TestExecutionOptions,
     ) -> Result<TestOutcome> {
+        self.ensure_mutation_mode_compatible(execution.coverage)?;
+
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
         }
 
-        // Mutation testing has bespoke orchestration (per-mutant temp
-        // workspaces, baseline + N mutants, aggregated mutation report). It is
-        // not compatible with the single-run debug / flame / list / junit
-        // modes — running them together would either mix incompatible output
-        // formats, or run the secondary mode against the baseline tests and
-        // then silently continue into mutation testing. Reject up front with a
-        // clear error rather than do the wrong thing.
-        if self.mutate.is_some() {
-            let mut conflicts = Vec::new();
-            if self.list {
-                conflicts.push("--list");
-            }
-            if self.debug {
-                conflicts.push("--debug");
-            }
-            if self.flamegraph {
-                conflicts.push("--flamegraph");
-            }
-            if self.flamechart {
-                conflicts.push("--flamechart");
-            }
-            if self.evm_profile.is_some() {
-                conflicts.push("--evm-profile");
-            }
-            if self.junit {
-                conflicts.push("--junit");
-            }
-            if execution.coverage {
-                conflicts.push("coverage");
-            }
-            if self.showmap_out.is_some() {
-                conflicts.push("--showmap-out");
-            }
-            if self.replay_symbolic_artifact.is_some() {
-                conflicts.push("--replay-symbolic-artifact");
-            }
-            if !conflicts.is_empty() {
-                bail!(
-                    "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
-                     mutation testing.",
-                    conflicts.join(", ")
-                );
-            }
-        }
+        self.warn_unsupported_engine_flags(
+            output,
+            &config,
+            &execution.inline_config,
+            filter,
+            &execution.multi_network,
+        )?;
 
         if self.list {
             return list_from_output(
@@ -1531,7 +1862,7 @@ impl TestArgs {
                 &config,
                 &execution.inline_config,
                 filter,
-                self.fuzz_only,
+                self.fuzz_only.is_enabled(),
                 execution.replay_symbolic_artifact.as_ref(),
             );
         }
@@ -1864,7 +2195,11 @@ impl TestArgs {
         if let Some(mutate) = &self.mutate {
             // Check outcome here, stop if any test failed
             if outcome.failed() > 0 {
-                eyre::bail!("Cannot run mutation testing with failed tests");
+                eyre::bail!(
+                    "Mutation testing compiler profile failed its unmutated baseline run; \
+                     adjust `--mutation-via-ir` / `--mutation-optimizer-runs` or fix the tests \
+                     before running mutation testing"
+                );
             }
 
             // A green baseline that ran zero non-skipped tests is not useful:
@@ -2035,18 +2370,10 @@ impl TestArgs {
                 );
             }
 
-            let mut config_for_mutation = config_for_mutation;
-            apply_mutation_compiler_overrides(&mut config_for_mutation);
-
             let json_output = shell::is_json();
-            let (selected_sources, _) = self.get_sources_to_compile(
-                &config_for_mutation,
-                filter,
-                Some(execution.inline_config.clone()),
-                execution.replay_symbolic_artifact.as_ref(),
-            )?;
-            let selected_sources_relative = selected_sources
-                .into_iter()
+            let selected_sources_relative = execution
+                .selected_sources
+                .iter()
                 .filter_map(|path| {
                     path.strip_prefix(&config_for_mutation.root).ok().map(PathBuf::from)
                 })
@@ -2070,6 +2397,7 @@ impl TestArgs {
                 // into `test_pattern`. Using `self.filter.clone()` would lose
                 // those and let mutant runs silently diverge from baseline.
                 filter_args: filter.args().clone(),
+                rerun_failures: filter.rerun_failures().map(|failures| failures.to_vec()),
                 selected_sources_relative,
                 isolate: evm_opts_for_mutation.isolate,
             };
@@ -2125,7 +2453,7 @@ impl TestArgs {
             .set_coverage(execution.coverage)
             .with_multi_network(execution.multi_network)
             .with_showmap(showmap)
-            .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
@@ -2153,7 +2481,7 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .with_multi_network(options.multi_network)
-            .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
     }
@@ -2251,6 +2579,11 @@ impl TestArgs {
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
+        if !self.opcodes.is_empty() && verbosity < 5 {
+            sh_eprintln!()?;
+            eyre::bail!("Not enough verbosity. Use -vvvvv to show opcodes.");
+        }
+
         if num_filtered == 0 {
             let total_tests = if filter.is_empty() {
                 num_filtered
@@ -2258,7 +2591,7 @@ impl TestArgs {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
             if total_tests == 0 {
-                sh_println!(
+                sh_warn!(
                     "No tests found in project! Forge looks for functions that start with `test`"
                 )?;
             } else {
@@ -2543,6 +2876,7 @@ impl TestArgs {
                         let should_include = should_include_trace(kind);
 
                         if renders_trace && should_include {
+                            decoder.opcodes = self.opcodes.clone();
                             decode_trace_arena(arena, &decoder).await;
 
                             if let Some(trace_depth) = self.trace_depth {
@@ -2917,6 +3251,9 @@ impl Provider for TestArgs {
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         let mut invariant_dict = Dict::default();
+        if let Some(invariant_runs) = self.invariant_runs_override {
+            invariant_dict.insert("runs".to_string(), invariant_runs.into());
+        }
         if let Some(invariant_depth) = self.invariant_depth {
             invariant_dict.insert("depth".to_string(), invariant_depth.into());
         }
@@ -2971,6 +3308,9 @@ impl Provider for TestArgs {
         if let Some(invariant_payable_value_weight) = self.invariant_payable_value_weight {
             invariant_dict
                 .insert("payable_value_weight".to_string(), invariant_payable_value_weight.into());
+        }
+        if let Some(invariant_timeout) = self.invariant_timeout_override {
+            invariant_dict.insert("timeout".to_string(), invariant_timeout.into());
         }
         if let Some(weight) = self.invariant_mutation_weight_splice {
             invariant_dict.insert("mutation_weight_splice".to_string(), weight.into());
@@ -3114,6 +3454,10 @@ impl Provider for TestArgs {
     }
 }
 
+fn parse_opcode(s: &str) -> Result<OpCode, String> {
+    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
+}
+
 const fn apply_mutation_compiler_overrides(config: &mut Config) {
     if let Some(optimizer_runs) = config.mutation.optimizer_runs {
         let default_optimizer_settings =
@@ -3194,6 +3538,71 @@ fn list_from_output(
 
     print_list_results(&results)?;
     Ok(TestOutcome::empty(None, false))
+}
+
+fn matched_engine_counts(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    inline_config: &InlineConfig,
+    filter: &ProjectPathsAwareFilter,
+    multi_network: &MultiNetworkConfig,
+) -> MatchedEngineCounts {
+    let matcher = TestFunctionMatcher::new(config, inline_config, None);
+    output
+        .artifact_ids()
+        .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
+        .filter_map(|(id, abi)| {
+            let id = id.with_stripped_file_prefixes(&config.root);
+            let deployable = abi
+                .constructor
+                .as_ref()
+                .map(|constructor| constructor.inputs.is_empty())
+                .unwrap_or(true);
+            if !deployable || !matcher.matches_contract(filter, &id, abi) {
+                return None;
+            }
+
+            let contract_name = id.identifier();
+            let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
+            let fuzz = abi
+                .functions()
+                .filter_map(|func| {
+                    let kind = matcher.test_function_kind(
+                        &contract_name,
+                        func,
+                        generated_symbolic_regression,
+                    );
+                    matches!(kind, TestFunctionKind::FuzzTest { .. }).then_some((func, kind))
+                })
+                .filter(|(func, kind)| {
+                    filter.matches_test_function_kind_in_contract(&contract_name, func, *kind)
+                })
+                .filter(|(func, _)| {
+                    function_matches_network_pass(
+                        &multi_network.all_override_networks,
+                        multi_network.pass_network.as_ref(),
+                        inline_config.network_for(&config.profile, &contract_name, &func.name),
+                    )
+                })
+                .count();
+            let invariant = count_runnable_invariant_campaign_anchors(
+                abi,
+                filter,
+                crate::runner::InvariantCampaignScope {
+                    config,
+                    inline_config,
+                    contract_name: &contract_name,
+                    all_override_networks: &multi_network.all_override_networks,
+                    pass_network: multi_network.pass_network.as_ref(),
+                },
+            );
+            Some(MatchedEngineCounts { fuzz, invariant })
+        })
+        .fold(MatchedEngineCounts::default(), |mut acc, counts| {
+            acc.fuzz += counts.fuzz;
+            acc.invariant += counts.invariant;
+            acc
+        })
 }
 
 fn print_list_results(results: &BTreeMap<String, BTreeMap<String, Vec<String>>>) -> Result<()> {
@@ -3590,10 +3999,48 @@ mod tests {
 
     #[test]
     fn fuzz_run() {
-        let args: TestArgs =
-            TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
+        let args: TestArgs = TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10"]);
         assert_eq!(args.fuzz_run, Some(10));
-        assert_eq!(args.fuzz_worker, Some(2));
+        assert_eq!(args.fuzz_worker, None);
+    }
+
+    #[test]
+    fn fuzz_run_adapter_writes_unified_campaign_dials_sparsely() {
+        let args = FuzzRunArgs::parse_from([
+            "foundry-cli",
+            "--runs",
+            "9",
+            "--timeout",
+            "3",
+            "--seed",
+            "0x10",
+            "--depth",
+            "7",
+            "--workers",
+            "2",
+        ]);
+        let args = TestArgs::from_fuzz_run(args);
+        let figment = figment::Figment::from(&args);
+
+        assert_eq!(figment.extract_inner::<u64>("fuzz.runs").unwrap(), 9);
+        assert_eq!(figment.extract_inner::<u64>("fuzz.timeout").unwrap(), 3);
+        assert_eq!(figment.extract_inner::<String>("fuzz.seed").unwrap(), "16");
+        assert_eq!(figment.extract_inner::<u64>("invariant.runs").unwrap(), 9);
+        assert_eq!(figment.extract_inner::<u32>("invariant.timeout").unwrap(), 3);
+        assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 7);
+        assert_eq!(
+            figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
+            InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap())
+        );
+    }
+
+    #[test]
+    fn fuzz_run_adapter_writes_invariant_workers_sparsely() {
+        let args = TestArgs::from_fuzz_run(FuzzRunArgs::parse_from(["foundry-cli"]));
+        let figment = figment::Figment::from(&args);
+
+        assert_eq!(args.invariant_workers, None);
+        assert!(figment.extract_inner::<InvariantWorkers>("invariant.workers").is_err());
     }
 
     #[test]
@@ -3734,6 +4181,66 @@ mod tests {
     }
 
     #[test]
+    fn auto_fuzz_corpus_defaults_to_cache_failure_layout() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.enable_fuzz_only_with_auto_fuzz_corpus();
+        let mut config = Config::default();
+
+        args.apply_auto_fuzz_corpus_dir(&mut config);
+
+        assert_eq!(
+            config.fuzz.corpus.corpus_dir,
+            Some(config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR))
+        );
+        assert_eq!(config.invariant.corpus.corpus_dir, None);
+    }
+
+    #[test]
+    fn auto_fuzz_corpus_uses_configured_failure_persist_dirs() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.enable_fuzz_only_with_auto_fuzz_corpus();
+        let mut config = Config::default();
+        config.fuzz.failure_persist_dir = Some(PathBuf::from("custom_fuzz_failures"));
+
+        args.apply_auto_fuzz_corpus_dir(&mut config);
+
+        assert_eq!(
+            config.fuzz.corpus.corpus_dir,
+            Some(PathBuf::from("custom_fuzz_failures").join(AUTO_CORPUS_DIR))
+        );
+        assert_eq!(config.invariant.corpus.corpus_dir, None);
+    }
+
+    #[test]
+    fn auto_fuzz_corpus_preserves_configured_corpus_dirs() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.enable_fuzz_only_with_auto_fuzz_corpus();
+        let mut config = Config::default();
+        config.fuzz.corpus.corpus_dir = Some(PathBuf::from("configured_fuzz_corpus"));
+        config.invariant.corpus.corpus_dir = Some(PathBuf::from("configured_invariant_corpus"));
+
+        args.apply_auto_fuzz_corpus_dir(&mut config);
+
+        assert_eq!(config.fuzz.corpus.corpus_dir, Some(PathBuf::from("configured_fuzz_corpus")));
+        assert_eq!(
+            config.invariant.corpus.corpus_dir,
+            Some(PathBuf::from("configured_invariant_corpus"))
+        );
+    }
+
+    #[test]
+    fn fuzz_only_does_not_enable_auto_fuzz_corpus() {
+        let mut args = TestArgs::parse_from(["foundry-cli"]);
+        args.enable_fuzz_only();
+        let mut config = Config::default();
+
+        args.apply_auto_fuzz_corpus_dir(&mut config);
+
+        assert_eq!(config.fuzz.corpus.corpus_dir, None);
+        assert_eq!(config.invariant.corpus.corpus_dir, None);
+    }
+
+    #[test]
     fn fuzz_and_invariant_config_flags() {
         let args = TestArgs::parse_from([
             "foundry-cli",
@@ -3776,6 +4283,8 @@ mod tests {
             "20",
             "--invariant-depth-mode",
             "random",
+            "--invariant-workers",
+            "4",
             "--invariant-dictionary-weight",
             "45",
             "--invariant-dictionary-addresses",
@@ -3894,6 +4403,11 @@ mod tests {
         assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
         assert_eq!(config.invariant.corpus.corpus_dir, Some(PathBuf::from("invariant_corpus")));
         assert!(config.invariant.corpus_random_sequence_weight_configured);
+        assert_eq!(
+            config.invariant.workers,
+            InvariantWorkers::Fixed(std::num::NonZeroUsize::new(4).unwrap())
+        );
+        assert!(config.invariant.workers_configured);
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
