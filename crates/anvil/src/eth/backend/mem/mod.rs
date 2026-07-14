@@ -60,8 +60,7 @@ use alloy_network::{
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, Log as PrimitiveLog, LogData, TxHash, TxKind, U64, U256, hex,
-    keccak256, logs_bloom,
+    Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
@@ -91,7 +90,6 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
-use alloy_sol_types::SolValue;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
@@ -187,10 +185,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm_inspectors::{
-    opcode::OpcodeGasInspector,
-    transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferKind},
-};
+use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
@@ -5106,22 +5101,12 @@ impl Backend<FoundryNetwork> {
         request: SimulatePayload,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
     ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, BlockchainError> {
-        let base_block_number = match block_request.as_ref() {
-            Some(BlockRequest::Number(number)) => BlockNumber::Number(*number),
-            Some(BlockRequest::Pending(_)) | None => BlockNumber::Latest,
-        };
-        let base_block =
-            self.block_by_number(base_block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-        let base_number = base_block.header.number();
-        let base_timestamp = base_block.header.timestamp();
-        let base_hash = base_block.header.hash;
-        let base_fee = self.fees.get_next_block_base_fee_per_gas(
-            base_block.header.gas_used(),
-            base_block.header.gas_limit(),
-            base_block.header.base_fee_per_gas().unwrap_or_default(),
-        );
-
-        self.with_database_at(block_request, |state, mut block_env| {
+        let simulate_at = |state: Box<dyn MaybeFullDatabase + '_>,
+                           mut block_env: BlockEnv,
+                           base_number,
+                           base_timestamp,
+                           base_hash,
+                           base_fee| {
             let SimulatePayload {
                 block_state_calls,
                 trace_transfers,
@@ -5194,10 +5179,8 @@ impl Backend<FoundryNetwork> {
                         ));
                     }
                     if validation {
-                        let max_fee = request
-                            .gas_price
-                            .or(request.max_fee_per_gas)
-                            .unwrap_or_default();
+                        let max_fee =
+                            request.gas_price.or(request.max_fee_per_gas).unwrap_or_default();
                         if max_fee < block_env.basefee as u128 {
                             return Err(simulate_rpc_error(
                                 -38012,
@@ -5247,26 +5230,24 @@ impl Backend<FoundryNetwork> {
                         inspector = inspector.with_transfers();
                     }
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
-                    let execution_result = if precompile_moves.is_empty()
-                        || self.is_optimism()
-                        || self.is_tempo()
-                    {
-                        self.transact_with_inspector_ref(
-                            &cache_db,
-                            &evm_env,
-                            &mut inspector,
-                            tx_env,
-                            op_deposit,
-                        )
-                    } else {
-                        self.transact_eth_with_inspector_ref_and_precompile_overrides(
-                            &cache_db,
-                            &evm_env,
-                            &mut inspector,
-                            tx_env,
-                            &precompile_moves,
-                        )
-                    };
+                    let execution_result =
+                        if precompile_moves.is_empty() || self.is_optimism() || self.is_tempo() {
+                            self.transact_with_inspector_ref(
+                                &cache_db,
+                                &evm_env,
+                                &mut inspector,
+                                tx_env,
+                                op_deposit,
+                            )
+                        } else {
+                            self.transact_eth_with_inspector_ref_and_precompile_overrides(
+                                &cache_db,
+                                &evm_env,
+                                &mut inspector,
+                                tx_env,
+                                &precompile_moves,
+                            )
+                        };
                     let ResultAndState { result, state } = match execution_result {
                         Err(BlockchainError::InvalidTransaction(error)) => {
                             return Err(simulate_transaction_error(error));
@@ -5275,11 +5256,6 @@ impl Backend<FoundryNetwork> {
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
-                    let selfdestruct_logs = if result.is_success() {
-                        selfdestruct_transfer_logs(&inspector)
-                    } else {
-                        Vec::new()
-                    };
                     let attempted_log_count = simulation_log_count(&inspector);
 
                     inspector.print_logs();
@@ -5302,7 +5278,9 @@ impl Backend<FoundryNetwork> {
                     }
                     request.prep_for_submission();
 
-                    let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
+                    let typed_tx = request
+                        .build_unsigned()
+                        .map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
 
                     let tx = build_impersonated(typed_tx);
                     let tx_hash = tx.hash();
@@ -5346,16 +5324,12 @@ impl Backend<FoundryNetwork> {
                             })
                         }
                     };
-                    let mut result_logs = if result.is_success() {
-                        result.clone().into_logs()
-                    } else {
-                        Vec::new()
-                    };
-                    result_logs.extend(selfdestruct_logs);
+                    let result_logs =
+                        if result.is_success() { result.clone().into_logs() } else { Vec::new() };
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
-                        max_used_gas: Some(result.tx_gas_used()),
+                        max_used_gas: Some(result.gas().total_gas_spent()),
                         status: result.is_success(),
                         error,
                         logs: result_logs
@@ -5379,10 +5353,8 @@ impl Backend<FoundryNetwork> {
                     call_res.push(sim_res);
                 }
 
-                let transactions_envelopes: Vec<AnyTxEnvelope> = transactions
-                    .iter()
-                    .map(|tx| AnyTxEnvelope::from(tx.clone()))
-                    .collect();
+                let transactions_envelopes: Vec<AnyTxEnvelope> =
+                    transactions.iter().map(|tx| AnyTxEnvelope::from(tx.clone())).collect();
                 let blob_gas_used =
                     transactions_envelopes.iter().filter_map(|tx| tx.blob_gas_used()).sum();
                 let header = Header {
@@ -5458,8 +5430,53 @@ impl Backend<FoundryNetwork> {
             }
 
             Ok(block_res)
-        })
-        .await?
+        };
+
+        match block_request {
+            Some(BlockRequest::Pending(pool_transactions)) => {
+                self.with_pending_block(pool_transactions, |state, block| {
+                    let header = &block.block.header;
+                    let base_fee = self.fees.get_next_block_base_fee_per_gas(
+                        header.gas_used(),
+                        header.gas_limit(),
+                        header.base_fee_per_gas().unwrap_or_default(),
+                    );
+                    simulate_at(
+                        state,
+                        block_env_from_header(header),
+                        header.number(),
+                        header.timestamp(),
+                        header.hash_slow(),
+                        base_fee,
+                    )
+                })
+                .await
+            }
+            block_request => {
+                let base_block_number = match block_request.as_ref() {
+                    Some(BlockRequest::Number(number)) => BlockNumber::Number(*number),
+                    Some(BlockRequest::Pending(_)) => unreachable!(),
+                    None => BlockNumber::Latest,
+                };
+                let base_block = self
+                    .block_by_number(base_block_number)
+                    .await?
+                    .ok_or(BlockchainError::BlockNotFound)?;
+                let base_number = base_block.header.number();
+                let base_timestamp = base_block.header.timestamp();
+                let base_hash = base_block.header.hash;
+                let base_fee = self.fees.get_next_block_base_fee_per_gas(
+                    base_block.header.gas_used(),
+                    base_block.header.gas_limit(),
+                    base_block.header.base_fee_per_gas().unwrap_or_default(),
+                );
+
+                self.with_database_at(block_request, |state, block_env| {
+                    simulate_at(state, block_env, base_number, base_timestamp, base_hash, base_fee)
+                })
+                .await?
+            }
+        }
     }
 
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
@@ -6069,25 +6086,6 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum();
     }
     false
-}
-
-fn selfdestruct_transfer_logs(inspector: &AnvilInspector) -> Vec<PrimitiveLog> {
-    let Some(transfer_inspector) = &inspector.transfer else { return Vec::new() };
-
-    transfer_inspector
-        .transfers()
-        .iter()
-        .filter(|transfer| transfer.kind == TransferKind::SelfDestruct && !transfer.value.is_zero())
-        .map(|transfer| {
-            let from = B256::from_slice(&transfer.from.abi_encode());
-            let to = B256::from_slice(&transfer.to.abi_encode());
-            let data = transfer.value.abi_encode();
-            PrimitiveLog {
-                address: TRANSFER_LOG_EMITTER,
-                data: LogData::new_unchecked(vec![TRANSFER_EVENT_TOPIC, from, to], data.into()),
-            }
-        })
-        .collect()
 }
 
 fn simulation_log_count(inspector: &AnvilInspector) -> usize {

@@ -1,7 +1,8 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::eth::macros::node_info;
-use alloy_primitives::{Address, Log, U256};
+use alloy_primitives::{Address, B256, Log, LogData, U256};
+use alloy_sol_types::SolValue;
 use foundry_evm::{
     call_inspectors,
     decode::decode_console_logs,
@@ -13,14 +14,14 @@ use foundry_evm::{
 };
 use revm::{
     Inspector,
-    context::ContextTr,
+    context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
         interpreter::EthInterpreter,
     },
 };
-use revm_inspectors::transfer::TransferInspector;
+use revm_inspectors::transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector};
 use std::sync::Arc;
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -34,6 +35,8 @@ pub struct AnvilInspector {
     pub transfer: Option<TransferInspector>,
     /// Counts every raw EVM log before reverted frames are discarded.
     raw_log_count: usize,
+    /// SELFDESTRUCT transfer logs awaiting the end of their execution frame.
+    pending_selfdestruct_logs: Vec<Log>,
 }
 
 /// Configuration for per-transaction inspector lifecycle.
@@ -67,6 +70,7 @@ impl AnvilInspector {
 
         let traces = self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
         self.raw_log_count = 0;
+        self.pending_selfdestruct_logs.clear();
 
         // Reinstall tracer for next tx.
         let tracing_config = if config.enable_steps_tracing {
@@ -143,6 +147,12 @@ impl AnvilInspector {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
+
+    fn commit_selfdestruct_logs<CTX: ContextTr>(&mut self, ecx: &mut CTX) {
+        for log in self.pending_selfdestruct_logs.drain(..) {
+            ecx.journal_mut().log(log);
+        }
+    }
 }
 
 /// Prints the traces for the inspector
@@ -217,6 +227,7 @@ where
         if let Some(tracer) = &mut self.tracer {
             tracer.call_end(ecx, inputs, outcome);
         }
+        self.commit_selfdestruct_logs(ecx);
     }
 
     fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
@@ -232,9 +243,19 @@ where
         if let Some(tracer) = &mut self.tracer {
             tracer.create_end(ecx, inputs, outcome);
         }
+        self.commit_selfdestruct_logs(ecx);
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        if self.transfer.is_some() && !value.is_zero() {
+            let from = B256::from_slice(&contract.abi_encode());
+            let to = B256::from_slice(&target.abi_encode());
+            let data = value.abi_encode();
+            self.pending_selfdestruct_logs.push(Log {
+                address: TRANSFER_LOG_EMITTER,
+                data: LogData::new_unchecked(vec![TRANSFER_EVENT_TOPIC, from, to], data.into()),
+            });
+        }
         call_inspectors!([&mut self.tracer, &mut self.transfer], |inspector| {
             Inspector::<CTX, EthInterpreter>::selfdestruct(inspector, contract, target, value)
         });

@@ -113,6 +113,41 @@ async fn test_simulate_block_sequence_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_pending_block_metadata_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let accounts = rpc_request(&endpoint, "eth_accounts", json!([])).await;
+    let accounts = accounts["result"].as_array().unwrap();
+
+    rpc_request(&endpoint, "anvil_setAutomine", json!([false])).await;
+    let sent = rpc_request(
+        &endpoint,
+        "eth_sendTransaction",
+        json!([{
+            "from": accounts[0],
+            "to": accounts[1],
+            "value": "0x1",
+            "gas": "0x5208"
+        }]),
+    )
+    .await;
+    assert!(sent.get("error").is_none(), "failed to queue transaction: {sent}");
+
+    let latest = rpc_request(&endpoint, "eth_getBlockByNumber", json!(["latest", false])).await;
+    let pending = rpc_request(&endpoint, "eth_getBlockByNumber", json!(["pending", false])).await;
+    let latest = &latest["result"];
+    let pending = &pending["result"];
+    assert_eq!(quantity(&pending["number"]), quantity(&latest["number"]) + 1);
+
+    let response =
+        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}, "pending"]))
+            .await;
+    let simulated = &response["result"][0];
+    assert_eq!(quantity(&simulated["number"]), quantity(&pending["number"]) + 1);
+    assert_eq!(simulated["parentHash"], pending["hash"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_trace_transfer_forwarding_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::Cancun.into()))
@@ -374,6 +409,80 @@ async fn test_simulate_selfdestruct_trace_transfer_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_nested_selfdestruct_logs_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let endpoint = handle.http_endpoint();
+
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc200000000000000000000000000000000000000": {
+                        "code": "0x730000000000000000000000000000000000000000ff",
+                        "balance": "0x1e8480"
+                    },
+                    "0xc300000000000000000000000000000000000000": {
+                        "code": "0x5f5f5f5f5f73c2000000000000000000000000000000000000005af1505f5ffd"
+                    },
+                    "0xc400000000000000000000000000000000000000": {
+                        "code": "0x5f5f5f5f5f73c3000000000000000000000000000000000000005af15000"
+                    }
+                },
+                "calls": [{
+                    "from": "0xc000000000000000000000000000000000000000",
+                    "to": "0xc400000000000000000000000000000000000000"
+                }]
+            }],
+            "traceTransfers": true
+        }, "latest"]),
+    )
+    .await;
+    let call = &response["result"][0]["calls"][0];
+    assert_eq!(call["status"], "0x1");
+    assert_eq!(call["logs"], json!([]));
+
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc200000000000000000000000000000000000000": {
+                        "code": "0x730000000000000000000000000000000000000000ff",
+                        "balance": "0x1e8480"
+                    },
+                    "0xc400000000000000000000000000000000000000": {
+                        "code": "0x5f5fa05f5f5f5f5f73c2000000000000000000000000000000000000005af1505f5fa000"
+                    }
+                },
+                "calls": [{
+                    "from": "0xc000000000000000000000000000000000000000",
+                    "to": "0xc400000000000000000000000000000000000000"
+                }]
+            }],
+            "traceTransfers": true
+        }, "latest"]),
+    )
+    .await;
+    let logs = response["result"][0]["calls"][0]["logs"].as_array().unwrap();
+    assert_eq!(
+        logs.iter()
+            .map(|log| json!({"address": log["address"], "logIndex": log["logIndex"]}))
+            .collect::<Vec<_>>(),
+        vec![
+            json!({"address": "0xc400000000000000000000000000000000000000", "logIndex": "0x0"}),
+            json!({"address": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "logIndex": "0x1"}),
+            json!({"address": "0xc400000000000000000000000000000000000000", "logIndex": "0x2"}),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_overflow_nonce_validation_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::Cancun.into()))
@@ -601,6 +710,38 @@ async fn test_simulate_rpc_gas_budget_rpc() {
             }),
         ]
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_max_used_gas_before_refund_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc200000000000000000000000000000000000000": {
+                        "code": "0x5f5f5500",
+                        "state": {
+                            "0x0000000000000000000000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000001"
+                        }
+                    }
+                },
+                "calls": [{
+                    "from": "0xc000000000000000000000000000000000000000",
+                    "to": "0xc200000000000000000000000000000000000000"
+                }]
+            }]
+        }, "latest"]),
+    )
+    .await;
+    let call = &response["result"][0]["calls"][0];
+    assert_eq!(call["gasUsed"], "0x52d4");
+    assert_eq!(call["maxUsedGas"], "0x6594");
 }
 
 #[tokio::test(flavor = "multi_thread")]
