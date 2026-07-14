@@ -1217,7 +1217,8 @@ impl NodeConfig {
             if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
                 self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
-                (Arc::new(TokioRwLock::new(Box::<StateRootDb>::default())), None)
+                let track_history = self.prune_history.is_state_history_supported();
+                (Arc::new(TokioRwLock::new(Box::new(StateRootDb::new(track_history)))), None)
             };
 
         // if provided use all settings of `genesis.json`
