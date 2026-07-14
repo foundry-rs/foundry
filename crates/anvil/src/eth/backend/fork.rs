@@ -416,6 +416,21 @@ impl<N: Network> ClientFork<N> {
                 .map_err(BlockchainError::Internal)?;
         }
 
+        self.prepare_reset(urls, block_number).await?;
+
+        let number = self.block_number();
+        let block_hash = self.block_hash();
+        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
+
+        Ok(())
+    }
+
+    /// Updates the fork configuration for a reset without modifying the current database.
+    pub(crate) async fn prepare_reset(
+        &self,
+        urls: Vec<String>,
+        block_number: BlockId,
+    ) -> Result<(), BlockchainError> {
         if !urls.is_empty() {
             self.config.write().update_urls(urls)?;
             let override_chain_id = self.config.read().override_chain_id;
@@ -445,8 +460,6 @@ impl<N: Network> ClientFork<N> {
         );
 
         self.clear_cached_storage();
-
-        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
 
         Ok(())
     }
