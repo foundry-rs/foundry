@@ -52,6 +52,7 @@ forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
+foundry-tui.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
 alloy-chains.workspace = true
@@ -68,6 +69,7 @@ tempo-alloy.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
+dialoguer.workspace = true
 dunce.workspace = true
 flate2.workspace = true
 globset = "0.4"
