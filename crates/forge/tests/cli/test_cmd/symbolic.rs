@@ -1,5 +1,7 @@
 use alloy_primitives::{U256, hex, keccak256};
 use foundry_common::sh_eprintln;
+use foundry_config::fs_permissions::PathPermission;
+use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{
     forgetest_init, str,
     util::{OutputExt, SOLC_VERSION},
@@ -7,7 +9,8 @@ use foundry_test_utils::{
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 use super::symbolic_helpers::{
@@ -52,36 +55,22 @@ fn keep_only_matching_frontier(
     target_frontier
 }
 
-fn matching_frontier(
-    root: &Path,
-    contract: &str,
-    test: &str,
-    missing: &str,
-    mut matches: impl FnMut(&Value) -> bool,
-) -> Value {
-    let frontier_path = frontier_artifact_path(root, contract, test);
-    let artifact: Value = serde_json::from_slice(
-        &std::fs::read(&frontier_path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
-    )
-    .unwrap();
-    artifact["frontiers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|frontier| matches(frontier))
-        .cloned()
-        .unwrap_or_else(|| panic!("missing {missing} frontier in {artifact}"))
-}
-
 fn single_uint_corpus_values(
     root: &Path,
     contract: &str,
     test: &str,
     signature: &str,
 ) -> Vec<U256> {
-    let corpus_dir =
-        root.join("fuzz_corpus").join(contract).join(test).join("worker0").join("corpus");
+    single_uint_corpus_values_in(&root.join("fuzz_corpus"), contract, test, signature)
+}
+
+fn single_uint_corpus_values_in(
+    corpus_root: &Path,
+    contract: &str,
+    test: &str,
+    signature: &str,
+) -> Vec<U256> {
+    let corpus_dir = corpus_root.join(contract).join(test).join("worker0").join("corpus");
     let expected_selector = format!("0x{}", hex::encode(&keccak256(signature.as_bytes())[..4]));
     let mut values = Vec::new();
     for entry in std::fs::read_dir(&corpus_dir)
@@ -97,6 +86,32 @@ fn single_uint_corpus_values(
         }
     }
     values
+}
+
+fn automatic_fuzz_bootstrap_manifest_paths_in(
+    corpus_root: &Path,
+    contract: &str,
+    test: &str,
+) -> Vec<PathBuf> {
+    let target_dir = corpus_root.join(contract).join(test);
+    std::fs::read_dir(target_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.starts_with(".foundry-symbolic-bootstrap-") && name.ends_with(".json")
+            })
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
+fn automatic_fuzz_bootstrap_manifest_in(corpus_root: &Path, contract: &str, test: &str) -> Value {
+    let manifests = automatic_fuzz_bootstrap_manifest_paths_in(corpus_root, contract, test);
+    let target_dir = corpus_root.join(contract).join(test);
+    assert_eq!(manifests.len(), 1, "manifests in {}", target_dir.display());
+    serde_json::from_slice(&std::fs::read(&manifests[0]).unwrap()).unwrap()
 }
 
 forgetest_init!(symbolic_tests_are_ignored_without_flag, |prj, cmd| {
@@ -2594,14 +2609,9 @@ forgetest_init!(symbolic_fuzz_frontier_seeding_persists_branch_flipping_input, |
         "SymbolicFuzzFrontierSeed.t.sol",
         r#"
 contract SymbolicFuzzFrontierSeed {
-    function testFuzz_frontier(uint64 amount, uint256 feeMultiplier) public pure {
-        uint256 credited;
-        unchecked {
-            credited = uint256(amount) + (feeMultiplier - 100);
-        }
-
-        if (feeMultiplier < 100) {
-            assert(credited <= amount);
+    function testFuzz_frontier(uint256 value) public pure {
+        if (value < 777) {
+            assert(false);
         }
     }
 }
@@ -2614,7 +2624,7 @@ contract SymbolicFuzzFrontierSeed {
             "--match-test",
             "testFuzz_frontier",
             "--fuzz-runs",
-            "8",
+            "1",
             "--fuzz-seed",
             "0x1234",
             "--threads",
@@ -2624,20 +2634,17 @@ contract SymbolicFuzzFrontierSeed {
         ])
         .assert_success();
 
-    let target_frontier = matching_frontier(
+    keep_only_matching_frontier(
         prj.root(),
         "SymbolicFuzzFrontierSeed",
         "testFuzz_frontier",
-        "missed fee multiplier",
+        "value < 777",
         |frontier| {
             frontier["site"]["opcode_name"] == "LT"
-                && (frontier["operands"]["lhs"] == "0x64" || frontier["operands"]["rhs"] == "0x64")
+                && (frontier["operands"]["lhs"] == "0x309"
+                    || frontier["operands"]["rhs"] == "0x309")
         },
     );
-    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
-    let target_frontier_pc = target_frontier["site"]["pc"].as_u64().unwrap().to_string();
-    let target_frontier_selector =
-        target_frontier["sequence"][0]["calldata"].as_str().unwrap()[..10].to_string();
 
     let output = cmd
         .forge_fuse()
@@ -2658,23 +2665,12 @@ contract SymbolicFuzzFrontierSeed {
             "--symbolic-use-fuzz-frontiers",
             "--symbolic-frontier-limit",
             "1",
-            "--symbolic-frontier-ids",
-            &target_frontier_id,
-            "--symbolic-frontier-pcs",
-            &target_frontier_pc,
-            "--symbolic-frontier-selectors",
-            &target_frontier_selector,
         ])
         .assert_success()
         .get_output()
         .clone();
     let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
-    assert!(stdout.contains("testFuzz_frontier(uint64,uint256)"), "{stdout}");
-    assert!(
-        stderr.contains("Symbolic frontier selection for testFuzz_frontier(uint64,uint256)"),
-        "{stderr}"
-    );
+    assert!(stdout.contains("testFuzz_frontier(uint256)"), "{stdout}");
 
     let corpus_dir = prj
         .root()
@@ -2683,7 +2679,7 @@ contract SymbolicFuzzFrontierSeed {
         .join("testFuzz_frontier")
         .join("worker0")
         .join("corpus");
-    let expected_selector = hex::encode(&keccak256(b"testFuzz_frontier(uint64,uint256)")[..4]);
+    let expected_selector = hex::encode(&keccak256(b"testFuzz_frontier(uint256)")[..4]);
     let mut found_branch_flipping_seed = false;
     for entry in std::fs::read_dir(&corpus_dir)
         .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
@@ -2695,8 +2691,8 @@ contract SymbolicFuzzFrontierSeed {
             if !calldata.starts_with(&format!("0x{expected_selector}")) {
                 continue;
             }
-            let fee_multiplier = U256::from_be_slice(&hex::decode(&calldata[74..138]).unwrap());
-            if fee_multiplier < U256::from(100) {
+            let value = U256::from_be_slice(&hex::decode(&calldata[10..74]).unwrap());
+            if value < U256::from(777) {
                 found_branch_flipping_seed = true;
             }
         }
@@ -2719,6 +2715,816 @@ contract SymbolicFuzzFrontierSeed {
         .get_output()
         .stdout_lossy();
     assert!(replay_output.contains("corpus replay failed"), "{replay_output}");
+});
+
+forgetest_init!(fuzz_seed_bootstraps_stateless_corpus_without_second_campaign, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping fuzz_seed_bootstraps_stateless_corpus_without_second_campaign because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "FuzzSeed.t.sol",
+        r#"
+contract FuzzSeedTest {
+    event Cold(uint256 value);
+
+    function testFuzz_seed(uint256 value) public {
+        if (value < 777) emit Cold(value);
+    }
+
+    function invariant_notPartOfStatelessBootstrap() public pure {
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "seed",
+            "--match-contract",
+            "FuzzSeedTest",
+            "--runs",
+            "1",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--corpus-dir",
+            "fuzz_corpus",
+            "--frontier-dir",
+            "fuzz_frontiers",
+            "--frontier-limit",
+            "64",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    assert!(stdout.contains("testFuzz_seed(uint256) (runs: 1"), "{stdout}");
+    assert!(stdout.contains("testFuzz_seed(uint256) (runs: 0"), "{stdout}");
+    assert!(!stdout.contains("invariant_notPartOfStatelessBootstrap"), "{stdout}");
+
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("Seeded testFuzz_seed(uint256):"), "{stderr}");
+    assert!(stderr.contains("replay-confirmed (0 failing)"), "{stderr}");
+
+    let values = single_uint_corpus_values(
+        prj.root(),
+        "FuzzSeedTest",
+        "testFuzz_seed",
+        "testFuzz_seed(uint256)",
+    );
+    assert!(values.iter().any(|value| *value < U256::from(777)), "{stdout}\n{stderr}\n{values:?}");
+});
+
+forgetest_init!(fuzz_run_automatically_bootstraps_eligible_stale_corpus, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping fuzz_run_automatically_bootstraps_eligible_stale_corpus because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "AutomaticFuzzBootstrap.t.sol",
+        r#"
+contract AutomaticFuzzBootstrapTest {
+    event Cold(uint256 value);
+
+    function testFuzz_auto(uint256 value) public {
+        unchecked {
+            if (value + 1000 < 500) emit Cold(value);
+            if (value + 2000 < 1000) assert(false);
+        }
+    }
+}
+"#,
+    );
+
+    let default_corpus = prj.root().join("cache").join("fuzz").join("corpus");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "AutomaticFuzzBootstrapTest",
+            "--match-test",
+            "testFuzz_auto",
+            "--runs",
+            "2000000",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    assert!(stdout.contains("Ran 1 test for"), "{stdout}");
+    assert!(!stdout.contains("Ran 2 tests for"), "{stdout}");
+    assert!(stdout.contains("counterexample: calldata="), "{stdout}");
+
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains(
+            "Bootstrapping stale fuzz corpus for testFuzz_auto(uint256) (16 concrete runs, up to 32 symbolic frontiers)"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Bootstrapped testFuzz_auto(uint256)"), "{stderr}");
+    assert!(stderr.contains("1 failure candidates"), "{stderr}");
+    assert!(
+        !stderr.contains("targeted symbolic frontier produced no branch-flipping input"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("targeted symbolic frontier incomplete"), "{stderr}");
+
+    assert!(
+        automatic_fuzz_bootstrap_manifest_paths_in(
+            &default_corpus,
+            "AutomaticFuzzBootstrapTest",
+            "testFuzz_auto",
+        )
+        .is_empty(),
+        "a symbolic failure must not complete the automatic manifest before standard replay"
+    );
+
+    let values = single_uint_corpus_values_in(
+        &default_corpus,
+        "AutomaticFuzzBootstrapTest",
+        "testFuzz_auto",
+        "testFuzz_auto(uint256)",
+    );
+    assert!(
+        values.iter().any(
+            |value| (U256::MAX - U256::from(999)..=U256::MAX - U256::from(500)).contains(value)
+        ),
+        "{values:?}"
+    );
+    assert!(
+        values
+            .iter()
+            .all(|value| !(U256::MAX - U256::from(1999)..=U256::MAX - U256::from(1000))
+                .contains(value)),
+        "an automatic failure candidate was persisted in the coverage corpus: {values:?}"
+    );
+
+    let failure_file = prj
+        .root()
+        .join("cache")
+        .join("fuzz")
+        .join("failures")
+        .join("AutomaticFuzzBootstrapTest")
+        .join("testFuzz_auto");
+    let second = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "AutomaticFuzzBootstrapTest",
+            "--match-test",
+            "testFuzz_auto",
+            "--runs",
+            "2000000",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let second_stderr = second.stderr_lossy();
+    assert!(!second_stderr.contains("Bootstrapping stale fuzz corpus"), "{second_stderr}");
+
+    std::fs::remove_file(&failure_file)
+        .unwrap_or_else(|err| panic!("failed to remove {}: {err}", failure_file.display()));
+
+    let third = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "AutomaticFuzzBootstrapTest",
+            "--match-test",
+            "testFuzz_auto",
+            "--runs",
+            "2000000",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    assert!(third.stderr_lossy().contains("Bootstrapping stale fuzz corpus"));
+});
+
+forgetest_init!(fuzz_run_automatic_bootstrap_rejects_blocking_cheatcodes, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping fuzz_run_automatic_bootstrap_rejects_blocking_cheatcodes because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "AutomaticFuzzBootstrapBlocking.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract AutomaticFuzzBootstrapBlockingTest is Test {
+    function testFuzz_blocking(uint256 value) public {
+        if (value == 42) vm.sleep(60_000);
+    }
+}
+"#,
+    );
+
+    let corpus = prj.root().join("cache").join("fuzz").join("corpus");
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args([
+        "fuzz",
+        "run",
+        "--match-contract",
+        "AutomaticFuzzBootstrapBlockingTest",
+        "--match-test",
+        "testFuzz_blocking",
+        "--runs",
+        "2000000",
+        "--seed",
+        "0x5150",
+        "--threads",
+        "1",
+    ]);
+    cmd.cmd().stdout(Stdio::null()).stderr(Stdio::null());
+    let mut child = cmd.cmd().spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if !automatic_fuzz_bootstrap_manifest_paths_in(
+            &corpus,
+            "AutomaticFuzzBootstrapBlockingTest",
+            "testFuzz_blocking",
+        )
+        .is_empty()
+        {
+            break;
+        }
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("automatic fuzz bootstrap exited before writing its manifest: {status}");
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("automatic fuzz bootstrap blocked for more than 30 seconds");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+
+    let manifest = automatic_fuzz_bootstrap_manifest_in(
+        &corpus,
+        "AutomaticFuzzBootstrapBlockingTest",
+        "testFuzz_blocking",
+    );
+    assert_eq!(manifest["schema"], "foundry:fuzz.symbolic-bootstrap@v3");
+    assert!(manifest["attempts"].as_u64().is_some_and(|attempts| attempts > 0));
+    assert!(manifest["elapsed_millis"].as_u64().is_some());
+    assert_eq!(manifest["failures"], 0);
+    let target_corpus = corpus
+        .join("AutomaticFuzzBootstrapBlockingTest")
+        .join("testFuzz_blocking")
+        .join("worker0")
+        .join("corpus");
+    let values = if target_corpus.is_dir() {
+        single_uint_corpus_values_in(
+            &corpus,
+            "AutomaticFuzzBootstrapBlockingTest",
+            "testFuzz_blocking",
+            "testFuzz_blocking(uint256)",
+        )
+    } else {
+        Vec::new()
+    };
+    assert!(!values.contains(&U256::from(42)), "{values:?}\n{manifest}");
+});
+
+forgetest_init!(fuzz_run_automatic_failure_mismatch_is_not_replayed_or_persisted, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping fuzz_run_automatic_failure_mismatch_is_not_replayed_or_persisted because z3 is not available"
+        );
+        return;
+    }
+
+    let root = prj.root();
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::read_write(root)));
+    prj.add_test(
+        "AutomaticFuzzBootstrapMismatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract AutomaticFuzzBootstrapMismatchTest is Test {
+    string internal constant SENTINEL = "./automatic-replay-mismatch";
+
+    function testFuzz_mismatch(uint256 value) public {
+        unchecked {
+            if (value + 1000 < 500) {
+                if (vm.exists(SENTINEL)) vm.skip(true, "second replay");
+                vm.writeFile(SENTINEL, "first replay failed");
+                assert(false);
+            }
+        }
+
+        // Stop the ordinary campaign immediately after the automatic candidate is discarded.
+        // If the stale candidate remains in FuzzedExecutor, its `vm.skip` is misclassified as the
+        // fuzz failure instead of this independent assertion.
+        if (vm.exists(SENTINEL)) assert(false);
+    }
+}
+"#,
+    );
+
+    let corpus = root.join("cache").join("fuzz").join("corpus");
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "AutomaticFuzzBootstrapMismatchTest",
+            "--match-test",
+            "testFuzz_mismatch",
+            "--runs",
+            "2000000",
+            "--seed",
+            "0x5151",
+            "--threads",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains(
+            "Automatic symbolic failure for testFuzz_mismatch(uint256) did not match standard replay"
+        ),
+        "{stderr}"
+    );
+    assert!(root.join("automatic-replay-mismatch").exists(), "{stderr}");
+    assert!(
+        automatic_fuzz_bootstrap_manifest_paths_in(
+            &corpus,
+            "AutomaticFuzzBootstrapMismatchTest",
+            "testFuzz_mismatch",
+        )
+        .is_empty(),
+        "a replay-mismatched failure completed the automatic manifest"
+    );
+    let corpus_values = single_uint_corpus_values_in(
+        &corpus,
+        "AutomaticFuzzBootstrapMismatchTest",
+        "testFuzz_mismatch",
+        "testFuzz_mismatch(uint256)",
+    );
+    assert!(
+        corpus_values
+            .iter()
+            .all(|value| !(U256::MAX - U256::from(999)..=U256::MAX - U256::from(500))
+                .contains(value)),
+        "a replay-mismatched failure was persisted in the coverage corpus: {corpus_values:?}"
+    );
+
+    let failure_file = root
+        .join("cache")
+        .join("fuzz")
+        .join("failures")
+        .join("AutomaticFuzzBootstrapMismatchTest")
+        .join("testFuzz_mismatch");
+    let failure: BaseCounterExample = foundry_common::fs::read_json_file(&failure_file).unwrap();
+    let value = U256::from_be_slice(&failure.calldata[4..]);
+    assert!(
+        !(U256::MAX - U256::from(999)..=U256::MAX - U256::from(500)).contains(&value),
+        "stale automatic candidate was reported as the fuzz failure: {value}"
+    );
+});
+
+forgetest_init!(fuzz_run_short_campaign_does_not_touch_automatic_bootstrap, |prj, cmd| {
+    prj.add_test(
+        "ShortFuzzCampaign.t.sol",
+        r#"
+contract ShortFuzzCampaignTest {
+    function testFuzz_short(uint256 value) public pure {
+        assert(value == value);
+    }
+}
+"#,
+    );
+    cmd.env("FOUNDRY_SYMBOLIC_SOLVER", "definitely-missing-symbolic-solver");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ShortFuzzCampaignTest",
+            "--match-test",
+            "testFuzz_short",
+            "--runs",
+            "32",
+            "--threads",
+            "1",
+            "--corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(!stderr.contains("automatic fuzz corpus bootstrap"), "{stderr}");
+    assert!(!stderr.contains("Bootstrapping stale fuzz corpus"), "{stderr}");
+
+    let target_dir =
+        prj.root().join("fuzz_corpus").join("ShortFuzzCampaignTest").join("testFuzz_short");
+    let has_manifest = std::fs::read_dir(target_dir).into_iter().flatten().flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".foundry-symbolic-bootstrap-"))
+    });
+    assert!(!has_manifest);
+});
+
+forgetest_init!(fuzz_run_missing_builtin_solver_continues_concrete_once, |prj, cmd| {
+    prj.add_test(
+        "MissingAutomaticSolver.t.sol",
+        r#"
+contract MissingAutomaticSolverFirst {
+    function testFuzz_missingSolverFirst(uint256) public pure {
+        assert(false);
+    }
+}
+
+contract MissingAutomaticSolverSecond {
+    function testFuzz_missingSolverSecond(uint256) public pure {
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let empty_path = prj.root().join("empty-path");
+    std::fs::create_dir_all(&empty_path).unwrap();
+    cmd.forge_fuse();
+    cmd.env("PATH", &empty_path);
+    cmd.env("FOUNDRY_SYMBOLIC_SOLVER", "z3");
+
+    let output = cmd
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "^MissingAutomaticSolver(First|Second)$",
+            "--match-test",
+            "^testFuzz_missingSolver",
+            "--runs",
+            "2000000",
+            "--threads",
+            "2",
+            "--corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    assert!(stdout.contains("testFuzz_missingSolverFirst(uint256)"), "{stdout}");
+    assert!(stdout.contains("testFuzz_missingSolverSecond(uint256)"), "{stdout}");
+
+    let stderr = output.stderr_lossy();
+    let missing_solver = "no configured built-in solver is available";
+    assert_eq!(stderr.matches(missing_solver).count(), 1, "{stderr}");
+    assert!(stderr.contains("z3"), "{stderr}");
+    assert!(!stderr.contains("Bootstrapping stale fuzz corpus"), "{stderr}");
+
+    let corpus = prj.root().join("fuzz_corpus");
+    for (contract, test) in [
+        ("MissingAutomaticSolverFirst", "testFuzz_missingSolverFirst"),
+        ("MissingAutomaticSolverSecond", "testFuzz_missingSolverSecond"),
+    ] {
+        assert!(
+            automatic_fuzz_bootstrap_manifest_paths_in(&corpus, contract, test).is_empty(),
+            "unexpected automatic bootstrap manifest for {contract}::{test}"
+        );
+    }
+});
+
+#[cfg(unix)]
+forgetest_init!(fuzz_run_never_executes_automatic_custom_solver_command, |prj, cmd| {
+    prj.add_test(
+        "AutomaticCustomSolver.t.sol",
+        r#"
+contract AutomaticCustomSolverTest {
+    function testFuzz_customSolver(uint256) public pure {
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let sentinel = prj.root().join("automatic-custom-solver-invoked");
+    cmd.forge_fuse();
+    cmd.env("TEST_AUTO_BOOTSTRAP_SENTINEL", &sentinel);
+    cmd.env(
+        "FOUNDRY_SYMBOLIC_SOLVER_COMMAND",
+        r#"/bin/sh -c 'touch "$TEST_AUTO_BOOTSTRAP_SENTINEL"'"#,
+    );
+
+    let output = cmd
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "^AutomaticCustomSolverTest$",
+            "--match-test",
+            "^testFuzz_customSolver\\(uint256\\)$",
+            "--runs",
+            "2000000",
+            "--threads",
+            "1",
+            "--corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    assert!(stdout.contains("testFuzz_customSolver(uint256)"), "{stdout}");
+
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains(
+            "automatic fuzz corpus bootstrap does not execute project-configured solver commands"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Bootstrapping stale fuzz corpus"), "{stderr}");
+    assert!(!sentinel.exists(), "automatic bootstrap executed the configured solver command");
+    assert!(
+        automatic_fuzz_bootstrap_manifest_paths_in(
+            &prj.root().join("fuzz_corpus"),
+            "AutomaticCustomSolverTest",
+            "testFuzz_customSolver",
+        )
+        .is_empty()
+    );
+});
+
+forgetest_init!(fuzz_seed_surfaces_replay_confirmed_failure, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping fuzz_seed_surfaces_replay_confirmed_failure because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "FuzzSeedFailure.t.sol",
+        r#"
+contract FuzzSeedFailureTest {
+    function testFuzz_seedFailure(uint256 value) public pure {
+        if (value < 777) assert(false);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "seed",
+            "--match-contract",
+            "FuzzSeedFailureTest",
+            "--runs",
+            "1",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--corpus-dir",
+            "fuzz_corpus",
+            "--frontier-limit",
+            "64",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    assert!(stdout.contains("replay-confirmed symbolic frontier input(s) failed"), "{stdout}");
+    assert!(stdout.contains("counterexample: calldata="), "{stdout}");
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("replay-confirmed ("), "{stderr}");
+    assert!(stderr.contains(" failing)"), "{stderr}");
+
+    let values = single_uint_corpus_values(
+        prj.root(),
+        "FuzzSeedFailureTest",
+        "testFuzz_seedFailure",
+        "testFuzz_seedFailure(uint256)",
+    );
+    assert!(values.iter().any(|value| *value < U256::from(777)), "{values:?}");
+});
+
+forgetest_init!(symbolic_fuzz_frontier_seeding_materializes_before_unsupported_tail, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fuzz_frontier_seeding_materializes_before_unsupported_tail because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzFrontierUnsupportedTail.t.sol",
+        r#"
+contract SymbolicFuzzFrontierUnsupportedTail {
+    event Tail(bool ok);
+
+    function testFuzz_unsupportedTail(uint256 value) public {
+        if (value < 777) {
+            (bool ok,) = address(uint160(value)).call("");
+            emit Tail(ok);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_unsupportedTail",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    keep_only_matching_frontier(
+        prj.root(),
+        "SymbolicFuzzFrontierUnsupportedTail",
+        "testFuzz_unsupportedTail",
+        "value < 777",
+        |frontier| {
+            frontier["site"]["opcode_name"] == "ISZERO"
+                && frontier["site"]["pc"].as_u64().is_some_and(|pc| (70..100).contains(&pc))
+                && frontier["operands"]["result"] == true
+        },
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_unsupportedTail",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+        ])
+        .assert_success();
+
+    let values = single_uint_corpus_values(
+        prj.root(),
+        "SymbolicFuzzFrontierUnsupportedTail",
+        "testFuzz_unsupportedTail",
+        "testFuzz_unsupportedTail(uint256)",
+    );
+    assert!(values.iter().any(|value| *value < U256::from(777)), "values={values:?}");
+});
+
+forgetest_init!(symbolic_fuzz_frontier_seeding_materializes_inside_nested_call, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fuzz_frontier_seeding_materializes_inside_nested_call because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzNestedFrontierUnsupportedTail.t.sol",
+        r#"
+contract NestedFrontierHelper {
+    event Tail(bool ok);
+
+    function cross(uint256 value) external {
+        if (value < 777) {
+            (bool ok,) = address(uint160(value)).call("");
+            emit Tail(ok);
+        }
+    }
+}
+
+contract SymbolicFuzzNestedFrontierUnsupportedTail {
+    NestedFrontierHelper private helper;
+
+    function setUp() public {
+        helper = new NestedFrontierHelper();
+    }
+
+    function testFuzz_nestedUnsupportedTail(uint256 value) public {
+        helper.cross(value);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_nestedUnsupportedTail",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    keep_only_matching_frontier(
+        prj.root(),
+        "SymbolicFuzzNestedFrontierUnsupportedTail",
+        "testFuzz_nestedUnsupportedTail",
+        "nested value < 777",
+        |frontier| {
+            frontier["site"]["opcode_name"] == "LT"
+                && (frontier["operands"]["lhs"] == "0x309"
+                    || frontier["operands"]["rhs"] == "0x309")
+        },
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_nestedUnsupportedTail",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+        ])
+        .assert_success();
+
+    let values = single_uint_corpus_values(
+        prj.root(),
+        "SymbolicFuzzNestedFrontierUnsupportedTail",
+        "testFuzz_nestedUnsupportedTail",
+        "testFuzz_nestedUnsupportedTail(uint256)",
+    );
+    assert!(values.iter().any(|value| *value < U256::from(777)), "values={values:?}");
 });
 
 forgetest_init!(symbolic_fuzz_frontier_seeding_ignores_pre_target_counterexamples, |prj, cmd| {
@@ -2821,30 +3627,19 @@ forgetest_init!(symbolic_fuzz_frontier_seeding_keeps_deploy_code_target_progress
         r#"
 import "forge-std/Test.sol";
 
-interface SymbolicDeployCodeVm {
-    function randomUint(uint256 min, uint256 max) external view returns (uint256);
-}
-
 contract DeployCodeFrontierCtor {
-    SymbolicDeployCodeVm constant VM =
-        SymbolicDeployCodeVm(address(uint160(uint256(keccak256("hevm cheat code")))));
-
     event TargetHit();
 
-    constructor() {
-        uint256 value = VM.randomUint(0, 1000);
-        if (value < 777) {
+    constructor(uint256 marker) {
+        if (marker < 777) {
             emit TargetHit();
         }
     }
 }
 
 contract SymbolicFuzzDeployCodeFrontier is Test {
-    string constant TARGET = "test/SymbolicFuzzDeployCodeFrontier.t.sol";
-
     function testFuzz_deployCode(uint256 marker) public {
-        marker;
-        vm.deployCode(string.concat(TARGET, ":DeployCodeFrontierCtor"));
+        new DeployCodeFrontierCtor(marker);
     }
 }
 "#,
@@ -2870,7 +3665,7 @@ contract SymbolicFuzzDeployCodeFrontier is Test {
         prj.root(),
         "SymbolicFuzzDeployCodeFrontier",
         "testFuzz_deployCode",
-        "deployCode constructor value < 777",
+        "deployCode constructor marker < 777",
         |frontier| {
             frontier["site"]["opcode_name"] == "LT"
                 && (frontier["operands"]["lhs"] == "0x309"
@@ -2909,98 +3704,6 @@ contract SymbolicFuzzDeployCodeFrontier is Test {
         "testFuzz_deployCode(uint256)",
     );
     assert!(values.contains(&U256::ZERO), "target_frontier={target_frontier}, values={values:?}");
-});
-
-forgetest_init!(symbolic_fuzz_frontier_seeding_keeps_callee_target_progress, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_fuzz_frontier_seeding_keeps_callee_target_progress because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicFuzzCalleeFrontierSeed.t.sol",
-        r#"
-contract SymbolicFuzzCalleeTarget {
-    function crossed(uint256 value) external pure returns (bool) {
-        return value == 777;
-    }
-}
-
-contract SymbolicFuzzCalleeFrontierSeed {
-    SymbolicFuzzCalleeTarget target = new SymbolicFuzzCalleeTarget();
-
-    function testFuzz_callee(uint256 value) public view {
-        target.crossed(value);
-    }
-}
-"#,
-    );
-
-    cmd.forge_fuse()
-        .args([
-            "test",
-            "--match-test",
-            "testFuzz_callee",
-            "--fuzz-runs",
-            "8",
-            "--fuzz-seed",
-            "0x1234",
-            "--threads",
-            "1",
-            "--fuzz-frontier-dir",
-            "fuzz_frontiers",
-        ])
-        .assert_success();
-
-    cmd.forge_fuse()
-        .args([
-            "test",
-            "--match-test",
-            "testFuzz_callee",
-            "--fuzz-runs",
-            "1",
-            "--fuzz-seed",
-            "0x1234",
-            "--threads",
-            "1",
-            "--fuzz-frontier-dir",
-            "fuzz_frontiers",
-            "--fuzz-corpus-dir",
-            "fuzz_corpus",
-            "--symbolic-use-fuzz-frontiers",
-            "--symbolic-frontier-limit",
-            "32",
-        ])
-        .assert_success();
-
-    let corpus_dir = prj
-        .root()
-        .join("fuzz_corpus")
-        .join("SymbolicFuzzCalleeFrontierSeed")
-        .join("testFuzz_callee")
-        .join("worker0")
-        .join("corpus");
-    let expected_selector = hex::encode(&keccak256(b"testFuzz_callee(uint256)")[..4]);
-    let mut found_branch_flipping_seed = false;
-    for entry in std::fs::read_dir(&corpus_dir)
-        .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
-    {
-        let entry = entry.unwrap();
-        let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
-        for tx in corpus.as_array().unwrap() {
-            let calldata = tx["calldata"].as_str().expect("seed calldata");
-            if !calldata.starts_with(&format!("0x{expected_selector}")) {
-                continue;
-            }
-            let value = U256::from_be_slice(&hex::decode(&calldata[10..74]).unwrap());
-            if value == U256::from(777) {
-                found_branch_flipping_seed = true;
-            }
-        }
-    }
-    assert!(found_branch_flipping_seed);
 });
 
 forgetest_init!(symbolic_import_fuzz_corpus_guides_bounded_symbolic_path, |prj, cmd| {

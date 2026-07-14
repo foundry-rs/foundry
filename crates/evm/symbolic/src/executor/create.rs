@@ -332,6 +332,20 @@ impl SymbolicExecutor {
                     }
                     StepOutcome::AssumeRejected | StepOutcome::Forked => break,
                 }
+
+                if state.branch_target().is_some() && state.satisfies_branch_target() {
+                    // Targeted frontier runs only need the constraints at the requested
+                    // comparison. Stop this child frame before an unsupported callee tail can
+                    // discard the model; callers inherit the target progress and the root frame
+                    // materializes and concretely replays the candidate immediately.
+                    *completed_paths += 1;
+                    outcomes.push(ExternalCallOutcome {
+                        status: TopLevelCallStatus::Success,
+                        return_data: state.return_data.clone(),
+                        state,
+                    });
+                    break;
+                }
             }
         }
 

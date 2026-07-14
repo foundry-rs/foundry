@@ -2,7 +2,10 @@
 
 use crate::{
     Cheatcode, CheatsConfig, CheatsCtxt, Error, Result,
-    Vm::{self, AccountAccess},
+    Vm::{
+        self, AccountAccess, promptAddressCall, promptCall, promptSecretCall, promptSecretUintCall,
+        promptUintCall, sleepCall,
+    },
     evm::{
         DealRecord, GasRecord, RecordAccess, journaled_account,
         mock::{MockCallDataContext, MockCallReturnData},
@@ -718,6 +721,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// route the change through `EnvOverrides` instead of the actual env
     /// when `true`, so they don't fight with the fee-accounting zeroing.
     pub in_isolation_context: bool,
+
+    /// Whether host-blocking cheatcodes should discard the current fuzz input before dispatch.
+    reject_blocking_cheatcodes: bool,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -780,7 +786,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             env_overrides: Default::default(),
             env_overrides_snapshots: Default::default(),
             in_isolation_context: false,
+            reject_blocking_cheatcodes: false,
         }
+    }
+
+    /// Discards fuzz inputs that invoke host-blocking cheatcodes instead of executing them.
+    ///
+    /// This is intended for bounded internal replay passes where an input selected by another
+    /// engine must not be able to block the calling worker on a sleep or interactive prompt.
+    pub const fn reject_blocking_cheatcodes(&mut self) {
+        self.reject_blocking_cheatcodes = true;
     }
 
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
@@ -843,8 +858,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         call: &CallInputs,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
+        let input = call.input.bytes(ecx);
         // decode the cheatcode call
-        let decoded = Vm::VmCalls::abi_decode(&call.input.bytes(ecx)).map_err(|e| {
+        let decoded = Vm::VmCalls::abi_decode(&input).map_err(|e| {
             if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
                 let msg = format!(
                     "unknown cheatcode with selector {selector}; \
@@ -855,6 +871,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
             e
         })?;
+
+        if self.reject_blocking_cheatcodes
+            && input.get(..SELECTOR_LEN).is_some_and(is_blocking_cheatcode_selector)
+        {
+            return Err(Error::from(MAGIC_ASSUME));
+        }
 
         let caller = call.caller;
 
@@ -1467,6 +1489,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     pub fn struct_defs(&self) -> Option<&foundry_common::fmt::StructDefinitions> {
         self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok())
     }
+}
+
+fn is_blocking_cheatcode_selector(selector: &[u8]) -> bool {
+    selector == sleepCall::SELECTOR
+        || selector == promptCall::SELECTOR
+        || selector == promptSecretCall::SELECTOR
+        || selector == promptSecretUintCall::SELECTOR
+        || selector == promptAddressCall::SELECTOR
+        || selector == promptUintCall::SELECTOR
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcodes<FEN> {
@@ -3201,6 +3232,21 @@ mod tests {
 
     fn create_inputs() -> CreateInputs {
         CreateInputs::new(Address::ZERO, CreateScheme::Create, U256::ZERO, Bytes::new(), 100_000, 0)
+    }
+
+    #[test]
+    fn blocking_cheatcode_selectors_are_classified() {
+        for selector in [
+            sleepCall::SELECTOR,
+            promptCall::SELECTOR,
+            promptSecretCall::SELECTOR,
+            promptSecretUintCall::SELECTOR,
+            promptAddressCall::SELECTOR,
+            promptUintCall::SELECTOR,
+        ] {
+            assert!(is_blocking_cheatcode_selector(&selector));
+        }
+        assert!(!is_blocking_cheatcode_selector(&Vm::skip_0Call::SELECTOR));
     }
 
     fn broadcast_at(depth: usize) -> Broadcast {

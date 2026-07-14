@@ -1,5 +1,5 @@
 use alloy_primitives::{
-    Address, U256,
+    Address, I256, U256,
     map::{DefaultHashBuilder, Entry, HashMap},
 };
 use core::{
@@ -87,6 +87,21 @@ pub struct CmpOperands {
     pub address: Address,
     /// EVM opcode that performed the comparison.
     pub opcode: u8,
+}
+
+impl CmpOperands {
+    /// Evaluates the captured comparison using EVM operand semantics.
+    pub fn result(&self) -> bool {
+        match self.opcode {
+            opcode::EQ => self.op1 == self.op2,
+            opcode::LT => self.op1 < self.op2,
+            opcode::GT => self.op1 > self.op2,
+            opcode::SLT => I256::from_raw(self.op1) < I256::from_raw(self.op2),
+            opcode::SGT => I256::from_raw(self.op1) > I256::from_raw(self.op2),
+            opcode::ISZERO => self.op1.is_zero(),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

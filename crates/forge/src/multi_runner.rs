@@ -480,9 +480,14 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub fuzz_minimize: Option<FuzzMinimizeConfig>,
     /// Run only fuzz and invariant tests.
     pub fuzz_only: bool,
+    /// Restrict `forge fuzz seed` to stateless fuzz tests.
+    pub fuzz_seed: bool,
+    /// Persist replay-confirmed symbolic frontier inputs without starting a fuzz campaign.
+    pub fuzz_seed_only: bool,
+    /// Automatically bootstrap stale stateless corpora for eligible long fuzz campaigns.
+    pub fuzz_auto_bootstrap: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
-
     /// When set, run only the matching test and replay this artifact's concrete payload.
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
@@ -615,6 +620,12 @@ pub struct MultiContractRunnerBuilder {
     pub fuzz_minimize: Option<FuzzMinimizeConfig>,
     /// Run only fuzz and invariant tests.
     pub fuzz_only: bool,
+    /// Restrict `forge fuzz seed` to stateless fuzz tests.
+    pub fuzz_seed: bool,
+    /// Persist replay-confirmed symbolic frontier inputs without starting a fuzz campaign.
+    pub fuzz_seed_only: bool,
+    /// Automatically bootstrap stale stateless corpora for eligible long fuzz campaigns.
+    pub fuzz_auto_bootstrap: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
     /// Symbolic artifact replay mode (CLI-only, off by default).
@@ -639,6 +650,9 @@ impl MultiContractRunnerBuilder {
             showmap: None,
             fuzz_minimize: None,
             fuzz_only: false,
+            fuzz_seed: false,
+            fuzz_seed_only: false,
+            fuzz_auto_bootstrap: false,
             fuzz_failure_replay: false,
             symbolic_artifact_replay: None,
         }
@@ -656,6 +670,21 @@ impl MultiContractRunnerBuilder {
 
     pub const fn with_fuzz_only(mut self, fuzz_only: bool) -> Self {
         self.fuzz_only = fuzz_only;
+        self
+    }
+
+    pub const fn with_fuzz_seed(mut self, fuzz_seed: bool) -> Self {
+        self.fuzz_seed = fuzz_seed;
+        self
+    }
+
+    pub const fn with_fuzz_seed_only(mut self, fuzz_seed_only: bool) -> Self {
+        self.fuzz_seed_only = fuzz_seed_only;
+        self
+    }
+
+    pub const fn with_fuzz_auto_bootstrap(mut self, fuzz_auto_bootstrap: bool) -> Self {
+        self.fuzz_auto_bootstrap = fuzz_auto_bootstrap;
         self
     }
 
@@ -863,6 +892,9 @@ impl MultiContractRunnerBuilder {
                 showmap: self.showmap,
                 fuzz_minimize: self.fuzz_minimize,
                 fuzz_only: self.fuzz_only,
+                fuzz_seed: self.fuzz_seed,
+                fuzz_seed_only: self.fuzz_seed_only,
+                fuzz_auto_bootstrap: self.fuzz_auto_bootstrap,
                 fuzz_failure_replay: self.fuzz_failure_replay,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,

@@ -507,6 +507,19 @@ pub struct TestArgs {
     #[arg(skip)]
     fuzz_only: FuzzOnlyMode,
 
+    /// Internal mode used by both phases of `forge fuzz seed`.
+    #[arg(skip)]
+    fuzz_seed_mode: bool,
+
+    /// Internal mode used by `forge fuzz seed` after its concrete warmup.
+    #[arg(skip)]
+    fuzz_seed_only: bool,
+
+    /// Automatically bootstrap stale stateless corpora for eligible long `forge fuzz run`
+    /// campaigns.
+    #[arg(skip)]
+    fuzz_auto_bootstrap: bool,
+
     /// Internal showmap/replay override used by `forge fuzz replay`.
     #[arg(skip)]
     pub(crate) showmap_override: Option<ShowmapConfig>,
@@ -1207,10 +1220,29 @@ impl TestArgs {
         self.fuzz_only = FuzzOnlyMode::Enabled;
     }
 
-    /// Restricts this test invocation to fuzz and invariant tests and enables a default fuzz corpus
-    /// dir after user config is loaded.
+    /// Restricts this test invocation to fuzz and invariant tests, enables a default fuzz corpus
+    /// dir after user config is loaded, and permits bounded automatic bootstrap for long campaigns.
     pub(crate) const fn enable_fuzz_only_with_auto_fuzz_corpus(&mut self) {
         self.fuzz_only = FuzzOnlyMode::WithAutoFuzzCorpus;
+        self.fuzz_auto_bootstrap = !self.list
+            && !self.rerun
+            && !self.gas_report
+            && self.fuzz_input_file.is_none()
+            && self.showmap_out.is_none();
+    }
+
+    /// Restricts the concrete warmup to stateless fuzz tests.
+    pub(crate) const fn enable_fuzz_seed_warmup(&mut self) {
+        self.fuzz_only = FuzzOnlyMode::WithAutoFuzzCorpus;
+        self.fuzz_seed_mode = true;
+    }
+
+    /// Restricts execution to replay-confirmed symbolic frontier seeding without starting a
+    /// second concrete campaign.
+    pub(crate) const fn enable_fuzz_seed_only(&mut self) {
+        self.fuzz_only = FuzzOnlyMode::WithAutoFuzzCorpus;
+        self.fuzz_seed_mode = true;
+        self.fuzz_seed_only = true;
     }
 
     fn apply_auto_fuzz_corpus_dir(&self, config: &mut Config) {
@@ -2451,6 +2483,9 @@ impl TestArgs {
             .with_multi_network(execution.multi_network)
             .with_showmap(showmap)
             .with_fuzz_only(self.fuzz_only.is_enabled())
+            .with_fuzz_seed(self.fuzz_seed_mode)
+            .with_fuzz_seed_only(self.fuzz_seed_only)
+            .with_fuzz_auto_bootstrap(self.fuzz_auto_bootstrap)
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
@@ -4185,6 +4220,7 @@ mod tests {
 
         args.apply_auto_fuzz_corpus_dir(&mut config);
 
+        assert!(args.fuzz_auto_bootstrap);
         assert_eq!(
             config.fuzz.corpus.corpus_dir,
             Some(config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR))
@@ -4235,6 +4271,16 @@ mod tests {
 
         assert_eq!(config.fuzz.corpus.corpus_dir, None);
         assert_eq!(config.invariant.corpus.corpus_dir, None);
+        assert!(!args.fuzz_auto_bootstrap);
+    }
+
+    #[test]
+    fn non_campaign_fuzz_run_modes_do_not_enable_automatic_bootstrap() {
+        for arg in ["--list", "--rerun", "--gas-report", "--fuzz-input-file=input.json"] {
+            let mut args = TestArgs::parse_from(["foundry-cli", arg]);
+            args.enable_fuzz_only_with_auto_fuzz_corpus();
+            assert!(!args.fuzz_auto_bootstrap, "{arg}");
+        }
     }
 
     #[test]

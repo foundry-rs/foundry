@@ -305,17 +305,39 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         let commands = self.commands()?;
         let mut errors = Vec::new();
         for command in commands {
-            let output = match Command::new(&command.program).arg("--version").output() {
-                Ok(output) => output,
+            let child = match Command::new(&command.program)
+                .arg("--version")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => child,
                 Err(err) => {
                     errors.push(format!("failed to execute `{}`: {err}", command.program));
                     continue;
                 }
             };
-            if output.status.success() {
-                return Ok(());
+            let mut child = SolverChild::new(child);
+            // Reuse the symbolic query timeout for the availability probe. Managed automatic
+            // fuzz bootstrap forces this to one second, while explicit symbolic modes preserve
+            // their configured (and historically more permissive) timeout.
+            let probe_timeout = Duration::from_secs(
+                self.timeout.filter(|timeout| *timeout > 0).unwrap_or(30).into(),
+            );
+            match child.child_mut().wait_timeout(probe_timeout) {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(_)) => errors
+                    .push(format!("`{}` is not a usable SMT solver executable", command.program)),
+                Ok(None) => errors.push(format!(
+                    "timed out checking symbolic solver executable `{}`",
+                    command.program
+                )),
+                Err(err) => errors.push(format!(
+                    "failed to wait for symbolic solver executable `{}`: {err}",
+                    command.program
+                )),
             }
-            errors.push(format!("`{}` is not a usable SMT solver executable", command.program));
         }
         Err(SymbolicError::Solver(errors.join("; ")))
     }
@@ -1501,34 +1523,85 @@ fn run_solver_process(
         }
     };
     let mut child = SolverChild::new(child);
-
-    if let Some(mut stdin) = child.child_mut().stdin.take()
-        && let Err(err) = stdin.write_all(smt.as_bytes())
-    {
-        return SolverProcessOutcome::Error(format!("failed to write solver query: {err}"));
-    }
-
     let started_at = Instant::now();
     let timeout =
         timeout.filter(|seconds| *seconds > 0).map(|seconds| Duration::from_secs(seconds.into()));
-    loop {
-        if cancel.load(Ordering::SeqCst) {
-            return SolverProcessOutcome::Cancelled;
-        }
+    let stdin = child.child_mut().stdin.take();
+    let early_outcome = thread::scope(|scope| {
+        // A solver can stop draining stdin while the query is larger than the pipe buffer. Write
+        // on a scoped worker so timeout and portfolio cancellation supervise input delivery too.
+        // Every early path kills and reaps the direct child before joining the worker. That closes
+        // the read end for the direct Z3/Bitwuzla processes used by managed automatic mode. A
+        // custom wrapper that forks descendants inheriting its pipes remains responsible for
+        // terminating that process tree.
+        let (write_result_tx, write_result_rx) = mpsc::sync_channel(1);
+        let writer = stdin.map(|mut stdin| {
+            scope.spawn(move || {
+                let result = stdin.write_all(smt.as_bytes());
+                let _ = write_result_tx.send(result);
+            })
+        });
+        let mut write_pending = writer.is_some();
+        let mut outcome = loop {
+            if write_pending {
+                match write_result_rx.try_recv() {
+                    Ok(Ok(())) => write_pending = false,
+                    Ok(Err(err)) => {
+                        break Some(SolverProcessOutcome::Error(format!(
+                            "failed to write solver query: {err}"
+                        )));
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        break Some(SolverProcessOutcome::Error(
+                            "solver stdin writer stopped unexpectedly".to_string(),
+                        ));
+                    }
+                }
+            }
 
-        let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
-            return SolverProcessOutcome::Unknown;
+            if cancel.load(Ordering::SeqCst) {
+                break Some(SolverProcessOutcome::Cancelled);
+            }
+
+            let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
+                break Some(SolverProcessOutcome::Unknown);
+            };
+
+            match child.child_mut().wait_timeout(wait) {
+                Ok(Some(_)) => break None,
+                Ok(None) => {}
+                Err(err) => {
+                    break Some(SolverProcessOutcome::Error(format!(
+                        "failed to wait for solver process: {err}"
+                    )));
+                }
+            }
         };
 
-        match child.child_mut().wait_timeout(wait) {
-            Ok(Some(_)) => break,
-            Ok(None) => {}
-            Err(err) => {
-                return SolverProcessOutcome::Error(format!(
-                    "failed to wait for solver process: {err}"
-                ));
-            }
+        if outcome.is_some() {
+            child.terminate();
         }
+        if writer.is_some_and(|writer| writer.join().is_err()) && outcome.is_none() {
+            outcome = Some(SolverProcessOutcome::Error(
+                "solver stdin writer stopped unexpectedly".to_string(),
+            ));
+        }
+        if outcome.is_none() && write_pending {
+            outcome = match write_result_rx.recv() {
+                Ok(Ok(())) => None,
+                Ok(Err(err)) => Some(SolverProcessOutcome::Error(format!(
+                    "failed to write solver query: {err}"
+                ))),
+                Err(_) => Some(SolverProcessOutcome::Error(
+                    "solver stdin writer stopped unexpectedly".to_string(),
+                )),
+            };
+        }
+        outcome
+    });
+    if let Some(outcome) = early_outcome {
+        return outcome;
     }
 
     let output = match child.wait_with_output() {
@@ -1569,6 +1642,13 @@ impl SolverChild {
 
     const fn child_mut(&mut self) -> &mut Child {
         self.child.as_mut().expect("solver child exists")
+    }
+
+    fn terminate(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 
     fn wait_with_output(mut self) -> std::io::Result<Output> {
@@ -1741,4 +1821,36 @@ fn model_symbols_for_constraints(
         constraint.collect_vars(&mut vars);
     }
     vars.into_iter().map(|symbol| (cx.symbol_name(symbol).to_owned(), symbol)).collect()
+}
+
+#[cfg(all(test, unix))]
+mod process_tests {
+    use super::*;
+
+    fn non_reading_solver() -> SolverCommand {
+        SolverCommand::new(vec!["/bin/sleep".to_string(), "10".to_string()], false).unwrap()
+    }
+
+    #[test]
+    fn solver_process_timeout_includes_blocked_stdin_write() {
+        let smt = "x".repeat(16 * 1024 * 1024);
+        let started_at = Instant::now();
+
+        let outcome =
+            run_solver_process(&non_reading_solver(), &smt, Some(1), &AtomicBool::new(false));
+
+        assert!(matches!(outcome, SolverProcessOutcome::Unknown), "{outcome:?}");
+        assert!(started_at.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn solver_process_cancellation_interrupts_blocked_stdin_write() {
+        let smt = "x".repeat(16 * 1024 * 1024);
+        let started_at = Instant::now();
+
+        let outcome = run_solver_process(&non_reading_solver(), &smt, None, &AtomicBool::new(true));
+
+        assert!(matches!(outcome, SolverProcessOutcome::Cancelled), "{outcome:?}");
+        assert!(started_at.elapsed() < Duration::from_secs(5));
+    }
 }

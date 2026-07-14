@@ -79,7 +79,10 @@ mod sancov;
 mod showmap;
 mod trace;
 
-pub use corpus::{DynamicTargetCtx, StatelessReplayTarget, persist_corpus_seed};
+pub use corpus::{
+    DynamicTargetCtx, StatelessReplayTarget, persist_corpus_seed,
+    persist_corpus_seed_without_disk_dedupe,
+};
 pub use corpus_io::{
     CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
 };

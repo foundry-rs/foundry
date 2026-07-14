@@ -141,8 +141,10 @@ configured record limit, and a `frontiers` array. Each frontier contains:
   present only when edge coverage is collected via a corpus directory, edge
   coverage metrics, or sancov, and omitted otherwise
 
-Frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default 256).
-It reuses the fuzzer's comparison-operand inspector and does not store traces.
+Manual frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default
+256). The automatic bootstrap described below enables a temporary bounded
+capture without changing project configuration. Capture reuses the fuzzer's
+comparison-operand inspector and does not store traces.
 
 Symbolic execution can consume those artifacts to solve the opposite side of
 captured comparisons and write replay-confirmed inputs into the fuzz corpus:
@@ -180,6 +182,163 @@ the requested selectors. Forge keeps the artifact order as the priority order
 after filtering, imports up to `symbolic.frontier_limit` records, reports how
 many records were imported or skipped by target filters, and warns if a
 requested target cannot be imported.
+
+## Automatic Fuzz Corpus Bootstrap
+
+`forge fuzz run` automatically gives an empty or stale stateless corpus one
+small symbolic bootstrap before an effectively long concrete campaign:
+
+```sh
+forge fuzz run --runs 50000000 --timeout 900 \
+  --match-test test_hard_branch
+```
+
+There is no routine hybrid flag. Forge enables this prelude only when the
+resolved per-test campaign has at least 2,000,000 runs and has no timeout below
+15 minutes. Fuzzing stops at the first active bound, so a 15-minute timeout with
+the default 256 runs, or two million runs with a short timeout, does not qualify.
+Automatic targets must use only scalar ABI inputs (`bool`, integer, address, or
+fixed bytes). Dynamic/composite inputs, function pointers, invariant tests,
+fork-backed or FFI-enabled tests, tests with a persisted fuzz failure,
+replay/showmap/list/rerun modes, gas reports, and ordinary `forge test` runs are
+excluded. Clear an obsolete failure file, or use the explicit command below,
+before asking Forge to bootstrap that target again.
+
+For one stale matching target per Forge process, bootstrap runs 16 ordinary
+concrete cases, capped at five seconds and 256 rejects, while retaining up to 32
+comparison frontiers. It stages at most 256 existing entries into an isolated
+temporary warmup corpus, so the prelude never asks the normal corpus loader to
+scan the complete on-disk corpus. Each frontier gets at most one second of
+symbolic time, 256 paths, and 1,024 solver queries. Forge checks configured
+built-in portfolio entries in order and uses the first available
+memory-bounded solver without racing them. Automatic mode currently supports Z3
+and Bitwuzla, injects their native 256 MB memory limit, and skips other solver
+backends rather than running them without a hard memory bound.
+Project-configured solver commands, custom solver paths, and custom portfolio
+entries are not executed automatically; use the explicit command below after
+reviewing trusted solver settings. Parallel suites share the same process-wide
+symbolic slot and do not receive additional budgets. When several eligible
+stale tests match, runner scheduling determines which one claims the slot; use
+`--match-test` or `--match-contract` to select a bootstrap target deliberately.
+
+Every candidate is replayed through the normal concrete executor and must flip
+the exact address, program counter, opcode, and comparison result that produced
+its frontier. Replays discarded by `vm.assume` or `vm.skip` are rejected.
+Automatic warmup and replay executors also discard inputs that reach
+host-blocking `vm.sleep` or interactive `vm.prompt*` cheatcodes; explicit
+symbolic commands keep their existing cheatcode behavior.
+Passing candidates are persisted only when a second concrete replay contributes
+a new EVM edge beyond a baseline of up to 256 sampled existing and warmup corpus
+entries. The filesystem sample is bounded rather than exhaustive or
+order-stable. A replay-confirmed failure must also fail the ordinary
+persisted-counterexample replay path before it is reported. Failure candidates
+are not written to the coverage corpus or completion manifest; a confirmed one
+uses the normal persisted failure file, while a replay mismatch is discarded
+and remains retryable. Automatic passing candidates use an in-run dedupe set and
+a direct write, avoiding a full-corpus dedupe scan per frontier. This coverage
+gate filters branch-flipping candidates that do not improve the sampled corpus
+without making prelude cost grow with an arbitrarily large corpus.
+
+After a completed non-failing attempt, Forge writes an atomic target-scoped
+manifest beside the target corpus. Its fingerprint covers the bootstrap
+version, full test identity, compiled test bytecode set, EVM mode, replay
+semantics, and normalized
+symbolic configuration, including the effective sender and EVM environment. An
+unchanged target skips bootstrap on later runs. A missing, corrupt, or
+mismatched manifest is stale; clearing a corpus that previously contained
+entries also makes it stale. A completed bounded reject/incomplete or negative
+attempt remains current so unsuitable targets do not pay the cost on every
+campaign. Missing solvers and interrupted attempts remain retryable and do not
+stop concrete fuzzing.
+
+When `--corpus-dir` is omitted, `forge fuzz run` uses the same automatic corpus
+root on every invocation: `cache/fuzz/corpus`, or `<fuzz.failure_persist_dir>/corpus`
+when a custom failure directory is configured. The concrete campaign starts
+after bootstrap and keeps its original run and timeout bounds.
+
+### Force or inspect a bootstrap
+
+`forge fuzz seed` remains an advanced, explicit corpus-building command. It is
+useful when evaluating a target, preserving frontier artifacts, or forcing a
+retry outside a long campaign, including supported non-scalar targets excluded
+from automatic mode:
+
+```sh
+forge fuzz seed --match-test test_hard_branch --corpus-dir fuzz_corpus
+forge fuzz run --match-test test_hard_branch --runs 50000000 \
+  --timeout 900 --corpus-dir fuzz_corpus
+```
+
+The explicit command runs 16 concrete cases by default and tries up to 32
+frontiers at one second each. `--runs`, `--frontier-limit`, and
+`--solver-timeout` override those diagnostic bounds. It excludes invariants and
+exits without starting the subsequent campaign. Unlike automatic mode, it
+persists every exact branch-flipping replay, so measure its output before
+assigning value to candidate count alone.
+
+Useful follow-up commands are:
+
+```sh
+forge fuzz show fuzz_corpus
+forge fuzz replay --match-test test_hard_branch --corpus-dir fuzz_corpus
+forge fuzz run --match-test test_hard_branch \
+  --showmap-out coverage_data --showmap-corpus-dir fuzz_corpus
+```
+
+This workflow is intended for cold, one-call branches visible as EVM
+comparisons, such as arithmetic bounds or threshold checks. Paired cold-corpus
+trials on unchanged Recon targets produced strict aggregate showmap supersets in
+five current-default, stable-bytecode trials: two Nerite liquidation trials
+gained 44 EVM IDs in existing bytecode namespaces (30 additional program
+counters in a cross-namespace diagnostic), and three Aave v4 liquidation-bonus
+trials gained 9 IDs and 9 program counters each. Three earlier Nerite trials at
+a 256-frontier development budget also produced strict stable-namespace gains,
+but are not counted as evidence for the final 32-frontier default. The added
+inputs were boundary values for `forge-std` `bound`; this is repeatable
+cold-corpus evidence, not a protocol bug or a broad DeFi time-to-bug
+improvement.
+
+Three Liquity cold-corpus pairs initially appeared to gain 1,458 to 1,582 IDs,
+but an audit found that nearly all of that delta came from new bytecode-hash
+namespaces when fuzz inputs became constructor immutables. Only 6 to 32 global
+program-counter offsets remained in a diagnostic that can itself conflate
+contracts, so those raw deltas are not counted as positive evidence. A separate
+one-hour automatic Liquity pair reached 18.08 million concrete control runs and
+18.26 million automatic runs. Its 578 ms prelude persisted one input that added
+an edge beyond the 16-run warmup, but both campaigns ended tied at 5 live edges,
+7 features, and 2,755 program-counter offsets. This validates bounded activation
+and replay filtering, not a lasting coverage or time-to-bug win.
+
+Final 15-minute automatic/control pairs also delimit the current claim. On the
+Nerite target, a 1.4-second prelude persisted three inputs; the concrete
+campaign then reached two additional program-counter offsets by five seconds,
+while the control reached the same offsets by eight seconds of concrete
+fuzzing. The automatic campaign finished with 14 corpus entries and the control
+with 12, but
+both final showmaps contained the same 27,090 EVM IDs and 17,549 global
+program-counter offsets. On the Aave v4 liquidation-bonus target, a 496 ms
+prelude persisted one of two replayed candidates and retained more inputs that
+individually covered the cold path, but both final showmaps contained the same
+1,119 EVM IDs. Automatic mode ran about 3% and 2.1% fewer concrete cases,
+respectively. Nerite added 96 MiB of maximum resident memory; Aave showed no
+memory penalty. These pairs support bounded corpus diversification and, in the
+Nerite case, modest early cold-path reach. They do not establish a lasting
+coverage or time-to-bug advantage.
+
+An uncapped development run on Solady exposed a transient Z3 child-process
+maximum resident set above 2 GiB. The final automatic configuration adds the
+solver-native 256 MB limit described above; a focused repeat peaked at 327 MB
+in the measured automatic command. Explicit symbolic commands remain governed
+by their configured solver command and are not changed by this automatic-only
+limit.
+
+Candidate generation alone is not evidence of value: an unchanged Solady WETH
+trial replay-confirmed seven explicit candidates but added no showmap IDs. The
+automatic new-edge gate is designed around that negative control. Earlier long
+automatic-assist campaigns on Aave, Spark, Tomb, and Solady targets also did not
+produce useful candidates. Nonlinear arithmetic, hashes, signatures,
+fork-heavy setup, invariant state machines, and deep unsupported call paths
+remain poor fits.
 
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
