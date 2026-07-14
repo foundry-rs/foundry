@@ -1511,7 +1511,10 @@ impl TestArgs {
         }
 
         let mut project = config.create_project(true, true)?;
-        let output = compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
+        let output = compile_abi_project(
+            &mut project,
+            ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true),
+        )?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
