@@ -610,6 +610,53 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(does_not_run_legacy_library_functions_as_tests, |prj, cmd| {
+    prj.update_config(|config| config.solc = Some("0.7.6".into()));
+    prj.add_raw_test(
+        "LegacyLibrary.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT OR Apache-2.0
+pragma solidity =0.7.6;
+
+library LegacyInternalLib {
+    function invariantProtocol() public pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract LegacyInternalLibTest {
+    function testInternalLibInvariantProtocol() public pure {
+        require(LegacyInternalLib.invariantProtocol() == 1);
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/LegacyLibrary.t.sol:LegacyInternalLibTest
+[PASS] testInternalLibInvariantProtocol() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/LegacyLibrary.t.sol:LegacyInternalLibTest
+[PASS] testInternalLibInvariantProtocol() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.add_source(

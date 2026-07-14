@@ -44,7 +44,7 @@ use foundry_evm_networks::NetworkVariant;
 
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
-use solar::sema::interface::source_map::FileName;
+use solar::ast::ItemKind;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -759,6 +759,31 @@ impl MultiContractRunnerBuilder {
         let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
         let inline_config = self.inline_config;
 
+        // Collect libraries from the source graph's parsed ASTs. Unlike the semantic analysis
+        // below, this includes sources compiled with Solidity versions older than Solar's minimum
+        // supported version.
+        let source_paths: HashSet<_> = output.artifact_ids().map(|(id, _)| id.source).collect();
+        let mut library_contracts = HashMap::<PathBuf, HashSet<String>>::default();
+        output.parser().solc().compiler().enter_sequential(|compiler| {
+            for path in source_paths {
+                let Some((_, source)) = compiler.gcx().get_ast_source(root.join(&path)) else {
+                    continue;
+                };
+                let Some(ast) = &source.ast else { continue };
+                let artifact_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+
+                for item in ast.items.iter() {
+                    let ItemKind::Contract(contract) = &item.kind else { continue };
+                    if contract.kind.is_library() {
+                        library_contracts
+                            .entry(artifact_path.clone())
+                            .or_default()
+                            .insert(contract.name.as_str().to_string());
+                    }
+                }
+            }
+        });
+
         // Initialize and configure the solar compiler.
         let mut analysis = solar::sema::Compiler::new(
             solar::interface::Session::builder().with_stderr_emitter().build(),
@@ -772,7 +797,6 @@ impl MultiContractRunnerBuilder {
 
         // Populate solar's global context by parsing and lowering the sources.
         let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
-        let mut library_contracts = HashMap::<PathBuf, HashSet<String>>::default();
 
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
@@ -784,22 +808,6 @@ impl MultiContractRunnerBuilder {
             )?;
             pcx.parse();
             let _ = compiler.lower_asts();
-
-            let hir = &compiler.gcx().hir;
-            for contract_id in hir.contract_ids() {
-                let contract = hir.contract(contract_id);
-                if !contract.kind.is_library() {
-                    continue;
-                }
-                let FileName::Real(path) = &hir.source(contract.source).file.name else {
-                    continue;
-                };
-                let path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-                library_contracts
-                    .entry(path)
-                    .or_default()
-                    .insert(contract.name.as_str().to_string());
-            }
             Ok(())
         })?;
 
