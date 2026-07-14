@@ -45,20 +45,10 @@ use crate::mem::storage::MinedTransaction;
 /// Number of preceding block hashes available to the EVM's `BLOCKHASH` opcode.
 pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
 
-/// Returns the cached block hash that expires when `number` is inserted.
-///
-/// Anvil also caches the just-mined block hash for the next EVM execution. Keeping that hash in
-/// addition to the 256 preceding hashes is necessary for calls against the latest block.
-pub(crate) fn expired_block_hash(number: U256) -> Option<U256> {
-    let cache_size = U256::from(BLOCKHASH_HISTORY + 1);
-    (number >= cache_size).then(|| number - cache_size)
-}
-
 /// Inserts a block hash while discarding the entry that left the EVM-visible cache.
 pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, hash: B256) {
-    if let Some(expired) = expired_block_hash(number) {
-        block_hashes.remove(&expired);
-    }
+    let min_number = number.saturating_sub(U256::from(BLOCKHASH_HISTORY));
+    block_hashes.retain(|cached, _| *cached >= min_number && *cached <= number);
     block_hashes.insert(number, hash);
 }
 

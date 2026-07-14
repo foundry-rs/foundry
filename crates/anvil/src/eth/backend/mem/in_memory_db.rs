@@ -2,9 +2,9 @@
 
 use crate::{
     eth::backend::db::{
-        Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
-        SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
-        cache_block_hash, expired_block_hash,
+        BLOCKHASH_HISTORY, Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord,
+        SerializableBlock, SerializableHistoricalStates, SerializableState,
+        SerializableTransaction, StateDb, cache_block_hash,
     },
     mem::state::{StateRootCache, state_root},
 };
@@ -73,9 +73,8 @@ impl HistoricalStateCache {
 
     fn record_block_hash(&mut self, number: U256, hash: B256) {
         let Some(state) = &mut self.state else { return };
-        if let Some(expired) = expired_block_hash(number) {
-            state.block_hashes.remove(&expired);
-        }
+        let min_number = number.saturating_sub(U256::from(BLOCKHASH_HISTORY));
+        state.block_hashes.retain(|cached, _| *cached >= min_number && *cached <= number);
         state.block_hashes.insert(number, hash);
     }
 
@@ -576,7 +575,6 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eth::backend::db::BLOCKHASH_HISTORY;
     use alloy_primitives::{Bytes, address};
     use revm::primitives::KECCAK_EMPTY;
     use std::collections::BTreeMap;
@@ -725,6 +723,22 @@ mod tests {
         assert!(block_hashes.contains_key(&U256::from(767)));
         assert!(block_hashes.contains_key(&U256::from(768)));
         assert!(block_hashes.contains_key(&U256::from(1_023)));
+    }
+
+    #[test]
+    fn evm_block_hash_cache_is_bounded_across_block_number_jumps() {
+        let mut db = StateRootDb::default();
+        for number in [0, 258, 516, 774] {
+            db.insert_block_hash(U256::from(number), B256::from(U256::from(number)));
+        }
+
+        let block_hashes = &db.inner.inner.cache.block_hashes;
+        assert_eq!(block_hashes.len(), 1);
+        assert!(block_hashes.contains_key(&U256::from(774)));
+
+        let historical = db.history.get_mut().state.as_ref().unwrap();
+        assert_eq!(historical.block_hashes.len(), 1);
+        assert!(historical.block_hashes.contains_key(&U256::from(774)));
     }
 
     #[test]
