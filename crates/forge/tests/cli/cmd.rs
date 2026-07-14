@@ -1859,6 +1859,76 @@ contract Mapping {
 "#]]);
 });
 
+// erc7201("test.contractfield") =
+// 0xbb00b7e016d7ea496af7283aed140b9036f331e3d3c10ad916e0333859828600 Contract/interface-typed
+// fields are 20-byte packable values, like address, and must not fall through to `unknown`/32-byte
+// slot-boundary treatment.
+forgetest!(can_inspect_erc7201_contract_typed_field, |prj, cmd| {
+    prj.add_source(
+        "ContractField.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+}
+
+contract ContractField {
+    /// @custom:storage-location erc7201:test.contractfield
+    struct FieldStorage {
+        IERC20 token;
+        bool paused;
+    }
+
+    function _storage() private pure returns (FieldStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.contractfield")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "ContractField", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "ContractField [erc7201:test.contractfield]",
+      "label": "token",
+      "offset": 0,
+      "slot": "0xbb00b7e016d7ea496af7283aed140b9036f331e3d3c10ad916e0333859828600",
+      "type": "contract IERC20"
+    },
+    {
+      "astId": 0,
+      "contract": "ContractField [erc7201:test.contractfield]",
+      "label": "paused",
+      "offset": 20,
+      "slot": "0xbb00b7e016d7ea496af7283aed140b9036f331e3d3c10ad916e0333859828600",
+      "type": "bool"
+    }
+  ],
+  "types": {
+    "bool": {
+      "encoding": "inplace",
+      "label": "bool",
+      "numberOfBytes": "1"
+    },
+    "contract IERC20": {
+      "encoding": "inplace",
+      "label": "contract IERC20",
+      "numberOfBytes": "20"
+    }
+  }
+}
+
+"#]]);
+});
+
 // erc7201("test.dynarray") = 0x5e9fbe99608ff647079d38f7c90233a009c7e81628b7a331162c48bd41e75600
 // Dynamic arrays must carry a populated base reference in storageLayout.types.
 forgetest!(can_inspect_erc7201_dynamic_array_base, |prj, cmd| {
@@ -2346,8 +2416,9 @@ contract Recursive {
 "#]]);
 });
 
-// erc7201("test.recursive.dynarray") = 0x539c3f42a016558808fc037d9c7f266a766b5f0aab821e2a24b0d64653589200
-// Recursive struct type: Node references itself through a dynamic array element type.
+// erc7201("test.recursive.dynarray") =
+// 0x539c3f42a016558808fc037d9c7f266a766b5f0aab821e2a24b0d64653589200 Recursive struct type: Node
+// references itself through a dynamic array element type.
 forgetest!(can_inspect_erc7201_recursive_struct_via_dynamic_array, |prj, cmd| {
     prj.add_source(
         "RecursiveArray.sol",

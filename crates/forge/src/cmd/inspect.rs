@@ -522,6 +522,9 @@ fn hir_type_label<'hir>(gcx: Gcx<'hir>, kind: &TypeKind<'hir>) -> String {
                 u.name.as_str().to_string()
             }
         }
+        TypeKind::Custom(ItemId::Contract(id)) => {
+            format!("contract {}", hir.contract(*id).name.as_str())
+        }
         TypeKind::Function(f) => match f.visibility {
             Visibility::External | Visibility::Public => "function () external".to_string(),
             _ => "function () internal".to_string(),
@@ -594,6 +597,7 @@ fn hir_type_storage_info<'hir>(
             let (_, bytes, slots, encoding) = hir_type_storage_info(gcx, &hir.udvt(*id).ty.kind);
             (bytes, slots, encoding)
         }
+        TypeKind::Custom(ItemId::Contract(_)) => (20, 0, "inplace"),
         TypeKind::Function(f) => {
             let bytes = match f.visibility {
                 Visibility::External | Visibility::Public => 24,
