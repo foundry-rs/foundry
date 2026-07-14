@@ -31,6 +31,7 @@ use alloy_rpc_types::{
     },
 };
 use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, StateContext};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
@@ -415,6 +416,21 @@ impl<N: Network> ClientFork<N> {
                 .map_err(BlockchainError::Internal)?;
         }
 
+        self.prepare_reset(urls, block_number).await?;
+
+        let number = self.block_number();
+        let block_hash = self.block_hash();
+        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
+
+        Ok(())
+    }
+
+    /// Updates the fork configuration for a reset without modifying the current database.
+    pub(crate) async fn prepare_reset(
+        &self,
+        urls: Vec<String>,
+        block_number: BlockId,
+    ) -> Result<(), BlockchainError> {
         if !urls.is_empty() {
             self.config.write().update_urls(urls)?;
             let override_chain_id = self.config.read().override_chain_id;
@@ -445,8 +461,6 @@ impl<N: Network> ClientFork<N> {
 
         self.clear_cached_storage();
 
-        self.database.write().await.insert_block_hash(U256::from(number), block_hash);
-
         Ok(())
     }
 
@@ -472,6 +486,14 @@ impl<N: Network> ClientFork<N> {
         self.provider()
             .raw_request("eth_callMany".into(), (bundles, state_context, state_override))
             .await
+    }
+
+    /// Sends `eth_callBundle`.
+    pub async fn call_bundle(
+        &self,
+        bundle: EthCallBundle,
+    ) -> Result<EthCallBundleResponse, TransportError> {
+        self.provider().raw_request("eth_callBundle".into(), (bundle,)).await
     }
 
     /// Sends `eth_simulateV1`

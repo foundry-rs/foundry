@@ -4,7 +4,7 @@ use crate::{
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
-use alloy_json_abi::{Error, Event, Function, JsonAbi};
+use alloy_json_abi::{Constructor, Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
     map::{AddressHashMap, HashMap, HashSet},
@@ -31,9 +31,9 @@ use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
-    IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
-    IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry,
-    IValidatorConfig,
+    CURRENT_COMMITTEE_ADDRESS, IAccountKeychain, IAddressRegistry, ICurrentCommittee, IFeeManager,
+    IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, IStorageCredits, ITIP20ChannelReserve,
+    ITIP20Factory, ITIP403Registry, IValidatorConfig,
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
@@ -178,6 +178,10 @@ pub struct CallTraceDecoder {
     pub functions: HashMap<Selector, Vec<Function>>,
     /// Functions identified for a specific contract address.
     pub functions_by_address: HashMap<Address, HashMap<Selector, Vec<Function>>>,
+    /// Constructors identified for a specific contract address.
+    pub constructors_by_address: HashMap<Address, Constructor>,
+    /// Creation input offsets where ABI-encoded constructor arguments begin.
+    pub constructor_args_offsets: HashMap<Address, usize>,
     /// All known events.
     ///
     /// Key is: `(topics[0], topics.len() - 1)`.
@@ -303,6 +307,8 @@ impl CallTraceDecoder {
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
             functions_by_address: Default::default(),
+            constructors_by_address: Default::default(),
+            constructor_args_offsets: Default::default(),
             events: console::ds::abi::events()
                 .into_values()
                 // Tempo
@@ -352,6 +358,8 @@ impl CallTraceDecoder {
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
+        self.constructors_by_address.clear();
+        self.constructor_args_offsets.clear();
     }
 
     /// Returns labels for precompiles active in this decoder's chain context.
@@ -435,11 +443,32 @@ impl CallTraceDecoder {
     }
 
     fn functions_for_selector(&self, address: Address, selector: &Selector) -> Option<&[Function]> {
+        if self.is_current_committee_active(address) {
+            static FUNCTIONS: OnceLock<HashMap<Selector, Vec<Function>>> = OnceLock::new();
+            if let Some(functions) = FUNCTIONS
+                .get_or_init(|| {
+                    ICurrentCommittee::abi::functions()
+                        .into_values()
+                        .flatten()
+                        .map(|function| (function.selector(), vec![function]))
+                        .collect()
+                })
+                .get(selector)
+            {
+                return Some(functions);
+            }
+        }
         self.functions_by_address
             .get(&address)
             .and_then(|functions| functions.get(selector))
             .or_else(|| self.functions.get(selector))
             .map(Vec::as_slice)
+    }
+
+    fn is_current_committee_active(&self, address: Address) -> bool {
+        address == CURRENT_COMMITTEE_ADDRESS
+            && self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t8())
+            && precompiles::is_known_precompile(address, self.chain_id, self.tempo_hardfork)
     }
 
     /// Selects the appropriate function from a list of functions with the same selector by
@@ -484,7 +513,15 @@ impl CallTraceDecoder {
         }
 
         trace!(target: "evm::traces", len=addrs.len(), "collecting address identities");
-        for IdentifiedAddress { address, label, contract, abi, artifact_id: _ } in addrs {
+        for IdentifiedAddress {
+            address,
+            label,
+            contract,
+            abi,
+            constructor_args_offset,
+            artifact_id: _,
+        } in addrs
+        {
             let _span = trace_span!(target: "evm::traces", "identity", ?contract, ?label).entered();
 
             if let Some(contract) = contract {
@@ -497,6 +534,10 @@ impl CallTraceDecoder {
 
             if let Some(abi) = abi {
                 self.collect_abi(&abi, Some(address));
+            }
+
+            if let Some(offset) = constructor_args_offset {
+                self.constructor_args_offsets.entry(address).or_insert(offset);
             }
         }
     }
@@ -512,6 +553,11 @@ impl CallTraceDecoder {
                 self.push_address_function(address, function.clone());
             }
             self.push_function(function.clone());
+        }
+        if let Some(address) = address
+            && let Some(constructor) = abi.constructor()
+        {
+            self.constructors_by_address.entry(address).or_insert_with(|| constructor.clone());
         }
         for event in abi.events() {
             self.push_event(event.clone());
@@ -594,11 +640,22 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        let label =
-            if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
+        let label = if self.disable_labels {
+            None
+        } else if let Some(label) = self.labels.get(&trace.address) {
+            Some(label.clone())
+        } else if self.is_current_committee_active(trace.address) {
+            Some("CurrentCommittee".to_string())
+        } else {
+            None
+        };
 
         if trace.kind.is_any_create() {
-            return DecodedCallTrace { label, ..Default::default() };
+            return DecodedCallTrace {
+                label,
+                call_data: self.decode_constructor_input(trace),
+                return_data: None,
+            };
         }
 
         if let Some(trace) = precompiles::decode(trace, self.chain_id, self.tempo_hardfork) {
@@ -638,7 +695,8 @@ impl CallTraceDecoder {
                 let return_data = if trace.success {
                     None
                 } else {
-                    let revert_msg = self.decode_revert(&trace.output, trace.status).await;
+                    let revert_msg =
+                        self.decode_revert_at(trace.address, &trace.output, trace.status).await;
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
                         Some(format!(
@@ -731,6 +789,29 @@ impl CallTraceDecoder {
         }
 
         DecodedCallData { signature: func.signature(), args: args.unwrap_or_default() }
+    }
+
+    /// Decodes constructor input from a creation trace.
+    fn decode_constructor_input(&self, trace: &CallTrace) -> Option<DecodedCallData> {
+        let constructor = self.constructors_by_address.get(&trace.address)?;
+        let offset = *self.constructor_args_offsets.get(&trace.address)?;
+        let data = trace.data.get(offset..)?;
+        let decoded = constructor.abi_decode_input(data).ok()?;
+        let args = decoded
+            .iter()
+            .zip(&constructor.inputs)
+            .map(|(value, input)| {
+                self.format_param_value(
+                    Some(trace.address),
+                    "constructor",
+                    &input.name,
+                    &input.ty,
+                    value,
+                )
+            })
+            .collect();
+
+        Some(DecodedCallData { signature: constructor_signature(constructor), args })
     }
 
     /// Custom decoding for cheatcode inputs.
@@ -946,7 +1027,7 @@ impl CallTraceDecoder {
         if trace.status.is_none_or(|s| s.is_ok()) || trace.success {
             return None;
         }
-        Some(self.decode_revert(&trace.output, trace.status).await)
+        Some(self.decode_revert_at(trace.address, &trace.output, trace.status).await)
     }
 
     /// Decodes revert data into a human-readable representation.
@@ -967,6 +1048,23 @@ impl CallTraceDecoder {
             return format!("{}({})", error.name, decoded.iter().map(format_token).format(", "));
         }
         self.revert_decoder.decode(output, status)
+    }
+
+    async fn decode_revert_at(
+        &self,
+        address: Address,
+        output: &[u8],
+        status: Option<InstructionResult>,
+    ) -> String {
+        if self.is_current_committee_active(address) {
+            static DECODER: OnceLock<RevertDecoder> = OnceLock::new();
+            let decoder = DECODER
+                .get_or_init(|| RevertDecoder::new().with_abi(&ICurrentCommittee::abi::contract()));
+            if let Some(reason) = decoder.maybe_decode_known(output) {
+                return reason;
+            }
+        }
+        self.decode_revert(output, status).await
     }
 
     /// Decodes an event.
@@ -1213,6 +1311,13 @@ fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
 }
 
+fn constructor_signature(constructor: &Constructor) -> String {
+    format!(
+        "constructor({})",
+        constructor.inputs.iter().map(|input| input.selector_type()).format(",")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1274,6 +1379,37 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[tokio::test]
+    async fn test_decode_constructor_input() {
+        let address = Address::repeat_byte(0x12);
+        let constructor = Constructor::parse("constructor(uint256 amount, address owner)").unwrap();
+        let args = constructor
+            .abi_encode_input(&[
+                DynSolValue::Uint(U256::from(42), 256),
+                DynSolValue::Address(Address::repeat_byte(0x34)),
+            ])
+            .unwrap();
+        let mut data = vec![0x60, 0x80, 0x60, 0x40];
+        let offset = data.len();
+        data.extend_from_slice(&args);
+        let trace = CallTrace {
+            address,
+            kind: revm_inspectors::tracing::types::CallKind::Create,
+            data: data.into(),
+            ..Default::default()
+        };
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.constructors_by_address.insert(address, constructor);
+        decoder.constructor_args_offsets.insert(address, offset);
+
+        let decoded = decoder.decode_function(&trace).await;
+        let call_data = decoded.call_data.expect("constructor input should decode");
+
+        assert_eq!(call_data.signature, "constructor(uint256,address)");
+        assert_eq!(call_data.args[0], "42");
+        assert_eq!(call_data.args[1], format!("{}", Address::repeat_byte(0x34)));
     }
 
     #[test]
@@ -2099,6 +2235,77 @@ mod tests {
             Some(&"ReceivePolicyGuard".to_string())
         );
         assert_eq!(t7_labels.get(&STORAGE_CREDITS_ADDRESS), Some(&"StorageCredits".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_current_committee_decoding_is_durable_and_context_gated() {
+        let abi = ICurrentCommittee::abi::contract();
+        let function = abi.functions.get("getCommitteeMembers").unwrap().first().unwrap();
+        let output = function
+            .abi_encode_output(&[
+                DynSolValue::Uint(U256::from(7), 64),
+                DynSolValue::Array(vec![DynSolValue::FixedBytes(B256::with_last_byte(1), 32)]),
+            ])
+            .unwrap();
+        let trace = CallTrace {
+            address: CURRENT_COMMITTEE_ADDRESS,
+            data: function.selector().to_vec().into(),
+            output: output.into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .build();
+        decoder.clear_addresses();
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("CurrentCommittee"));
+        assert_eq!(decoded.call_data.unwrap().signature, "getCommitteeMembers()");
+        assert_eq!(
+            decoded.return_data.unwrap(),
+            "7, [0x0000000000000000000000000000000000000000000000000000000000000001]"
+        );
+
+        for decoder in [
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(4217))
+                .with_tempo_hardfork(Some(TempoHardfork::T7))
+                .build(),
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(1))
+                .with_tempo_hardfork(Some(TempoHardfork::T8))
+                .build(),
+        ] {
+            let decoded = decoder.decode_function(&trace).await;
+            assert_ne!(decoded.label.as_deref(), Some("CurrentCommittee"));
+            assert!(decoded.call_data.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_current_committee_unauthorized_is_address_scoped() {
+        let output = ICurrentCommittee::Unauthorized {}.abi_encode();
+        let trace = CallTrace {
+            address: CURRENT_COMMITTEE_ADDRESS,
+            output: output.clone().into(),
+            success: false,
+            status: Some(InstructionResult::Revert),
+            ..Default::default()
+        };
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .build();
+        assert_eq!(
+            decoder.decode_function(&trace).await.return_data.as_deref(),
+            Some("Unauthorized()")
+        );
+
+        let unrelated = CallTrace { address: Address::ZERO, ..trace };
+        let baseline = CallTraceDecoder::new().decode_function(&unrelated).await;
+        assert_eq!(decoder.decode_function(&unrelated).await.return_data, baseline.return_data);
     }
 
     #[test]

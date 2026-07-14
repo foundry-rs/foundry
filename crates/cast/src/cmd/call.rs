@@ -2,7 +2,7 @@ use super::run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_v
 use crate::{
     Cast,
     debug::handle_traces,
-    rpc_trace::call_frame_to_arena,
+    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
 };
@@ -366,32 +366,14 @@ impl CallArgs {
                 .await
                 .map_err(|err| -> eyre::Report {
                     // Two RPC rejections deserve an actionable hint instead of the raw transport
-                    // error, and they need different fixes:
-                    // - `debug` namespace disabled: rejected with JSON-RPC -32601 (method not found).
-                    // - missing historical state: an archive-depth error, usually with a generic
-                    //   code (-32000) distinguishable only by message, hit whenever `--block`
-                    //   targets a block a full node has pruned.
-                    let is_method_not_found =
-                        err.as_error_resp().is_some_and(|resp| resp.code == -32601);
-                    let message = err
-                        .as_error_resp()
-                        .map(|resp| resp.message.to_ascii_lowercase())
-                        .unwrap_or_else(|| err.to_string().to_ascii_lowercase());
-                    let is_missing_state = [
-                        "missing trie node",
-                        "required historical state",
-                        "historical state",
-                        "header not found",
-                        "missing state",
-                    ]
-                    .iter()
-                    .any(|needle| message.contains(*needle));
-
-                    if is_method_not_found {
+                    // error, and they need different fixes: a disabled `debug` namespace, and
+                    // missing historical state, hit whenever `--block` targets a block a full
+                    // node has pruned.
+                    if is_method_not_found_error(&err) {
                         eyre::eyre!(
                             "the RPC endpoint does not support `debug_traceCall` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or drop `--debug-trace-call` to run the call locally with `--trace`"
                         )
-                    } else if is_missing_state {
+                    } else if is_missing_state_error(&err) {
                         eyre::eyre!(
                             "the RPC endpoint does not have the historical state for the requested block; use an archive endpoint, or target a more recent block with `--block`"
                         )

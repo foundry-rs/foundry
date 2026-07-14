@@ -57,6 +57,12 @@ use todo::TODO_COMMENT;
 mod unused_error;
 use unused_error::UNUSED_ERROR;
 
+mod literal_instead_of_constant;
+use literal_instead_of_constant::LITERAL_INSTEAD_OF_CONSTANT;
+
+mod function_init_state;
+use function_init_state::FUNCTION_INIT_STATE;
+
 mod internal_function_used_once;
 use internal_function_used_once::INTERNAL_FUNCTION_USED_ONCE;
 
@@ -90,6 +96,8 @@ register_lints!(
     (EventFields, early, (EVENT_FIELDS)),
     (TodoComment, early, (TODO_COMMENT)),
     (UnusedError, project, (UNUSED_ERROR)),
+    (LiteralInsteadOfConstant, late, (LITERAL_INSTEAD_OF_CONSTANT)),
+    (FunctionInitState, late, (FUNCTION_INIT_STATE)),
     (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE)),
     (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY)),
     (IncorrectUsingFor, late, (INCORRECT_USING_FOR)),

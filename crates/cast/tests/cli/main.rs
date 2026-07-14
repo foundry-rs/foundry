@@ -3,7 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::{TransactionBuilder, TransactionResponse};
+use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{
@@ -3938,6 +3938,164 @@ forgetest_async!(cast_run_prestate_tracer_matches_block_replay, |prj, cmd| {
         .stdout_lossy();
 
     assert_eq!(replay, prestate, "prestate tracer traces must match block replay traces");
+});
+
+// https://github.com/foundry-rs/foundry/issues/12336
+// `cast run --debug-trace-transaction` fetches the transaction's trace from the node via
+// `debug_traceTransaction` (callTracer) and renders it with the same decoding/rendering machinery
+// as the local replay, skipping local execution entirely: the block replay message must be absent
+// from stderr.
+forgetest_async!(cast_run_debug_trace_transaction, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "run",
+            "--debug-trace-transaction",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+    assert!(
+        !assert
+            .get_output()
+            .stderr_lossy()
+            .contains("Executing previous transactions from the block."),
+        "debug_traceTransaction path should not replay previous block transactions"
+    );
+    let receipt = api.transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert!(
+        assert.get_output().stdout_lossy().contains(&format!("Gas used: {}", receipt.gas_used())),
+        "debug_traceTransaction summary should report the receipt gas used"
+    );
+});
+
+// `cast run --debug-trace-transaction` must render a multi-node trace: the parent runtime emits a
+// LOG0 and then CALLs a child whose runtime reverts (the parent ignores the failure), exercising
+// the log/sub-call interleaving, nesting and revert rendering through the real pipeline.
+casttest!(cast_run_debug_trace_transaction_renders_nested_call_and_revert, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    // Parent runtime: LOG0(0,0); CALL(gas, 0x..bb, 0,0,0,0,0); POP; STOP.
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000000aa"),
+        "0x60006000a0600060006000600060007300000000000000000000000000000000000000bb5af15000"
+            .parse()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    // Child runtime: PUSH1 0 PUSH1 0 REVERT.
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000000bb"),
+        "0x60006000fd".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x00000000000000000000000000000000000000aa",
+            "run()",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+
+    let tx_hash = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash();
+
+    cmd.cast_fuse()
+        .args([
+            "run",
+            "--debug-trace-transaction",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x00000000000000000000000000000000000000AA::run()
+    ├─           data: 0x
+    ├─ [..] 0x00000000000000000000000000000000000000bb::fallback()
+    │   └─ ← [Revert] execution reverted
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `cast run --debug-trace-transaction --with-local-artifacts` labels the target contract by its
+// local artifact name (Counter::) instead of the raw address: the RPC path has no local executor,
+// so the bytecode for artifact matching must be fetched over RPC at the transaction's block.
+forgetest_async!(cast_run_debug_trace_transaction_with_local_artifacts, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "run",
+        "--debug-trace-transaction",
+        "--la",
+        format!("{tx_hash}").as_str(),
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Traces:
+  [..] Counter::setNumber(111)
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-transaction` fetches the trace from the node, so the local-execution-only flags
+// must be rejected by clap.
+casttest!(cast_run_debug_trace_transaction_conflicts_with_debug, |_prj, cmd| {
+    cmd.args([
+        "run",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "--debug-trace-transaction",
+        "--debug",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+error: the argument '--debug-trace-transaction' cannot be used with '--debug'
+...
+"#]]);
 });
 
 // tests cast can decode traces when running with verbosity level > 4

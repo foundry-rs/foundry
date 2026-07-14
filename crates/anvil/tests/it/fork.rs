@@ -204,6 +204,43 @@ async fn test_spawn_fork() {
     assert_eq!(head, U256::from(BLOCK_NUMBER))
 }
 
+// <https://github.com/foundry-rs/foundry/issues/9743>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_set_storage_visible_to_call() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+
+    let target = Address::random();
+    let slot = uint!(0x9f19e10bccde41c24f53ff4dbf7bb5ee2063896e54351d7230ecd1f7e361cb74_U256);
+    let value = b256!("0000000000000000000000000000000000000000000000000000000000000001");
+
+    // Return the value at `slot`, matching the storage read performed by ENS.resolver(bytes32).
+    origin_api
+        .anvil_set_code(
+            target,
+            bytes!(
+                "7f9f19e10bccde41c24f53ff4dbf7bb5ee2063896e54351d7230ecd1f7e361cb74545f5260205ff3"
+            ),
+        )
+        .await
+        .unwrap();
+
+    let (_fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = fork_handle.http_provider();
+
+    let updated: bool =
+        provider.raw_request("anvil_setStorageAt".into(), (target, slot, value)).await.unwrap();
+    assert!(updated);
+    assert_eq!(provider.get_storage_at(target, slot - U256::ONE).await.unwrap(), U256::ZERO);
+
+    let tx = TransactionRequest::default().to(target);
+    for _ in 0..10 {
+        assert_eq!(provider.get_storage_at(target, slot).await.unwrap(), U256::ONE);
+        let output = provider.call(tx.clone().into()).await.unwrap();
+        assert_eq!(output.as_ref(), value.as_slice());
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_get_balance() {
     let (api, handle) = spawn(fork_config()).await;
@@ -1739,6 +1776,41 @@ async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     .unwrap();
 
     assert_eq!(BLOCK_NUMBER - 1_000_000, get_block_from_cache_path(&mut api).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_reuses_cached_remote_state() {
+    let address = Address::random();
+    let balance = U256::from(1337u64);
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    let origin_config = NodeConfig::test()
+        .with_chain_id(Some(chain_id))
+        .with_funded_accounts([(address, balance)].into_iter().collect());
+    let (_origin_api, origin_handle) = spawn(origin_config).await;
+    let fork_config = NodeConfig::test()
+        .with_chain_id(Some(chain_id))
+        .with_eth_rpc_url(Some(origin_handle.http_endpoint()));
+    let (api, handle) = spawn(fork_config).await;
+    let provider = handle.http_provider();
+    let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
+
+    assert_eq!(provider.get_balance(address).await.unwrap(), balance);
+    api.mine_one().await;
+
+    for _ in 0..2 {
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
+            .await
+            .unwrap();
+
+        let db = api.backend.get_db().read().await;
+        assert!(db.maybe_inner().unwrap().accounts().read().contains_key(&address));
+    }
+
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[tokio::test(flavor = "multi_thread")]

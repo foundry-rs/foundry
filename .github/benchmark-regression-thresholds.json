@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "kind": "foundry-nightly-benchmark-thresholds",
+  "calibration": {
+    "status": "provisional",
+    "snapshot": "Six retained same-run stable/nightly artifacts from 2026-07-08 through 2026-07-13."
+  },
+  "benchmarks": {
+    "forge_build_no_cache/aave-aave-v4": {"warning_percent": 1, "regression_percent": 2, "alert": true},
+    "forge_build_with_cache/aave-aave-v4": {"warning_percent": 5, "regression_percent": 10, "alert": true},
+    "forge_test/aave-aave-v4": {"warning_percent": 5, "regression_percent": 10, "alert": true},
+    "forge_fuzz_test/aave-aave-v4": {"warning_percent": 7.5, "regression_percent": 12.5, "alert": true},
+    "forge_coverage/aave-aave-v4": {
+      "warning_percent": 5,
+      "regression_percent": 10,
+      "alert": false,
+      "note": "Advisory only: one timing sample per side."
+    }
+  }
+}
