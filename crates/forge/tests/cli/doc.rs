@@ -41,6 +41,114 @@ contract DocTarget {
     assert_eq!(after, b"sentinel");
 });
 
+forgetest_init!(doc_supports_empty_projects, |_prj, cmd| {
+    cmd.arg("doc").assert_success();
+});
+
+forgetest_init!(doc_uses_configured_commit_for_source_links, |prj, cmd| {
+    prj.add_source(
+        "Revision.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Revision {}
+"#,
+    );
+    prj.update_config(|config| {
+        config.doc.repository = Some("https://github.com/foundry-rs/foundry".to_string());
+        config.doc.commit = Some("v1.2.3".to_string());
+    });
+
+    cmd.arg("doc").assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Revision.mdx"), None),
+        str![[r#"
+...
+[Git Source](https://github.com/foundry-rs/foundry/blob/v1.2.3/src/Revision.sol)
+...
+"#]],
+    );
+});
+
+forgetest!(doc_supports_mixed_solidity_versions, |prj, cmd| {
+    prj.add_source(
+        "New.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract New {}
+"#,
+    );
+    prj.add_source(
+        "Old.sol",
+        r#"
+pragma solidity 0.7.6;
+
+contract Old {}
+"#,
+    );
+
+    cmd.arg("doc").assert_success();
+    assert!(prj.root().join("docs/src/pages/src/contract.New.mdx").exists());
+    assert!(prj.root().join("docs/src/pages/src/contract.Old.mdx").exists());
+});
+
+#[cfg(unix)]
+forgetest_init!(doc_does_not_run_solc, |prj, cmd| {
+    use std::os::unix::fs::PermissionsExt;
+
+    prj.add_source(
+        "DocTarget.sol",
+        r#"
+pragma solidity ^0.8.35;
+
+contract DocTarget {
+    /// @notice Returns a value.
+    function value() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Skipped.sol",
+        r#"
+pragma solidity ^0.8.35;
+
+contract Skipped {}
+"#,
+    );
+
+    let solc = prj.root().join("fake-solc");
+    let invoked = prj.root().join("fake-solc.invoked");
+    fs::write(
+        &solc,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.35+commit.69074fbd"
+    exit 0
+fi
+touch "$0.invoked"
+exit 1
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&solc).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&solc, permissions).unwrap();
+
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc));
+        config.skip = vec!["*Skipped*".parse().unwrap()];
+    });
+
+    cmd.arg("doc").assert_success();
+    assert!(!invoked.exists(), "forge doc invoked the configured solc binary");
+    assert!(!prj.root().join("docs/src/pages/src/contract.Skipped.mdx").exists());
+});
+
 // Test that overloaded functions in interfaces inherit the correct NatSpec comments
 // fixes <https://github.com/foundry-rs/foundry/issues/11823>
 forgetest_init!(can_generate_docs_for_overloaded_functions, |prj, cmd| {

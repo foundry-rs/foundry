@@ -28,7 +28,7 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Fork
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolEvent, SolValue, sol};
+use alloy_sol_types::{SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
 use foundry_evm::core::tempo::{
@@ -46,6 +46,7 @@ use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN,
     RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    current_committee::{CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee},
     receive_policy_guard::{IReceivePolicyGuard, InboundKind},
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
@@ -61,8 +62,8 @@ const THETA_USD: Address = THETA_USD_ADDRESS;
 const TEMPO_ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 
-/// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
-const TIP20_TRANSFER_GAS: u64 = 300_000;
+/// Gas limit for TIP20 transfer calls, including T1+ transaction accounting.
+const TIP20_TRANSFER_GAS: u64 = 1_000_000;
 const T5_PRECOMPILE_GAS: u64 = 10_000_000;
 
 fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
@@ -665,6 +666,41 @@ async fn test_tempo_config_filters_hardfork_gated_precompiles() {
         config_t6.current.precompiles.get("ReceivePolicyGuard"),
         Some(&RECEIVE_POLICY_GUARD_ADDRESS)
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t8_current_committee_activation_and_empty_genesis() {
+    let (api_t7, handle_t7) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T7.into()))).await;
+    assert!(api_t7.get_code(CURRENT_COMMITTEE_ADDRESS, None).await.unwrap().is_empty());
+    assert!(!api_t7.config().unwrap().current.precompiles.contains_key("CurrentCommittee"));
+    let committee_t7 = ICurrentCommittee::new(CURRENT_COMMITTEE_ADDRESS, handle_t7.http_provider());
+    assert!(committee_t7.getCommitteeMembers().call().await.is_err());
+
+    let (api_t8, handle_t8) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T8.into()))).await;
+    assert!(!api_t8.get_code(CURRENT_COMMITTEE_ADDRESS, None).await.unwrap().is_empty());
+    assert_eq!(
+        api_t8.config().unwrap().current.precompiles.get("CurrentCommittee"),
+        Some(&CURRENT_COMMITTEE_ADDRESS)
+    );
+
+    let provider = handle_t8.http_provider();
+    let committee = ICurrentCommittee::new(CURRENT_COMMITTEE_ADDRESS, &provider);
+    let members = committee.getCommitteeMembers().call().await.unwrap();
+    assert_eq!(members.epoch, 0);
+    assert!(members.publicKeys.is_empty());
+
+    let caller = handle_t8.dev_accounts().next().unwrap();
+    let err = committee
+        .setCommitteeMembers(1, vec![B256::repeat_byte(0x11)])
+        .from(caller)
+        .call()
+        .await
+        .unwrap_err();
+    let unauthorized =
+        alloy_primitives::hex::encode_prefixed(ICurrentCommittee::Unauthorized::SELECTOR);
+    assert!(err.to_string().contains(&unauthorized), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1843,7 +1879,7 @@ async fn test_contract_deployment() {
     let bytecode = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]);
 
     let tx =
-        TransactionRequest::default().from(sender).with_input(bytecode).with_gas_limit(100_000);
+        TransactionRequest::default().from(sender).with_input(bytecode).with_gas_limit(1_000_000);
 
     let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
@@ -3745,7 +3781,8 @@ async fn test_gas_estimation_tempo_aa_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_tempo_aa_with_2d_nonce() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
+    let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();
@@ -3799,7 +3836,8 @@ async fn test_gas_estimation_tempo_aa_with_2d_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_estimation_tempo_aa_expiring_nonce() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
+    let (_api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<Address> = handle.dev_accounts().collect();

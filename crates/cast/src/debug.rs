@@ -57,12 +57,13 @@ pub(crate) async fn handle_traces(
         None
     });
     let config_labels = config.labels.clone().into_iter();
+    let is_tempo = tempo_hardfork.is_some() || chain.is_tempo();
 
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_label_disabled(disable_label)
-        .with_chain_id(Some(chain.id()))
+        .with_chain_id((!is_tempo).then(|| chain.id()))
         .with_tempo_hardfork(
             tempo_hardfork
                 .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),
