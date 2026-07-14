@@ -2,6 +2,7 @@
 
 #[cfg(unix)]
 forgetest_init!(filtered_tests_reuse_preprocessed_cache, |prj, cmd| {
+    use foundry_test_utils::util::OutputExt;
     use std::{fs, os::unix::fs::PermissionsExt};
 
     prj.initialize_default_contracts();
@@ -30,7 +31,13 @@ exit 1
         config.solc = Some(foundry_config::SolcReq::Local(solc));
     });
 
-    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+    let output =
+        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+    assert!(
+        stdout.contains("Ran 2 tests for test/Counter.t.sol:CounterTest"),
+        "cached ABI did not select CounterTest: {stdout}"
+    );
     assert!(!invoked.exists(), "filtered test compilation did not reuse the preprocessed cache");
 });
 
