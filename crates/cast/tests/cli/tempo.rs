@@ -10,7 +10,8 @@ use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
 use tempo_contracts::precompiles::{
-    IReceivePolicyGuard, ITIP20, ITIP403Registry, TIP403_REGISTRY_ADDRESS,
+    CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee, IReceivePolicyGuard, ITIP20, ITIP403Registry,
+    TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
 
@@ -665,6 +666,73 @@ casttest!(storage_credits_require_t7, async |_prj, cmd| {
         .get_output()
         .stderr_lossy();
     assert!(set_budget_err.contains(expected), "{set_budget_err}");
+});
+
+casttest!(current_committee_cast_run_decoding, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T8.into()))).await;
+    let provider = handle.http_provider();
+    let caller = handle.dev_accounts().next().unwrap();
+    let committee = ICurrentCommittee::new(CURRENT_COMMITTEE_ADDRESS, &provider);
+    let public_key = B256::repeat_byte(0x11);
+
+    let getter = TransactionRequest::default()
+        .from(caller)
+        .to(CURRENT_COMMITTEE_ADDRESS)
+        .with_input(committee.getCommitteeMembers().calldata().clone())
+        .with_gas_limit(1_000_000);
+    let getter_receipt = provider
+        .send_transaction(WithOtherFields::new(getter))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(getter_receipt.status());
+
+    cmd.cast_fuse();
+    cmd.env("FOUNDRY_HARDFORK", "tempo:T8");
+    let getter_stdout = cmd
+        .args([
+            "run",
+            &getter_receipt.transaction_hash.to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(getter_stdout.contains("CurrentCommittee::getCommitteeMembers()"), "{getter_stdout}");
+    assert!(getter_stdout.contains("← [Return] 0, []"), "{getter_stdout}");
+
+    let setter = TransactionRequest::default()
+        .from(caller)
+        .to(CURRENT_COMMITTEE_ADDRESS)
+        .with_input(committee.setCommitteeMembers(1, vec![public_key]).calldata().clone())
+        .with_gas_limit(1_000_000);
+    let setter_receipt = provider
+        .send_transaction(WithOtherFields::new(setter))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(!setter_receipt.status());
+
+    cmd.cast_fuse();
+    cmd.env("FOUNDRY_HARDFORK", "tempo:T8");
+    let setter_stdout = cmd
+        .args([
+            "run",
+            &setter_receipt.transaction_hash.to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(setter_stdout.contains("CurrentCommittee::setCommitteeMembers(1"), "{setter_stdout}");
+    assert!(setter_stdout.contains("← [Revert] Unauthorized()"), "{setter_stdout}");
 });
 
 casttest!(tip20_logo_create_help_includes_logo_uri, |_prj, cmd| {

@@ -424,6 +424,63 @@ contract TempoT6KeychainHelpersTest is Test {
     assert!(stdout.contains("ReceivePolicyGuard::balanceOf"), "{stdout}");
 });
 
+forgetest_init!(tempo_t8_current_committee_decoding, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T8".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoT8CurrentCommittee.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface ICurrentCommittee {
+    error Unauthorized();
+
+    function getCommitteeMembers()
+        external
+        view
+        returns (uint64 epoch, bytes32[] memory publicKeys);
+
+    function setCommitteeMembers(uint64 epoch, bytes32[] calldata publicKeys) external;
+}
+
+contract TempoT8CurrentCommitteeTest is Test {
+    ICurrentCommittee constant committee =
+        ICurrentCommittee(0xC077e00000000000000000000000000000000000);
+
+    function test_get_current_committee() public view {
+        (uint64 epoch, bytes32[] memory publicKeys) = committee.getCommitteeMembers();
+        assertEq(epoch, 0);
+        assertEq(publicKeys.length, 0);
+    }
+
+    function test_set_current_committee_is_system_only() public {
+        bytes32[] memory publicKeys = new bytes32[](1);
+        publicKeys[0] = bytes32(uint256(0x11));
+
+        vm.expectRevert(ICurrentCommittee.Unauthorized.selector);
+        committee.setCommitteeMembers(1, publicKeys);
+    }
+}
+   "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--mc", "TempoT8CurrentCommitteeTest", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("CurrentCommittee::getCommitteeMembers"), "{stdout}");
+    assert!(stdout.contains("← [Return] 0, []"), "{stdout}");
+    assert!(stdout.contains("CurrentCommittee::setCommitteeMembers(1"), "{stdout}");
+    assert!(stdout.contains("← [Revert] Unauthorized()"), "{stdout}");
+});
+
 // tests transfer using celo precompile.
 // <https://github.com/foundry-rs/foundry/issues/11622>
 forgetest_init!(celo_transfer, |prj, cmd| {

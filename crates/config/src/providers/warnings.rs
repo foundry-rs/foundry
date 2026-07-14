@@ -41,8 +41,10 @@ const VYPER_KEYS: &[&str] = &[
 
 /// Allowed keys for DocConfig.
 /// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
-/// (`repository`, `path`), whose defaults are `None` and thus excluded from serialization.
-const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "path", "ignore"];
+/// (`repository`, `commit`, `path`), whose defaults are `None` and thus excluded from
+/// serialization.
+const DOC_KEYS: &[&str] =
+    &["out", "title", "book", "homepage", "repository", "commit", "path", "ignore"];
 
 /// Allowed keys for SymbolicConfig.
 /// Required because some compatibility aliases and empty length collections are skipped by default
