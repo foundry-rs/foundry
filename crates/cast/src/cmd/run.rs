@@ -8,17 +8,19 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
-use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, Network, ReceiptResponse, TransactionResponse};
+use alloy_network::{
+    AnyNetwork, AnyRpcTransaction, BlockResponse, Network, ReceiptResponse, TransactionResponse,
+};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
-    map::{AddressHashMap, AddressSet},
+    map::{AddressHashMap, AddressSet, B256HashMap},
 };
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockTransactions,
     trace::geth::{CallConfig, GethDebugTracingOptions, GethTrace, PreStateConfig},
 };
+use alloy_serde::OtherFields;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -40,7 +42,7 @@ use foundry_config::{
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
-        FoundryBlock as _,
+        FoundryBlock as _, FoundryTransaction, FromAnyRpcTransaction,
         evm::{EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
@@ -48,6 +50,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
+use foundry_evm_networks::arbitrum::is_arbitrum_chain;
 use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
@@ -184,7 +187,10 @@ impl RunArgs {
             self.rpc.common.compute_units_per_second
         };
 
-        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?
+        // Full blocks can contain chain-specific system transaction types (for example Nitro's
+        // `0x6a`) even when the target transaction uses a standard Ethereum envelope. Decode RPC
+        // responses through `AnyNetwork` so those transactions can be identified and skipped.
+        let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?
             .compute_units_per_second_opt(compute_units_per_second)
             .build()?;
 
@@ -364,12 +370,26 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(
+            apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
                 &mut evm_env,
                 block,
                 config.networks,
             );
         }
+
+        let l1_gas_used_by_tx = if is_arbitrum_chain(evm_env.cfg_env.chain_id) {
+            provider
+                .get_block_receipts(tx_block_number.into())
+                .await?
+                .ok_or_else(|| eyre::eyre!("block receipts not found: {tx_block_number}"))?
+                .into_iter()
+                .map(|receipt| {
+                    (receipt.transaction_hash(), arbitrum_l1_gas_used(receipt.other_fields()))
+                })
+                .collect::<B256HashMap<_>>()
+        } else {
+            B256HashMap::default()
+        };
 
         let trace_requirements = TraceRequirements::none()
             .with_calls(true)
@@ -394,9 +414,11 @@ impl RunArgs {
 
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
-        if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_spec(spec_id, parent_beacon_block_root)?
-        {
+        if let Some(parent_beacon_block_root) = parent_beacon_block_root_for_spec(
+            spec_id,
+            parent_beacon_block_root,
+            evm_env.cfg_env.chain_id,
+        )? {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
 
@@ -459,7 +481,10 @@ impl RunArgs {
                         break;
                     }
 
-                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                    let tx_env = replay_tx_env::<FEN>(
+                        tx,
+                        l1_gas_used_by_tx.get(&tx.tx_hash()).copied().unwrap_or_default(),
+                    )?;
 
                     evm_env.cfg_env.disable_balance_check = true;
 
@@ -504,19 +529,26 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+            let l1_gas_used = l1_gas_used_by_tx.get(&tx.tx_hash()).copied().unwrap_or_default();
+            let tx_env = replay_tx_env::<FEN>(&tx, l1_gas_used)?;
 
-            if tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()) {
+            let from = tx.from();
+            if tx
+                .as_envelope()
+                .is_some_and(|tx| tx.recover_signer().is_ok_and(|signer| signer != from))
+            {
                 evm_env.cfg_env.disable_balance_check = true;
             }
 
-            if let Some(to) = Transaction::to(&tx) {
+            let mut result = if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
                 TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
             } else {
                 trace!(tx=?tx.tx_hash(), "executing create transaction");
                 TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
-            }
+            };
+            result.gas_used = result.gas_used.saturating_add(l1_gas_used);
+            result
         };
 
         let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &result)?;
@@ -539,11 +571,34 @@ impl RunArgs {
     }
 }
 
+/// Builds a transaction environment with Nitro's L1 poster gas removed from the gas available to
+/// the EVM. Nitro charges this component before execution and reports it separately on the receipt.
+fn replay_tx_env<FEN: FoundryEvmNetwork>(
+    tx: &AnyRpcTransaction,
+    l1_gas_used: u64,
+) -> Result<TxEnvFor<FEN>> {
+    let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
+    tx_env.set_gas_limit(tx.gas_limit().saturating_sub(l1_gas_used));
+    Ok(tx_env)
+}
+
+fn arbitrum_l1_gas_used(other_fields: &OtherFields) -> u64 {
+    other_fields
+        .get_deserialized::<U256>("gasUsedForL1")
+        .and_then(|value| value.ok())
+        .map(|value| value.saturating_to())
+        .unwrap_or_default()
+}
+
 fn parent_beacon_block_root_for_spec(
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
+    chain_id: u64,
 ) -> Result<Option<B256>> {
     if !spec_id.is_enabled_in(SpecId::CANCUN) {
+        return Ok(None);
+    }
+    if is_arbitrum_chain(chain_id) && parent_beacon_block_root.is_none() {
         return Ok(None);
     }
 
@@ -723,6 +778,13 @@ mod tests {
     }
 
     #[test]
+    fn parses_arbitrum_l1_gas_used() {
+        let mut other_fields = OtherFields::default();
+        other_fields.insert_value("gasUsedForL1".to_string(), "0x26ed52").unwrap();
+        assert_eq!(arbitrum_l1_gas_used(&other_fields), 2_551_122);
+    }
+
+    #[test]
     fn debug_trace_transaction_accepts_label_and_render_flags() {
         let args = RunArgs::try_parse_from([
             "foundry-cli",
@@ -740,15 +802,24 @@ mod tests {
 
     #[test]
     fn parent_beacon_block_root_is_required_for_cancun() {
-        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None).unwrap_err();
+        let err = parent_beacon_block_root_for_spec(SpecId::CANCUN, None, 1).unwrap_err();
         assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
 
         let root = B256::repeat_byte(0x42);
         assert_eq!(
-            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root)).unwrap(),
+            parent_beacon_block_root_for_spec(SpecId::CANCUN, Some(root), 1).unwrap(),
             Some(root),
         );
-        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root)).unwrap(), None);
-        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None).unwrap(), None);
+        assert_eq!(
+            parent_beacon_block_root_for_spec(SpecId::SHANGHAI, Some(root), 1).unwrap(),
+            None
+        );
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::SHANGHAI, None, 1).unwrap(), None);
+    }
+
+    #[test]
+    fn parent_beacon_block_root_is_optional_on_arbitrum() {
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::CANCUN, None, 42161).unwrap(), None);
+        assert_eq!(parent_beacon_block_root_for_spec(SpecId::CANCUN, None, 4663).unwrap(), None);
     }
 }

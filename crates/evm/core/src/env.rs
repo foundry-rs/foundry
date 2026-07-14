@@ -1,6 +1,8 @@
 use std::fmt::Debug;
 
 use alloy_consensus::Typed2718;
+#[cfg(feature = "optimism")]
+use alloy_eips::Encodable2718;
 pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
@@ -751,7 +753,7 @@ mod optimism {
             if let Some(envelope) = tx.as_envelope() {
                 return Ok(Self(OpTransaction::<TxEnv> {
                     base: TxEnv::from_recovered_tx(envelope, tx.from()),
-                    enveloped_tx: None,
+                    enveloped_tx: Some(envelope.encoded_2718().into()),
                     deposit: Default::default(),
                 }));
             }
@@ -1029,6 +1031,7 @@ mod tests {
         fn from_any_rpc_transaction_for_op() {
             let from = Address::random();
             let signed_tx = make_signed_eip1559();
+            let expected_enveloped_tx = signed_tx.encoded_2718();
 
             // Build the eth TxEnv to compare against op base
             let rpc_tx = RpcTransaction::from_transaction(
@@ -1040,6 +1043,7 @@ mod tests {
 
             let op_tx_env = OpTx::from_any_rpc_transaction(&any_tx).unwrap();
             assert_eq!(op_tx_env.base, expected_base);
+            assert_eq!(op_tx_env.enveloped_tx, Some(expected_enveloped_tx.into()));
         }
 
         #[test]
