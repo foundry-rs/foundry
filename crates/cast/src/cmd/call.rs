@@ -1,6 +1,6 @@
 use super::run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc};
 use crate::{
-    Cast,
+    Cast, RpcBlockOverrides,
     debug::handle_traces,
     rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
@@ -12,7 +12,7 @@ use alloy_primitives::{
     Address, B256, Bytes, TxKind, U256, hex,
     map::{AddressHashMap, HashMap},
 };
-use alloy_provider::{Provider, ext::DebugApi};
+use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
     state::{StateOverride, StateOverridesBuilder},
@@ -54,12 +54,34 @@ use foundry_evm::{
 };
 use foundry_wallets::WalletOpts;
 use regex::Regex;
+use serde::{Serialize, Serializer};
 use std::{str::FromStr, sync::LazyLock};
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
 static OVERRIDE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([^:]+):([^:]+):([^:]+)$").unwrap());
+
+#[derive(Clone, Debug)]
+struct RpcDebugTracingCallOptions(GethDebugTracingCallOptions);
+
+impl Serialize for RpcDebugTracingCallOptions {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut value = serde_json::to_value(&self.0).map_err(serde::ser::Error::custom)?;
+        if let Some(block_overrides) =
+            value.as_object_mut().and_then(|options| options.get_mut("blockOverrides"))
+        {
+            *block_overrides = serde_json::to_value(RpcBlockOverrides(
+                self.0.block_overrides.clone().unwrap_or_default(),
+            ))
+            .map_err(serde::ser::Error::custom)?;
+        }
+        value.serialize(serializer)
+    }
+}
 
 /// CLI arguments for `cast call`.
 ///
@@ -206,6 +228,13 @@ pub struct CallArgs {
     #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE", value_delimiter = ',')]
     pub state_diff_overrides: Option<Vec<String>>,
 
+    #[command(flatten)]
+    pub block_overrides: Box<BlockOverrideOpts>,
+}
+
+/// Block context overrides for `cast call`.
+#[derive(Debug, clap::Args)]
+pub struct BlockOverrideOpts {
     /// Override the block timestamp.
     #[arg(long = "block.time", value_name = "TIME")]
     pub block_time: Option<u64>,
@@ -213,6 +242,30 @@ pub struct CallArgs {
     /// Override the block number.
     #[arg(long = "block.number", value_name = "NUMBER")]
     pub block_number: Option<u64>,
+
+    /// Override the block gas limit.
+    #[arg(long = "block.gas-limit", value_name = "GAS_LIMIT")]
+    pub block_gas_limit: Option<u64>,
+
+    /// Override the block fee recipient.
+    #[arg(long = "block.fee-recipient", visible_alias = "block.coinbase", value_name = "ADDRESS")]
+    pub block_fee_recipient: Option<Address>,
+
+    /// Override the block base fee per gas.
+    #[arg(
+        long = "block.base-fee",
+        visible_alias = "block.base-fee-per-gas",
+        value_name = "BASE_FEE"
+    )]
+    pub block_base_fee: Option<U256>,
+
+    /// Override the block base fee per blob gas.
+    #[arg(
+        long = "block.blob-base-fee",
+        visible_alias = "block.blob-base-fee-per-gas",
+        value_name = "BLOB_BASE_FEE"
+    )]
+    pub block_blob_base_fee: Option<U256>,
 }
 
 #[derive(Debug, Parser)]
@@ -361,8 +414,11 @@ impl CallArgs {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
 
-            let geth_trace = provider
-                .debug_trace_call(tx, block, call_options)
+            let geth_trace: GethTrace = provider
+                .raw_request(
+                    "debug_traceCall".into(),
+                    (tx, block, RpcDebugTracingCallOptions(call_options)),
+                )
                 .await
                 .map_err(|err| -> eyre::Report {
                     // Two RPC rejections deserve an actionable hint instead of the raw transport
@@ -435,6 +491,8 @@ impl CallArgs {
         }
 
         if trace {
+            let preserve_block_base_fee =
+                block_overrides.as_ref().is_some_and(|overrides| overrides.base_fee.is_some());
             if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
                 // Override Config `fork_block_number` (if set) with CLI value.
                 config.fork_block_number = Some(block_number);
@@ -456,6 +514,18 @@ impl CallArgs {
                 }
                 if let Some(time) = block_overrides.time {
                     evm_env.block_env.set_timestamp(U256::from(time));
+                }
+                if let Some(gas_limit) = block_overrides.gas_limit {
+                    evm_env.block_env.set_gas_limit(gas_limit);
+                }
+                if let Some(fee_recipient) = block_overrides.coinbase {
+                    evm_env.block_env.set_beneficiary(fee_recipient);
+                }
+                if let Some(base_fee) = block_overrides.base_fee {
+                    evm_env.block_env.set_basefee(base_fee.try_into()?);
+                }
+                if let Some(blob_base_fee) = block_overrides.blob_base_fee {
+                    evm_env.block_env.set_blob_gasprice(blob_base_fee.try_into()?);
                 }
             }
 
@@ -523,12 +593,36 @@ impl CallArgs {
                 env_tx.set_signed_authorization(auth);
             }
 
-            let trace = match tx_kind {
-                TxKind::Create => {
+            // The test executor normally zeros the block base fee together with the transaction
+            // gas price. An explicit call override must remain visible to the BASEFEE opcode, so
+            // execute with the configured environments in that case.
+            let call_env = preserve_block_base_fee.then(|| {
+                let mut evm_env = executor.evm_env().clone();
+                evm_env.cfg_env.disable_balance_check = true;
+                let mut tx_env = executor.tx_env().clone();
+                tx_env.set_caller(from);
+                tx_env.set_kind(tx_kind);
+                tx_env.set_data(input.clone());
+                tx_env.set_value(value);
+                tx_env.set_gas_limit(executor.gas_limit());
+                tx_env.set_chain_id(Some(evm_env.cfg_env.chain_id));
+                (evm_env, tx_env)
+            });
+
+            let trace = match (tx_kind, call_env) {
+                (TxKind::Create, Some((evm_env, tx_env))) => {
+                    let deploy_result = executor.deploy_with_env(evm_env, tx_env, None)?;
+                    TraceResult::from(deploy_result)
+                }
+                (TxKind::Create, None) => {
                     let deploy_result = executor.deploy(from, input, value, None);
                     TraceResult::try_from(deploy_result)?
                 }
-                TxKind::Call(to) => TraceResult::from_raw(
+                (TxKind::Call(_), Some((evm_env, tx_env))) => TraceResult::from_raw(
+                    executor.transact_with_env(evm_env, tx_env)?,
+                    TraceKind::Execution,
+                ),
+                (TxKind::Call(to), None) => TraceResult::from_raw(
                     executor.transact_raw(from, to, input, value)?,
                     TraceKind::Execution,
                 ),
@@ -644,9 +738,29 @@ impl CallArgs {
             if let Some(block_overrides) = self.get_block_overrides()? {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
-            ("debug_traceCall", serde_json::json!([call_object, block_param, call_options]))
+            (
+                "debug_traceCall",
+                serde_json::json!([
+                    call_object,
+                    block_param,
+                    RpcDebugTracingCallOptions(call_options)
+                ]),
+            )
         } else {
-            ("eth_call", serde_json::json!([call_object, block_param]))
+            let state_overrides = self.get_state_overrides()?;
+            let params = if let Some(block_overrides) = self.get_block_overrides()? {
+                serde_json::json!([
+                    call_object,
+                    block_param,
+                    state_overrides.unwrap_or_default(),
+                    RpcBlockOverrides(block_overrides)
+                ])
+            } else if let Some(state_overrides) = state_overrides {
+                serde_json::json!([call_object, block_param, state_overrides])
+            } else {
+                serde_json::json!([call_object, block_param])
+            };
+            ("eth_call", params)
         };
 
         let curl_cmd = generate_curl_command(
@@ -730,11 +844,23 @@ impl CallArgs {
     /// Parse block overrides from command line arguments.
     pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
         let mut overrides = BlockOverrides::default();
-        if let Some(number) = self.block_number {
+        if let Some(number) = self.block_overrides.block_number {
             overrides = overrides.with_number(U256::from(number));
         }
-        if let Some(time) = self.block_time {
+        if let Some(time) = self.block_overrides.block_time {
             overrides = overrides.with_time(time);
+        }
+        if let Some(gas_limit) = self.block_overrides.block_gas_limit {
+            overrides = overrides.with_gas_limit(gas_limit);
+        }
+        if let Some(fee_recipient) = self.block_overrides.block_fee_recipient {
+            overrides = overrides.with_coinbase(fee_recipient);
+        }
+        if let Some(base_fee) = self.block_overrides.block_base_fee {
+            overrides = overrides.with_base_fee(base_fee);
+        }
+        if let Some(blob_base_fee) = self.block_overrides.block_blob_base_fee {
+            overrides = overrides.with_blob_base_fee(blob_base_fee);
         }
         if overrides.is_empty() { Ok(None) } else { Ok(Some(overrides)) }
     }
@@ -840,12 +966,28 @@ mod tests {
 
     #[test]
     fn test_get_block_overrides() {
-        let mut call_args = CallArgs::parse_from([""]);
-        call_args.block_number = Some(1);
-        call_args.block_time = Some(2);
+        let call_args = CallArgs::parse_from([
+            "foundry-cli",
+            "--block.number",
+            "1",
+            "--block.time",
+            "2",
+            "--block.gas-limit",
+            "3",
+            "--block.coinbase",
+            "0x0000000000000000000000000000000000000004",
+            "--block.base-fee",
+            "5",
+            "--block.blob-base-fee",
+            "6",
+        ]);
         let overrides = call_args.get_block_overrides().unwrap().unwrap();
         assert_eq!(overrides.number, Some(U256::from(1)));
         assert_eq!(overrides.time, Some(2));
+        assert_eq!(overrides.gas_limit, Some(3));
+        assert_eq!(overrides.coinbase, Some(address!("0000000000000000000000000000000000000004")));
+        assert_eq!(overrides.base_fee, Some(U256::from(5)));
+        assert_eq!(overrides.blob_base_fee, Some(U256::from(6)));
     }
 
     #[test]

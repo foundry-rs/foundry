@@ -19,7 +19,7 @@ use alloy_json_abi::Function;
 use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
 use alloy_primitives::{
-    Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
+    Address, B256, Bytes, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
@@ -82,6 +82,28 @@ use rlp_converter::Item;
 pub struct Cast<P, N = AnyNetwork> {
     provider: P,
     _phantom: PhantomData<N>,
+}
+
+/// Serializes block overrides using the field names accepted by execution clients.
+#[derive(Clone, Debug)]
+pub(crate) struct RpcBlockOverrides(pub BlockOverrides);
+
+impl Serialize for RpcBlockOverrides {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut value = serde_json::to_value(&self.0).map_err(serde::ser::Error::custom)?;
+        if let Some(overrides) = value.as_object_mut() {
+            if let Some(fee_recipient) = overrides.remove("coinbase") {
+                overrides.insert("feeRecipient".to_string(), fee_recipient);
+            }
+            if let Some(base_fee) = overrides.remove("baseFee") {
+                overrides.insert("baseFeePerGas".to_string(), base_fee);
+            }
+        }
+        value.serialize(serializer)
+    }
 }
 
 impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
@@ -152,16 +174,26 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         state_override: Option<StateOverride>,
         block_override: Option<BlockOverrides>,
     ) -> Result<String> {
-        let mut call = self
-            .provider
-            .call(req.clone())
-            .block(block.unwrap_or_default())
-            .with_block_overrides_opt(block_override);
-        if let Some(state_override) = state_override {
-            call = call.overrides(state_override)
-        }
-
-        let res = call.await?;
+        let block = block.unwrap_or_default();
+        let res: Bytes = if let Some(block_override) = block_override {
+            self.provider
+                .raw_request(
+                    "eth_call".into(),
+                    (
+                        req.clone(),
+                        block,
+                        state_override.unwrap_or_default(),
+                        RpcBlockOverrides(block_override),
+                    ),
+                )
+                .await?
+        } else {
+            let mut call = self.provider.call(req.clone()).block(block);
+            if let Some(state_override) = state_override {
+                call = call.overrides(state_override)
+            }
+            call.await?
+        };
         let decoded = if let Some(func) = func {
             // decode args into tokens
             match func.abi_decode_output(res.as_ref()) {
@@ -171,11 +203,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                     if res.is_empty() {
                         // check that the recipient is a contract that can be called
                         if let Some(addr) = req.to() {
-                            if let Ok(code) = self
-                                .provider
-                                .get_code_at(addr)
-                                .block_id(block.unwrap_or_default())
-                                .await
+                            if let Ok(code) = self.provider.get_code_at(addr).block_id(block).await
                                 && code.is_empty()
                             {
                                 eyre::bail!("contract {addr:?} does not have any code")
@@ -2505,6 +2533,36 @@ fn explorer_client(
     }
 
     builder.build().map_err(Into::into)
+}
+
+#[cfg(test)]
+mod rpc_block_overrides_tests {
+    use super::RpcBlockOverrides;
+    use alloy_primitives::{U256, address};
+    use alloy_rpc_types::BlockOverrides;
+
+    #[test]
+    fn serializes_execution_client_field_names() {
+        let overrides = BlockOverrides::default()
+            .with_number(U256::from(1))
+            .with_time(2)
+            .with_gas_limit(3)
+            .with_coinbase(address!("0000000000000000000000000000000000000004"))
+            .with_base_fee(U256::from(5))
+            .with_blob_base_fee(U256::from(6));
+
+        assert_eq!(
+            serde_json::to_value(RpcBlockOverrides(overrides)).unwrap(),
+            serde_json::json!({
+                "number": "0x1",
+                "time": "0x2",
+                "gasLimit": "0x3",
+                "feeRecipient": "0x0000000000000000000000000000000000000004",
+                "baseFeePerGas": "0x5",
+                "blobBaseFee": "0x6",
+            })
+        );
+    }
 }
 
 /// Tests for the `eth_getLogs` chunking/bisection helpers, kept in a separate module so they can
