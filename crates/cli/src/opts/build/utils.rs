@@ -176,6 +176,10 @@ pub fn get_solar_sources_from_compile_output(
     target_paths: Option<&[PathBuf]>,
     ignored_paths: Option<&[PathBuf]>,
 ) -> Result<SolcVersionedInput> {
+    let canonicalize = |path: &Path| {
+        let path = if path.is_absolute() { path.to_path_buf() } else { config.root.join(path) };
+        dunce::canonicalize(path)
+    };
     let is_solidity_file = |path: &Path| -> bool {
         path.extension().and_then(|s| s.to_str()).is_some_and(|ext| SOLC_EXTENSIONS.contains(&ext))
     };
@@ -195,9 +199,7 @@ pub fn get_solar_sources_from_compile_output(
         let mut source_paths = HashSet::new();
         let mut queue: VecDeque<PathBuf> = targets
             .iter()
-            .filter_map(|path| {
-                is_solidity_file(path).then(|| dunce::canonicalize(path).ok()).flatten()
-            })
+            .filter_map(|path| is_solidity_file(path).then(|| canonicalize(path).ok()).flatten())
             .collect();
 
         while let Some(path) = queue.pop_front() {
@@ -227,7 +229,7 @@ pub fn get_solar_sources_from_compile_output(
     let (version, sources) = {
         let (mut max_version, mut sources) = (MIN_SOLIDITY_VERSION, Sources::new());
         for (id, _) in output.artifact_ids() {
-            if let Ok(path) = dunce::canonicalize(&id.source)
+            if let Ok(path) = canonicalize(&id.source)
                 && source_paths.remove(&path)
             {
                 if id.version < MIN_SOLIDITY_VERSION {

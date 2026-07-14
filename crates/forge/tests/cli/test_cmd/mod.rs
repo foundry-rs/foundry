@@ -567,6 +567,49 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(does_not_run_library_functions_as_tests, |prj, cmd| {
+    prj.add_test(
+        "Library.t.sol",
+        r#"
+library InternalLib {
+    function invariantProtocol() public pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract InternalLibTest {
+    function testInternalLibInvariantProtocol() public pure {
+        require(InternalLib.invariantProtocol() == 1);
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Library.t.sol:InternalLibTest
+[PASS] testInternalLibInvariantProtocol() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Library.t.sol:InternalLibTest
+[PASS] testInternalLibInvariantProtocol() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.add_source(

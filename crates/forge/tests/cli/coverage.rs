@@ -2311,6 +2311,46 @@ contract ArrayConditionTest is DSTest {
 "#]]);
 });
 
+forgetest_init!(does_not_run_library_functions_as_tests, |prj, cmd| {
+    prj.add_test(
+        "Library.t.sol",
+        r#"
+library InternalLib {
+    function invariantProtocol() public pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract InternalLibTest {
+    function testInternalLibInvariantProtocol() public pure {
+        require(InternalLib.invariantProtocol() == 1);
+    }
+}
+"#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 1 test for test/Library.t.sol:InternalLibTest
+[PASS] testInternalLibInvariantProtocol() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+╭-------+---------------+---------------+---------------+---------------╮
+| File  | % Lines       | % Statements  | % Branches    | % Funcs       |
++=======================================================================+
+| Total | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) |
+╰-------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/11432
 // Test coverage for linked libraries.
 forgetest!(linked_library, |prj, cmd| {

@@ -11,7 +11,10 @@ use crate::{
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{
+    Address, Bytes, U256,
+    map::{HashMap, HashSet},
+};
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
@@ -41,6 +44,7 @@ use foundry_evm_networks::NetworkVariant;
 
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
+use solar::sema::interface::source_map::FileName;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -755,6 +759,50 @@ impl MultiContractRunnerBuilder {
         let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
         let inline_config = self.inline_config;
 
+        // Initialize and configure the solar compiler.
+        let mut analysis = solar::sema::Compiler::new(
+            solar::interface::Session::builder().with_stderr_emitter().build(),
+        );
+        let dcx = analysis.dcx_mut();
+        dcx.set_emitter(Box::new(
+            solar::interface::diagnostics::HumanEmitter::stderr(Default::default())
+                .source_map(Some(dcx.source_map().unwrap())),
+        ));
+        dcx.set_flags_mut(|f| f.track_diagnostics = false);
+
+        // Populate solar's global context by parsing and lowering the sources.
+        let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
+        let mut library_contracts = HashMap::<PathBuf, HashSet<String>>::default();
+
+        analysis.enter_mut(|compiler| -> Result<()> {
+            let mut pcx = compiler.parse();
+            configure_pcx_from_compile_output(
+                &mut pcx,
+                &self.config,
+                output,
+                if files.is_empty() { None } else { Some(&files) },
+            )?;
+            pcx.parse();
+            let _ = compiler.lower_asts();
+
+            let hir = &compiler.gcx().hir;
+            for contract_id in hir.contract_ids() {
+                let contract = hir.contract(contract_id);
+                if !contract.kind.is_library() {
+                    continue;
+                }
+                let FileName::Real(path) = &hir.source(contract.source).file.name else {
+                    continue;
+                };
+                let path = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+                library_contracts
+                    .entry(path)
+                    .or_default()
+                    .insert(contract.name.as_str().to_string());
+            }
+            Ok(())
+        })?;
+
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
         let test_matcher = TestFunctionMatcher::new(
@@ -766,6 +814,9 @@ impl MultiContractRunnerBuilder {
 
         for (id, contract) in linked_contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else { continue };
+            if library_contracts.get(&id.source).is_some_and(|names| names.contains(&id.name)) {
+                continue;
+            }
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
@@ -787,33 +838,6 @@ impl MultiContractRunnerBuilder {
         // Create known contracts from linked contracts and storage layout information (if any).
         let known_contracts =
             ContractsByArtifactBuilder::new(linked_contracts).with_output(output, root).build();
-
-        // Initialize and configure the solar compiler.
-        let mut analysis = solar::sema::Compiler::new(
-            solar::interface::Session::builder().with_stderr_emitter().build(),
-        );
-        let dcx = analysis.dcx_mut();
-        dcx.set_emitter(Box::new(
-            solar::interface::diagnostics::HumanEmitter::stderr(Default::default())
-                .source_map(Some(dcx.source_map().unwrap())),
-        ));
-        dcx.set_flags_mut(|f| f.track_diagnostics = false);
-
-        // Populate solar's global context by parsing and lowering the sources.
-        let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
-
-        analysis.enter_mut(|compiler| -> Result<()> {
-            let mut pcx = compiler.parse();
-            configure_pcx_from_compile_output(
-                &mut pcx,
-                &self.config,
-                output,
-                if files.is_empty() { None } else { Some(&files) },
-            )?;
-            pcx.parse();
-            let _ = compiler.lower_asts();
-            Ok(())
-        })?;
 
         let analysis = Arc::new(analysis);
         // Enum variant counts used to constrain fuzzed enum inputs to valid values.
