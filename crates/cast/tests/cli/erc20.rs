@@ -2,7 +2,7 @@
 
 use alloy_primitives::U256;
 use anvil::{NodeConfig, NodeHandle};
-use foundry_test_utils::util::OutputExt;
+use foundry_test_utils::{str, util::OutputExt};
 
 mod anvil_const {
     /// First Anvil account
@@ -79,6 +79,79 @@ async fn setup_token_test(
 
     (rpc, token, handle)
 }
+
+casttest!(erc20_balance_applies_call_overrides, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let token = "0x00000000000000000000000000000000000000aa";
+
+    cmd.cast_fuse()
+        .args([
+            "erc20-token",
+            "balance",
+            token,
+            anvil_const::ADDR1,
+            "--block",
+            "latest",
+            "--override-code",
+            // Runtime that returns the current block number.
+            &format!("{token}:0x4360005260206000f3"),
+            "--block.number",
+            "1234",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1234
+
+"#]]);
+});
+
+casttest!(deprecated_erc20_balance_applies_call_overrides, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let token = "0x00000000000000000000000000000000000000aa";
+
+    cmd.cast_fuse()
+        .args([
+            "balance",
+            anvil_const::ADDR1,
+            "--erc20",
+            token,
+            "--block",
+            "latest",
+            "--override-code",
+            // Runtime that returns the current block number.
+            &format!("{token}:0x4360005260206000f3"),
+            "--block.number",
+            "1234",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+1234
+
+"#]]);
+});
+
+casttest!(native_balance_rejects_call_overrides, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args([
+            "balance",
+            anvil_const::ADDR1,
+            "--block.number",
+            "1234",
+            "--rpc-url",
+            "http://127.0.0.1:1",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: call overrides require `--erc20` when using `cast balance`
+
+"#]]);
+});
 
 // tests that `balance` and `transfer` commands works correctly
 forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {

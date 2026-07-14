@@ -1,7 +1,10 @@
 use std::{str::FromStr, time::Duration};
 
 use crate::{
-    cmd::send::{cast_send, cast_send_with_access_key},
+    cmd::{
+        call_overrides::CallOverrideOpts,
+        send::{cast_send, cast_send_with_access_key},
+    },
     format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
@@ -86,6 +89,9 @@ pub enum Erc20Subcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        #[command(flatten)]
+        overrides: CallOverrideOpts,
     },
 
     /// Transfer ERC20 tokens.
@@ -624,16 +630,15 @@ impl Erc20Subcommand {
                     sh_println!("{}", format_uint_exp(allowance))?;
                 }
             }
-            Self::Balance { token, owner, block, .. } => {
+            Self::Balance { token, owner, block, overrides, .. } => {
                 let provider = get_provider(&config)?;
                 let token = token.resolve(&provider).await?;
                 let owner = owner.resolve(&provider).await?;
 
-                let balance = IERC20::new(token, &provider)
-                    .balanceOf(owner)
-                    .block(block.unwrap_or_default())
-                    .call()
-                    .await?;
+                let token = IERC20::new(token, &provider);
+                let balance_call = token.balanceOf(owner).block(block.unwrap_or_default());
+                let call = balance_call.call();
+                let balance = overrides.apply(call)?.await?;
 
                 if shell::is_json() {
                     print_json_success(balance.to_string())?;
