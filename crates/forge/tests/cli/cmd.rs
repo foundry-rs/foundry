@@ -2885,6 +2885,193 @@ contract Consumer2 {
 "#]]);
 });
 
+// A file-scope struct declared as an ordinary state variable (not accessed via the ERC-7201
+// assembly-slot pattern) must not get a synthetic namespace-slot entry: solc's real storageLayout
+// already reports it at its true sequential slot, so synthesizing a second entry would fabricate
+// a conflicting location for the same field.
+forgetest!(can_inspect_erc7201_annotated_struct_as_state_var_not_duplicated, |prj, cmd| {
+    prj.add_source(
+        "StateVarStorage.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// @custom:storage-location erc7201:test.statevar
+struct StateVarStorage {
+    uint256 count;
+}
+    "#,
+    );
+    prj.add_source(
+        "Consumer3.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {StateVarStorage} from "./StateVarStorage.sol";
+
+contract Consumer3 {
+    StateVarStorage private $unused;
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Consumer3", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": [..],
+      "contract": "src/Consumer3.sol:Consumer3",
+      "label": "$unused",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_struct(StateVarStorage)[..]_storage"
+    }
+  ],
+  "types": {
+    "t_struct(StateVarStorage)[..]_storage": {
+      "encoding": "inplace",
+      "label": "struct StateVarStorage",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": [..],
+          "contract": "src/Consumer3.sol:Consumer3",
+          "label": "count",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint256"
+        }
+      ]
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// A file-scope struct referenced only through a function parameter's declared type (not a return
+// type, and not a local variable) must not get a synthetic entry: a storage-pointer parameter is
+// just a reference the caller supplies, and says nothing about where that storage actually lives
+// (the same ambiguity as the state-variable case above).
+forgetest!(can_inspect_erc7201_function_param_alone_not_synthesized, |prj, cmd| {
+    prj.add_source(
+        "ParamStorage.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// @custom:storage-location erc7201:test.paramref
+struct ParamStorage {
+    uint256 value;
+}
+    "#,
+    );
+    prj.add_source(
+        "Consumer4.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {ParamStorage} from "./ParamStorage.sol";
+
+contract Consumer4 {
+    function _touch(ParamStorage storage $) internal view returns (uint256) {
+        return $.value;
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Consumer4", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [],
+  "types": {}
+}
+
+"#]]);
+});
+
+// erc7201("test.nestedif") = 0x2c4d71dfbc8efcc354b50ebe5732a4d75886269793465de74be9ed0423e79800
+// File-scope struct referenced only through a local variable declared inside a nested `if`
+// block, exercising the recursive statement walk rather than a top-level declaration.
+forgetest!(can_inspect_erc7201_file_scope_struct_via_nested_local_var, |prj, cmd| {
+    prj.add_source(
+        "NestedLib.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// @custom:storage-location erc7201:test.nestedif
+struct NestedStorage {
+    uint256 total;
+}
+
+library NestedLib {
+    function layout() internal pure returns (NestedStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.nestedif")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "Consumer5.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {NestedLib, NestedStorage} from "./NestedLib.sol";
+
+contract Consumer5 {
+    function maybeIncrement(bool flag) external {
+        if (flag) {
+            NestedStorage storage $ = NestedLib.layout();
+            $.total++;
+        }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Consumer5", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Consumer5 [erc7201:test.nestedif]",
+      "label": "total",
+      "offset": 0,
+      "slot": "0x2c4d71dfbc8efcc354b50ebe5732a4d75886269793465de74be9ed0423e79800",
+      "type": "uint256"
+    }
+  ],
+  "types": {
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();

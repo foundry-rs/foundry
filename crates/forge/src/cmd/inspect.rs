@@ -801,8 +801,14 @@ fn stmt_references_struct<'hir>(gcx: Gcx<'hir>, stmt: &Stmt<'hir>, struct_id: St
     }
 }
 
-/// Returns `true` if `func_id` references `struct_id` in its parameters, return types, or the
-/// local variable declarations in its body.
+/// Returns `true` if `func_id` references `struct_id` in its return types or the local variable
+/// declarations in its body.
+///
+/// Parameters are deliberately excluded: a storage-pointer parameter is just a reference the
+/// caller supplies, and says nothing about where that storage actually lives (it could just as
+/// well point at an ordinary state variable, as in the state-variable case above). A return type
+/// or a local variable initialized from an accessor call, by contrast, is the idiomatic ERC-7201
+/// accessor/consumer pattern itself.
 fn function_references_struct<'hir>(
     gcx: Gcx<'hir>,
     func_id: FunctionId,
@@ -810,15 +816,19 @@ fn function_references_struct<'hir>(
 ) -> bool {
     let hir = &gcx.hir;
     let func = hir.function(func_id);
-    func.parameters
+    func.returns
         .iter()
-        .chain(func.returns)
         .any(|&var_id| type_references_struct(&hir.variable(var_id).ty.kind, struct_id))
         || func.body.is_some_and(|body| block_references_struct(gcx, &body, struct_id))
 }
 
-/// Returns `true` if `struct_id` is referenced anywhere in the declarations (state variables or
-/// functions) of any contract in `linearized_bases`.
+/// Returns `true` if `struct_id` is referenced anywhere in the function declarations (return
+/// types or local variables) of any contract in `linearized_bases`.
+///
+/// State variable declarations are deliberately excluded: a struct used as an actual state
+/// variable is allocated and reported by solc's own `storageLayout` at its real sequential slot,
+/// so treating that as a reference here would synthesize a second, conflicting entry for the
+/// same field at the unrelated ERC-7201 namespace slot.
 fn contract_references_struct<'hir>(
     gcx: Gcx<'hir>,
     linearized_bases: &HashSet<ContractId>,
@@ -826,18 +836,9 @@ fn contract_references_struct<'hir>(
 ) -> bool {
     let hir = &gcx.hir;
     linearized_bases.iter().any(|&base_id| {
-        let base = hir.contract(base_id);
-        let state_var_reference = base.items.iter().any(|item| {
-            matches!(
-                item,
-                ItemId::Variable(var_id)
-                    if type_references_struct(&hir.variable(*var_id).ty.kind, struct_id)
-            )
-        });
-        state_var_reference
-            || base
-                .all_functions()
-                .any(|func_id| function_references_struct(gcx, func_id, struct_id))
+        hir.contract(base_id)
+            .all_functions()
+            .any(|func_id| function_references_struct(gcx, func_id, struct_id))
     })
 }
 
