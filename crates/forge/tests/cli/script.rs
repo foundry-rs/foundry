@@ -1223,6 +1223,64 @@ forgetest_async!(test_custom_sender_balance, |prj, cmd| {
         .simulate(ScriptOutcome::OkSimulation);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/3887>
+forgetest_async!(broadcast_log_uses_full_function_signature, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj.add_script(
+        "FullSignature.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract Target {
+    uint256 configuredAmount;
+    address configuredRecipient;
+
+    function configure(uint256 amount, address recipient)
+        external
+        returns (bool accepted)
+    {
+        configuredAmount = amount;
+        configuredRecipient = recipient;
+        return amount > 0 && recipient != address(0);
+    }
+}
+
+contract SignatureScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        Target target = new Target();
+        target.configure(1, address(1));
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(script)
+        .args(["--tc", "SignatureScript", "--rpc-url", &handle.http_endpoint()])
+        .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let sequence: ScriptSequence<Ethereum> =
+        foundry_common::fs::read_json_file(&run_latest).unwrap();
+
+    assert_eq!(sequence.transactions.len(), 2);
+    assert_eq!(
+        sequence.transactions[1].function.as_deref(),
+        Some("function configure(uint256 amount, address recipient) returns (bool accepted)")
+    );
+});
+
 #[derive(serde::Deserialize)]
 struct Transactions {
     transactions: Vec<Transaction>,

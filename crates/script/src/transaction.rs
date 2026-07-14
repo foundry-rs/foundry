@@ -67,7 +67,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
                 };
 
                 if let Some(function) = function {
-                    self.transaction.function = Some(function.signature());
+                    self.transaction.function = Some(function.full_signature());
 
                     let values = function.abi_decode_input(data).inspect_err(|_| {
                         error!(
