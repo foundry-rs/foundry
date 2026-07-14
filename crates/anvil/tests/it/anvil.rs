@@ -5,7 +5,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, bytes, hex};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_sol_types::SolCall;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::{core::precompiles::P256_VERIFY, hardfork::EthereumHardfork};
@@ -121,8 +121,18 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
     let provider = handle.http_provider();
 
     let tx = TransactionRequest::default().with_to(P256_VERIFY).with_input(P256_INPUT);
-    let output = provider.call(tx.clone().into()).await.unwrap();
-    assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
+    assert_eq!(
+        api.config().unwrap().current.precompiles.values().find(|&&address| address == P256_VERIFY),
+        Some(&P256_VERIFY)
+    );
+    for block in [
+        BlockId::Number(BlockNumberOrTag::Latest),
+        BlockId::Number(0_u64.into()),
+        BlockId::pending(),
+    ] {
+        let output = provider.call(tx.clone().into()).block(block).await.unwrap();
+        assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
+    }
 
     let caller = Address::random();
     api.anvil_set_code(caller, P256_CALLER_CODE.to_vec().into()).await.unwrap();
@@ -143,6 +153,26 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         .unwrap();
     assert!(receipt.status());
     assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::from(1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bsc_pre_haber_eth_config_omits_p256() {
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(BSC_MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Osaka.into()))
+            .with_genesis_timestamp(Some(BSC_MAINNET_HABER_TIMESTAMP - 1)),
+    )
+    .await;
+
+    assert!(
+        !api.config()
+            .unwrap()
+            .current
+            .precompiles
+            .values()
+            .any(|&address| { address == P256_VERIFY })
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

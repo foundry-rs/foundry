@@ -615,11 +615,18 @@ impl<N: Network> Backend<N> {
     /// Returns the precompiles for the current spec.
     pub fn precompiles(&self) -> BTreeMap<String, Address> {
         let spec_id = self.spec_id();
-        let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec_id));
+        let mut precompiles =
+            PrecompilesMap::from_static(Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)));
+        let (chain_id, timestamp) = {
+            let evm_env = self.evm_env.read();
+            (evm_env.cfg_env.chain_id, evm_env.block_env.timestamp.saturating_to())
+        };
+        self.networks.inject_chain_precompiles(&mut precompiles, chain_id, timestamp);
 
         let mut precompiles_map = BTreeMap::<String, Address>::default();
-        for (address, precompile) in precompiles.inner() {
-            precompiles_map.insert(precompile.id().name().to_string(), *address);
+        for address in precompiles.addresses() {
+            let precompile = precompiles.get(address).expect("precompile address must resolve");
+            precompiles_map.insert(precompile.precompile_id().name().to_string(), *address);
         }
 
         // Extend with configured network precompiles.
@@ -2286,10 +2293,14 @@ impl<N: Network> Backend<N> {
             )
         };
 
-        // Sync EVM block.number with genesis for non-fork mode.
+        // Sync the active EVM block environment with genesis for non-fork mode.
         // Fork mode syncs in setup_fork_db_config() instead.
         if fork.read().is_none() {
-            env.write().block_env.number = U256::from(genesis.number);
+            {
+                let mut evm_env = env.write();
+                evm_env.block_env.number = U256::from(genesis.number);
+                evm_env.block_env.timestamp = U256::from(genesis.timestamp);
+            }
 
             // The genesis block keeps its base fee, but the next block must already follow Tempo's
             // rules (e.g. T7 clamps the seed down to the cap). Fork mode seeds this from the fork
