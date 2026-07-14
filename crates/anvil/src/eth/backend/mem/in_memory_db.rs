@@ -35,6 +35,8 @@ pub struct StateRootDb {
     inner: MemDb,
     state_root: Mutex<StateRootCache>,
     history: Mutex<HistoricalStateCache>,
+    /// Live cache head used to make sequential block-hash insertion constant-time.
+    block_hash_head: Option<U256>,
 }
 
 impl StateRootDb {
@@ -100,11 +102,20 @@ impl HistoricalStateCache {
         self.dirty.entry(address).or_default().storage.insert(slot);
     }
 
-    fn record_block_hash(&mut self, number: U256, hash: B256) {
+    fn record_block_hash(&mut self, number: U256, hash: B256, is_next: bool) {
         if self.disabled {
             return;
         }
         let Some(state) = &mut self.state else { return };
+        if is_next {
+            let min_number = number.saturating_sub(U256::from(BLOCKHASH_HISTORY));
+            if min_number > U256::ZERO {
+                state.block_hashes.remove(&(min_number - U256::from(1)));
+            }
+            state.block_hashes.insert(number, hash);
+            return;
+        }
+
         let head = state.block_hashes.keys().copied().max().map_or(number, |head| head.max(number));
         let min_number = head.saturating_sub(U256::from(BLOCKHASH_HISTORY));
         state.block_hashes.retain(|cached, _| *cached >= min_number && *cached <= head);
@@ -410,12 +421,25 @@ impl Db for StateRootDb {
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        Db::insert_block_hash(&mut self.inner, number, hash);
-        self.history.get_mut().record_block_hash(number, hash);
+        let is_next =
+            self.block_hash_head.is_some_and(|head| number == head.saturating_add(U256::from(1)));
+        if is_next {
+            let min_number = number.saturating_sub(U256::from(BLOCKHASH_HISTORY));
+            if min_number > U256::ZERO {
+                self.inner.inner.cache.block_hashes.remove(&(min_number - U256::from(1)));
+            }
+            self.inner.inner.cache.block_hashes.insert(number, hash);
+            self.block_hash_head = Some(number);
+        } else {
+            self.block_hash_head =
+                Some(cache_block_hash(&mut self.inner.inner.cache.block_hashes, number, hash));
+        }
+        self.history.get_mut().record_block_hash(number, hash, is_next);
     }
 
     fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
         Db::set_block_hashes(&mut self.inner, block_hashes);
+        self.block_hash_head = self.inner.inner.cache.block_hashes.keys().copied().max();
         self.history.get_mut().invalidate();
     }
 
@@ -439,6 +463,7 @@ impl Db for StateRootDb {
         if reverted {
             self.state_root.get_mut().invalidate();
             self.history.get_mut().invalidate();
+            self.block_hash_head = self.inner.inner.cache.block_hashes.keys().copied().max();
         }
         reverted
     }
@@ -460,6 +485,7 @@ impl MaybeFullDatabase for StateRootDb {
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         self.state_root.get_mut().invalidate();
         self.history.get_mut().invalidate();
+        self.block_hash_head = None;
         MaybeFullDatabase::clear_into_state_snapshot(&mut self.inner)
     }
 
@@ -470,6 +496,7 @@ impl MaybeFullDatabase for StateRootDb {
     fn clear(&mut self) {
         self.state_root.get_mut().invalidate();
         self.history.get_mut().invalidate();
+        self.block_hash_head = None;
         MaybeFullDatabase::clear(&mut self.inner)
     }
 
@@ -477,6 +504,7 @@ impl MaybeFullDatabase for StateRootDb {
         MaybeFullDatabase::init_from_state_snapshot(&mut self.inner, snapshot);
         self.state_root.get_mut().invalidate();
         self.history.get_mut().invalidate();
+        self.block_hash_head = self.inner.inner.cache.block_hashes.keys().copied().max();
     }
 }
 
@@ -770,6 +798,17 @@ mod tests {
         assert!(block_hashes.contains_key(&U256::from(767)));
         assert!(block_hashes.contains_key(&U256::from(768)));
         assert!(block_hashes.contains_key(&U256::from(1_023)));
+
+        let snapshot = db.snapshot_state();
+        db.insert_block_hash(U256::from(1_024), B256::from(U256::from(1_024)));
+        assert!(db.revert_state(snapshot, RevertStateSnapshotAction::RevertRemove));
+        db.insert_block_hash(U256::from(1_024), B256::from(U256::from(1_024)));
+
+        let block_hashes = &db.inner.inner.cache.block_hashes;
+        assert_eq!(block_hashes.len(), BLOCKHASH_HISTORY as usize + 1);
+        assert!(!block_hashes.contains_key(&U256::from(767)));
+        assert!(block_hashes.contains_key(&U256::from(768)));
+        assert!(block_hashes.contains_key(&U256::from(1_024)));
     }
 
     #[test]
