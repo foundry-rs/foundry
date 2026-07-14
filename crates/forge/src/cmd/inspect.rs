@@ -26,7 +26,10 @@ use solar::sema::{
     Gcx,
     ast::Visibility,
     eval::ConstantEvaluator,
-    hir::{ElementaryType, ItemId, NatSpecKind, TypeKind, VariableId},
+    hir::{
+        Block, ContractId, ElementaryType, FunctionId, ItemId, NatSpecKind, Stmt, StmtKind,
+        StructId, TypeKind, VariableId,
+    },
     interface::source_map::FileName,
 };
 use std::{
@@ -747,6 +750,97 @@ fn register_type_recursive<'hir>(
     label
 }
 
+/// Returns `true` if `kind` resolves to `struct_id`, directly or through arrays/mappings.
+fn type_references_struct(kind: &TypeKind<'_>, struct_id: StructId) -> bool {
+    match kind {
+        TypeKind::Custom(ItemId::Struct(id)) => *id == struct_id,
+        TypeKind::Array(arr) => type_references_struct(&arr.element.kind, struct_id),
+        TypeKind::Mapping(m) => {
+            type_references_struct(&m.key.kind, struct_id)
+                || type_references_struct(&m.value.kind, struct_id)
+        }
+        _ => false,
+    }
+}
+
+/// Returns `true` if any statement in `block` references `struct_id`, recursing into nested
+/// blocks, loops, conditionals, switches, and try/catch clauses.
+fn block_references_struct<'hir>(gcx: Gcx<'hir>, block: &Block<'hir>, struct_id: StructId) -> bool {
+    block.stmts.iter().any(|stmt| stmt_references_struct(gcx, stmt, struct_id))
+}
+
+fn stmt_references_struct<'hir>(gcx: Gcx<'hir>, stmt: &Stmt<'hir>, struct_id: StructId) -> bool {
+    let hir = &gcx.hir;
+    match &stmt.kind {
+        StmtKind::DeclSingle(var_id) => {
+            type_references_struct(&hir.variable(*var_id).ty.kind, struct_id)
+        }
+        StmtKind::DeclMulti(vars, _) => vars
+            .iter()
+            .flatten()
+            .any(|var_id| type_references_struct(&hir.variable(*var_id).ty.kind, struct_id)),
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block_references_struct(gcx, block, struct_id)
+        }
+        StmtKind::Loop(block, _) => block_references_struct(gcx, block, struct_id),
+        StmtKind::If(_, then, else_) => {
+            stmt_references_struct(gcx, then, struct_id)
+                || else_.is_some_and(|e| stmt_references_struct(gcx, e, struct_id))
+        }
+        StmtKind::Switch(sw) => {
+            sw.cases.iter().any(|case| block_references_struct(gcx, &case.body, struct_id))
+        }
+        StmtKind::Try(t) => t.clauses.iter().any(|clause| {
+            clause
+                .args
+                .iter()
+                .any(|&var_id| type_references_struct(&hir.variable(var_id).ty.kind, struct_id))
+                || block_references_struct(gcx, &clause.block, struct_id)
+        }),
+        _ => false,
+    }
+}
+
+/// Returns `true` if `func_id` references `struct_id` in its parameters, return types, or the
+/// local variable declarations in its body.
+fn function_references_struct<'hir>(
+    gcx: Gcx<'hir>,
+    func_id: FunctionId,
+    struct_id: StructId,
+) -> bool {
+    let hir = &gcx.hir;
+    let func = hir.function(func_id);
+    func.parameters
+        .iter()
+        .chain(func.returns)
+        .any(|&var_id| type_references_struct(&hir.variable(var_id).ty.kind, struct_id))
+        || func.body.is_some_and(|body| block_references_struct(gcx, &body, struct_id))
+}
+
+/// Returns `true` if `struct_id` is referenced anywhere in the declarations (state variables or
+/// functions) of any contract in `linearized_bases`.
+fn contract_references_struct<'hir>(
+    gcx: Gcx<'hir>,
+    linearized_bases: &HashSet<ContractId>,
+    struct_id: StructId,
+) -> bool {
+    let hir = &gcx.hir;
+    linearized_bases.iter().any(|&base_id| {
+        let base = hir.contract(base_id);
+        let state_var_reference = base.items.iter().any(|item| {
+            matches!(
+                item,
+                ItemId::Variable(var_id)
+                    if type_references_struct(&hir.variable(*var_id).ty.kind, struct_id)
+            )
+        });
+        state_var_reference
+            || base
+                .all_functions()
+                .any(|func_id| function_references_struct(gcx, func_id, struct_id))
+    })
+}
+
 /// Collects ERC-7201 namespaced storage entries for the target contract using Solar HIR.
 ///
 /// Scans all structs annotated with `@custom:storage-location erc7201:<namespace>` in the
@@ -786,13 +880,16 @@ fn collect_erc7201_entries(
             hir.contract(target_id).linearized_bases.iter().copied().collect();
         let target_contract_name = hir.contract(target_id).name.as_str().to_string();
 
-        // Walk every struct in the HIR; keep those that belong to a contract in the
-        // linearization chain and carry an @custom:storage-location erc7201:<ns> annotation.
+        // Walk every struct in the HIR; keep those with an @custom:storage-location
+        // erc7201:<ns> annotation that are referenced by the linearization chain.
         for struct_id in hir.strukt_ids() {
             let strukt = hir.strukt(struct_id);
 
-            let Some(struct_contract_id) = strukt.contract else { continue };
-            if !linearized_bases.contains(&struct_contract_id) {
+            let referenced = match strukt.contract {
+                Some(struct_contract_id) => linearized_bases.contains(&struct_contract_id),
+                None => contract_references_struct(gcx, &linearized_bases, struct_id),
+            };
+            if !referenced {
                 continue;
             }
             if strukt.doc.is_empty() {

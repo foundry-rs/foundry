@@ -2743,6 +2743,148 @@ contract FnPtr {
 "#]]);
 });
 
+// erc7201("test.imported") = 0x4a7f16c2f493f6eb79c2b8297429f4fbc690856a2a65af93a573c101fa981500
+// File-scope struct (no enclosing contract) imported into the target contract's file and
+// referenced only through the accessor function's return type.
+forgetest!(can_inspect_erc7201_file_scope_struct_cross_file_import, |prj, cmd| {
+    prj.add_source(
+        "Storage.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// @custom:storage-location erc7201:test.imported
+struct ImportedStorage {
+    uint256 value;
+    address owner;
+}
+    "#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {ImportedStorage} from "./Storage.sol";
+
+contract Consumer {
+    function _storage() private pure returns (ImportedStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.imported")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Consumer", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Consumer [erc7201:test.imported]",
+      "label": "value",
+      "offset": 0,
+      "slot": "0x4a7f16c2f493f6eb79c2b8297429f4fbc690856a2a65af93a573c101fa981500",
+      "type": "uint256"
+    },
+    {
+      "astId": 0,
+      "contract": "Consumer [erc7201:test.imported]",
+      "label": "owner",
+      "offset": 0,
+      "slot": "0x4a7f16c2f493f6eb79c2b8297429f4fbc690856a2a65af93a573c101fa981501",
+      "type": "address"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.consumed") = 0xa3669fc8f704d78305bf9d9253d122ecf181c78dbd4f7b45474d30c81be82b00
+// File-scope struct declared and accessed via a library in one file, but only referenced by the
+// target contract through a local variable declaration in a function body (not the target
+// contract's own signatures).
+forgetest!(can_inspect_erc7201_file_scope_struct_via_local_var, |prj, cmd| {
+    prj.add_source(
+        "LibStorage.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// @custom:storage-location erc7201:test.consumed
+struct ConsumedStorage {
+    uint256 count;
+}
+
+library ConsumedLib {
+    function layout() internal pure returns (ConsumedStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.consumed")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+    prj.add_source(
+        "Consumer2.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {ConsumedLib, ConsumedStorage} from "./LibStorage.sol";
+
+contract Consumer2 {
+    function increment() external {
+        ConsumedStorage storage $ = ConsumedLib.layout();
+        $.count++;
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Consumer2", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Consumer2 [erc7201:test.consumed]",
+      "label": "count",
+      "offset": 0,
+      "slot": "0xa3669fc8f704d78305bf9d9253d122ecf181c78dbd4f7b45474d30c81be82b00",
+      "type": "uint256"
+    }
+  ],
+  "types": {
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();
