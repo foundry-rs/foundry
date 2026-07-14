@@ -1509,7 +1509,10 @@ impl TestArgs {
         }
 
         let mut project = config.create_project(true, true)?;
-        let output = compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
+        let output = compile_abi_project(
+            &mut project,
+            ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true),
+        )?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
@@ -1623,8 +1626,6 @@ impl TestArgs {
     }
 
     async fn compile_project(&mut self) -> Result<CompiledTestProject> {
-        let should_default_fuzz_run_workers_to_auto =
-            self.fuzz_only.is_enabled() && self.invariant_workers.is_none();
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -1635,10 +1636,6 @@ impl TestArgs {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
-        if should_default_fuzz_run_workers_to_auto && !config.invariant.workers_configured {
-            config.invariant.workers = InvariantWorkers::Auto;
-        }
-
         if should_mutate {
             // Force dyn test linking and cache usage for mutation testing after any config reload.
             config.dynamic_test_linking = true;

@@ -1,6 +1,7 @@
 use crate::eth::backend::db::{
     Db, MaybeForkedDatabase, MaybeFullDatabase, SerializableAccountRecord, SerializableBlock,
     SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
+    cache_block_hash,
 };
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
@@ -45,7 +46,11 @@ impl<N: Network> Db for ForkedDatabase<N> {
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.inner().block_hashes().write().insert(number, hash);
+        cache_block_hash(&mut self.inner().block_hashes().write(), number, hash);
+    }
+
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
+        *self.inner().block_hashes().write() = block_hashes.into_iter().collect();
     }
 
     fn dump_state(

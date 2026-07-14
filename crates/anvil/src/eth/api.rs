@@ -87,12 +87,13 @@ use anvil_rpc::{
 };
 use foundry_common::{
     provider::ProviderBuilder,
+    tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, FoundryTxType, FoundryTypedTx, PaymentLaneClassification, PaymentLaneReason,
+    FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -2711,7 +2712,7 @@ impl EthApi<FoundryNetwork> {
         self.ensure_typed_transaction_supported(&transaction)?;
 
         if self.backend.is_tempo() && TempoHardfork::from(self.backend.hardfork()).is_t5() {
-            let classification = transaction.classify_t5_payment_lane();
+            let classification = classify_payment_lane(tx.as_ref());
             trace!(target: "node", tx = ?transaction.hash(), ?classification, "classified transaction lane");
         }
 
@@ -2762,16 +2763,13 @@ impl EthApi<FoundryNetwork> {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
 
-        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+        FoundryTxEnvelope::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
-        Ok(self.classify_transaction_envelope(&transaction))
+        Ok(self.classify_transaction_lane(tx.as_ref()))
     }
 
-    fn classify_transaction_envelope(
-        &self,
-        transaction: &FoundryTxEnvelope,
-    ) -> PaymentLaneClassification {
+    fn classify_transaction_lane(&self, raw: &[u8]) -> PaymentLaneClassification {
         if !self.backend.is_tempo() {
             return PaymentLaneClassification::general(PaymentLaneReason::NotTempo);
         }
@@ -2780,7 +2778,7 @@ impl EthApi<FoundryNetwork> {
             return PaymentLaneClassification::general(PaymentLaneReason::T5NotActive);
         }
 
-        transaction.classify_t5_payment_lane()
+        classify_payment_lane(raw)
     }
 
     /// Sends signed transaction, returning its receipt.

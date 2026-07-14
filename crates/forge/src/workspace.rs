@@ -907,7 +907,9 @@ mod tests {
         );
 
         let contracts = temp_config.model_checker.unwrap().contracts;
-        assert!(contracts.contains_key(&workspace.join("src/Target.sol").display().to_string()));
+        assert!(
+            contracts.contains_key(&workspace.join("src").join("Target.sol").display().to_string())
+        );
         assert!(contracts.contains_key(&external.join("External.sol").display().to_string()));
     }
 
@@ -1237,7 +1239,7 @@ mod tests {
         assert!(workspace.join("packages/shared/src/Shared.sol").exists());
         assert_eq!(
             remappings[0].path,
-            format!("{}/", workspace.join("packages/shared/src").display())
+            format!("{}/", workspace.join("packages").join("shared").join("src").display())
         );
     }
 
@@ -1572,7 +1574,7 @@ mod tests {
         let path = PathBuf::from("/other/location");
 
         let rel = relative_to_root(&root, &path);
-        assert_eq!(rel, path);
+        assert_eq!(rel, normalize_existing_ancestor(&path));
     }
 
     #[test]

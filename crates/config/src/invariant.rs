@@ -8,18 +8,13 @@ use serde::{
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 /// Worker selection mode for invariant campaign sharding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InvariantWorkers {
     /// Automatically derive invariant workers from the active `--jobs` / rayon thread pool.
+    #[default]
     Auto,
     /// Explicit user override for invariant campaign sharding.
     Fixed(NonZeroUsize),
-}
-
-impl Default for InvariantWorkers {
-    fn default() -> Self {
-        Self::Fixed(NonZeroUsize::MIN)
-    }
 }
 
 impl Serialize for InvariantWorkers {
@@ -136,8 +131,8 @@ pub struct InvariantConfig {
     pub depth_mode: InvariantDepthMode,
     /// Worker selection mode used to shard invariant runs.
     ///
-    /// Defaults to `1` for reproducible seeded campaigns. Use `auto` to derive the worker count
-    /// from `--jobs`, or a positive integer for an explicit worker count.
+    /// Defaults to `auto`, which derives the worker count from `--jobs`. Use a positive integer
+    /// for an explicit worker count.
     pub workers: InvariantWorkers,
     /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
@@ -249,9 +244,9 @@ mod tests {
     }
 
     #[test]
-    fn invariant_workers_default_to_one() {
-        assert_eq!(InvariantWorkers::default(), InvariantWorkers::Fixed(NonZeroUsize::MIN));
-        assert_eq!(InvariantConfig::default().workers, InvariantWorkers::Fixed(NonZeroUsize::MIN));
+    fn invariant_workers_default_to_auto() {
+        assert_eq!(InvariantWorkers::default(), InvariantWorkers::Auto);
+        assert_eq!(InvariantConfig::default().workers, InvariantWorkers::Auto);
     }
 
     #[test]

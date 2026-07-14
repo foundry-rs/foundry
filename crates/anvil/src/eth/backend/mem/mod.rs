@@ -2648,7 +2648,10 @@ impl<N: Network> Backend<N> {
             // reset the fork entirely and reapply the genesis config
             let reset_urls =
                 forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
-            fork.reset(reset_urls, block_number).await?;
+            // Persist fetched remote state before rebuilding the fork database so the new
+            // block-specific database can load it from disk.
+            fork.database.read().await.maybe_flush_cache().map_err(BlockchainError::Internal)?;
+            fork.prepare_reset(reset_urls, block_number.into()).await?;
             let fork_block_number = fork.block_number();
             let fork_block = fork
                 .block_by_number(fork_block_number)
@@ -2711,8 +2714,6 @@ impl<N: Network> Backend<N> {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
-            self.db.write().await.clear();
-
             self.apply_genesis().await?;
 
             trace!(target: "backend", "reset fork");
@@ -4932,22 +4933,17 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         // BLOCKHASH opcode stays consistent after loading state. Reuses the hashes already
         // computed by `load_blocks` above. Only collect the last 256 blocks since that's all
         // BLOCKHASH can access.
-        let block_hashes: Vec<_> = {
+        let block_hashes = {
             let storage = self.blockchain.storage.read();
             let min_block = storage.best_number.saturating_sub(256);
             storage
                 .hashes
                 .iter()
-                .filter(|(num, _)| **num >= min_block)
-                .map(|(&num, &hash)| (num, hash))
+                .filter(|(num, _)| (min_block..=storage.best_number).contains(*num))
+                .map(|(&num, &hash)| (U256::from(num), hash))
                 .collect()
         };
-        {
-            let mut db = self.db.write().await;
-            for (block_num, hash) in block_hashes {
-                db.insert_block_hash(U256::from(block_num), hash);
-            }
-        }
+        self.db.write().await.set_block_hashes(block_hashes);
 
         if let Some(historical_states) = state.historical_states {
             self.states.write().load_states(historical_states);
