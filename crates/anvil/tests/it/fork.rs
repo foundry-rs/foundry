@@ -1799,6 +1799,7 @@ async fn test_fork_reset_reuses_cached_remote_state() {
     let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
 
     assert_eq!(provider.get_balance(address).await.unwrap(), balance);
+    api.mine_one().await;
 
     for _ in 0..2 {
         api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))

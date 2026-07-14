@@ -2552,7 +2552,6 @@ impl<N: Network> Backend<N> {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
-
             self.apply_genesis().await?;
 
             trace!(target: "backend", "reset fork");
