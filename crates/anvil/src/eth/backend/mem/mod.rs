@@ -4770,22 +4770,17 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         // BLOCKHASH opcode stays consistent after loading state. Reuses the hashes already
         // computed by `load_blocks` above. Only collect the last 256 blocks since that's all
         // BLOCKHASH can access.
-        let block_hashes: Vec<_> = {
+        let block_hashes = {
             let storage = self.blockchain.storage.read();
             let min_block = storage.best_number.saturating_sub(256);
             storage
                 .hashes
                 .iter()
-                .filter(|(num, _)| **num >= min_block)
-                .map(|(&num, &hash)| (num, hash))
+                .filter(|(num, _)| (min_block..=storage.best_number).contains(*num))
+                .map(|(&num, &hash)| (U256::from(num), hash))
                 .collect()
         };
-        {
-            let mut db = self.db.write().await;
-            for (block_num, hash) in block_hashes {
-                db.insert_block_hash(U256::from(block_num), hash);
-            }
-        }
+        self.db.write().await.set_block_hashes(block_hashes);
 
         if let Some(historical_states) = state.historical_states {
             self.states.write().load_states(historical_states);

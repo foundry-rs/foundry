@@ -379,6 +379,11 @@ impl Db for StateRootDb {
         self.history.get_mut().record_block_hash(number, hash);
     }
 
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
+        Db::set_block_hashes(&mut self.inner, block_hashes);
+        self.history.get_mut().invalidate();
+    }
+
     fn dump_state(
         &self,
         at: BlockEnv,
@@ -465,6 +470,10 @@ impl Db for MemDb {
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
         cache_block_hash(&mut self.inner.cache.block_hashes, number, hash);
+    }
+
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
+        self.inner.cache.block_hashes = block_hashes.into_iter().collect();
     }
 
     fn dump_state(

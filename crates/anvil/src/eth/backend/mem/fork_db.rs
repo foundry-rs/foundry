@@ -33,6 +33,10 @@ impl<N: Network> Db for ForkedDatabase<N> {
         cache_block_hash(&mut self.inner().block_hashes().write(), number, hash);
     }
 
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
+        *self.inner().block_hashes().write() = block_hashes.into_iter().collect();
+    }
+
     fn dump_state(
         &self,
         at: BlockEnv,

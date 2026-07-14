@@ -238,6 +238,9 @@ pub trait Db:
     /// inserts a blockhash for the given number
     fn insert_block_hash(&mut self, number: U256, hash: B256);
 
+    /// Replaces all cached block hashes.
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>);
+
     /// Write all chain data to serialized bytes buffer
     fn dump_state(
         &self,
@@ -313,6 +316,10 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
         cache_block_hash(&mut self.cache.block_hashes, number, hash);
+    }
+
+    fn set_block_hashes(&mut self, block_hashes: Vec<(U256, B256)>) {
+        self.cache.block_hashes = block_hashes.into_iter().collect();
     }
 
     fn dump_state(
