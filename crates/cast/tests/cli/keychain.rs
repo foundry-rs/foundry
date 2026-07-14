@@ -1065,8 +1065,9 @@ contract SessionForgeScript is Script {{
     let tx = &broadcast["transactions"][0];
 
     assert_eq!(tx["transactionType"], "CALL", "unexpected forge broadcast tx: {tx}");
+    assert_eq!(tx["function"], "transfer(address,uint256)", "unexpected forge broadcast tx: {tx}");
     assert_eq!(
-        tx["function"], "function transfer(address to, uint256 amount) returns (bool)",
+        tx["functionAbi"], "function transfer(address to, uint256 amount) returns (bool)",
         "unexpected forge broadcast tx: {tx}"
     );
     assert_eq!(
