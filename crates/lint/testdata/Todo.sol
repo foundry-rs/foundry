@@ -15,8 +15,14 @@ contract Todo {
     // todo-list should not be treated as an unresolved marker if whole words are required
     function todolist() public {}
 
+    // Read todo.md before editing this contract
+    function todoMarkdown() public {}
+
     // FixMe: this is broken
     function buggy() public {}
+
+    // TODO. This should still be treated as an unresolved marker
+    function sentenceMarker() public {}
 
     /*TODO(alice): this one should be fixed */
     function buggy2() public {}
@@ -52,6 +58,9 @@ contract Todo {
     function natSpec() public pure returns (uint256) {
         return 42;
     }
+
+    ///@dev TODO: compact NatSpec should also be detected
+    function compactNatSpec() public {}
 
     function noFalsePositiveInStrings() public pure returns (string memory) {
         // The marker below is inside a string literal, must NOT fire:

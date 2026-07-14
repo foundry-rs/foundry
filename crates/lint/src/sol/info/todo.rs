@@ -65,8 +65,8 @@ impl<'ast> EarlyLintPass<'ast> for TodoComment {
 
 fn is_control_comment(comment: &Comment) -> bool {
     let Some(first_line) = comment.lines.first() else { return false };
-    let content = strip_comment_prefix(first_line, comment);
-    content.starts_with('@') || content.trim_start().starts_with("forge-lint:")
+    let content = strip_comment_prefix(first_line, comment).trim_start();
+    content.starts_with("@compile-flags:") || content.starts_with("forge-lint:")
 }
 
 /// If `token` begins with a marker followed by a valid boundary, return that marker.
@@ -76,8 +76,14 @@ fn marker_at_start(token: &str) -> Option<&str> {
         if !prefix.eq_ignore_ascii_case(m) {
             return None;
         }
-        let after = token[m.len()..].chars().next()?;
-        if TRAILING.contains(&after) { Some(*m) } else { None }
+        let mut trailing = token[m.len()..].chars();
+        let after = trailing.next()?;
+        if !TRAILING.contains(&after)
+            || (after == '.' && trailing.next().is_some_and(|c| c.is_alphanumeric() || c == '_'))
+        {
+            return None;
+        }
+        Some(*m)
     })
 }
 

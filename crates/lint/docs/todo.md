@@ -11,7 +11,7 @@ bugs that have not been resolved before the code reached production.
 Scans every comment in the source file (single-line `//`, block `/* */`, and NatSpec `///`)
 and reports comments containing a `TODO` or `FIXME` marker.
 
-A marker is recognized when it appears at the **start of a whitespace-delimited token** and is **immediately followed by one of** `:` `(` `,` `;` `.` `)`.
+A marker is recognized when it appears at the **start of a whitespace-delimited token** and is **immediately followed by one of** `:` `(` `,` `;` `.` `)`. A period does not count when followed by an alphanumeric character or underscore, preventing dotted names such as `todo.md` from matching.
 Matching is case-insensitive, so `todo:`, `ToDo:`, and `FixMe:` all match.
 
 ## Why is this bad?

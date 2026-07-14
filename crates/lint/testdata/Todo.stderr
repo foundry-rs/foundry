@@ -25,6 +25,14 @@ LL │     // FixMe: this is broken
 note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
+LL │     // TODO. This should still be treated as an unresolved marker
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
+
+note[todo-comment]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
 LL │     /*TODO(alice): this one should be fixed */
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
@@ -61,6 +69,14 @@ note[todo-comment]: unresolved `TODO` comment
    │
 LL │     /// @dev TODO: implement the actual logic here
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
+
+note[todo-comment]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     ///@dev TODO: compact NatSpec should also be detected
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
