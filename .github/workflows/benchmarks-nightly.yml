@@ -178,6 +178,7 @@ jobs:
           path: |
             benches/stable-*.json
             benches/nightly-*.json
+            benches/common/
             regression.md
 
   report-regression:

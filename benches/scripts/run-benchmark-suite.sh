@@ -202,12 +202,16 @@ args+=(
 if [[ -n ${markdown_output} ]]; then
   args+=(--output-file "${markdown_output}")
 fi
+date=$(date -u +%Y-%m-%d)
 if [[ -n ${json_output} ]]; then
-  date=$(date -u +%Y-%m-%d)
   json_output=${json_output//\{version\}/${versions}}
   json_output=${json_output//\{date\}/${date}}
   args+=(--json-output "${json_output}")
+  common_json_output=${json_output}
+else
+  common_json_output="${requested_profile}-${requested_suite}-${versions}-${date}.json"
 fi
+args+=(--common-json-output "common/${common_json_output}")
 args+=(--verbose)
 
 if [[ ${dry_run} == true ]]; then
