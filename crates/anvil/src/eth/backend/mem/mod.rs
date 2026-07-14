@@ -185,7 +185,10 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm_inspectors::opcode::OpcodeGasInspector;
+use revm_inspectors::{
+    opcode::OpcodeGasInspector,
+    transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER},
+};
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
@@ -5129,6 +5132,7 @@ impl Backend<FoundryNetwork> {
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut logs = Vec::new();
+                block_env.prevrandao = Some(B256::ZERO);
                 if !validation {
                     block_env.basefee = 0;
                 }
@@ -5220,7 +5224,6 @@ impl Backend<FoundryNetwork> {
                         evm_env.cfg_env.disable_block_gas_limit = false;
                     } else {
                         evm_env.cfg_env.disable_base_fee = true;
-                        evm_env.block_env.basefee = 0;
                     }
 
                     let mut inspector = self.build_inspector();
@@ -5326,6 +5329,9 @@ impl Backend<FoundryNetwork> {
                     };
                     let result_logs =
                         if result.is_success() { result.clone().into_logs() } else { Vec::new() };
+                    logs.extend(
+                        result_logs.iter().filter(|log| !is_simulated_transfer_log(log)).cloned(),
+                    );
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
@@ -5348,7 +5354,6 @@ impl Backend<FoundryNetwork> {
                             })
                             .collect(),
                     };
-                    logs.extend(sim_res.logs.iter().map(|log| log.inner.clone()));
                     log_index += attempted_log_count;
                     call_res.push(sim_res);
                 }
@@ -5385,9 +5390,16 @@ impl Backend<FoundryNetwork> {
                     requests_hash: None,
                     ..Default::default()
                 };
+                let block_hash = header.hash_slow();
+                for (transaction_index, transaction) in transactions.iter_mut().enumerate() {
+                    transaction.block_hash = Some(block_hash);
+                    transaction.block_number = Some(header.number);
+                    transaction.transaction_index = Some(transaction_index as u64);
+                    transaction.block_timestamp = Some(header.timestamp);
+                }
                 let mut block = alloy_rpc_types::Block {
                     header: AnyRpcHeader {
-                        hash: header.hash_slow(),
+                        hash: block_hash,
                         inner: header.into(),
                         total_difficulty: None,
                         size: None,
@@ -5425,6 +5437,18 @@ impl Backend<FoundryNetwork> {
                     header.gas_limit(),
                     header.base_fee_per_gas().unwrap_or_default(),
                 );
+                if block_env.blob_excess_gas_and_price.is_some() {
+                    let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+                        header.excess_blob_gas().unwrap_or_default(),
+                        header.blob_gas_used().unwrap_or_default(),
+                    );
+                    block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+                        next_block_excess_blob_gas,
+                        get_blob_base_fee_update_fraction_by_spec_id(
+                            *self.evm_env.read().spec_id(),
+                        ),
+                    ));
+                }
 
                 block_res.push(simulated_block);
             }
@@ -6101,6 +6125,10 @@ fn simulation_log_count(inspector: &AnvilInspector) -> usize {
         })
         .unwrap_or_default();
     inspector.raw_log_count() + transfer_count
+}
+
+fn is_simulated_transfer_log(log: &revm::primitives::Log) -> bool {
+    log.address == TRANSFER_LOG_EMITTER && log.topics().first() == Some(&TRANSFER_EVENT_TOPIC)
 }
 
 fn simulate_rpc_error(code: i64, message: impl Into<String>) -> BlockchainError {

@@ -113,6 +113,47 @@ async fn test_simulate_block_sequence_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_block_override_scoping_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let random = format!("0x{:064x}", 42);
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {
+                    "blockOverrides": {
+                        "prevRandao": random,
+                        "baseFeePerGas": "0xa",
+                        "blobBaseFee": "0x15"
+                    },
+                    "stateOverrides": {
+                        "0xc100000000000000000000000000000000000000": {
+                            "code": "0x445f52486020524a60405260605ff3"
+                        }
+                    },
+                    "calls": [{
+                        "to": "0xc100000000000000000000000000000000000000"
+                    }]
+                },
+                {
+                    "calls": [{
+                        "to": "0xc100000000000000000000000000000000000000"
+                    }]
+                }
+            ]
+        }, "latest"]),
+    )
+    .await;
+    let blocks = response["result"].as_array().unwrap();
+    assert_eq!(blocks[0]["calls"][0]["returnData"], format!("0x{:064x}{:064x}{:064x}", 42, 10, 21));
+    assert_eq!(blocks[1]["calls"][0]["returnData"], format!("0x{:064x}{:064x}{:064x}", 0, 0, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_pending_block_metadata_rpc() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
@@ -175,6 +216,7 @@ async fn test_simulate_trace_transfer_forwarding_rpc() {
         }, "latest"]),
     )
     .await;
+    assert_eq!(response["result"][0]["logsBloom"], format!("0x{}", "00".repeat(256)));
     let call = &response["result"][0]["calls"][0];
     assert_eq!(
         json!({
@@ -792,6 +834,14 @@ async fn test_simulate_creation_and_revert_rpc() {
         ])
     );
     assert_eq!(block["transactions"][0]["to"], Value::Null);
+    for (transaction_index, transaction) in
+        block["transactions"].as_array().unwrap().iter().enumerate()
+    {
+        assert_eq!(transaction["blockHash"], block["hash"]);
+        assert_eq!(transaction["blockNumber"], block["number"]);
+        assert_eq!(quantity(&transaction["transactionIndex"]), transaction_index as u64);
+        assert_eq!(transaction["blockTimestamp"], block["timestamp"]);
+    }
 
     let response = rpc_request(
         &handle.http_endpoint(),
