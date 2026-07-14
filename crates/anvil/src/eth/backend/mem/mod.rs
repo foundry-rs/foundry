@@ -2486,14 +2486,12 @@ impl<N: Network> Backend<N> {
             // reset the fork entirely and reapply the genesis config
             let reset_urls =
                 forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
-            let rpc_url_changed = forking
-                .json_rpc_url
-                .as_ref()
-                .is_some_and(|url| fork.eth_rpc_url().as_ref() != Some(url));
+            let target_rpc_url = forking.json_rpc_url.clone().or_else(|| fork.eth_rpc_url());
+            let rpc_url_changed = target_rpc_url != fork.database_rpc_url();
             fork.prepare_reset(reset_urls, block_number.into()).await?;
             if rpc_url_changed {
                 // Clear state fetched from the previous RPC URL before persisting the cache.
-                fork.database.write().await.clear();
+                fork.database.write().await.clear_into_state_snapshot();
             }
             // Persist fetched remote state before rebuilding the fork database so the new
             // block-specific database can load it from disk.
@@ -2561,6 +2559,7 @@ impl<N: Network> Backend<N> {
             );
             self.states.write().clear();
             self.apply_genesis().await?;
+            fork.set_database_rpc_url(target_rpc_url);
 
             trace!(target: "backend", "reset fork");
 
