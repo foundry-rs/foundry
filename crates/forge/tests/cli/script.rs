@@ -1224,7 +1224,7 @@ forgetest_async!(test_custom_sender_balance, |prj, cmd| {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/3887>
-forgetest_async!(broadcast_log_uses_full_function_signature, |prj, cmd| {
+forgetest_async!(broadcast_log_includes_full_function_abi, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj.add_script(
@@ -1275,8 +1275,9 @@ contract SignatureScript {
         foundry_common::fs::read_json_file(&run_latest).unwrap();
 
     assert_eq!(sequence.transactions.len(), 2);
+    assert_eq!(sequence.transactions[1].function.as_deref(), Some("configure(uint256,address)"));
     assert_eq!(
-        sequence.transactions[1].function.as_deref(),
+        sequence.transactions[1].function_abi.as_deref(),
         Some("function configure(uint256 amount, address recipient) returns (bool accepted)")
     );
 });

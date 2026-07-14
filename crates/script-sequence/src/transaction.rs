@@ -32,6 +32,7 @@ pub struct TransactionWithMetadata<N: Network> {
     pub contract_address: Option<Address>,
     #[serde(default = "default_string")]
     pub function: Option<String>,
+    pub function_abi: Option<String>,
     #[serde(skip)]
     pub display_function: Option<String>,
     #[serde(default = "default_vec_of_strings")]
@@ -66,6 +67,7 @@ impl<N: Network> TransactionWithMetadata<N> {
             contract_name: Default::default(),
             contract_address: Default::default(),
             function: Default::default(),
+            function_abi: Default::default(),
             display_function: Default::default(),
             arguments: Default::default(),
             is_fixed_gas_limit: Default::default(),
