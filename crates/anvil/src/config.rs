@@ -1238,6 +1238,14 @@ impl NodeConfig {
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
+        // Keep the default EVM timestamp when none was configured. Fork setup initializes its own
+        // timestamp, and an explicit flag takes precedence over a genesis file in non-fork mode.
+        if fork.is_none()
+            && let Some(timestamp) = self.genesis_timestamp
+        {
+            evm_env.block_env.timestamp = U256::from(timestamp);
+        }
+
         self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
         let genesis = GenesisConfig {

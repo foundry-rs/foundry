@@ -2293,14 +2293,10 @@ impl<N: Network> Backend<N> {
             )
         };
 
-        // Sync the active EVM block environment with genesis for non-fork mode.
+        // Sync EVM block.number with genesis for non-fork mode.
         // Fork mode syncs in setup_fork_db_config() instead.
         if fork.read().is_none() {
-            {
-                let mut evm_env = env.write();
-                evm_env.block_env.number = U256::from(genesis.number);
-                evm_env.block_env.timestamp = U256::from(genesis.timestamp);
-            }
+            env.write().block_env.number = U256::from(genesis.number);
 
             // The genesis block keeps its base fee, but the next block must already follow Tempo's
             // rules (e.g. T7 clamps the seed down to the cap). Fork mode seeds this from the fork
