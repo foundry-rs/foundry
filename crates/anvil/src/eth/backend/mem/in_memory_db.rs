@@ -73,9 +73,12 @@ impl HistoricalStateCache {
 
     fn record_block_hash(&mut self, number: U256, hash: B256) {
         let Some(state) = &mut self.state else { return };
-        let min_number = number.saturating_sub(U256::from(BLOCKHASH_HISTORY));
-        state.block_hashes.retain(|cached, _| *cached >= min_number && *cached <= number);
-        state.block_hashes.insert(number, hash);
+        let head = state.block_hashes.keys().copied().max().map_or(number, |head| head.max(number));
+        let min_number = head.saturating_sub(U256::from(BLOCKHASH_HISTORY));
+        state.block_hashes.retain(|cached, _| *cached >= min_number && *cached <= head);
+        if number >= min_number {
+            state.block_hashes.insert(number, hash);
+        }
     }
 
     fn invalidate(&mut self) {
@@ -728,9 +731,20 @@ mod tests {
     #[test]
     fn evm_block_hash_cache_is_bounded_across_block_number_jumps() {
         let mut db = StateRootDb::default();
-        for number in [0, 258, 516, 774] {
+        // Initialize the persistent historical-state cache as well as the live EVM cache.
+        db.current_state();
+
+        for number in [0, 516, 400] {
             db.insert_block_hash(U256::from(number), B256::from(U256::from(number)));
         }
+
+        // An out-of-order insertion within the active window must not discard the current head.
+        let block_hashes = &db.inner.inner.cache.block_hashes;
+        assert_eq!(block_hashes.len(), 2);
+        assert!(block_hashes.contains_key(&U256::from(400)));
+        assert!(block_hashes.contains_key(&U256::from(516)));
+
+        db.insert_block_hash(U256::from(774), B256::from(U256::from(774)));
 
         let block_hashes = &db.inner.inner.cache.block_hashes;
         assert_eq!(block_hashes.len(), 1);

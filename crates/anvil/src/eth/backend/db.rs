@@ -47,9 +47,12 @@ pub(crate) const BLOCKHASH_HISTORY: u64 = 256;
 
 /// Inserts a block hash while discarding the entry that left the EVM-visible cache.
 pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, hash: B256) {
-    let min_number = number.saturating_sub(U256::from(BLOCKHASH_HISTORY));
-    block_hashes.retain(|cached, _| *cached >= min_number && *cached <= number);
-    block_hashes.insert(number, hash);
+    let head = block_hashes.keys().copied().max().map_or(number, |head| head.max(number));
+    let min_number = head.saturating_sub(U256::from(BLOCKHASH_HISTORY));
+    block_hashes.retain(|cached, _| *cached >= min_number && *cached <= head);
+    if number >= min_number {
+        block_hashes.insert(number, hash);
+    }
 }
 
 /// Helper trait get access to the full state data of the database
