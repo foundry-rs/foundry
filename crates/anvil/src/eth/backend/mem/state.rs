@@ -6,7 +6,10 @@ use alloy_primitives::{
 };
 use alloy_rlp::Encodable;
 use alloy_trie::{HashBuilder, Nibbles};
-use revm::{database::DbAccount, state::AccountInfo};
+use revm::{
+    database::{AccountState, DbAccount},
+    state::AccountInfo,
+};
 
 pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 {
     let mut builder = HashBuilder::default();
@@ -30,6 +33,7 @@ pub fn storage_root(storage: &U256Map<U256>) -> B256 {
 pub fn trie_storage(storage: &U256Map<U256>) -> Vec<(Nibbles, Vec<u8>)> {
     let mut storage = storage
         .iter()
+        .filter(|(_, value)| !value.is_zero())
         .map(|(key, value)| {
             let data = alloy_rlp::encode(value);
             (Nibbles::unpack(keccak256(key.to_be_bytes::<32>())), data)
@@ -44,6 +48,7 @@ pub fn trie_storage(storage: &U256Map<U256>) -> Vec<(Nibbles, Vec<u8>)> {
 pub fn trie_accounts(accounts: &AddressMap<DbAccount>) -> Vec<(Nibbles, Vec<u8>)> {
     let mut accounts: Vec<(Nibbles, Vec<u8>)> = accounts
         .iter()
+        .filter(|(_, account)| account.account_state != AccountState::NotExisting)
         .map(|(address, account)| {
             let data = trie_account_rlp(&account.info, &account.storage);
             (Nibbles::unpack(keccak256(*address)), data)

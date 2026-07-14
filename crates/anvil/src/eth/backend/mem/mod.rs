@@ -10,12 +10,12 @@ use crate::{
             db::{AnvilCacheDB, Db, MaybeFullDatabase, SerializableState, StateDb},
             executor::{
                 AnvilBlockExecutor, ExecutedPoolTransactions, PoolTxGasConfig,
-                execute_pool_transactions,
+                build_foundry_receipt, execute_pool_transactions,
             },
             fork::ClientFork,
             genesis::GenesisConfig,
             mem::{
-                state::{storage_root, trie_accounts},
+                state::{state_root, storage_root, trie_accounts},
                 storage::MinedTransactionReceipt,
             },
             notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
@@ -37,7 +37,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
-    TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
+    TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
@@ -60,8 +60,8 @@ use alloy_network::{
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
-    map::{AddressMap, HashMap, HashSet},
+    Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256,
+    map::{AddressMap, AddressSet, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
@@ -146,6 +146,12 @@ struct OpCallDepositInfo;
 /// Maximum cumulative gas available to one `eth_simulateV1` request.
 const SIMULATE_GAS_CAP: u64 = 50_000_000;
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct SimulationPrecompileOverrides {
+    moves: Vec<(Address, Address)>,
+    overridden_addresses: HashSet<Address>,
+}
+
 /// Marker trait that abstracts over the per-network inspector trait bounds
 /// required by the in-memory backend. The OP bound is only included when the
 /// `optimism` feature is enabled.
@@ -185,10 +191,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm_inspectors::{
-    opcode::OpcodeGasInspector,
-    transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER},
-};
+use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
@@ -643,35 +646,40 @@ impl<N: Network> Backend<N> {
         precompiles_map
     }
 
-    fn simulation_precompile_moves(
+    fn simulation_precompile_overrides(
         &self,
         state_overrides: &StateOverride,
-    ) -> Result<Vec<(Address, Address)>, BlockchainError> {
-        let moves = state_overrides
+    ) -> Result<SimulationPrecompileOverrides, BlockchainError> {
+        let mut moves = state_overrides
             .iter()
             .filter_map(|(source, account)| {
                 account.move_precompile_to.map(|destination| (*source, destination))
             })
             .collect::<Vec<_>>();
-        if moves.is_empty() {
-            return Ok(moves);
-        }
+        moves.sort_unstable();
+        let overridden_addresses = state_overrides.keys().copied().collect::<HashSet<_>>();
 
         let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(self.spec_id()));
         let mut precompiles = PrecompilesMap::from_static(precompiles);
         self.inject_precompiles(&mut precompiles);
 
         for (source, destination) in &moves {
+            if precompiles.get(source).is_none() {
+                return Err(simulate_rpc_error(
+                    -32000,
+                    format!("account {source} is not a precompile"),
+                ));
+            }
             if source == destination {
-                if precompiles.get(source).is_none() {
-                    return Err(simulate_rpc_error(
-                        -32000,
-                        format!("account {source} is not a precompile"),
-                    ));
-                }
                 return Err(simulate_rpc_error(
                     -38022,
                     format!("cannot move precompile {source} to itself"),
+                ));
+            }
+            if overridden_addresses.contains(destination) {
+                return Err(simulate_rpc_error(
+                    -32000,
+                    format!("account {destination} is already overridden"),
                 ));
             }
         }
@@ -681,7 +689,32 @@ impl<N: Network> Backend<N> {
                 simulate_rpc_error(-32000, format!("account {address} is not a precompile"))
             },
         )?;
-        Ok(moves)
+        Ok(SimulationPrecompileOverrides { moves, overridden_addresses })
+    }
+
+    fn apply_simulation_precompile_overrides(
+        &self,
+        precompiles: &mut PrecompilesMap,
+        overrides: &SimulationPrecompileOverrides,
+    ) -> Result<AddressSet, BlockchainError> {
+        let warm_addresses = precompiles.addresses().copied().collect::<AddressSet>();
+        precompiles.move_precompiles(overrides.moves.iter().copied()).map_err(
+            |MovePrecompileError::NotAPrecompile(address)| {
+                simulate_rpc_error(-32000, format!("account {address} is not a precompile"))
+            },
+        )?;
+        for address in &overrides.overridden_addresses {
+            precompiles.apply_precompile(address, |_| None);
+        }
+        let overridden_addresses = Arc::new(overrides.overridden_addresses.clone());
+        precompiles.map_precompile_lookup(move |address, previous| {
+            if overridden_addresses.contains(address) {
+                None
+            } else {
+                previous.and_then(|lookup| lookup.lookup(address))
+            }
+        });
+        Ok(warm_addresses)
     }
 
     /// Returns the system contracts for the current spec.
@@ -1335,17 +1368,48 @@ impl<N: Network> Backend<N> {
         I: BackendInspector<WrapDatabaseRef<&'db DB>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        let overrides = SimulationPrecompileOverrides::default();
+        self.transact_with_inspector_ref_and_precompile_overrides(
+            db, evm_env, inspector, tx_env, op_deposit, &overrides,
+        )
+    }
+
+    /// Network-aware transact path with per-call precompile overrides.
+    fn transact_with_inspector_ref_and_precompile_overrides<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+        op_deposit: OpCallDepositInfo,
+        overrides: &SimulationPrecompileOverrides,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
         #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_tx = OpTransaction { base: tx_env, deposit: op_deposit, ..Default::default() };
-            return self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx);
+            return self.transact_op_with_inspector_ref_and_precompile_overrides(
+                db, evm_env, inspector, op_tx, overrides,
+            );
         }
         // `op_deposit` only matters on the OP path; eth/tempo ignore it.
         let _ = op_deposit;
         if self.is_tempo() {
-            self.transact_tempo_with_inspector_ref(db, evm_env, inspector, TempoTxEnv::from(tx_env))
+            self.transact_tempo_with_inspector_ref_and_precompile_overrides(
+                db,
+                evm_env,
+                inspector,
+                TempoTxEnv::from(tx_env),
+                overrides,
+            )
         } else {
-            self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)
+            self.transact_eth_with_inspector_ref_and_precompile_overrides(
+                db, evm_env, inspector, tx_env, overrides,
+            )
         }
     }
 
@@ -1365,23 +1429,20 @@ impl<N: Network> Backend<N> {
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        let overrides = SimulationPrecompileOverrides::default();
         self.transact_eth_with_inspector_ref_and_precompile_overrides(
-            db,
-            evm_env,
-            inspector,
-            tx_env,
-            &[],
+            db, evm_env, inspector, tx_env, &overrides,
         )
     }
 
-    /// Eth path of [`Backend::transact_eth_with_inspector_ref`] with per-call precompile moves.
+    /// Eth path of [`Backend::transact_eth_with_inspector_ref`] with per-call precompile overrides.
     fn transact_eth_with_inspector_ref_and_precompile_overrides<'db, I, DB>(
         &self,
         db: &'db DB,
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: TxEnv,
-        precompile_moves: &[(Address, Address)],
+        overrides: &SimulationPrecompileOverrides,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
@@ -1395,12 +1456,8 @@ impl<N: Network> Backend<N> {
         );
         self.inject_precompiles(evm.precompiles_mut());
         self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
-        let warm_precompile_addresses = evm.precompiles_mut().addresses().copied().collect();
-        evm.precompiles_mut().move_precompiles(precompile_moves.iter().copied()).map_err(
-            |MovePrecompileError::NotAPrecompile(address)| {
-                simulate_rpc_error(-32000, format!("account {address} is not a precompile"))
-            },
-        )?;
+        let warm_precompile_addresses =
+            self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
         // EIP-2929 warms the protocol precompile addresses, not their simulation-only destinations.
         // Seed the journal before RevM's pre-execution hook so moving the map does not prewarm the
         // replacement addresses.
@@ -1472,6 +1529,26 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        let overrides = SimulationPrecompileOverrides::default();
+        self.transact_tempo_with_inspector_ref_and_precompile_overrides(
+            db, evm_env, inspector, tx_env, &overrides,
+        )
+    }
+
+    /// Tempo path with per-call precompile overrides.
+    fn transact_tempo_with_inspector_ref_and_precompile_overrides<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TempoTxEnv,
+        overrides: &SimulationPrecompileOverrides,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
         let tempo_env = self.build_tempo_evm_env(evm_env);
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
@@ -1479,6 +1556,9 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_tempo_precompiles(&mut evm);
+        let warm_precompile_addresses =
+            self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
+        evm.ctx_mut().journal_mut().warm_precompiles(&warm_precompile_addresses);
         let result = evm.transact(tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {
@@ -5131,14 +5211,14 @@ impl Backend<FoundryNetwork> {
                 let mut log_index = 0;
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
-                let mut logs = Vec::new();
+                let mut receipts = Vec::with_capacity(calls.len());
                 block_env.prevrandao = Some(B256::ZERO);
                 if !validation {
                     block_env.basefee = 0;
                 }
-                let precompile_moves = state_overrides
+                let precompile_overrides = state_overrides
                     .as_ref()
-                    .map(|overrides| self.simulation_precompile_moves(overrides))
+                    .map(|overrides| self.simulation_precompile_overrides(overrides))
                     .transpose()?
                     .unwrap_or_default();
 
@@ -5233,24 +5313,15 @@ impl Backend<FoundryNetwork> {
                         inspector = inspector.with_transfers();
                     }
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
-                    let execution_result =
-                        if precompile_moves.is_empty() || self.is_optimism() || self.is_tempo() {
-                            self.transact_with_inspector_ref(
-                                &cache_db,
-                                &evm_env,
-                                &mut inspector,
-                                tx_env,
-                                op_deposit,
-                            )
-                        } else {
-                            self.transact_eth_with_inspector_ref_and_precompile_overrides(
-                                &cache_db,
-                                &evm_env,
-                                &mut inspector,
-                                tx_env,
-                                &precompile_moves,
-                            )
-                        };
+                    let execution_result = self
+                        .transact_with_inspector_ref_and_precompile_overrides(
+                            &cache_db,
+                            &evm_env,
+                            &mut inspector,
+                            tx_env,
+                            op_deposit,
+                            &precompile_overrides,
+                        );
                     let ResultAndState { result, state } = match execution_result {
                         Err(BlockchainError::InvalidTransaction(error)) => {
                             return Err(simulate_transaction_error(error));
@@ -5259,7 +5330,8 @@ impl Backend<FoundryNetwork> {
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
-                    let attempted_log_count = simulation_log_count(&inspector);
+                    let attempted_log_count = inspector.attempted_simulation_log_count();
+                    let simulation_logs = inspector.simulation_logs().to_vec();
 
                     inspector.print_logs();
                     if self.print_traces {
@@ -5267,6 +5339,7 @@ impl Backend<FoundryNetwork> {
                     }
 
                     // commit the transaction
+                    let deposit_nonce = state.get(&caller).map(|account| account.info.nonce);
                     cache_db.commit(state);
                     gas_used += result.tx_gas_used();
                     rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
@@ -5287,6 +5360,7 @@ impl Backend<FoundryNetwork> {
 
                     let tx = build_impersonated(typed_tx);
                     let tx_hash = tx.hash();
+                    let tx_type = tx.tx_type();
                     let rpc_tx = transaction_build(
                         None,
                         MaybeImpersonatedTransaction::impersonated(tx, from),
@@ -5327,26 +5401,28 @@ impl Backend<FoundryNetwork> {
                             })
                         }
                     };
-                    let result_logs =
-                        if result.is_success() { result.clone().into_logs() } else { Vec::new() };
-                    logs.extend(
-                        result_logs.iter().filter(|log| !is_simulated_transfer_log(log)).cloned(),
-                    );
+                    let receipt_logs = result.clone().into_logs();
+                    receipts.push(build_foundry_receipt(
+                        tx_type,
+                        result.is_success(),
+                        gas_used,
+                        receipt_logs,
+                        deposit_nonce,
+                    ));
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
                         max_used_gas: Some(result.gas().total_gas_spent()),
                         status: result.is_success(),
                         error,
-                        logs: result_logs
+                        logs: simulation_logs
                             .into_iter()
-                            .enumerate()
-                            .map(|(idx, log)| Log {
-                                inner: log,
+                            .map(|simulation_log| Log {
+                                inner: simulation_log.log,
                                 block_number: Some(block_env.number.saturating_to()),
                                 block_timestamp: Some(block_env.timestamp.saturating_to()),
                                 transaction_index: Some(req_idx as u64),
-                                log_index: Some((idx + log_index) as u64),
+                                log_index: Some((simulation_log.index + log_index) as u64),
                                 removed: false,
 
                                 block_hash: None,
@@ -5360,34 +5436,39 @@ impl Backend<FoundryNetwork> {
 
                 let transactions_envelopes: Vec<AnyTxEnvelope> =
                     transactions.iter().map(|tx| AnyTxEnvelope::from(tx.clone())).collect();
-                let blob_gas_used =
+                let cumulative_blob_gas_used =
                     transactions_envelopes.iter().filter_map(|tx| tx.blob_gas_used()).sum();
+                let spec_id = self.spec_id();
+                let is_shanghai = spec_id >= SpecId::SHANGHAI;
+                let is_cancun = spec_id >= SpecId::CANCUN;
+                let is_prague = spec_id >= SpecId::PRAGUE;
+                let receipts_root = calculate_receipt_root(&receipts);
+                let bloom = receipts.iter().fold(Bloom::default(), |mut bloom, receipt| {
+                    bloom.accrue_bloom(receipt.logs_bloom());
+                    bloom
+                });
+                let state_root = cache_db.maybe_full_db().map(|state| state_root(&state));
                 let header = Header {
-                    logs_bloom: logs_bloom(logs.iter()),
+                    logs_bloom: bloom,
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
-                    receipts_root: calculate_receipt_root(&transactions_envelopes),
+                    receipts_root,
                     parent_hash,
                     beneficiary: block_env.beneficiary,
-                    state_root: Default::default(),
-                    difficulty: Default::default(),
+                    state_root: state_root.unwrap_or_default(),
+                    difficulty: block_env.difficulty,
                     number: block_env.number.saturating_to(),
                     gas_limit: block_env.gas_limit,
                     gas_used,
                     timestamp: block_env.timestamp.saturating_to(),
                     extra_data: Default::default(),
-                    mix_hash: Default::default(),
+                    mix_hash: block_env.prevrandao.unwrap_or_default(),
                     nonce: Default::default(),
-                    base_fee_per_gas: Some(block_env.basefee),
-                    withdrawals_root: None,
-                    blob_gas_used: Some(blob_gas_used),
-                    excess_blob_gas: Some(
-                        block_env
-                            .blob_excess_gas_and_price()
-                            .map(|blob| blob.excess_blob_gas)
-                            .unwrap_or_default(),
-                    ),
-                    parent_beacon_block_root: None,
-                    requests_hash: None,
+                    base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(block_env.basefee),
+                    withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+                    blob_gas_used: is_cancun.then_some(cumulative_blob_gas_used),
+                    excess_blob_gas: if is_cancun { block_env.blob_excess_gas() } else { None },
+                    parent_beacon_block_root: is_cancun.then_some(Default::default()),
+                    requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();
@@ -5406,7 +5487,7 @@ impl Backend<FoundryNetwork> {
                     },
                     uncles: vec![],
                     transactions: BlockTransactions::Full(transactions),
-                    withdrawals: None,
+                    withdrawals: is_shanghai.then_some(Default::default()),
                 };
 
                 if !return_full_transactions {
@@ -6110,25 +6191,6 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum();
     }
     false
-}
-
-fn simulation_log_count(inspector: &AnvilInspector) -> usize {
-    let transfer_count = inspector
-        .transfer
-        .as_ref()
-        .map(|transfer_inspector| {
-            transfer_inspector
-                .transfers()
-                .iter()
-                .filter(|transfer| !transfer.value.is_zero())
-                .count()
-        })
-        .unwrap_or_default();
-    inspector.raw_log_count() + transfer_count
-}
-
-fn is_simulated_transfer_log(log: &revm::primitives::Log) -> bool {
-    log.address == TRANSFER_LOG_EMITTER && log.topics().first() == Some(&TRANSFER_EVENT_TOPIC)
 }
 
 fn simulate_rpc_error(code: i64, message: impl Into<String>) -> BlockchainError {

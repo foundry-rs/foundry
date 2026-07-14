@@ -17,12 +17,21 @@ use revm::{
     context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, CreateScheme, Interpreter,
         interpreter::EthInterpreter,
     },
 };
 use revm_inspectors::transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector};
 use std::sync::Arc;
+
+/// A log emitted while simulating a transaction and its attempted execution-order index.
+#[derive(Clone, Debug)]
+pub struct SimulationLog {
+    /// The emitted log.
+    pub log: Log,
+    /// The log's index among all attempted logs in the transaction.
+    pub index: usize,
+}
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
@@ -33,10 +42,12 @@ pub struct AnvilInspector {
     pub log_collector: Option<LogCollector>,
     /// Collects all internal ETH transfers as ERC20 transfer events.
     pub transfer: Option<TransferInspector>,
-    /// Counts every raw EVM log before reverted frames are discarded.
-    raw_log_count: usize,
-    /// SELFDESTRUCT transfer logs awaiting the end of their execution frame.
-    pending_selfdestruct_logs: Vec<Log>,
+    /// Canonical and synthetic logs retained from successful execution frames.
+    simulation_logs: Vec<SimulationLog>,
+    /// The retained-log length at the start of each execution frame.
+    simulation_log_checkpoints: Vec<usize>,
+    /// Counts every attempted canonical and synthetic log, including reverted frames.
+    attempted_simulation_log_count: usize,
 }
 
 /// Configuration for per-transaction inspector lifecycle.
@@ -53,9 +64,14 @@ pub struct InspectorTxConfig {
 }
 
 impl AnvilInspector {
-    /// Returns the number of raw EVM logs observed during execution.
-    pub const fn raw_log_count(&self) -> usize {
-        self.raw_log_count
+    /// Returns simulation response logs in execution order.
+    pub fn simulation_logs(&self) -> &[SimulationLog] {
+        &self.simulation_logs
+    }
+
+    /// Returns the number of logs attempted during execution, including reverted frames.
+    pub const fn attempted_simulation_log_count(&self) -> usize {
+        self.attempted_simulation_log_count
     }
 
     /// Finish a transaction: print traces/logs, drain the tracer, and reset for the next tx.
@@ -69,8 +85,9 @@ impl AnvilInspector {
         self.print_logs();
 
         let traces = self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
-        self.raw_log_count = 0;
-        self.pending_selfdestruct_logs.clear();
+        self.simulation_logs.clear();
+        self.simulation_log_checkpoints.clear();
+        self.attempted_simulation_log_count = 0;
 
         // Reinstall tracer for next tx.
         let tracing_config = if config.enable_steps_tracing {
@@ -138,7 +155,7 @@ impl AnvilInspector {
 
     /// Configures the `Tracer` [`revm::Inspector`] with a transfer event collector
     pub fn with_transfers(mut self) -> Self {
-        self.transfer = Some(TransferInspector::new(false).with_logs(true));
+        self.transfer = Some(TransferInspector::new(false));
         self
     }
 
@@ -148,9 +165,34 @@ impl AnvilInspector {
         self
     }
 
-    fn commit_selfdestruct_logs<CTX: ContextTr>(&mut self, ecx: &mut CTX) {
-        for log in self.pending_selfdestruct_logs.drain(..) {
-            ecx.journal_mut().log(log);
+    fn record_simulation_log(&mut self, log: Log) {
+        let index = self.attempted_simulation_log_count;
+        self.attempted_simulation_log_count += 1;
+        self.simulation_logs.push(SimulationLog { log, index });
+    }
+
+    fn record_transfer(&mut self, from: Address, to: Address, value: U256) {
+        if self.transfer.is_none() || value.is_zero() {
+            return;
+        }
+        let from = B256::from_slice(&from.abi_encode());
+        let to = B256::from_slice(&to.abi_encode());
+        let data = value.abi_encode();
+        self.record_simulation_log(Log {
+            address: TRANSFER_LOG_EMITTER,
+            data: LogData::new_unchecked(vec![TRANSFER_EVENT_TOPIC, from, to], data.into()),
+        });
+    }
+
+    fn start_simulation_frame(&mut self) {
+        self.simulation_log_checkpoints.push(self.simulation_logs.len());
+    }
+
+    fn end_simulation_frame(&mut self, success: bool) {
+        if let Some(checkpoint) = self.simulation_log_checkpoints.pop()
+            && !success
+        {
+            self.simulation_logs.truncate(checkpoint);
         }
     }
 }
@@ -200,7 +242,7 @@ where
 
     #[allow(clippy::redundant_clone)]
     fn log(&mut self, ecx: &mut CTX, log: Log) {
-        self.raw_log_count += 1;
+        self.record_simulation_log(log.clone());
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             inspector.log(ecx, log.clone());
         });
@@ -208,13 +250,17 @@ where
 
     #[allow(clippy::redundant_clone)]
     fn log_full(&mut self, interp: &mut Interpreter, ecx: &mut CTX, log: Log) {
-        self.raw_log_count += 1;
+        self.record_simulation_log(log.clone());
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             inspector.log_full(interp, ecx, log.clone());
         });
     }
 
     fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        self.start_simulation_frame();
+        if let Some(value) = inputs.transfer_value() {
+            self.record_transfer(inputs.transfer_from(), inputs.transfer_to(), value);
+        }
         call_inspectors!(
             #[ret]
             [&mut self.tracer, &mut self.log_collector, &mut self.transfer],
@@ -227,10 +273,20 @@ where
         if let Some(tracer) = &mut self.tracer {
             tracer.call_end(ecx, inputs, outcome);
         }
-        self.commit_selfdestruct_logs(ecx);
+        self.end_simulation_frame(outcome.result.result.is_ok());
     }
 
     fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
+        self.start_simulation_frame();
+        if !matches!(inputs.scheme(), CreateScheme::Custom { .. })
+            && let Ok(account) = ecx.journal_mut().load_account(inputs.caller())
+        {
+            self.record_transfer(
+                inputs.caller(),
+                inputs.created_address(account.data.info.nonce),
+                inputs.value(),
+            );
+        }
         call_inspectors!(
             #[ret]
             [&mut self.tracer, &mut self.transfer],
@@ -243,19 +299,11 @@ where
         if let Some(tracer) = &mut self.tracer {
             tracer.create_end(ecx, inputs, outcome);
         }
-        self.commit_selfdestruct_logs(ecx);
+        self.end_simulation_frame(outcome.result.result.is_ok());
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        if self.transfer.is_some() && !value.is_zero() {
-            let from = B256::from_slice(&contract.abi_encode());
-            let to = B256::from_slice(&target.abi_encode());
-            let data = value.abi_encode();
-            self.pending_selfdestruct_logs.push(Log {
-                address: TRANSFER_LOG_EMITTER,
-                data: LogData::new_unchecked(vec![TRANSFER_EVENT_TOPIC, from, to], data.into()),
-            });
-        }
+        self.record_transfer(contract, target, value);
         call_inspectors!([&mut self.tracer, &mut self.transfer], |inspector| {
             Inspector::<CTX, EthInterpreter>::selfdestruct(inspector, contract, target, value)
         });

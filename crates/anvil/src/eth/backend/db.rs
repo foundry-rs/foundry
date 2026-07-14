@@ -22,7 +22,8 @@ use anvil_core::eth::{
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
-    BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
+    BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
+    StateSnapshot,
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
@@ -30,7 +31,7 @@ use revm::{
     bytecode::Bytecode,
     context::BlockEnv,
     context_interface::block::BlobExcessGasAndPrice,
-    database::{CacheDB, DatabaseRef, DbAccount},
+    database::{AccountState, CacheDB, DatabaseRef, DbAccount},
     primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
     state::AccountInfo,
 };
@@ -46,6 +47,11 @@ use crate::mem::storage::MinedTransaction;
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         None
+    }
+
+    /// Returns an owned, recursively merged view of all available accounts.
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        self.maybe_as_full_db().cloned()
     }
 
     /// Clear the state and move it into a new `StateSnapshot`.
@@ -71,6 +77,10 @@ where
         T::maybe_as_full_db(self)
     }
 
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        T::maybe_full_db(self)
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         unreachable!("never called for DatabaseRef")
     }
@@ -82,6 +92,35 @@ where
     fn clear(&mut self) {}
 
     fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
+}
+
+impl<T: MaybeFullDatabase + ?Sized> MaybeFullDatabase for Box<T>
+where
+    Self: DatabaseRef<Error = DatabaseError>,
+{
+    fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        T::maybe_as_full_db(self)
+    }
+
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        T::maybe_full_db(self)
+    }
+
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        T::clear_into_state_snapshot(self)
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        T::read_as_state_snapshot(self)
+    }
+
+    fn clear(&mut self) {
+        T::clear(self)
+    }
+
+    fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot) {
+        T::init_from_state_snapshot(self, state_snapshot)
+    }
 }
 
 /// Helper trait to reset the DB if it's forked
@@ -280,7 +319,10 @@ pub trait Db:
 /// This is useful to create blocks without actually writing to the `Db`, but rather in the cache of
 /// the `CacheDB` see also
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
-impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> Db for CacheDB<T> {
+impl<T> Db for CacheDB<T>
+where
+    T: DatabaseRef<Error = DatabaseError> + MaybeFullDatabase + Send + Sync + Clone + fmt::Debug,
+{
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.insert_account_info(address, account)
     }
@@ -317,9 +359,29 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheDB<T> {
+impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.cache.accounts)
+    }
+
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        let mut accounts = self.db.maybe_full_db()?;
+        for (address, overlay) in &self.cache.accounts {
+            if overlay.account_state == AccountState::NotExisting {
+                accounts.remove(address);
+                continue;
+            }
+            if overlay.account_state == AccountState::StorageCleared {
+                accounts.insert(*address, overlay.clone());
+                continue;
+            }
+            let mut account = accounts.remove(address).unwrap_or_default();
+            account.info = overlay.info.clone();
+            account.account_state = overlay.account_state.clone();
+            account.storage.extend(overlay.storage.clone());
+            accounts.insert(*address, account);
+        }
+        Some(accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
@@ -390,6 +452,20 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
     }
 }
 
+impl MaybeFullDatabase for EmptyDBWrapper {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        StateSnapshot::default()
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        StateSnapshot::default()
+    }
+
+    fn clear(&mut self) {}
+
+    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
+}
+
 /// Represents a state at certain point
 #[derive(Debug)]
 pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
@@ -428,6 +504,10 @@ impl DatabaseRef for StateDb {
 impl MaybeFullDatabase for StateDb {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         self.0.maybe_as_full_db()
+    }
+
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        self.0.maybe_full_db()
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
