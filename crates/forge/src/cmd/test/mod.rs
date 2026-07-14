@@ -2611,8 +2611,11 @@ impl TestArgs {
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
-        let interactive_debug_selection =
-            self.debug && num_filtered != 1 && tui_mode().is_interactive();
+        let debug_selection_term = Term::stderr();
+        let interactive_debug_selection = self.debug
+            && num_filtered != 1
+            && tui_mode().is_interactive()
+            && debug_selection_term.is_term();
         let mut matching_debug_tests = if interactive_debug_selection {
             collect_matching_debug_tests(&runner.list_signatures(filter))
         } else if self.debug && num_filtered != 1 {
@@ -2621,6 +2624,11 @@ impl TestArgs {
             Vec::new()
         };
         if interactive_debug_selection {
+            ctrlc::set_handler(|| {
+                let _ = Term::stderr().show_cursor();
+                std::process::exit(130);
+            })?;
+
             let Some(selected) = Select::new()
                 .with_prompt("Select a test to debug")
                 .items(
@@ -2629,7 +2637,7 @@ impl TestArgs {
                         .map(|test| format!("{}.{}", test.contract, test.test)),
                 )
                 .max_length(DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT)
-                .interact_on_opt(&Term::stderr())?
+                .interact_on_opt(&debug_selection_term)?
             else {
                 bail!("Debugger test selection cancelled");
             };

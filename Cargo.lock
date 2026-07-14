@@ -4997,6 +4997,7 @@ dependencies = [
  "clap_complete",
  "clearscreen",
  "comfy-table",
+ "ctrlc",
  "dialoguer",
  "dunce",
  "evm-disassembler",

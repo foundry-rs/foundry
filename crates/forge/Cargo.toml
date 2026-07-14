@@ -69,6 +69,7 @@ tempo-alloy.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
+ctrlc = "3"
 dialoguer.workspace = true
 dunce.workspace = true
 flate2.workspace = true
