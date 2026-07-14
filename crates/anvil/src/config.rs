@@ -11,7 +11,7 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
-    mem::{self, in_memory_db::MemDb},
+    mem::{self, in_memory_db::StateRootDb},
 };
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
@@ -1217,7 +1217,7 @@ impl NodeConfig {
             if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
                 self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
-                (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
+                (Arc::new(TokioRwLock::new(Box::<StateRootDb>::default())), None)
             };
 
         // if provided use all settings of `genesis.json`
