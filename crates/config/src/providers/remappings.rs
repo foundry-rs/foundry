@@ -248,7 +248,7 @@ impl RemappingsProvider<'_> {
     fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.lib_paths
             .par_iter()
-            .map(|p| if p.is_absolute() { self.root.join("lib") } else { self.root.join(p) })
+            .map(|p| self.root.join(p))
             .flat_map(foundry_toml_dirs)
             .flat_map_iter(|lib| {
                 trace!(?lib, "find all remappings of nested foundry.toml");

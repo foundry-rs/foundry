@@ -808,7 +808,9 @@ impl Config {
     /// that may not define all profiles the main project uses.
     #[track_caller]
     pub fn load_with_root_and_fallback(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
-        let figment = Self::figment_with_root(root.as_ref());
+        // Nested configs must use their own library paths. Inheriting an absolute `FOUNDRY_LIBS`
+        // or `DAPP_LIBS` value would make remapping discovery recurse into the same directory.
+        let figment = Self::with_root(root.as_ref()).to_figment_inner(FigmentProviders::All, true);
         Self::from_figment_fallback(Figment::from(figment))
     }
 
@@ -951,6 +953,10 @@ impl Config {
     /// This will merge various providers, such as env,toml,remappings into the figment if
     /// requested.
     pub fn to_figment(&self, providers: FigmentProviders) -> Figment {
+        self.to_figment_inner(providers, false)
+    }
+
+    fn to_figment_inner(&self, providers: FigmentProviders, ignore_libs_env: bool) -> Figment {
         // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
 
         if providers.is_none() {
@@ -960,6 +966,16 @@ impl Config {
         let root = self.root.as_path();
         let profile = Self::selected_profile();
         let mut figment = Figment::default().merge(DappHardhatDirProvider(root));
+        let dapp_ignored: &[&str] = if ignore_libs_env {
+            &["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS", "LIBS"]
+        } else {
+            &["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"]
+        };
+        let foundry_ignored: &[&str] = if ignore_libs_env {
+            &["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS", "LIBS"]
+        } else {
+            &["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"]
+        };
 
         // merge global foundry.toml file
         if let Some(global_toml) = Self::foundry_dir_toml().filter(|p| p.exists()) {
@@ -978,11 +994,7 @@ impl Config {
 
         // merge environment variables
         figment = figment
-            .merge(
-                Env::prefixed("DAPP_")
-                    .ignore(&["REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
-                    .global(),
-            )
+            .merge(Env::prefixed("DAPP_").ignore(dapp_ignored).global())
             .merge(
                 Env::prefixed("DAPP_TEST_")
                     .ignore(&["CACHE", "FUZZ_RUNS", "DEPTH", "FFI", "FS_PERMISSIONS"])
@@ -992,7 +1004,7 @@ impl Config {
             .merge(EtherscanEnvProvider::default())
             .merge(
                 Env::prefixed("FOUNDRY_")
-                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI", "FS_PERMISSIONS"])
+                    .ignore(foundry_ignored)
                     .map(|key| {
                         let key = key.as_str();
                         if Self::STANDALONE_SECTIONS.iter().any(|section| {

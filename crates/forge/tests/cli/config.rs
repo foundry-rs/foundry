@@ -987,6 +987,36 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     );
 });
 
+forgetest!(can_detect_nested_remappings_from_absolute_lib, |prj, cmd| {
+    let external_lib = prj.root().parent().unwrap().join("external-lib");
+    let nested_lib = external_lib.join("nested-lib");
+    pretty_err(&nested_lib, fs::create_dir_all(&nested_lib));
+
+    let nested_config = Config {
+        src: "custom-source-dir".into(),
+        remappings: vec![Remapping::from_str("nested-alias/=vendor").unwrap().into()],
+        ..Default::default()
+    };
+    let toml_file = nested_lib.join(Config::FILE_NAME);
+    pretty_err(&toml_file, fs::write(&toml_file, nested_config.to_string_pretty().unwrap()));
+
+    cmd.env("FOUNDRY_LIBS", serde_json::to_string(&[external_lib]).unwrap());
+    let config = cmd.config();
+    let remappings = config
+        .remappings
+        .into_iter()
+        .map(Remapping::from)
+        .map(|remapping| remapping.to_string())
+        .collect::<Vec<_>>();
+    similar_asserts::assert_eq!(
+        remappings,
+        vec![
+            format!("nested-alias/={}/", nested_lib.join("vendor").to_slash_lossy()),
+            format!("nested-lib/={}/", nested_lib.join("custom-source-dir").to_slash_lossy()),
+        ]
+    );
+});
+
 // test remappings with closer paths are prioritised
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
 forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
