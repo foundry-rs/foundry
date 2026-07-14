@@ -322,7 +322,8 @@ impl<'a> Linter for SolidityLinter<'a> {
 
         let sm = compiler.sess().clone_source_map();
         let prev_emitter = compiler.dcx().set_emitter(if self.with_json_emitter {
-            let writer: Box<dyn std::io::Write + Send> = if self.json_emitter_stdout {
+            let writer: Box<dyn std::io::Write + Send> = if self.json_emitter_stdout && !ui_testing
+            {
                 Box::new(std::io::BufWriter::new(std::io::stdout()))
             } else {
                 Box::new(std::io::BufWriter::new(std::io::stderr()))
