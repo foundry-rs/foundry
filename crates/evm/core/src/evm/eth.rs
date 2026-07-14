@@ -45,9 +45,13 @@ impl FoundryEvmFactory for EthEvmFactory {
         evm_env: EvmEnv,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
+        let chain_id = evm_env.cfg_env.chain_id;
+        let timestamp = evm_env.block_env.timestamp.saturating_to();
         let mut eth_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
         eth_evm.cfg.tx_chain_id_check = true;
-        eth_evm.inspector().get_networks().inject_precompiles(eth_evm.precompiles_mut());
+        let networks = eth_evm.inspector().get_networks();
+        networks.inject_precompiles(eth_evm.precompiles_mut());
+        networks.inject_chain_precompiles(eth_evm.precompiles_mut(), chain_id, timestamp);
         eth_evm
     }
 

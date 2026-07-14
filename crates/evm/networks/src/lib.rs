@@ -10,10 +10,11 @@ use alloy_chains::{
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
 use alloy_eips::eip1559::BaseFeeParams;
-use alloy_evm::precompiles::PrecompilesMap;
-use alloy_primitives::{Address, ChainId, map::AddressHashMap};
+use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
+use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
+use revm::precompile::secp256r1::P256VERIFY;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
@@ -46,6 +47,14 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("StorageCredits", STORAGE_CREDITS_ADDRESS),
     ("CurrentCommittee", CURRENT_COMMITTEE_ADDRESS),
 ];
+
+/// BSC secp256r1 precompile address introduced by the Haber hardfork.
+pub const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
+
+const BSC_MAINNET_CHAIN_ID: u64 = 56;
+const BSC_TESTNET_CHAIN_ID: u64 = 97;
+const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;
+const BSC_TESTNET_HABER_TIMESTAMP: u64 = 1_716_962_820;
 
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
@@ -328,6 +337,28 @@ impl NetworkConfigs {
         }
     }
 
+    /// Injects chain-specific precompiles active at the given timestamp.
+    pub fn inject_chain_precompiles(
+        self,
+        precompiles: &mut PrecompilesMap,
+        chain_id: ChainId,
+        timestamp: u64,
+    ) {
+        let is_haber = match chain_id {
+            BSC_MAINNET_CHAIN_ID => timestamp >= BSC_MAINNET_HABER_TIMESTAMP,
+            BSC_TESTNET_CHAIN_ID => timestamp >= BSC_TESTNET_HABER_TIMESTAMP,
+            _ => false,
+        };
+        if is_haber {
+            let p256verify = P256VERIFY;
+            precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
+                Some(DynPrecompile::new(p256verify.id().clone(), move |input| {
+                    p256verify.execute(input.data, input.gas, input.reservoir)
+                }))
+            });
+        }
+    }
+
     /// Returns precompiles label for configured networks, to be used in traces.
     pub fn precompiles_label(
         self,
@@ -395,6 +426,8 @@ impl From<NetworkVariant> for NetworkConfigs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_evm::precompiles::Precompile as _;
+    use revm::precompile::{PrecompileId, Precompiles};
 
     // --- Equivalence: new flag == legacy flag ---
 
@@ -406,6 +439,35 @@ mod tests {
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
         assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
         assert_eq!(via_new.precompiles_label(None), via_old.precompiles_label(None));
+    }
+
+    #[test]
+    fn injects_bsc_p256_from_haber() {
+        let mut precompiles = PrecompilesMap::from_static(Precompiles::cancun());
+        assert!(precompiles.get(&BSC_P256_ADDRESS).is_none());
+
+        NetworkConfigs::default().inject_chain_precompiles(
+            &mut precompiles,
+            BSC_MAINNET_CHAIN_ID,
+            BSC_MAINNET_HABER_TIMESTAMP,
+        );
+
+        assert_eq!(
+            precompiles.get(&BSC_P256_ADDRESS).unwrap().precompile_id(),
+            &PrecompileId::P256Verify
+        );
+    }
+
+    #[test]
+    fn does_not_inject_bsc_p256_before_haber() {
+        let mut precompiles = PrecompilesMap::from_static(Precompiles::cancun());
+        NetworkConfigs::default().inject_chain_precompiles(
+            &mut precompiles,
+            BSC_MAINNET_CHAIN_ID,
+            BSC_MAINNET_HABER_TIMESTAMP - 1,
+        );
+
+        assert!(precompiles.get(&BSC_P256_ADDRESS).is_none());
     }
 
     #[test]
