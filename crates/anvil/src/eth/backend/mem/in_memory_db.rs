@@ -37,11 +37,31 @@ pub struct StateRootDb {
     history: Mutex<HistoricalStateCache>,
 }
 
+impl StateRootDb {
+    /// Creates a new database, optionally tracking the state used by block-history snapshots.
+    ///
+    /// Anvil disables history tracking when state history is pruned, since historical snapshots
+    /// are never taken in that mode and the recorded dirty sets would accumulate without ever
+    /// being drained. With tracking disabled, [`Db::current_state`] still returns a correct,
+    /// freshly built snapshot.
+    pub fn new(track_history: bool) -> Self {
+        Self {
+            history: Mutex::new(HistoricalStateCache {
+                disabled: !track_history,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+}
+
 /// Incrementally maintained, structurally shared state used by block-history snapshots.
 #[derive(Debug, Default)]
 struct HistoricalStateCache {
     state: Option<PersistentStateDb>,
     dirty: AddressMap<DirtyHistoricalAccount>,
+    /// Disables recording and snapshot caching; set when historical snapshots are never taken.
+    disabled: bool,
 }
 
 #[derive(Debug, Default)]
@@ -52,6 +72,9 @@ struct DirtyHistoricalAccount {
 
 impl HistoricalStateCache {
     fn record_changes(&mut self, changes: &AddressMap<Account>) {
+        if self.disabled {
+            return;
+        }
         for (address, account) in changes {
             if !account.is_touched() {
                 continue;
@@ -64,14 +87,23 @@ impl HistoricalStateCache {
     }
 
     fn record_account(&mut self, address: Address) {
+        if self.disabled {
+            return;
+        }
         self.dirty.entry(address).or_default();
     }
 
     fn record_storage(&mut self, address: Address, slot: U256) {
+        if self.disabled {
+            return;
+        }
         self.dirty.entry(address).or_default().storage.insert(slot);
     }
 
     fn record_block_hash(&mut self, number: U256, hash: B256) {
+        if self.disabled {
+            return;
+        }
         let Some(state) = &mut self.state else { return };
         let head = state.block_hashes.keys().copied().max().map_or(number, |head| head.max(number));
         let min_number = head.saturating_sub(U256::from(BLOCKHASH_HISTORY));
@@ -87,6 +119,9 @@ impl HistoricalStateCache {
     }
 
     fn snapshot(&mut self, db: &MemDb) -> PersistentStateDb {
+        if self.disabled {
+            return PersistentStateDb::from_mem_db(db);
+        }
         let Some(state) = &mut self.state else {
             let state = PersistentStateDb::from_mem_db(db);
             self.state = Some(state.clone());
@@ -800,5 +835,27 @@ mod tests {
             PersistentAccount { account_state: AccountState::NotExisting, ..Default::default() },
         );
         assert_eq!(persistent.basic_ref(address).unwrap(), None);
+    }
+
+    #[test]
+    fn disabled_history_tracking_records_nothing() {
+        let address = address!("0000000000000000000000000000000000002935");
+        let slot = U256::from(1);
+        let mut db = StateRootDb::new(false);
+
+        db.insert_account(address, AccountInfo::from_balance(U256::from(1)));
+        db.set_storage_at(address, slot.into(), B256::from(U256::from(2))).unwrap();
+        db.basic(address).unwrap();
+        db.storage(address, slot).unwrap();
+        db.maybe_state_root().unwrap();
+
+        assert!(db.history.get_mut().dirty.is_empty());
+        assert!(db.history.get_mut().state.is_none());
+
+        // `current_state` must still produce a correct snapshot without caching it.
+        let historical = db.current_state();
+        assert_eq!(historical.basic_ref(address).unwrap().unwrap().balance, U256::from(1));
+        assert_eq!(historical.storage_ref(address, slot).unwrap(), U256::from(2));
+        assert!(db.history.get_mut().state.is_none());
     }
 }

@@ -318,9 +318,8 @@ impl TUIContext<'_> {
             }
 
             // Go to previous call
-            KeyCode::Char('c') => {
-                self.draw_memory.inner_call_index =
-                    self.draw_memory.inner_call_index.saturating_sub(1);
+            KeyCode::Char('c') if self.draw_memory.inner_call_index > 0 => {
+                self.draw_memory.inner_call_index -= 1;
                 self.current_step = self.n_steps() - 1;
                 self.scroll_memory_to_current_write();
             }
@@ -1714,6 +1713,24 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('h')));
         assert!(tui.show_shortcuts);
         assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: shown");
+    }
+
+    #[test]
+    fn previous_call_shortcut_respects_root_boundary() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![
+            node(address, CallKind::Call, &[1, 2]),
+            node(address, CallKind::Call, &[3]),
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('c')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (0, 0));
+
+        tui.draw_memory.inner_call_index = 1;
+        let _ = tui.handle_key_event(key(KeyCode::Char('c')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (0, 1));
     }
 
     #[test]

@@ -30,9 +30,10 @@ use foundry_common::{
         pretty_calldata,
     },
     shell, stdin,
+    tempo::{PaymentLaneClassification, classify_payment_lane},
 };
 use foundry_evm_networks::NetworkVariant;
-use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope, PaymentLaneClassification};
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
@@ -984,9 +985,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
     let raw_tx = hex::decode(raw_tx)?;
     let mut data = raw_tx.as_slice();
-    let tx =
-        FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
-    format_lane_classification(&tx.classify_t5_payment_lane())
+    FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
+    format_lane_classification(&classify_payment_lane(&raw_tx))
 }
 
 pub(crate) fn format_lane_classification(

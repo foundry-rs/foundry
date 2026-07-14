@@ -29,6 +29,7 @@ use crate::{
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
+use dialoguer::{Select, console::Term};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
@@ -70,6 +71,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
+use foundry_tui::tui_mode;
 use rand::Rng;
 use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
@@ -1509,7 +1511,10 @@ impl TestArgs {
         }
 
         let mut project = config.create_project(true, true)?;
-        let output = compile_abi_project(&mut project, ProjectCompiler::new().quiet(true))?;
+        let output = compile_abi_project(
+            &mut project,
+            ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true),
+        )?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
@@ -1861,6 +1866,8 @@ impl TestArgs {
             );
         }
 
+        let mut filter = filter.clone();
+
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;
@@ -1925,7 +1932,7 @@ impl TestArgs {
                 config,
                 evm_opts.clone(),
                 output,
-                filter,
+                &mut filter,
                 execution.clone(),
             )
             .await?
@@ -1941,7 +1948,7 @@ impl TestArgs {
                     config.clone(),
                     evm_opts.clone(),
                     output,
-                    filter,
+                    &mut filter,
                     TestExecutionOptions {
                         decode_internal,
                         multi_network: MultiNetworkConfig {
@@ -1963,7 +1970,7 @@ impl TestArgs {
                         config.clone(),
                         pass_evm_opts.clone(),
                         output,
-                        filter,
+                        &mut filter,
                         TestExecutionOptions {
                             decode_internal,
                             multi_network: MultiNetworkConfig {
@@ -2426,7 +2433,7 @@ impl TestArgs {
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
@@ -2487,7 +2494,7 @@ impl TestArgs {
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         match network_dispatch_kind(dispatch_opts) {
@@ -2555,7 +2562,7 @@ impl TestArgs {
         mut runner: MultiContractRunner<FEN>,
         config: Arc<Config>,
         verbosity: u8,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         let fuzz_seed = config.fuzz.seed;
@@ -2571,7 +2578,7 @@ impl TestArgs {
             || self.summary && shell::is_json()
             || self.mutate.is_some() && shell::is_json();
 
-        let num_filtered = runner.matching_test_functions(filter).count();
+        let mut num_filtered = runner.matching_test_functions(filter).count();
 
         if !self.opcodes.is_empty() && verbosity < 5 {
             sh_eprintln!()?;
@@ -2604,6 +2611,41 @@ impl TestArgs {
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
+        let debug_selection_term = Term::stderr();
+        let interactive_debug_selection = self.debug
+            && num_filtered != 1
+            && tui_mode().is_interactive()
+            && debug_selection_term.is_term();
+        let mut matching_debug_tests = if interactive_debug_selection {
+            collect_matching_debug_tests(&runner.list_signatures(filter))
+        } else if self.debug && num_filtered != 1 {
+            collect_matching_debug_tests(&runner.list(filter))
+        } else {
+            Vec::new()
+        };
+        if interactive_debug_selection {
+            ctrlc::set_handler(|| {
+                let _ = Term::stderr().show_cursor();
+                std::process::exit(130);
+            })?;
+
+            let Some(selected) = Select::new()
+                .with_prompt("Select a test to debug")
+                .items(
+                    matching_debug_tests
+                        .iter()
+                        .map(|test| format!("{}.{}", test.contract, test.test)),
+                )
+                .max_length(DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT)
+                .interact_on_opt(&debug_selection_term)?
+            else {
+                bail!("Debugger test selection cancelled");
+            };
+
+            filter.set_rerun_failures(vec![matching_debug_tests.swap_remove(selected)]);
+            num_filtered = 1;
+        }
+
         if num_filtered != 1
             && (self.debug || self.flamegraph || self.flamechart || self.evm_profile.is_some())
         {
@@ -2622,7 +2664,7 @@ impl TestArgs {
                 format!("\n\nFilter used:\n{filter}")
             };
             let matching_tests_hint = if self.debug {
-                format_matching_debug_tests(&runner.list(filter)).unwrap_or_default()
+                format_matching_debug_tests(&matching_debug_tests).unwrap_or_default()
             } else {
                 String::new()
             };
@@ -3637,37 +3679,41 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
     }
 }
 
-fn format_matching_debug_tests(
+fn collect_matching_debug_tests(
     matching_tests: &BTreeMap<String, BTreeMap<String, Vec<String>>>,
-) -> Option<String> {
-    let mut output = String::from("\n\nMatching tests:");
-    let mut total = 0;
-    let mut shown = 0;
-
+) -> Vec<RerunFailure> {
+    let mut tests = Vec::new();
     for (source, contracts) in matching_tests {
-        for (contract, tests) in contracts {
-            for test in tests {
-                total += 1;
-
-                if shown < DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT {
-                    output.push_str("\n  ");
-                    output.push_str(source);
-                    output.push(':');
-                    output.push_str(contract);
-                    output.push('.');
-                    output.push_str(test);
-                    shown += 1;
-                }
-            }
+        for (contract, contract_tests) in contracts {
+            let contract = format!("{source}:{contract}");
+            tests.extend(
+                contract_tests
+                    .iter()
+                    .map(|test| RerunFailure { contract: contract.clone(), test: test.clone() }),
+            );
         }
     }
+    tests
+}
 
-    if total == 0 {
+fn format_matching_debug_tests(matching_tests: &[RerunFailure]) -> Option<String> {
+    if matching_tests.is_empty() {
         return None;
     }
 
-    if total > shown {
-        output.push_str(&format!("\n  ... and {} more", total - shown));
+    let mut output = String::from("\n\nMatching tests:");
+    for test in matching_tests.iter().take(DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT) {
+        output.push_str("\n  ");
+        output.push_str(&test.contract);
+        output.push('.');
+        output.push_str(&test.test);
+    }
+
+    if matching_tests.len() > DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT {
+        output.push_str(&format!(
+            "\n  ... and {} more",
+            matching_tests.len() - DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT
+        ));
     }
 
     Some(output)
@@ -3981,6 +4027,27 @@ mod tests {
         assert!(!should_render_trace_output(true, true));
         assert!(!should_render_trace_output(false, false));
         assert!(should_render_trace_output(false, true));
+    }
+
+    #[test]
+    fn debugger_test_candidates_preserve_exact_suite_ids() {
+        let matching = BTreeMap::from([(
+            "test/Counter.t.sol".to_string(),
+            BTreeMap::from([(
+                "CounterTest".to_string(),
+                vec!["testFuzz_SetNumber(uint256)".to_string(), "test_Increment()".to_string()],
+            )]),
+        )]);
+
+        let candidates = collect_matching_debug_tests(&matching);
+
+        assert_eq!(candidates[0].contract, "test/Counter.t.sol:CounterTest");
+        assert_eq!(candidates[0].test, "testFuzz_SetNumber(uint256)");
+        assert_eq!(candidates[1].test, "test_Increment()");
+        assert_eq!(
+            format_matching_debug_tests(&candidates).unwrap(),
+            "\n\nMatching tests:\n  test/Counter.t.sol:CounterTest.testFuzz_SetNumber(uint256)\n  test/Counter.t.sol:CounterTest.test_Increment()"
+        );
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5913>
