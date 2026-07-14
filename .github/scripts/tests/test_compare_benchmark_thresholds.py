@@ -9,13 +9,14 @@ SCRIPT = pathlib.Path(__file__).parents[1] / "compare-benchmark-thresholds.py"
 
 
 class CompareBenchmarkThresholdsTests(unittest.TestCase):
-    def run_compare(self, base, candidate, rules):
+    def run_compare(self, base, candidate, rules, candidate_exists=True):
         with tempfile.TemporaryDirectory() as directory:
             directory = pathlib.Path(directory)
             base_path = directory / "base.json"
             candidate_path = directory / "candidate.json"
             base_path.write_text(json.dumps(base))
-            candidate_path.write_text(json.dumps(candidate))
+            if candidate_exists:
+                candidate_path.write_text(json.dumps(candidate))
             config_path = directory / "thresholds.json"
             config_path.write_text(json.dumps({
                 "schema_version": 1,
@@ -46,20 +47,34 @@ class CompareBenchmarkThresholdsTests(unittest.TestCase):
         self.assertEqual(warning.returncode, 0)
         self.assertIn("Warning", warning.stdout)
 
-    def test_advisory_missing_and_uncalibrated_never_alert(self):
+    def test_advisory_and_uncalibrated_never_alert(self):
         advisory = self.run_compare(
             {"coverage": 100}, {"coverage": 120}, {"coverage": self.rule(5, 10, False)}
         )
         self.assertEqual(advisory.returncode, 0)
         self.assertIn("Regression (advisory)", advisory.stdout)
 
-        missing = self.run_compare({"only-base": 1}, {"only-candidate": 1}, {})
-        self.assertEqual(missing.returncode, 0)
-        self.assertEqual(missing.stdout.count("Inconclusive (missing side)"), 2)
-
         uncalibrated = self.run_compare({"symbolic": 1}, {"symbolic": 2}, {})
         self.assertEqual(uncalibrated.returncode, 0)
         self.assertIn("Uncalibrated", uncalibrated.stdout)
+
+    def test_missing_nightly_alerts_but_missing_baseline_does_not(self):
+        rules = {
+            "alerting": self.rule(5, 10),
+            "advisory": self.rule(5, 10, False),
+        }
+        missing_nightly = self.run_compare({"alerting": 1, "advisory": 1}, {}, rules)
+        self.assertEqual(missing_nightly.returncode, 1)
+        self.assertIn("❌ Missing nightly result", missing_nightly.stdout)
+        self.assertIn("⚠️ Inconclusive (missing side)", missing_nightly.stdout)
+
+        missing_nightly_file = self.run_compare({"alerting": 1}, {}, rules, False)
+        self.assertEqual(missing_nightly_file.returncode, 1)
+        self.assertIn("❌ Missing nightly result", missing_nightly_file.stdout)
+
+        missing_baseline = self.run_compare({}, {"alerting": 1}, rules)
+        self.assertEqual(missing_baseline.returncode, 0)
+        self.assertIn("⚠️ Inconclusive (missing side)", missing_baseline.stdout)
 
     def test_malformed_config_and_input_exit_two(self):
         config = self.run_compare({"key": 1}, {"key": 2}, {"key": self.rule(10, 5)})

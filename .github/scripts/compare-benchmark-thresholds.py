@@ -84,7 +84,12 @@ def compare(base, candidate, rules):
         if not has_base or not has_candidate:
             present = duration(mean_of(candidate[key] if not has_base else base[key], key))
             left, right = ("N/A", present) if not has_base else (present, "N/A")
-            print(f"| `{key}` | {left} | {right} | ⚠️ Inconclusive (missing side) |")
+            if has_base and rules.get(key, {}).get("alert", False):
+                has_regression = True
+                verdict = "❌ Missing nightly result"
+            else:
+                verdict = "⚠️ Inconclusive (missing side)"
+            print(f"| `{key}` | {left} | {right} | {verdict} |")
             continue
 
         baseline = mean_of(base[key], key)
@@ -127,7 +132,8 @@ def main():
     args = parser.parse_args()
     base_path = pathlib.Path(args.base)
     base = load_object(base_path, "baseline") if base_path.is_file() else {}
-    candidate = load_object(args.candidate, "candidate")
+    candidate_path = pathlib.Path(args.candidate)
+    candidate = load_object(candidate_path, "candidate") if candidate_path.is_file() else {}
     rules = load_rules(args.thresholds)
     return compare(base, candidate, rules)
 
