@@ -2672,10 +2672,11 @@ contract Called {
     event log_string(string);
     uint256 public x;
     uint256 public y;
-    function run(uint256 _x, uint256 _y) external {
+    function run(uint256 _x, uint256 _y) external returns (uint256 result) {
         x = _x;
         y = _y;
         emit log_string("script ran");
+        return _x + _y;
     }
 }
 
@@ -2708,10 +2709,10 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
     ├─ [..] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
-    │   └─ ← [Return] 567 bytes of code
+    │   └─ ← [Return] 700 bytes of code
     ├─ [..] Called::run(123, 456)
     │   ├─ emit log_string(val: "script ran")
-    │   └─ ← [Stop]
+    │   └─ ← [Return] 579
     └─ ← [Stop]
 
 
@@ -2724,12 +2725,12 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [113557] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
-    └─ ← [Return] 567 bytes of code
+  [140181] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    └─ ← [Return] 700 bytes of code
 
-  [46595] Called::run(123, 456)
+  [46966] Called::run(123, 456)
     ├─ emit log_string(val: "script ran")
-    └─ ← [Stop]
+    └─ ← [Return] 579
 
 
 ==========================
@@ -2770,7 +2771,7 @@ value                0
 
 accessList           []
 chainId              31337
-gasLimit             93856
+gasLimit             99920
 gasPrice             
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
 maxFeePerBlobGas     
@@ -2781,7 +2782,7 @@ to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 EIP-1559
 value                0
 contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
-data (decoded): function run(uint256 _x, uint256 _y)(
+data (decoded): run(
   123,
   456
 )
