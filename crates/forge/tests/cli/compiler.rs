@@ -5,6 +5,7 @@ use foundry_test_utils::{
     snapbox::IntoData,
     util::{SOLC_VERSION, get_vyper},
 };
+use path_slash::PathBufExt;
 
 const CONTRACT_A: &str = r#"
 // SPDX-license-identifier: MIT
@@ -97,7 +98,7 @@ forgetest_init!(can_print_resolved_compiler_path, |prj, cmd| {
 
     cmd.args(["compiler", "resolve", "--path"])
         .assert_success()
-        .stdout_eq(format!("{}\n", solc.solc.display()));
+        .stdout_eq(format!("{}\n", solc.solc.to_slash_lossy()));
 });
 
 forgetest!(can_print_resolved_vyper_path, |prj, cmd| {
