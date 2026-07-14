@@ -1247,7 +1247,9 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
-        let mut decoder_builder = CallTraceDecoderBuilder::new();
+        let mut decoder_builder = CallTraceDecoderBuilder::new().with_tempo_hardfork(
+            self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork())),
+        );
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
