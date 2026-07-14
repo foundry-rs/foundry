@@ -228,12 +228,22 @@ jobs:
           DATE=$(date -u +%Y-%m-%d)
           STABLE_JSON="benches/stable-${DATE}.json"
           NIGHTLY_JSON="benches/nightly-${DATE}.json"
-          if ./.github/scripts/compare-nightly.sh "$STABLE_JSON" "$NIGHTLY_JSON" > regression.md 2>&1; then
+          set +e
+          python3 ./.github/scripts/compare-benchmark-thresholds.py \
+            "$STABLE_JSON" "$NIGHTLY_JSON" \
+            .github/benchmark-regression-thresholds.json > regression.md 2>&1
+          status=$?
+          set -e
+          if [[ $status -eq 0 ]]; then
             echo "has_regression=false" >> "$GITHUB_OUTPUT"
-          else
+          elif [[ $status -eq 1 ]]; then
             echo "has_regression=true" >> "$GITHUB_OUTPUT"
+          else
+            cat regression.md
+            exit "$status"
           fi
           cat regression.md
+          cat regression.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -248,7 +258,7 @@ jobs:
   report-regression:
     name: Report Regression
     needs: run-benchmarks
-    if: needs.run-benchmarks.outputs.has_regression == 'true'
+    if: needs.run-benchmarks.outputs.has_regression == 'true' && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -272,7 +282,7 @@ jobs:
           **Run**: [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
           **Date**: ${DATE}
           **Repo benchmarked**: \`aave/aave-v4\` (pinned commit)
-          **Threshold**: 🔴 >=3% regression, 🟡 >=1% warning"
+          **Threshold**: Per-benchmark calibrated thresholds from \`.github/benchmark-regression-thresholds.json\`"
 
           gh issue create \
             --title "[Nightly Regression] ${DATE}" \
