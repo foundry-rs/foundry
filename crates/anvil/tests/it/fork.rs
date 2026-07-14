@@ -1814,6 +1814,76 @@ async fn test_fork_reset_reuses_cached_remote_state() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_does_not_reuse_cache_for_new_rpc_url() {
+    let address = Address::random();
+    let first_balance = U256::from(1337u64);
+    let second_balance = U256::from(42u64);
+    let timestamp = 1_000_000u64;
+    let chain_id =
+        u64::from_be_bytes(address.as_slice()[12..].try_into().unwrap()) % 1_000_000 + 1_000_000;
+    let cache_dir = Config::foundry_chain_cache_dir(chain_id).unwrap();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    async {
+        let first_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, first_balance)].into_iter().collect());
+        let (_first_origin_api, first_origin_handle) = spawn(first_origin).await;
+        let second_origin = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(timestamp))
+            .with_funded_accounts([(address, second_balance)].into_iter().collect());
+        let (_second_origin_api, second_origin_handle) = spawn(second_origin).await;
+        let fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(first_origin_handle.http_endpoint()));
+        let (api, handle) = spawn(fork_config).await;
+        let provider = handle.http_provider();
+        let fork_block_number = api.anvil_node_info().await.unwrap().fork_config.fork_block_number;
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
+            .await
+            .unwrap();
+        assert_eq!(provider.get_balance(address).await.unwrap(), first_balance);
+
+        let local_balance = U256::from(9001u64);
+        api.anvil_set_balance(address, local_balance).await.unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let unavailable_url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        assert!(
+            api.anvil_reset(Some(Forking {
+                json_rpc_url: Some(unavailable_url),
+                block_number: fork_block_number,
+            }))
+            .await
+            .is_err()
+        );
+        assert_eq!(provider.get_balance(address).await.unwrap(), local_balance);
+
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(second_origin_handle.http_endpoint()),
+            block_number: fork_block_number,
+        }))
+        .await
+        .unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+
+        let second_fork_config = NodeConfig::test()
+            .with_chain_id(Some(chain_id))
+            .with_eth_rpc_url(Some(second_origin_handle.http_endpoint()));
+        let (_second_fork_api, second_fork_handle) = spawn(second_fork_config).await;
+        let second_fork_provider = second_fork_handle.http_provider();
+        assert_eq!(second_fork_provider.get_balance(address).await.unwrap(), second_balance);
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_get_account() {
     let (_api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
