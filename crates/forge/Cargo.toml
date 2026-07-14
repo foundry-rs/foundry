@@ -119,6 +119,10 @@ tempfile.workspace = true
 
 alloy-signer-local.workspace = true
 
+[target.'cfg(unix)'.dev-dependencies]
+# Keep this aligned with the Chisel PTY test dependency.
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
+
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]

@@ -1863,6 +1863,8 @@ impl TestArgs {
             );
         }
 
+        let mut filter = filter.clone();
+
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;
@@ -1927,7 +1929,7 @@ impl TestArgs {
                 config,
                 evm_opts.clone(),
                 output,
-                filter,
+                &mut filter,
                 execution.clone(),
             )
             .await?
@@ -1943,7 +1945,7 @@ impl TestArgs {
                     config.clone(),
                     evm_opts.clone(),
                     output,
-                    filter,
+                    &mut filter,
                     TestExecutionOptions {
                         decode_internal,
                         multi_network: MultiNetworkConfig {
@@ -1965,7 +1967,7 @@ impl TestArgs {
                         config.clone(),
                         pass_evm_opts.clone(),
                         output,
-                        filter,
+                        &mut filter,
                         TestExecutionOptions {
                             decode_internal,
                             multi_network: MultiNetworkConfig {
@@ -2428,7 +2430,7 @@ impl TestArgs {
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
@@ -2489,7 +2491,7 @@ impl TestArgs {
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         match network_dispatch_kind(dispatch_opts) {
@@ -2557,7 +2559,7 @@ impl TestArgs {
         mut runner: MultiContractRunner<FEN>,
         config: Arc<Config>,
         verbosity: u8,
-        filter: &ProjectPathsAwareFilter,
+        filter: &mut ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         let fuzz_seed = config.fuzz.seed;
@@ -2615,7 +2617,7 @@ impl TestArgs {
         } else {
             Vec::new()
         };
-        let selected_filter = if interactive_debug_selection {
+        if interactive_debug_selection {
             let Some(selected) = Select::new()
                 .with_prompt("Select a test to debug")
                 .items(
@@ -2624,19 +2626,14 @@ impl TestArgs {
                         .map(|test| format!("{}.{}", test.contract, test.test)),
                 )
                 .max_length(DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT)
-                .interact_on_opt(&Term::stdout())?
+                .interact_on_opt(&Term::stderr())?
             else {
                 bail!("Debugger test selection cancelled");
             };
 
-            let mut selected_filter = filter.clone();
-            selected_filter.set_rerun_failures(vec![matching_debug_tests.swap_remove(selected)]);
+            filter.set_rerun_failures(vec![matching_debug_tests.swap_remove(selected)]);
             num_filtered = 1;
-            Some(selected_filter)
-        } else {
-            None
-        };
-        let filter = selected_filter.as_ref().unwrap_or(filter);
+        }
 
         if num_filtered != 1
             && (self.debug || self.flamegraph || self.flamechart || self.evm_profile.is_some())
@@ -4027,18 +4024,18 @@ mod tests {
             "test/Counter.t.sol".to_string(),
             BTreeMap::from([(
                 "CounterTest".to_string(),
-                vec!["testFuzz_SetNumber".to_string(), "test_Increment".to_string()],
+                vec!["testFuzz_SetNumber(uint256)".to_string(), "test_Increment()".to_string()],
             )]),
         )]);
 
         let candidates = collect_matching_debug_tests(&matching);
 
         assert_eq!(candidates[0].contract, "test/Counter.t.sol:CounterTest");
-        assert_eq!(candidates[0].test, "testFuzz_SetNumber");
-        assert_eq!(candidates[1].test, "test_Increment");
+        assert_eq!(candidates[0].test, "testFuzz_SetNumber(uint256)");
+        assert_eq!(candidates[1].test, "test_Increment()");
         assert_eq!(
             format_matching_debug_tests(&candidates).unwrap(),
-            "\n\nMatching tests:\n  test/Counter.t.sol:CounterTest.testFuzz_SetNumber\n  test/Counter.t.sol:CounterTest.test_Increment"
+            "\n\nMatching tests:\n  test/Counter.t.sol:CounterTest.testFuzz_SetNumber(uint256)\n  test/Counter.t.sol:CounterTest.test_Increment()"
         );
     }
 
