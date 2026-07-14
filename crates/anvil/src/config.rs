@@ -1346,30 +1346,19 @@ impl NodeConfig {
                 .wrap_err("failed to establish provider to fork url")?,
         );
 
-        let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
-            &self.fork_choice
-        {
+        let (fork_block_number, force_transactions) = if let Some(fork_choice) = &self.fork_choice {
             let (fork_block_number, force_transactions) =
                 derive_block_and_transactions(fork_choice, &provider).await.wrap_err(
                     "failed to derive fork block number and force transactions from fork choice",
                 )?;
-            let chain_id = if let Some(chain_id) = self.fork_chain_id {
-                Some(chain_id)
-            } else if self.hardfork.is_none() {
-                let chain_id =
-                    provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
-                Some(U256::from(chain_id))
-            } else {
-                None
-            };
 
-            (fork_block_number, chain_id, force_transactions)
+            (fork_block_number, force_transactions)
         } else {
             // pick the last block number but also ensure it's not pending anymore
             let bn = find_latest_fork_block(&provider)
                 .await
                 .wrap_err("failed to get fork block number")?;
-            (bn, None, None)
+            (bn, None)
         };
 
         let block = provider
@@ -1407,27 +1396,31 @@ latest block number: {latest_block}"
             ..block_env_from_header(&block.header)
         };
 
+        let fork_chain_id = if let Some(fork_chain_id) = self.fork_chain_id {
+            fork_chain_id.to()
+        } else if self.hardfork.is_some()
+            && let Some(chain_id) = self.chain_id
+        {
+            chain_id
+        } else {
+            provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+        };
+
         // Determine chain_id early so we can use it consistently
         let chain_id = if let Some(chain_id) = self.chain_id {
             chain_id
         } else {
-            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id.to()
-            } else {
-                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-            };
-
             // need to update the dev signers and env with the chain id
-            self.set_chain_id(Some(chain_id));
-            evm_env.cfg_env.chain_id = chain_id;
-            chain_id
+            self.set_chain_id(Some(fork_chain_id));
+            evm_env.cfg_env.chain_id = fork_chain_id;
+            fork_chain_id
         };
 
         let hardfork = resolve_fork_hardfork(
             provider.as_ref(),
             self.hardfork,
             self.get_hardfork(),
-            chain_id,
+            fork_chain_id,
             block.header.timestamp(),
             fork_block_number,
         )

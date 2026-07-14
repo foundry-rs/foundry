@@ -89,6 +89,8 @@ fn arbitrum_hardfork(arb_os_version: U256) -> Option<EthereumHardfork> {
         Some(EthereumHardfork::Cancun)
     } else if arb_os_version >= U256::from(11) {
         Some(EthereumHardfork::Shanghai)
+    } else if arb_os_version >= U256::from(1) {
+        Some(EthereumHardfork::Paris)
     } else {
         None
     }
@@ -162,7 +164,10 @@ mod tests {
     #[test]
     fn maps_arb_sys_os_versions_in_descending_order() {
         let cases = [
-            (65, None),
+            (54, None),
+            (55, None),
+            (56, Some(EthereumHardfork::Paris)),
+            (65, Some(EthereumHardfork::Paris)),
             (66, Some(EthereumHardfork::Shanghai)),
             (74, Some(EthereumHardfork::Shanghai)),
             (75, Some(EthereumHardfork::Cancun)),

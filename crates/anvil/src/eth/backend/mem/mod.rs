@@ -1452,7 +1452,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork.into()),
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork().into()),
                 evm_env.block_env.clone(),
             );
             let mut evm =
