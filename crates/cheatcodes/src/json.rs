@@ -537,18 +537,33 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
         Value::Object(map) => {
             // Try to find a struct definition that matches the object keys.
             let keys: BTreeSet<_> = map.keys().map(|s| s.as_str()).collect();
-            let matching_def = defs.values().find(|fields| {
-                fields.len() == keys.len()
-                    && fields.iter().map(|(name, _)| name.as_str()).collect::<BTreeSet<_>>() == keys
-            });
+            let matching_defs = defs
+                .values()
+                .filter(|fields| {
+                    fields.len() == keys.len()
+                        && fields.iter().map(|(name, _)| name.as_str()).collect::<BTreeSet<_>>()
+                            == keys
+                })
+                .collect::<Vec<_>>();
 
-            if let Some(fields) = matching_def {
+            if let Some(fields) = matching_defs.first() {
                 // Found a struct with matching field names, use the order from the definition.
                 fields
                     .iter()
-                    .map(|(name, _)| {
+                    .map(|(name, type_description)| {
                         // unwrap is safe because we know the key exists.
-                        _json_value_to_token(map.get(name).unwrap(), defs)
+                        let value = map.get(name).unwrap();
+                        let unambiguous = matching_defs.iter().all(|fields| {
+                            fields
+                                .iter()
+                                .find(|(field, _)| field == name)
+                                .is_some_and(|(_, ty)| ty == type_description)
+                        });
+                        if unambiguous && let Some(ty) = fixed_array_type(type_description, defs) {
+                            parse_json_as(value, &ty)
+                        } else {
+                            _json_value_to_token(value, defs)
+                        }
                     })
                     .collect::<Result<_>>()
                     .map(DynSolValue::Tuple)
@@ -643,6 +658,23 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
             // Otherwise, treat as a regular string
             Ok(DynSolValue::String(string.to_owned()))
         }
+    }
+}
+
+fn fixed_array_type(type_description: &str, defs: &StructDefinitions) -> Option<DynSolType> {
+    let root = type_description.split('[').next()?;
+    if !matches!(defs.get(root), Ok(None)) {
+        return None;
+    }
+
+    DynSolType::parse(type_description).ok().filter(contains_fixed_array)
+}
+
+fn contains_fixed_array(ty: &DynSolType) -> bool {
+    match ty {
+        DynSolType::FixedArray(_, _) => true,
+        DynSolType::Array(inner) => contains_fixed_array(inner),
+        _ => false,
     }
 }
 
@@ -978,6 +1010,26 @@ mod tests {
             return Ok(());
         }
         panic!("Expected Person to be CustomStruct");
+    }
+
+    #[test]
+    fn test_fixed_array_type() {
+        let mut struct_defs = TypeDefMap::new();
+        struct_defs.insert(
+            "Contract.Child".to_string(),
+            vec![("value".to_string(), "uint256".to_string())],
+        );
+        let struct_defs = StructDefinitions::from(struct_defs);
+
+        assert_eq!(
+            fixed_array_type("uint256[1][]", &struct_defs),
+            Some(DynSolType::Array(Box::new(DynSolType::FixedArray(
+                Box::new(DynSolType::Uint(256)),
+                1,
+            ))))
+        );
+        assert!(fixed_array_type("uint256[", &struct_defs).is_none());
+        assert!(fixed_array_type("Contract.Child[1]", &struct_defs).is_none());
     }
 
     #[test]

@@ -67,6 +67,31 @@ library JsonStructs {
 contract ParseJsonTest is Test {
     using JsonStructs for *;
 
+    struct StaticArray {
+        uint256[1] timestamp;
+    }
+
+    struct NestedStaticArray {
+        uint256[2][1] matrix;
+    }
+
+    struct AmbiguousAStaticArray {
+        uint256[1] ambiguousValues;
+    }
+
+    struct AmbiguousZDynamicArray {
+        uint256[] ambiguousValues;
+    }
+
+    struct StaticBytesArray {
+        bytes4[1] selectors;
+    }
+
+    struct SelectiveStaticArray {
+        uint256[1] fixedValues;
+        string inferredAddress;
+    }
+
     struct FlatJson {
         uint256 a;
         int24[][] arr;
@@ -152,6 +177,45 @@ contract ParseJsonTest is Test {
         uint256[] memory decodedData = abi.decode(data, (uint256[]));
         assertEq(42, decodedData[0]);
         assertEq(43, decodedData[1]);
+    }
+
+    function test_staticArray() public {
+        bytes memory data = vm.parseJson('{"timestamp":[1655140035]}');
+        StaticArray memory decodedData = abi.decode(data, (StaticArray));
+        assertEq(1655140035, decodedData.timestamp[0]);
+    }
+
+    function test_nestedStaticArray() public {
+        bytes memory data = vm.parseJson('{"matrix":[[42,43]]}');
+        NestedStaticArray memory decodedData = abi.decode(data, (NestedStaticArray));
+        assertEq(42, decodedData.matrix[0][0]);
+        assertEq(43, decodedData.matrix[0][1]);
+    }
+
+    function test_staticArrayLengthMismatch() public {
+        vm._expectCheatcodeRevert("array length mismatch");
+        vm.parseJson('{"timestamp":[1,2]}');
+    }
+
+    function test_ambiguousArrayFallsBackToDynamic() public {
+        bytes memory data = vm.parseJson('{"ambiguousValues":[42]}');
+        AmbiguousZDynamicArray memory decodedData = abi.decode(data, (AmbiguousZDynamicArray));
+        assertEq(42, decodedData.ambiguousValues[0]);
+    }
+
+    function test_staticArrayUsesElementType() public {
+        bytes memory data = vm.parseJson('{"selectors":["0x12345678"]}');
+        StaticBytesArray memory decodedData = abi.decode(data, (StaticBytesArray));
+        assertEq(bytes32(decodedData.selectors[0]), bytes32(bytes4(0x12345678)));
+    }
+
+    function test_staticArrayPreservesSiblingInference() public {
+        address inferredAddress = address(0x1234);
+        bytes memory data = vm.parseJson(
+            string.concat('{"fixedValues":[42],"inferredAddress":"', vm.toString(inferredAddress), '"}')
+        );
+        uint256[1] memory fixedValues = [uint256(42)];
+        assertEq(data, abi.encode(fixedValues, inferredAddress));
     }
 
     // Object keys are sorted alphabetically, regardless of input.
