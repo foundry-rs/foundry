@@ -72,7 +72,7 @@ use alloy_rpc_types::{
     anvil::Forking,
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
-    simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
+    simulate::{SimBlock, SimCallResult, SimulateError, SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
     trace::{
         filter::TraceFilter,
@@ -95,7 +95,7 @@ use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
 };
-use anvil_rpc::error::RpcError;
+use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
@@ -185,7 +185,7 @@ use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
     io::{Read, Write},
-    ops::{Mul, Not},
+    ops::Mul,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -5068,7 +5068,21 @@ impl Backend<FoundryNetwork> {
                 }
 
                 // execute all calls in that block
-                for (req_idx, request) in calls.into_iter().enumerate() {
+                for (req_idx, mut request) in calls.into_iter().enumerate() {
+                    let remaining_gas = block_env.gas_limit.saturating_sub(gas_used);
+                    let requested_gas = request.gas.unwrap_or(remaining_gas);
+                    if requested_gas > remaining_gas {
+                        return Err(BlockchainError::RpcError(RpcError {
+                            code: ErrorCode::ServerError(-38015),
+                            message: format!(
+                                "block gas limit exceeded: remaining {remaining_gas}, requested {requested_gas}"
+                            )
+                            .into(),
+                            data: None,
+                        }));
+                    }
+                    request.gas = Some(requested_gas);
+
                     let fee_details = FeeDetails::new(
                         request.gas_price,
                         request.max_fee_per_gas,
@@ -5141,13 +5155,21 @@ impl Backend<FoundryNetwork> {
                         gas_used: result.tx_gas_used(),
                         max_used_gas: None,
                         status: result.is_success(),
-                        error: result.is_success().not().then(|| {
-                            alloy_rpc_types::simulate::SimulateError {
+                        error: match &result {
+                            ExecutionResult::Success { .. } => None,
+                            ExecutionResult::Halt {
+                                reason: HaltReason::OutOfGas(_), ..
+                            } => Some(SimulateError {
+                                code: SimulateError::VM_EXECUTION_ERROR_CODE,
+                                message: "out of gas".to_string(),
+                                data: None,
+                            }),
+                            _ => Some(SimulateError {
                                 code: -3200,
                                 message: "execution failed".to_string(),
                                 data: None,
-                            }
-                        }),
+                            }),
+                        },
                         logs: result.clone()
                             .into_logs()
                             .into_iter()
