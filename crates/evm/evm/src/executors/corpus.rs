@@ -1072,26 +1072,7 @@ impl WorkerCorpus {
             self.optimization_best_value.is_none_or(|best| *value > best)
         });
 
-        // Update stats of current mutated primary corpus.
-        if let Some(index) = self.current_mutated_index.take() {
-            let should_credit = new_coverage || improved_optimization;
-            if let Some(corpus) = self.in_memory_corpus.get_mut(index) {
-                corpus.total_mutations += 1;
-                if should_credit {
-                    corpus.new_finds_produced += 1
-                }
-                let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
-                    > FAVORABILITY_THRESHOLD;
-                self.metrics.update_favored(is_favored, corpus.is_favored);
-                corpus.is_favored = is_favored;
-
-                trace!(
-                    target: "corpus",
-                    "updated corpus {}, total mutations: {}, new finds: {}",
-                    corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
-                );
-            }
-        }
+        self.current_mutated_index = None;
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -1376,7 +1357,7 @@ impl WorkerCorpus {
                 MutationType::Splice => {
                     trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
 
-                    self.current_mutated_index = Some(primary_index);
+                    self.current_mutated_index = primary_index;
 
                     let start1 = test_runner.rng().random_range(0..primary.tx_seq.len());
                     let end1 = test_runner.rng().random_range(start1..primary.tx_seq.len());
@@ -1396,24 +1377,21 @@ impl WorkerCorpus {
                     };
                     trace!(target: "corpus", "repeat {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
-                    let start = rng.random_range(0..corpus.tx_seq.len());
-                    let end = rng.random_range(start..corpus.tx_seq.len());
-                    let item_idx = rng.random_range(0..corpus.tx_seq.len());
-                    let repeated = corpus.tx_seq[item_idx].clone();
-
-                    new_seq.reserve(corpus.tx_seq.len());
-                    new_seq.extend_from_slice(&corpus.tx_seq[..start]);
-                    for _ in start..end {
-                        new_seq.push(repeated.clone());
+                    new_seq = corpus.tx_seq.clone();
+                    let start = test_runner.rng().random_range(0..new_seq.len());
+                    let end = test_runner.rng().random_range(start..new_seq.len());
+                    let item_idx = test_runner.rng().random_range(0..new_seq.len());
+                    let repeated = new_seq[item_idx].clone();
+                    for tx in &mut new_seq[start..end] {
+                        *tx = repeated.clone();
                     }
-                    new_seq.extend_from_slice(&corpus.tx_seq[end..]);
                 }
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
 
-                    self.current_mutated_index = Some(primary_index);
+                    self.current_mutated_index = primary_index;
 
                     new_seq.reserve(primary.tx_seq.len().min(secondary.tx_seq.len()));
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
@@ -1434,14 +1412,12 @@ impl WorkerCorpus {
                     };
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
-                    let prefix_len = rng.random_range(0..=corpus.tx_seq.len());
-                    new_seq.reserve(corpus.tx_seq.len());
-                    for _ in 0..prefix_len {
-                        new_seq.push(self.new_tx(test_runner)?);
+                    new_seq = corpus.tx_seq.clone();
+                    for i in 0..test_runner.rng().random_range(0..=new_seq.len()) {
+                        new_seq[i] = self.new_tx(test_runner)?;
                     }
-                    new_seq.extend_from_slice(&corpus.tx_seq[prefix_len..]);
                 }
                 MutationType::Suffix => {
                     let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
@@ -1451,14 +1427,13 @@ impl WorkerCorpus {
                     };
                     trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
-                    let suffix_len = rng.random_range(0..corpus.tx_seq.len());
-                    let retained_len = corpus.tx_seq.len() - suffix_len;
-                    new_seq.reserve(corpus.tx_seq.len());
-                    new_seq.extend_from_slice(&corpus.tx_seq[..retained_len]);
-                    for _ in retained_len..corpus.tx_seq.len() {
-                        new_seq.push(self.new_tx(test_runner)?);
+                    new_seq = corpus.tx_seq.clone();
+                    for i in new_seq.len() - test_runner.rng().random_range(0..new_seq.len())
+                        ..new_seq.len()
+                    {
+                        new_seq[i] = self.new_tx(test_runner)?;
                     }
                 }
                 MutationType::Abi => {
@@ -1470,7 +1445,7 @@ impl WorkerCorpus {
                     };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
                     new_seq = corpus.tx_seq.clone();
 
@@ -1493,7 +1468,7 @@ impl WorkerCorpus {
                     };
                     trace!(target: "corpus", "cmp mutate args of {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
                     new_seq = corpus.tx_seq.clone();
                     let mut mutated = false;
@@ -1536,81 +1511,81 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::CrossoverInsert => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
+                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
+                        (primary_index, &primary)
                     } else {
-                        (secondary_index, secondary)
+                        (secondary_index, &secondary)
                     };
                     trace!(target: "corpus", "crossover insert into {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
                     new_seq = corpus.tx_seq.clone();
-                    if let Some(tx) = self.load_random_disk_tx(rng) {
-                        let idx = rng.random_range(0..=new_seq.len());
+                    if let Some(tx) = self.load_random_disk_tx(test_runner.rng()) {
+                        let idx = test_runner.rng().random_range(0..=new_seq.len());
                         new_seq.insert(idx, tx);
                     }
                 }
                 MutationType::CrossoverReplace => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
+                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
+                        (primary_index, &primary)
                     } else {
-                        (secondary_index, secondary)
+                        (secondary_index, &secondary)
                     };
                     trace!(target: "corpus", "crossover replace in {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
                     new_seq = corpus.tx_seq.clone();
-                    if let Some(tx) = self.load_random_disk_tx(rng) {
-                        let idx = rng.random_range(0..new_seq.len());
+                    if let Some(tx) = self.load_random_disk_tx(test_runner.rng()) {
+                        let idx = test_runner.rng().random_range(0..new_seq.len());
                         new_seq[idx] = tx;
                     }
                 }
                 MutationType::Insert => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
+                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
+                        (primary_index, &primary)
                     } else {
-                        (secondary_index, secondary)
+                        (secondary_index, &secondary)
                     };
                     trace!(target: "corpus", "insert generated tx into {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
                     new_seq = corpus.tx_seq.clone();
-                    let idx = rng.random_range(0..=new_seq.len());
+                    let idx = test_runner.rng().random_range(0..=new_seq.len());
                     new_seq.insert(idx, self.new_tx(test_runner)?);
                 }
                 MutationType::Delete => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
+                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
+                        (primary_index, &primary)
                     } else {
-                        (secondary_index, secondary)
+                        (secondary_index, &secondary)
                     };
                     trace!(target: "corpus", "delete tx from {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
                     new_seq = corpus.tx_seq.clone();
                     if new_seq.len() > 1 {
-                        let idx = rng.random_range(0..new_seq.len());
+                        let idx = test_runner.rng().random_range(0..new_seq.len());
                         new_seq.remove(idx);
                     }
                 }
                 MutationType::Swap => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
+                    let (corpus_index, corpus) = if test_runner.rng().random::<bool>() {
+                        (primary_index, &primary)
                     } else {
-                        (secondary_index, secondary)
+                        (secondary_index, &secondary)
                     };
                     trace!(target: "corpus", "swap txs in {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
+                    self.current_mutated_index = corpus_index;
 
                     new_seq = corpus.tx_seq.clone();
                     if new_seq.len() >= 2 {
-                        let first = rng.random_range(0..new_seq.len());
-                        let mut second = rng.random_range(0..new_seq.len() - 1);
+                        let first = test_runner.rng().random_range(0..new_seq.len());
+                        let mut second = test_runner.rng().random_range(0..new_seq.len() - 1);
                         if second >= first {
                             second += 1;
                         }
