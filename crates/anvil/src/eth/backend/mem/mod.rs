@@ -3000,14 +3000,14 @@ where
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
-            let mut input = Vec::with_capacity(40);
-            input.extend_from_slice(best_hash.as_slice());
-            input.extend_from_slice(&block_number.to_le_bytes());
+            let mut input = [0u8; 40];
+            input[..32].copy_from_slice(best_hash.as_slice());
+            input[32..].copy_from_slice(&block_number.to_le_bytes());
             // Use the `prevrandao` value set via `anvil_setNextBlockPrevRandao` for this block if
             // one was provided, otherwise derive it from the parent hash and block number. The
             // manual override is consumed here so it only applies to this single block.
             evm_env.block_env.prevrandao =
-                Some(self.cheats.take_next_block_prevrandao().unwrap_or_else(|| keccak256(&input)));
+                Some(self.cheats.take_next_block_prevrandao().unwrap_or_else(|| keccak256(input)));
 
             if self.prune_state_history_config.is_state_history_supported() {
                 let db = self.db.read().await.current_state();
