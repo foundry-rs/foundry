@@ -127,12 +127,11 @@ impl StorageArgs {
 
         // Check if we're in a forge project and if we can find the address' code
         let project = build.project()?;
-        if project.paths.has_input_files() {
-            if let Some(artifact) =
+        if project.paths.has_input_files()
+            && let Some(artifact) =
                 compile_local_storage_layout(&project, &address_code, shell::is_json())?
-            {
-                return fetch_and_print_storage(provider, address, block, &artifact).await;
-            }
+        {
+            return fetch_and_print_storage(provider, address, block, &artifact).await;
         }
 
         let chain = utils::get_chain(config.chain, &provider).await?;
