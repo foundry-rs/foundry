@@ -12,6 +12,7 @@ pub mod batch_mktx;
 pub mod batch_send;
 pub mod bind;
 pub mod call;
+pub mod call_overrides;
 pub mod constructor_args;
 pub mod create2;
 pub mod creation_code;

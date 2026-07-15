@@ -370,18 +370,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             );
             print_scalar(out)?;
         }
-        CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
+        CastSubcommand::Balance { block, who, ether, rpc, erc20, overrides } => {
+            if erc20.is_none() && !overrides.is_empty() {
+                eyre::bail!("call overrides require `--erc20` when using `cast balance`");
+            }
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let account_addr = who.resolve(&provider).await?;
 
             match erc20 {
                 Some(token) => {
-                    let balance = IERC20::new(token, &provider)
-                        .balanceOf(account_addr)
-                        .block(block.unwrap_or_default())
-                        .call()
-                        .await?;
+                    let token = IERC20::new(token, &provider);
+                    let balance_call =
+                        token.balanceOf(account_addr).block(block.unwrap_or_default());
+                    let call = balance_call.call();
+                    let balance = overrides.apply(call)?.await?;
 
                     sh_warn!("--erc20 flag is deprecated, use `cast erc20 balance` instead")?;
                     print_scalar(format_uint_exp(balance))?;
