@@ -2498,14 +2498,21 @@ impl<N: Network> Backend<N> {
             fork.database.read().await.maybe_flush_cache().map_err(BlockchainError::Internal)?;
             let fork_block_number = fork.block_number();
             if rpc_url_changed {
-                let cache_path = self.node_config.read().await.block_cache_path(fork_block_number);
-                if let Some(cache_path) = cache_path
-                    && let Err(err) = std::fs::remove_file(&cache_path)
+                let cache_dir = {
+                    let config = self.node_config.read().await;
+                    if config.no_storage_caching || config.fork_urls.is_empty() {
+                        None
+                    } else {
+                        foundry_config::Config::foundry_chain_cache_dir(config.get_chain_id())
+                    }
+                };
+                if let Some(cache_dir) = cache_dir
+                    && let Err(err) = std::fs::remove_dir_all(&cache_dir)
                     && err.kind() != std::io::ErrorKind::NotFound
                 {
                     return Err(BlockchainError::Internal(format!(
                         "failed to invalidate fork cache at {}: {err}",
-                        cache_path.display()
+                        cache_dir.display()
                     )));
                 }
             }

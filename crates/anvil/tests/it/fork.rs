@@ -1868,10 +1868,16 @@ async fn test_fork_reset_does_not_reuse_cache_for_new_rpc_url() {
 
         api.anvil_reset(Some(Forking {
             json_rpc_url: Some(second_origin_handle.http_endpoint()),
-            block_number: fork_block_number,
+            block_number: Some(2),
         }))
         .await
         .unwrap();
+
+        assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
+
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: fork_block_number }))
+            .await
+            .unwrap();
 
         assert_eq!(provider.get_balance(address).await.unwrap(), second_balance);
 
