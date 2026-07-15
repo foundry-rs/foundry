@@ -5,10 +5,11 @@ use crate::{
         Severity, SolLint,
         analysis::{
             helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
-            primitives::is_require_or_assert,
+            primitives::{branch_always_exits, is_require_or_assert},
         },
     },
 };
+use alloy_primitives::U256;
 use solar::{
     ast::{
         BinOpKind, DataLocation, ElementaryType, LitKind, StateMutability, StrKind, TypeSize,
@@ -24,6 +25,8 @@ use solar::{
     },
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
+
+const REENTRANCY_GAS_STIPEND: u64 = 2_300;
 
 declare_forge_lint!(
     REENTRANCY_BALANCE,
@@ -60,7 +63,7 @@ impl<'hir> LateLintPass<'hir> for ReentrancyEth {
 
         let Some(body) = func.body else { return };
 
-        let mut analyzer = Analyzer::new(ctx, gcx, hir);
+        let mut analyzer = Analyzer::new(ctx, gcx, hir, func.span);
         if !analyzer.has_enabled_lints() {
             return;
         }
@@ -153,13 +156,17 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     hir: &'hir hir::Hir<'hir>,
     emitted: HashSet<Span>,
     emitted_balance: HashSet<Span>,
+    entry_function_span: Span,
     call_stack: Vec<FunctionId>,
-    inline_cache: HelperAnalysisCache<InlineCallKey, FlowState>,
+    inline_cache: HelperAnalysisCache<InlineCallKey, InlineCallResult>,
     recursive_cut_frontiers: HashMap<RecursiveFrontierKey, Vec<FunctionId>>,
     direct_internal_calls: HashMap<FunctionId, Vec<FunctionId>>,
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
     reentrancy_balance_enabled: bool,
+    balance_only_analysis: bool,
+    call_balance_values: HashMap<Span, Vec<BalanceValue>>,
+    return_collectors: Vec<ReturnCollector>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -167,7 +174,14 @@ struct InlineCallKey {
     func_id: FunctionId,
     /// First active function that can cut recursion from this callee.
     recursive_cut: Option<FunctionId>,
+    balance_only: bool,
     state: FlowState,
+}
+
+#[derive(Clone, Debug)]
+struct InlineCallResult {
+    state: FlowState,
+    returns: Vec<BalanceValue>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -176,14 +190,39 @@ struct RecursiveFrontierKey {
     active_call_stack: Vec<FunctionId>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct BalanceValue {
+    balance_dependent: bool,
+    stale_calls: HashSet<Span>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BalanceQuery {
+    Any,
+    Current(Span),
+    Stale(Span),
+}
+
+#[derive(Debug)]
+struct ReturnCollector {
+    func_id: FunctionId,
+    values: Vec<BalanceValue>,
+}
+
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
-    fn new(ctx: &'ctx LintContext<'s, 'c>, gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>) -> Self {
+    fn new(
+        ctx: &'ctx LintContext<'s, 'c>,
+        gcx: Gcx<'hir>,
+        hir: &'hir hir::Hir<'hir>,
+        entry_function_span: Span,
+    ) -> Self {
         Self {
             ctx,
             gcx,
             hir,
             emitted: HashSet::new(),
             emitted_balance: HashSet::new(),
+            entry_function_span,
             call_stack: Vec::new(),
             inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
             recursive_cut_frontiers: HashMap::new(),
@@ -191,6 +230,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
             reentrancy_balance_enabled: ctx.is_lint_enabled(REENTRANCY_BALANCE.id),
+            balance_only_analysis: false,
+            call_balance_values: HashMap::new(),
+            return_collectors: Vec::new(),
         }
     }
 
@@ -237,10 +279,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             return self.analyze_modifier_chain(modifiers, index + 1, body, state);
         };
 
+        self.seed_balance_parameters(modifier_func, &modifier.args, state);
         self.call_stack.push(modifier_id);
         let falls_through =
             self.analyze_block(modifier_body, Some((modifiers, index + 1, body)), state);
         self.call_stack.pop();
+        self.clear_function_balance_locals(modifier_id, state);
         falls_through
     }
 
@@ -274,7 +318,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 }
                 true
             }
-            StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => {
+            StmtKind::DeclMulti(vars, expr) => {
+                self.analyze_expr(expr, state);
+                if self.reentrancy_balance_enabled {
+                    self.update_balance_vars(state, vars.iter().copied(), expr);
+                }
+                true
+            }
+            StmtKind::Expr(expr) => {
                 self.analyze_expr(expr, state);
                 true
             }
@@ -293,6 +344,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 if let Some(expr) = expr {
                     self.analyze_expr(expr, state);
                 }
+                if self.reentrancy_balance_enabled {
+                    self.record_return(expr, state);
+                }
                 false
             }
             StmtKind::Break | StmtKind::Continue => false,
@@ -300,15 +354,28 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 let before_loop = state.clone();
                 let mut body_state = state.clone();
                 self.analyze_block(block, placeholder, &mut body_state);
+                // One bounded second iteration exposes loop-carried balance checks while leaving
+                // the established ETH and no-ETH analysis unchanged.
+                let second_iteration = self.reentrancy_balance_enabled.then(|| {
+                    let mut second_iteration = body_state.balance_only();
+                    self.analyze_with_only_balance(|this| {
+                        this.analyze_block(block, placeholder, &mut second_iteration);
+                    });
+                    second_iteration
+                });
                 state.clear();
                 state.merge(&before_loop);
                 state.merge(&body_state);
+                if let Some(second_iteration) = second_iteration {
+                    state.merge_balance(&second_iteration);
+                }
                 true
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.analyze_expr(cond, state);
                 if self.reentrancy_balance_enabled
-                    && (branch_reverts(then_stmt) || else_stmt.is_some_and(branch_reverts))
+                    && (branch_stops_current_path(then_stmt)
+                        || else_stmt.is_some_and(branch_stops_current_path))
                 {
                     self.emit_balance_calls(cond, state);
                 }
@@ -374,10 +441,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 if !written_vars.is_empty() {
                     self.emit_pending_calls(state, &written_vars);
                 }
-                if self.reentrancy_balance_enabled
-                    && let Some(var_id) = lhs_local_var(self.hir, lhs)
-                {
-                    self.update_balance_local(state, var_id, Some(rhs), op.is_some());
+                if self.reentrancy_balance_enabled {
+                    self.update_balance_assignment(state, lhs, rhs, op.is_some());
                 }
             }
             ExprKind::Delete(inner) => {
@@ -408,14 +473,32 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 self.analyze_expr(inner, state);
             }
             ExprKind::Call(callee, args, opts) => {
-                self.analyze_expr(callee, state);
+                let mut operands = Vec::with_capacity(1 + args.len() + usize::from(opts.is_some()));
+                operands.push(*callee);
                 if let Some(opts) = opts {
                     for opt in opts.args {
-                        self.analyze_expr(&opt.value, state);
+                        operands.push(&opt.value);
                     }
                 }
                 for arg in args.exprs() {
-                    self.analyze_expr(arg, state);
+                    operands.push(arg);
+                }
+
+                let before_operands = state.clone();
+                for operand in &operands {
+                    self.analyze_expr(operand, state);
+                }
+                // Solidity does not specify operand evaluation order. Reversing the operands
+                // covers both relative orders for each pair without changing the shared
+                // reentrancy analysis.
+                if self.reentrancy_balance_enabled && operands.len() > 1 {
+                    let mut reverse_state = before_operands.balance_only();
+                    self.analyze_with_only_balance(|this| {
+                        for operand in operands.iter().rev() {
+                            this.analyze_expr(operand, &mut reverse_state);
+                        }
+                    });
+                    state.merge_balance(&reverse_state);
                 }
 
                 if self.reentrancy_balance_enabled
@@ -425,8 +508,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.emit_balance_calls(cond, state);
                 }
 
-                for func_id in resolved_function_ids(callee) {
-                    self.analyze_internal_call(func_id, state);
+                if let Some(func_id) = self.resolved_internal_function_id(callee) {
+                    let returns = self.analyze_internal_call(func_id, args, state);
+                    self.merge_call_balance_values(expr.span, returns);
                 }
                 if !state.state_reads.is_empty()
                     && let Some(kind) = self.reentrant_call_kind(callee, args, *opts)
@@ -498,35 +582,107 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
     }
 
-    fn analyze_internal_call(&mut self, func_id: FunctionId, state: &mut FlowState) {
-        if self.call_stack.contains(&func_id) {
-            return;
+    fn analyze_internal_call(
+        &mut self,
+        func_id: FunctionId,
+        args: &CallArgs<'hir>,
+        state: &mut FlowState,
+    ) -> Vec<BalanceValue> {
+        if self.call_stack.contains(&func_id)
+            || self.hir.function(func_id).span == self.entry_function_span
+        {
+            return Vec::new();
         }
 
         let func = self.hir.function(func_id);
-        let Some(body) = func.body else { return };
+        let Some(body) = func.body else { return Vec::new() };
+
+        if self.reentrancy_balance_enabled {
+            self.seed_balance_parameters(func, args, state);
+        }
 
         let key = InlineCallKey {
             func_id,
             recursive_cut: self.first_recursive_cut(func_id),
+            balance_only: self.balance_only_analysis,
             state: state.clone(),
         };
         if self.inline_cache.is_in_progress(&key) {
-            return;
+            self.clear_function_balance_locals(func_id, state);
+            return Vec::new();
         }
         if let Some(cached) = self.inline_cache.get(&key) {
-            *state = cached.clone();
-            return;
+            let cached = cached.clone();
+            *state =
+                if self.balance_only_analysis { cached.state.balance_only() } else { cached.state };
+            return cached.returns;
         }
 
         let mut after = state.clone();
         self.inline_cache.start(key.clone());
+        if self.reentrancy_balance_enabled {
+            self.return_collectors.push(ReturnCollector {
+                func_id,
+                values: vec![BalanceValue::default(); func.returns.len()],
+            });
+        }
         self.call_stack.push(func_id);
-        self.analyze_callable(func, body, &mut after);
+        let falls_through = self.analyze_callable(func, body, &mut after);
         self.call_stack.pop();
 
-        self.inline_cache.finish(key, after.clone());
+        let returns = if self.reentrancy_balance_enabled {
+            if falls_through {
+                self.record_return(None, &after);
+            }
+            self.return_collectors.pop().expect("return collector is active").values
+        } else {
+            Vec::new()
+        };
+        self.clear_function_balance_locals(func_id, &mut after);
+        if self.balance_only_analysis {
+            after = after.balance_only();
+        }
+
+        self.inline_cache
+            .finish(key, InlineCallResult { state: after.clone(), returns: returns.clone() });
         *state = after;
+        returns
+    }
+
+    fn resolved_internal_function_id(&self, callee: &'hir hir::Expr<'hir>) -> Option<FunctionId> {
+        match &callee.peel_parens().kind {
+            ExprKind::Ident(_) => {}
+            ExprKind::Member(base, _) if is_super(base) => {}
+            _ => return None,
+        }
+        let ty = self.gcx.type_of_expr(callee.peel_parens().id)?;
+        let TyKind::Fn(function) = ty.kind else { return None };
+        if function.is_internal() { function.function_id } else { None }
+    }
+
+    fn merge_call_balance_values(&mut self, span: Span, values: Vec<BalanceValue>) {
+        let stored = self.call_balance_values.entry(span).or_default();
+        if stored.len() < values.len() {
+            stored.resize_with(values.len(), BalanceValue::default);
+        }
+        for (stored, value) in stored.iter_mut().zip(values) {
+            stored.balance_dependent |= value.balance_dependent;
+            stored.stale_calls.extend(value.stale_calls);
+        }
+    }
+
+    fn analyze_with_only_balance<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let reentrancy_eth_enabled = self.reentrancy_eth_enabled;
+        let reentrancy_no_eth_enabled = self.reentrancy_no_eth_enabled;
+        let balance_only_analysis = self.balance_only_analysis;
+        self.reentrancy_eth_enabled = false;
+        self.reentrancy_no_eth_enabled = false;
+        self.balance_only_analysis = true;
+        let result = f(self);
+        self.reentrancy_eth_enabled = reentrancy_eth_enabled;
+        self.reentrancy_no_eth_enabled = reentrancy_no_eth_enabled;
+        self.balance_only_analysis = balance_only_analysis;
+        result
     }
 
     fn first_recursive_cut(&mut self, func_id: FunctionId) -> Option<FunctionId> {
@@ -677,7 +833,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for arg in args.exprs() {
                     self.collect_direct_internal_calls_expr(arg, calls);
                 }
-                for func_id in resolved_function_ids(callee) {
+                if let Some(func_id) = self.resolved_internal_function_id(callee) {
                     calls.insert(func_id);
                 }
             }
@@ -786,7 +942,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn emit_balance_calls(&mut self, guard: &'hir hir::Expr<'hir>, state: &FlowState) {
         for call in &state.pending_balance_calls {
             if self.emitted_balance.contains(&call.span)
-                || !guard_has_stale_balance_comparison(guard, &call.stale_locals)
+                || !self.guard_has_stale_balance_comparison(guard, call, state)
             {
                 continue;
             }
@@ -796,21 +952,120 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
     }
 
-    fn update_balance_local(
+    fn guard_has_stale_balance_comparison(
         &self,
+        expr: &'hir hir::Expr<'hir>,
+        call: &PendingBalanceCall,
+        state: &FlowState,
+    ) -> bool {
+        match &expr.peel_parens().kind {
+            ExprKind::Binary(lhs, op, rhs) => {
+                let is_comparison = matches!(
+                    op.kind,
+                    BinOpKind::Lt
+                        | BinOpKind::Le
+                        | BinOpKind::Gt
+                        | BinOpKind::Ge
+                        | BinOpKind::Eq
+                        | BinOpKind::Ne
+                );
+                let current_locals = state
+                    .balance_locals
+                    .difference(&call.stale_locals)
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                (is_comparison
+                    && self.expr_depends_on_balance(
+                        expr,
+                        &current_locals,
+                        BalanceQuery::Current(call.span),
+                    )
+                    && self.expr_depends_on_balance(
+                        expr,
+                        &call.stale_locals,
+                        BalanceQuery::Stale(call.span),
+                    ))
+                    || self.guard_has_stale_balance_comparison(lhs, call, state)
+                    || self.guard_has_stale_balance_comparison(rhs, call, state)
+            }
+            ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => {
+                self.guard_has_stale_balance_comparison(inner, call, state)
+            }
+            ExprKind::Ternary(cond, true_expr, false_expr) => {
+                self.guard_has_stale_balance_comparison(cond, call, state)
+                    || self.guard_has_stale_balance_comparison(true_expr, call, state)
+                    || self.guard_has_stale_balance_comparison(false_expr, call, state)
+            }
+            ExprKind::Call(callee, args, opts)
+                if opts.is_none()
+                    && matches!(
+                        callee.peel_parens().kind,
+                        ExprKind::Type(_) | ExprKind::TypeCall(_)
+                    ) =>
+            {
+                args.exprs().any(|arg| self.guard_has_stale_balance_comparison(arg, call, state))
+            }
+            _ => false,
+        }
+    }
+
+    fn update_balance_local(
+        &mut self,
         state: &mut FlowState,
         var_id: VariableId,
         value: Option<&'hir hir::Expr<'hir>>,
         reads_old_value: bool,
     ) {
-        let balance_dependent = (reads_old_value && state.balance_locals.contains(&var_id))
-            || value.is_some_and(|value| {
-                contains_self_balance(value) || expr_depends_on_locals(value, &state.balance_locals)
-            });
+        let value = value.map(|value| self.balance_dependency(value, state)).unwrap_or_default();
+        self.update_balance_local_with_value(state, var_id, &value, reads_old_value);
+    }
+
+    fn update_balance_assignment(
+        &mut self,
+        state: &mut FlowState,
+        lhs: &'hir hir::Expr<'hir>,
+        rhs: &'hir hir::Expr<'hir>,
+        reads_old_value: bool,
+    ) {
+        if let ExprKind::Tuple(lhs_values) = &lhs.peel_parens().kind {
+            let values = self.balance_dependencies(rhs, state);
+            for (lhs, value) in lhs_values.iter().zip(values.iter()) {
+                if let Some(var_id) = lhs.and_then(|lhs| lhs_local_var(self.hir, lhs)) {
+                    self.update_balance_local_with_value(state, var_id, value, false);
+                }
+            }
+        } else if let Some(var_id) = lhs_local_var(self.hir, lhs) {
+            self.update_balance_local(state, var_id, Some(rhs), reads_old_value);
+        }
+    }
+
+    fn update_balance_vars(
+        &mut self,
+        state: &mut FlowState,
+        vars: impl Iterator<Item = Option<VariableId>>,
+        value: &'hir hir::Expr<'hir>,
+    ) {
+        let values = self.balance_dependencies(value, state);
+        for (var_id, value) in vars.zip(values.iter()) {
+            if let Some(var_id) = var_id {
+                self.update_balance_local_with_value(state, var_id, value, false);
+            }
+        }
+    }
+
+    fn update_balance_local_with_value(
+        &self,
+        state: &mut FlowState,
+        var_id: VariableId,
+        value: &BalanceValue,
+        reads_old_value: bool,
+    ) {
+        let balance_dependent =
+            value.balance_dependent || (reads_old_value && state.balance_locals.contains(&var_id));
 
         for call in &mut state.pending_balance_calls {
-            let stale = (reads_old_value && call.stale_locals.contains(&var_id))
-                || value.is_some_and(|value| expr_depends_on_locals(value, &call.stale_locals));
+            let stale = value.stale_calls.contains(&call.span)
+                || (reads_old_value && call.stale_locals.contains(&var_id));
             call.stale_locals.remove(&var_id);
             if stale {
                 call.stale_locals.insert(var_id);
@@ -820,6 +1075,160 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         state.balance_locals.remove(&var_id);
         if balance_dependent {
             state.balance_locals.insert(var_id);
+        }
+    }
+
+    fn balance_dependencies(
+        &self,
+        expr: &'hir hir::Expr<'hir>,
+        state: &FlowState,
+    ) -> Vec<BalanceValue> {
+        match &expr.peel_parens().kind {
+            ExprKind::Tuple(exprs) => exprs
+                .iter()
+                .map(|expr| {
+                    expr.map(|expr| self.balance_dependency(expr, state)).unwrap_or_default()
+                })
+                .collect(),
+            ExprKind::Call(_, _, _) => self
+                .call_balance_values
+                .get(&expr.span)
+                .cloned()
+                .unwrap_or_else(|| vec![self.balance_dependency(expr, state)]),
+            _ => vec![self.balance_dependency(expr, state)],
+        }
+    }
+
+    fn balance_dependency(&self, expr: &'hir hir::Expr<'hir>, state: &FlowState) -> BalanceValue {
+        let balance_dependent =
+            self.expr_depends_on_balance(expr, &state.balance_locals, BalanceQuery::Any);
+        let stale_calls = state
+            .pending_balance_calls
+            .iter()
+            .filter(|call| {
+                self.expr_depends_on_balance(
+                    expr,
+                    &call.stale_locals,
+                    BalanceQuery::Stale(call.span),
+                )
+            })
+            .map(|call| call.span)
+            .collect();
+        BalanceValue { balance_dependent, stale_calls }
+    }
+
+    fn expr_depends_on_balance(
+        &self,
+        expr: &'hir hir::Expr<'hir>,
+        locals: &BTreeSet<VariableId>,
+        query: BalanceQuery,
+    ) -> bool {
+        let expr = expr.peel_parens();
+        if is_self_balance(expr) {
+            return !matches!(query, BalanceQuery::Stale(_));
+        }
+
+        match &expr.kind {
+            ExprKind::Ident(reses) => reses.iter().any(
+                |res| matches!(res, Res::Item(ItemId::Variable(var_id)) if locals.contains(var_id)),
+            ),
+            ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => {
+                self.expr_depends_on_balance(inner, locals, query)
+            }
+            ExprKind::Binary(lhs, _, rhs) => {
+                self.expr_depends_on_balance(lhs, locals, query)
+                    || self.expr_depends_on_balance(rhs, locals, query)
+            }
+            ExprKind::Ternary(cond, true_expr, false_expr) => {
+                self.expr_depends_on_balance(cond, locals, query)
+                    || self.expr_depends_on_balance(true_expr, locals, query)
+                    || self.expr_depends_on_balance(false_expr, locals, query)
+            }
+            ExprKind::Call(callee, args, opts)
+                if opts.is_none()
+                    && matches!(
+                        callee.peel_parens().kind,
+                        ExprKind::Type(_) | ExprKind::TypeCall(_)
+                    ) =>
+            {
+                args.exprs().any(|arg| self.expr_depends_on_balance(arg, locals, query))
+            }
+            ExprKind::Call(_, _, _) => {
+                self.call_balance_values.get(&expr.span).is_some_and(|values| {
+                    values.iter().any(|value| match query {
+                        BalanceQuery::Any => value.balance_dependent,
+                        BalanceQuery::Current(call) => {
+                            value.balance_dependent && !value.stale_calls.contains(&call)
+                        }
+                        BalanceQuery::Stale(call) => value.stale_calls.contains(&call),
+                    })
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn seed_balance_parameters(
+        &mut self,
+        func: &'hir hir::Function<'hir>,
+        args: &CallArgs<'hir>,
+        state: &mut FlowState,
+    ) {
+        if !self.reentrancy_balance_enabled {
+            return;
+        }
+        let values = func
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(index, &param)| {
+                let value = argument_for_parameter(self.hir, args, func.parameters, index)
+                    .map(|arg| self.balance_dependency(arg, state))
+                    .unwrap_or_default();
+                (param, value)
+            })
+            .collect::<Vec<_>>();
+        for (param, value) in values {
+            self.update_balance_local_with_value(state, param, &value, false);
+        }
+    }
+
+    fn record_return(&mut self, expr: Option<&'hir hir::Expr<'hir>>, state: &FlowState) {
+        let Some(func_id) = self.return_collectors.last().map(|collector| collector.func_id) else {
+            return;
+        };
+        let func = self.hir.function(func_id);
+        let values = if let Some(expr) = expr {
+            self.balance_dependencies(expr, state)
+        } else {
+            func.returns
+                .iter()
+                .map(|var_id| {
+                    let balance_dependent = state.balance_locals.contains(var_id);
+                    let stale_calls = state
+                        .pending_balance_calls
+                        .iter()
+                        .filter(|call| call.stale_locals.contains(var_id))
+                        .map(|call| call.span)
+                        .collect();
+                    BalanceValue { balance_dependent, stale_calls }
+                })
+                .collect()
+        };
+        let collector = self.return_collectors.last_mut().expect("return collector is active");
+        for (stored, value) in collector.values.iter_mut().zip(values) {
+            stored.balance_dependent |= value.balance_dependent;
+            stored.stale_calls.extend(value.stale_calls);
+        }
+    }
+
+    fn clear_function_balance_locals(&self, func_id: FunctionId, state: &mut FlowState) {
+        let belongs_to_function = |var_id: &VariableId| {
+            self.hir.variable(*var_id).parent == Some(ItemId::Function(func_id))
+        };
+        state.balance_locals.retain(|var_id| !belongs_to_function(var_id));
+        for call in &mut state.pending_balance_calls {
+            call.stale_locals.retain(|var_id| !belongs_to_function(var_id));
         }
     }
 
@@ -873,95 +1282,113 @@ impl FlowState {
             }
         }
     }
+
+    fn balance_only(&self) -> Self {
+        Self {
+            balance_locals: self.balance_locals.clone(),
+            pending_balance_calls: self.pending_balance_calls.clone(),
+            ..Self::default()
+        }
+    }
+
+    fn merge_balance(&mut self, other: &Self) {
+        self.balance_locals.extend(other.balance_locals.iter().copied());
+        for call in &other.pending_balance_calls {
+            if let Some(existing) =
+                self.pending_balance_calls.iter_mut().find(|existing| existing.span == call.span)
+            {
+                existing.stale_locals.extend(call.stale_locals.iter().copied());
+            } else {
+                self.pending_balance_calls.push(call.clone());
+            }
+        }
+    }
 }
 
 fn is_balance_reentrant_call<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     callee: &'hir hir::Expr<'hir>,
-    args: &CallArgs<'hir>,
+    _args: &CallArgs<'hir>,
     opts: Option<&hir::CallOptions<'hir>>,
 ) -> bool {
-    if !call_options_forward_all_gas(opts) {
+    if !call_options_allow_reentrancy(hir, opts) {
         return false;
     }
 
     match &callee.peel_parens().kind {
-        ExprKind::Member(receiver, member) => match member.name {
-            kw::Call | kw::Callcode | kw::Delegatecall => is_address_like(gcx, hir, receiver),
-            kw::Staticcall => false,
-            _ => external_member_call_can_reenter(gcx, hir, receiver, member.name, args),
-        },
-        _ => external_function_pointer_can_reenter(gcx, hir, callee, args),
+        ExprKind::Member(receiver, _) if is_contract_receiver(gcx, receiver) => {
+            external_call_can_reenter(gcx, callee)
+        }
+        ExprKind::Member(receiver, member)
+            if is_address_like(gcx, hir, receiver)
+                && matches!(
+                    member.name,
+                    kw::Call | kw::Callcode | kw::Delegatecall | kw::Staticcall
+                ) =>
+        {
+            member.name != kw::Staticcall
+        }
+        ExprKind::Member(receiver, _) if is_super(receiver) => false,
+        _ => external_call_can_reenter(gcx, callee),
     }
 }
 
-fn call_options_forward_all_gas(opts: Option<&hir::CallOptions<'_>>) -> bool {
-    opts.and_then(|opts| opts.args.iter().find(|opt| opt.name.name == kw::Gas))
-        .is_none_or(|gas| gas_option_forwards_all(&gas.value))
+fn call_options_allow_reentrancy(hir: &hir::Hir<'_>, opts: Option<&hir::CallOptions<'_>>) -> bool {
+    let Some(gas) = opts.and_then(|opts| opts.args.iter().find(|opt| opt.name.name == kw::Gas))
+    else {
+        return true;
+    };
+    let mut seen = BTreeSet::new();
+    concrete_gas_cap(hir, &gas.value, &mut seen)
+        .is_none_or(|gas| gas > U256::from(REENTRANCY_GAS_STIPEND))
 }
 
-fn branch_reverts(stmt: &hir::Stmt<'_>) -> bool {
+fn concrete_gas_cap(
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+    seen: &mut BTreeSet<VariableId>,
+) -> Option<U256> {
+    match &expr.peel_parens().kind {
+        ExprKind::Lit(lit) => match lit.kind {
+            LitKind::Number(value) => Some(value),
+            _ => None,
+        },
+        ExprKind::Ident(reses) => {
+            let var_id = unique(reses.iter().filter_map(|res| match res {
+                Res::Item(ItemId::Variable(var_id)) => Some(*var_id),
+                _ => None,
+            }))?;
+            let var = hir.variable(var_id);
+            if !var.is_constant() || !seen.insert(var_id) {
+                return None;
+            }
+            concrete_gas_cap(hir, var.initializer?, seen)
+        }
+        ExprKind::Call(callee, args, opts)
+            if opts.is_none()
+                && matches!(
+                    callee.peel_parens().kind,
+                    ExprKind::Type(_) | ExprKind::TypeCall(_)
+                )
+                && args.exprs().count() == 1 =>
+        {
+            concrete_gas_cap(hir, args.exprs().next()?, seen)
+        }
+        _ => None,
+    }
+}
+
+fn branch_stops_current_path(stmt: &hir::Stmt<'_>) -> bool {
     match &stmt.kind {
-        StmtKind::Revert(_) => true,
+        StmtKind::Break | StmtKind::Continue => true,
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block.stmts.iter().any(|stmt| branch_reverts(stmt))
+            block.stmts.iter().any(branch_stops_current_path)
         }
         StmtKind::If(_, then_stmt, Some(else_stmt)) => {
-            branch_reverts(then_stmt) && branch_reverts(else_stmt)
+            branch_stops_current_path(then_stmt) && branch_stops_current_path(else_stmt)
         }
-        _ => false,
-    }
-}
-
-fn guard_has_stale_balance_comparison(
-    expr: &hir::Expr<'_>,
-    stale_locals: &BTreeSet<VariableId>,
-) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Binary(lhs, op, rhs) => {
-            let is_comparison = matches!(
-                op.kind,
-                BinOpKind::Lt
-                    | BinOpKind::Le
-                    | BinOpKind::Gt
-                    | BinOpKind::Ge
-                    | BinOpKind::Eq
-                    | BinOpKind::Ne
-            );
-            (is_comparison
-                && contains_self_balance(expr)
-                && expr_depends_on_locals(expr, stale_locals))
-                || guard_has_stale_balance_comparison(lhs, stale_locals)
-                || guard_has_stale_balance_comparison(rhs, stale_locals)
-        }
-        ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => {
-            guard_has_stale_balance_comparison(inner, stale_locals)
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            guard_has_stale_balance_comparison(cond, stale_locals)
-                || guard_has_stale_balance_comparison(true_expr, stale_locals)
-                || guard_has_stale_balance_comparison(false_expr, stale_locals)
-        }
-        _ => false,
-    }
-}
-
-fn contains_self_balance(expr: &hir::Expr<'_>) -> bool {
-    let expr = expr.peel_parens();
-    if is_self_balance(expr) {
-        return true;
-    }
-
-    match &expr.kind {
-        ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => contains_self_balance(inner),
-        ExprKind::Binary(lhs, _, rhs) => contains_self_balance(lhs) || contains_self_balance(rhs),
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            contains_self_balance(cond)
-                || contains_self_balance(true_expr)
-                || contains_self_balance(false_expr)
-        }
-        _ => false,
+        _ => branch_always_exits(stmt),
     }
 }
 
@@ -982,35 +1409,6 @@ fn is_self_address(expr: &hir::Expr<'_>) -> bool {
             args.exprs().next().is_some_and(is_self_address)
         }
         _ => is_this(expr),
-    }
-}
-
-fn expr_depends_on_locals(expr: &hir::Expr<'_>, locals: &BTreeSet<VariableId>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().any(
-            |res| matches!(res, Res::Item(ItemId::Variable(var_id)) if locals.contains(var_id)),
-        ),
-        ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => {
-            expr_depends_on_locals(inner, locals)
-        }
-        ExprKind::Binary(lhs, _, rhs) => {
-            expr_depends_on_locals(lhs, locals) || expr_depends_on_locals(rhs, locals)
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            expr_depends_on_locals(cond, locals)
-                || expr_depends_on_locals(true_expr, locals)
-                || expr_depends_on_locals(false_expr, locals)
-        }
-        ExprKind::Call(callee, args, opts)
-            if opts.is_none()
-                && matches!(
-                    callee.peel_parens().kind,
-                    ExprKind::Type(_) | ExprKind::TypeCall(_)
-                ) =>
-        {
-            args.exprs().any(|arg| expr_depends_on_locals(arg, locals))
-        }
-        _ => false,
     }
 }
 
@@ -1042,7 +1440,7 @@ fn is_no_eth_reentrant_call<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     callee: &'hir hir::Expr<'hir>,
-    args: &CallArgs<'hir>,
+    _args: &CallArgs<'hir>,
     opts: Option<&hir::CallOptions<'hir>>,
 ) -> bool {
     if call_sends_eth(hir, opts) {
@@ -1050,12 +1448,20 @@ fn is_no_eth_reentrant_call<'hir>(
     }
 
     match &callee.peel_parens().kind {
-        ExprKind::Member(receiver, member) => match member.name {
-            kw::Call | kw::Callcode | kw::Delegatecall => is_address_like(gcx, hir, receiver),
-            kw::Staticcall => false,
-            _ => external_member_call_can_reenter(gcx, hir, receiver, member.name, args),
-        },
-        _ => external_function_pointer_can_reenter(gcx, hir, callee, args),
+        ExprKind::Member(receiver, _) if is_contract_receiver(gcx, receiver) => {
+            external_call_can_reenter(gcx, callee)
+        }
+        ExprKind::Member(receiver, member)
+            if is_address_like(gcx, hir, receiver)
+                && matches!(
+                    member.name,
+                    kw::Call | kw::Callcode | kw::Delegatecall | kw::Staticcall
+                ) =>
+        {
+            member.name != kw::Staticcall
+        }
+        ExprKind::Member(receiver, _) if is_super(receiver) => false,
+        _ => external_call_can_reenter(gcx, callee),
     }
 }
 
@@ -1065,119 +1471,35 @@ fn call_sends_eth(hir: &hir::Hir<'_>, opts: Option<&hir::CallOptions<'_>>) -> bo
     })
 }
 
-fn external_member_call_can_reenter<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    receiver: &'hir hir::Expr<'hir>,
-    member: solar::interface::Symbol,
-    args: &CallArgs<'hir>,
-) -> bool {
-    if is_super(receiver) {
-        return false;
-    }
-
-    let Some(receiver_ty) = expr_ty(gcx, hir, receiver) else { return false };
-    gcx.members_of(receiver_ty, base_item_source(hir, receiver), base_contract(hir, receiver))
-        .filter(|candidate| candidate.name == member)
-        .any(|candidate| match (candidate.res, candidate.ty.kind) {
-            (Some(Res::Item(ItemId::Function(function_id))), _) => {
-                let function = hir.function(function_id);
-                is_externally_callable(function)
-                    && args_match_function(gcx, hir, args, function.parameters)
-                    && function.mutates_state()
-            }
-            (_, TyKind::Fn(function)) => {
-                is_externally_callable_fn_kind(function.kind)
-                    && args_match_types(gcx, hir, args, function.parameters)
-                    && !matches!(
-                        function.state_mutability,
-                        StateMutability::Pure | StateMutability::View
-                    )
-            }
-            _ => false,
-        })
-}
-
-fn external_function_pointer_can_reenter<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    callee: &'hir hir::Expr<'hir>,
-    args: &CallArgs<'hir>,
-) -> bool {
-    let Some(ty) = expr_ty(gcx, hir, callee) else { return false };
+fn external_call_can_reenter<'hir>(gcx: Gcx<'hir>, callee: &'hir hir::Expr<'hir>) -> bool {
+    let Some(ty) = gcx.type_of_expr(callee.peel_parens().id) else { return false };
     let TyKind::Fn(function) = ty.kind else { return false };
-    function.kind == TyFnKind::External
-        && args_match_types(gcx, hir, args, function.parameters)
+    is_externally_callable_fn_kind(function.kind)
         && !matches!(function.state_mutability, StateMutability::Pure | StateMutability::View)
-}
-
-const fn is_externally_callable(func: &hir::Function<'_>) -> bool {
-    matches!(func.visibility, Visibility::Public | Visibility::External)
 }
 
 const fn is_externally_callable_fn_kind(kind: TyFnKind) -> bool {
     matches!(kind, TyFnKind::External | TyFnKind::Declaration | TyFnKind::DelegateCall)
 }
 
-fn args_match_function<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
+fn argument_for_parameter<'hir>(
+    hir: &hir::Hir<'hir>,
     args: &CallArgs<'hir>,
-    params: &'hir [VariableId],
-) -> bool {
-    if args.len() != params.len() {
-        return false;
-    }
-
+    params: &[VariableId],
+    index: usize,
+) -> Option<&'hir hir::Expr<'hir>> {
     match args.kind {
-        CallArgsKind::Unnamed(exprs) => exprs.iter().zip(params).all(|(arg, &param)| {
-            let param = hir.variable(param);
-            let param_ty =
-                gcx.type_of_hir_ty(&param.ty).with_loc_if_ref_opt(gcx, param.data_location);
-            arg_matches_type(gcx, hir, arg, param_ty)
-        }),
-        CallArgsKind::Named(named_args) => named_args.iter().all(|arg| {
-            params
-                .iter()
-                .copied()
-                .find(|&param| {
-                    hir.variable(param).name.is_some_and(|name| name.name == arg.name.name)
-                })
-                .is_some_and(|param| {
-                    let param = hir.variable(param);
-                    let param_ty =
-                        gcx.type_of_hir_ty(&param.ty).with_loc_if_ref_opt(gcx, param.data_location);
-                    arg_matches_type(gcx, hir, &arg.value, param_ty)
-                })
-        }),
-    }
-}
-
-fn args_match_types<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    args: &CallArgs<'hir>,
-    params: &'hir [Ty<'hir>],
-) -> bool {
-    if args.len() != params.len() {
-        return false;
-    }
-
-    match args.kind {
-        CallArgsKind::Unnamed(exprs) => {
-            exprs.iter().zip(params).all(|(arg, &param)| arg_matches_type(gcx, hir, arg, param))
+        CallArgsKind::Unnamed(exprs) => exprs.get(index),
+        CallArgsKind::Named(named_args) => {
+            let name = hir.variable(*params.get(index)?).name?;
+            named_args.iter().find(|arg| arg.name.name == name.name).map(|arg| &arg.value)
         }
-        CallArgsKind::Named(_) => false,
     }
 }
 
-fn arg_matches_type<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    arg: &'hir hir::Expr<'hir>,
-    param_ty: Ty<'hir>,
-) -> bool {
-    expr_ty(gcx, hir, arg).is_some_and(|arg_ty| arg_ty.convert_implicit_to(param_ty, gcx))
+fn is_contract_receiver<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
+    gcx.type_of_expr(expr.peel_parens().id)
+        .is_some_and(|ty| matches!(ty.peel_refs().kind, TyKind::Contract(_)))
 }
 
 fn is_address_like<'hir>(
@@ -1467,19 +1789,6 @@ fn gas_option_forwards_all(expr: &hir::Expr<'_>) -> bool {
                 matches!(res, Res::Builtin(builtin) if builtin.name() == sym::gasleft)
             })
     )
-}
-
-fn resolved_function_ids<'hir>(
-    callee: &'hir hir::Expr<'hir>,
-) -> impl Iterator<Item = FunctionId> + 'hir {
-    let reses = match &callee.peel_parens().kind {
-        ExprKind::Ident(reses) => *reses,
-        _ => &[],
-    };
-    reses.iter().filter_map(|res| match res {
-        Res::Item(ItemId::Function(func_id)) => Some(*func_id),
-        _ => None,
-    })
 }
 
 fn lhs_local_var(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> Option<VariableId> {

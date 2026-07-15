@@ -9,15 +9,17 @@ contract balance against that saved value.
 ## What it does
 
 Warns when a public or external entry point saves `address(this).balance` in a local value, performs
-an external call that can forward enough gas to re-enter, and then uses the saved value together
-with a fresh `address(this).balance` read in a `require`, `assert`, or reverting branch. Local
-arithmetic derived from the saved balance is tracked, and internal helper calls and modifiers are
-analyzed when their bodies are available.
+an external call that can forward enough gas to re-enter, and then compares the saved value with a
+fresh contract-balance read in a `require`, `assert`, or exiting branch. Casts, tuple assignments,
+derived locals, fresh post-call balance locals, internal helper parameters and returns, and
+modifiers are tracked when their bodies are available.
 
-This detector intentionally covers native ETH held by the current contract. It does not report
-token balances, balances of other addresses, view or static calls, calls with a concrete gas cap,
-checks on mutually exclusive paths, baselines overwritten after the call, or expressions that do
-not compare a fresh contract-balance read with the stale local value.
+This detector intentionally covers native ETH held by the current contract. It is not the later
+token `balanceOf(address)` detector with a similar name. It does not report token balances,
+balances of other addresses, mutable state or storage baselines, view or static calls, calls capped
+at the 2,300-gas stipend or less, checks on directly mutually exclusive branches, baselines
+overwritten after the call, or expressions that do not compare a fresh contract-balance read with
+the stale local value.
 
 ## Why is this bad?
 
