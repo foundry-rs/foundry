@@ -471,7 +471,7 @@ impl<'a> Git<'a> {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.cmd().arg("rm").args(force.then_some("--force")).args(paths).exec().map(drop)
+        self.cmd().arg("rm").args(force.then_some("--force")).arg("--").args(paths).exec().map(drop)
     }
 
     pub fn commit(self, msg: &str) -> Result<()> {
@@ -507,6 +507,14 @@ impl<'a> Git<'a> {
 
     pub fn is_clean(self) -> Result<bool> {
         self.cmd().args(["status", "--porcelain"]).exec().map(|out| out.stdout.is_empty())
+    }
+
+    pub fn is_path_clean(self, path: &Path) -> Result<bool> {
+        self.cmd()
+            .args(["status", "--porcelain", "--"])
+            .arg(path)
+            .exec()
+            .map(|out| out.stdout.is_empty())
     }
 
     pub fn has_branch(self, branch: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
@@ -763,6 +771,17 @@ ignore them in the `.gitignore` file."
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
+    pub fn submodule_deinit(self, force: bool, path: &Path) -> Result<()> {
+        self.cmd()
+            .stderr(self.stderr())
+            .args(["submodule", "deinit"])
+            .args(force.then_some("--force"))
+            .arg("--")
+            .arg(path)
+            .exec()
+            .map(drop)
+    }
+
     pub fn submodules(&self) -> Result<Submodules> {
         self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
     }
@@ -777,6 +796,25 @@ ignore them in the `.gitignore` file."
             .args(["config", "--get", &format!("submodule.{}.url", path.to_slash_lossy())])
             .get_stdout_lossy()
             .map(|url| Some(url.trim().to_string()))
+    }
+
+    /// Returns whether the local config contains any values for the given submodule.
+    pub fn has_submodule_config(self, path: &Path) -> Result<bool> {
+        let pattern = format!(r"^submodule\.{}\.", regex::escape(&path.to_slash_lossy()));
+        let output = self.cmd().args(["config", "--local", "--get-regexp", &pattern]).output()?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(eyre::eyre!(
+                "failed to inspect submodule config: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+
+    /// Returns the absolute path to the repository's Git directory.
+    pub fn absolute_git_dir(self) -> Result<PathBuf> {
+        self.cmd().args(["rev-parse", "--absolute-git-dir"]).get_stdout_lossy().map(PathBuf::from)
     }
 
     /// Returns the fetch URL of the given remote, or `None` if it doesn't exist.

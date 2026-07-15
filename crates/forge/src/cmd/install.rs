@@ -341,7 +341,12 @@ impl Installer<'_> {
         // checkout the tag if necessary, using recursive checkout to properly clean up
         // nested submodules that may exist on the default branch but not on the target tag.
         // See: https://github.com/foundry-rs/foundry/issues/13688
-        self.git_checkout(&dep, path, true)?;
+        if let Err(err) = self.git_checkout(&dep, path, true) {
+            if let Err(cleanup_err) = fs::remove_dir_all(path) {
+                warn!(%cleanup_err, "failed to remove dependency after installation failure");
+            }
+            return Err(err);
+        }
 
         trace!("updating dependency submodules recursively");
         self.git.root(path).submodule_update(
@@ -402,35 +407,99 @@ impl Installer<'_> {
     /// This will add the git submodule to the given dir, initialize it and checkout the tag if
     /// provided or try to find the latest semver, release tag.
     fn install_as_submodule(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
+        let root = Git::root_of(self.git.root)?;
+        let relative_path = path.strip_prefix(&root)?;
+        let git = self.git.root(&root);
+        let gitmodules = root.join(".gitmodules");
+        let gitmodules_existed = gitmodules.exists();
+        let module_dir = git.absolute_git_dir()?.join("modules").join(relative_path);
+        let can_rollback = !path.exists()
+            && !module_dir.exists()
+            && !git.has_submodule_config(relative_path)?
+            && git.is_path_clean(relative_path)?
+            && git.is_path_clean(Path::new(".gitmodules"))?;
+
         // install the dep
         self.git_submodule(dep, path)?;
+        let actual_module_dir =
+            self.git.root(path).absolute_git_dir().unwrap_or_else(|_| module_dir.clone());
 
-        let mut dep = dep.clone();
-        if dep.tag.is_none() {
-            // try to find latest semver release tag
-            dep.tag = self.last_tag(path);
+        let result = (|| {
+            let mut dep = dep.clone();
+            if dep.tag.is_none() {
+                // try to find latest semver release tag
+                dep.tag = self.last_tag(path);
+            }
+
+            // checkout the tag if necessary
+            self.git_checkout(&dep, path, true)?;
+
+            trace!("updating dependency submodules recursively");
+            self.git.root(path).submodule_update(
+                false,
+                false,
+                false,
+                true,
+                std::iter::empty::<PathBuf>(),
+            )?;
+
+            // sync submodules config with changes in .gitmodules, see <https://github.com/foundry-rs/foundry/issues/9611>
+            self.git.root(path).submodule_sync()?;
+
+            if self.commit {
+                self.git.add(Some(path))?;
+            }
+
+            Ok(dep.tag)
+        })();
+
+        if result.is_err() && can_rollback && actual_module_dir == module_dir {
+            self.rollback_submodule(
+                &root,
+                relative_path,
+                path,
+                &gitmodules,
+                gitmodules_existed,
+                &actual_module_dir,
+            );
         }
 
-        // checkout the tag if necessary
-        self.git_checkout(&dep, path, true)?;
+        result
+    }
 
-        trace!("updating dependency submodules recursively");
-        self.git.root(path).submodule_update(
-            false,
-            false,
-            false,
-            true,
-            std::iter::empty::<PathBuf>(),
-        )?;
-
-        // sync submodules config with changes in .gitmodules, see <https://github.com/foundry-rs/foundry/issues/9611>
-        self.git.root(path).submodule_sync()?;
-
-        if self.commit {
-            self.git.add(Some(path))?;
+    fn rollback_submodule(
+        self,
+        root: &Path,
+        relative_path: &Path,
+        path: &Path,
+        gitmodules: &Path,
+        gitmodules_existed: bool,
+        module_dir: &Path,
+    ) {
+        let git = self.git.root(root);
+        if let Err(err) = git.submodule_deinit(true, relative_path) {
+            warn!(%err, "failed to remove submodule config after installation failure");
         }
-
-        Ok(dep.tag)
+        if let Err(err) = git.rm(true, Some(relative_path)) {
+            warn!(%err, "failed to remove submodule after installation failure");
+        }
+        if module_dir.exists()
+            && let Err(err) = fs::remove_dir_all(module_dir)
+        {
+            warn!(%err, "failed to remove submodule Git directory after installation failure");
+        }
+        if !gitmodules_existed && gitmodules.exists() {
+            if let Err(err) = fs::remove_file(gitmodules) {
+                warn!(%err, "failed to remove .gitmodules after installation failure");
+            } else if let Err(err) = git.add(Some(".gitmodules")) {
+                warn!(%err, "failed to unstage .gitmodules after installation failure");
+            }
+        }
+        if path.exists()
+            && let Err(err) = fs::remove_dir_all(path)
+        {
+            warn!(%err, "failed to remove dependency after installation failure");
+        }
     }
 
     fn last_tag(self, path: &Path) -> Option<String> {
@@ -504,8 +573,6 @@ impl Installer<'_> {
 
         let res = self.git.root(path).checkout(recurse, &tag);
         if let Err(mut e) = res {
-            // remove dependency on failed checkout
-            fs::remove_dir_all(path)?;
             if e.to_string().contains("did not match any file(s) known to git") {
                 e = eyre::eyre!("Tag: \"{tag}\" not found for repo \"{url}\"!")
             }

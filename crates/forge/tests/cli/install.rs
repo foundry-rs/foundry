@@ -149,6 +149,71 @@ Removing 'forge-std' in [..], (url: https://github.com/foundry-rs/forge-std, tag
     remove(&mut cmd, "lib/forge-std");
 });
 
+// https://github.com/foundry-rs/foundry/issues/6790
+forgetest!(failed_install_leaves_repository_clean, |prj, cmd| {
+    cmd.git_init();
+    let git = Git::new(prj.root());
+    assert!(git.is_clean().unwrap());
+
+    cmd.forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Installing solady in [..] (url: https://github.com/vectorized/solady, tag: this-tag-does-not-exist)
+...
+Error: Tag: "this-tag-does-not-exist" not found for repo "https://github.com/vectorized/solady"!
+
+"#]]);
+
+    assert!(git.is_clean().unwrap());
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
+    assert!(git.submodule_url(Path::new("lib/solady")).unwrap_or(None).is_none());
+});
+
+forgetest!(failed_install_preserves_gitmodules, |prj, cmd| {
+    cmd.git_init();
+    let gitmodules = prj.root().join(".gitmodules");
+    let original = r#"[submodule "existing"]
+	path = lib/existing
+	url = https://github.com/example/existing
+"#;
+    fs::write(&gitmodules, original).unwrap();
+    cmd.git_add();
+    cmd.git_commit("add gitmodules");
+
+    cmd.forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+
+    assert!(Git::new(prj.root()).is_clean().unwrap());
+    assert_eq!(read_string(&gitmodules), original);
+});
+
+forgetest!(failed_install_preserves_submodule_config, |prj, cmd| {
+    cmd.git_init();
+    let key = "submodule.lib/solady.update";
+    let status = Command::new("git")
+        .current_dir(prj.root())
+        .args(["config", "--local", key, "none"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    cmd.forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["config", "--local", "--get", key])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "none");
+});
+
 // test to check we can run `forge install` in an empty dir <https://github.com/foundry-rs/foundry/issues/6519>
 forgetest!(can_install_empty, |prj, cmd| {
     // create
