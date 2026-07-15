@@ -14,3 +14,11 @@ LL │ contract ConcreteTypedProxy {
    │
    ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
 
+warning[function-selector-collision]: proxy function `ParameterizedFallbackProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ParameterizedFallbackProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+

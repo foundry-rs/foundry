@@ -105,3 +105,61 @@ contract FixedPayloadDelegatecall {
         if (!success) revert();
     }
 }
+
+// The parameterized fallback input is exactly equal to msg.data.
+contract ParameterizedFallbackProxy { //~WARN: proxy function `ParameterizedFallbackProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback(bytes calldata input) external returns (bytes memory) {
+        (bool success, bytes memory returndata) = address(implementation).delegatecall(input);
+        if (!success) revert();
+        return returndata;
+    }
+}
+
+// Reassigned fallback calldata is no longer proven to be the full msg.data.
+contract ReassignedFallbackInputProxy {
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback(bytes calldata input) external returns (bytes memory) {
+        input = input[4:];
+        (bool success, bytes memory returndata) = address(implementation).delegatecall(input);
+        if (!success) revert();
+        return returndata;
+    }
+}
+
+library DelegatecallExtension {
+    function delegatecall(address, bytes calldata) internal pure returns (bool, bytes memory) {
+        return (true, "");
+    }
+}
+
+// A user-defined address member with the same name is not an EVM delegatecall.
+contract UserDefinedDelegatecall {
+    using DelegatecallExtension for address;
+
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback() external {
+        address(implementation).delegatecall(msg.data);
+    }
+}
