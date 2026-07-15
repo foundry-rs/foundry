@@ -1314,9 +1314,13 @@ impl<'ast> State<'_, 'ast> {
                     && is_call_chain(&call_expr.kind, true))
                 .then(|| ChainedNamedCall {
                     callee: call_expr.span,
-                    keep_inline: self.estimate_size(call_expr.span)
-                        + if call_args.is_empty() { 4 } else { 2 }
-                        <= self.space_left(),
+                    keep_inline: !call_chain_contains_options(call_expr)
+                        && self.estimate_size(call_expr.span)
+                            + if call_args.is_empty() { 4 } else { 2 }
+                            <= self.space_left(),
+                })
+                .or_else(|| {
+                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span))
                 });
                 let list_format = if keep_inline {
                     ListFormat::inline()
@@ -1376,7 +1380,7 @@ impl<'ast> State<'_, 'ast> {
                             ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
                             ast::ExprKind::Index(..) if s.skip_index_break => (),
                             _ if s.chained_named_call.is_some_and(|call| {
-                                call.keep_inline && call.callee == expr.span
+                                call.keep_inline && call.callee.contains(expr.span)
                             }) => {}
                             // Don't add break when accessing a field after a call with named args.
                             // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
@@ -3055,6 +3059,16 @@ fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
         is_call_chain(&child.kind, false)
     } else {
         !must_have_child && is_call(expr_kind)
+    }
+}
+
+fn call_chain_contains_options(expr: &ast::Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ast::ExprKind::CallOptions(..) => true,
+        ast::ExprKind::Call(expr, ..)
+        | ast::ExprKind::Index(expr, ..)
+        | ast::ExprKind::Member(expr, ..) => call_chain_contains_options(expr),
+        _ => false,
     }
 }
 

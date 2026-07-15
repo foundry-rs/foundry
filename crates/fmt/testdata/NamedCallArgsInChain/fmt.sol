@@ -54,6 +54,23 @@ contract NamedCallArgsInChain {
             });
     }
 
+    function reviewCases(uint256 firstExtremelyLongValueName, uint256 secondExtremelyLongValueName) external {
+        factory().foo(bar(firstExtremelyLongValueName)).baz({
+            firstExtremelyLongArgumentName: firstExtremelyLongValueName,
+            secondExtremelyLongArgumentName: secondExtremelyLongValueName
+        });
+        foo{value: 1}()
+            .bar({
+                firstExtremelyLongArgumentName: firstExtremelyLongValueName,
+                secondExtremelyLongArgumentName: secondExtremelyLongValueName
+            });
+        (foo{value: 1})()
+            .bar({
+                firstExtremelyLongArgumentName: firstExtremelyLongValueName,
+                secondExtremelyLongArgumentName: secondExtremelyLongValueName
+            });
+    }
+
     function attempted(
         address vault,
         uint256 positionId,
