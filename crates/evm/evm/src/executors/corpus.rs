@@ -1589,81 +1589,56 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::CrossoverInsert => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "crossover insert into {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
-
                     new_seq = corpus.tx_seq.clone();
-                    if let Some(tx) = self.load_random_disk_tx(rng) {
-                        let idx = rng.random_range(0..=new_seq.len());
+                    if let Some(tx) = self.load_random_disk_tx(test_runner.rng()) {
+                        let idx = test_runner.rng().random_range(0..=new_seq.len());
                         new_seq.insert(idx, tx);
                     }
                 }
                 MutationType::CrossoverReplace => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "crossover replace in {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
-
                     new_seq = corpus.tx_seq.clone();
-                    if let Some(tx) = self.load_random_disk_tx(rng) {
-                        let idx = rng.random_range(0..new_seq.len());
+                    if let Some(tx) = self.load_random_disk_tx(test_runner.rng()) {
+                        let idx = test_runner.rng().random_range(0..new_seq.len());
                         new_seq[idx] = tx;
                     }
                 }
                 MutationType::Insert => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "insert generated tx into {}", corpus.uuid);
 
-                    self.current_mutated_index = Some(corpus_index);
-
                     new_seq = corpus.tx_seq.clone();
-                    let idx = rng.random_range(0..=new_seq.len());
+                    let idx = test_runner.rng().random_range(0..=new_seq.len());
                     new_seq.insert(idx, self.new_tx(test_runner)?);
                 }
                 MutationType::Delete => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "delete tx from {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     if new_seq.len() > 1 {
-                        let idx = rng.random_range(0..new_seq.len());
+                        let idx = test_runner.rng().random_range(0..new_seq.len());
                         new_seq.remove(idx);
                     }
                 }
                 MutationType::Swap => {
-                    let (corpus_index, corpus) = if rng.random::<bool>() {
-                        (primary_index, primary)
-                    } else {
-                        (secondary_index, secondary)
-                    };
+                    let corpus =
+                        if test_runner.rng().random::<bool>() { &primary } else { &secondary };
                     trace!(target: "corpus", "swap txs in {}", corpus.uuid);
-
-                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     if new_seq.len() >= 2 {
-                        let first = rng.random_range(0..new_seq.len());
-                        let mut second = rng.random_range(0..new_seq.len() - 1);
+                        let first = test_runner.rng().random_range(0..new_seq.len());
+                        let mut second = test_runner.rng().random_range(0..new_seq.len() - 1);
                         if second >= first {
                             second += 1;
                         }
@@ -2931,7 +2906,6 @@ mod tests {
         assert_eq!(sequence.len(), 2);
         assert!(sequence.iter().any(|tx| tx.call_details.calldata == base.call_details.calldata));
         assert!(sequence.iter().any(|tx| tx.call_details.calldata == donor.call_details.calldata));
-        assert_eq!(manager.current_mutated_index, Some(0));
     }
 
     #[test]
@@ -2973,7 +2947,6 @@ mod tests {
 
         assert_eq!(sequence.len(), 1);
         assert_eq!(sequence[0].call_details.calldata, donor.call_details.calldata);
-        assert_eq!(manager.current_mutated_index, Some(0));
     }
 
     #[test]
@@ -3016,7 +2989,6 @@ mod tests {
         assert!(
             sequence.iter().any(|tx| tx.call_details.calldata == generated.call_details.calldata)
         );
-        assert_eq!(manager.current_mutated_index, Some(0));
     }
 
     #[test]
@@ -3059,7 +3031,6 @@ mod tests {
             sequence[0].call_details.calldata == first.call_details.calldata
                 || sequence[0].call_details.calldata == second.call_details.calldata
         );
-        assert_eq!(manager.current_mutated_index, Some(0));
     }
 
     #[test]
@@ -3100,7 +3071,6 @@ mod tests {
         assert_eq!(sequence.len(), 2);
         assert_eq!(sequence[0].call_details.calldata, second.call_details.calldata);
         assert_eq!(sequence[1].call_details.calldata, first.call_details.calldata);
-        assert_eq!(manager.current_mutated_index, Some(0));
     }
 
     #[test]
