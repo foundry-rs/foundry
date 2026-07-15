@@ -270,6 +270,10 @@ pub struct FuzzCorpusMutationWeights {
     pub mutation_weight_abi: u32,
     /// Weight for comparison-operand guided argument mutation.
     pub mutation_weight_cmp: u32,
+    /// Weight for inserting a transaction loaded from the persisted corpus.
+    pub mutation_weight_crossover_insert: u32,
+    /// Weight for replacing a transaction with one loaded from the persisted corpus.
+    pub mutation_weight_crossover_replace: u32,
 }
 
 impl FuzzCorpusMutationWeights {
@@ -281,6 +285,8 @@ impl FuzzCorpusMutationWeights {
             + self.mutation_weight_suffix as u64
             + self.mutation_weight_abi as u64
             + self.mutation_weight_cmp as u64
+            + self.mutation_weight_crossover_insert as u64
+            + self.mutation_weight_crossover_replace as u64
     }
 
     /// Returns defaults if every configured weight is zero.
@@ -292,13 +298,15 @@ impl FuzzCorpusMutationWeights {
 impl Default for FuzzCorpusMutationWeights {
     fn default() -> Self {
         Self {
-            mutation_weight_splice: 1,
-            mutation_weight_repeat: 1,
-            mutation_weight_interleave: 1,
-            mutation_weight_prefix: 1,
-            mutation_weight_suffix: 1,
-            mutation_weight_abi: 1,
-            mutation_weight_cmp: 1,
+            mutation_weight_splice: 4,
+            mutation_weight_repeat: 4,
+            mutation_weight_interleave: 4,
+            mutation_weight_prefix: 4,
+            mutation_weight_suffix: 4,
+            mutation_weight_abi: 4,
+            mutation_weight_cmp: 4,
+            mutation_weight_crossover_insert: 1,
+            mutation_weight_crossover_replace: 1,
         }
     }
 }
