@@ -45,6 +45,12 @@ contract Todo {
     // TODO
     function bareMarker() public {}
 
+    // TODO implement access control
+    function bareTodoSentence() public {}
+
+    // FIXME this check is wrong
+    function bareFixmeSentence() public {}
+
     // check this later TODO
     function trailingBare() public {}
 
@@ -61,6 +67,9 @@ contract Todo {
 
     ///@dev TODO: compact NatSpec should also be detected
     function compactNatSpec() public {}
+
+    /// @dev TODO implement the actual logic here
+    function bareNatSpec() public {}
 
     function noFalsePositiveInStrings() public pure returns (string memory) {
         // The marker below is inside a string literal, must NOT fire:

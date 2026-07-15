@@ -40,13 +40,21 @@ impl<'ast> EarlyLintPass<'ast> for TodoComment {
             }
 
             let mut seen = HashSet::new();
-            let found: Vec<&str> = comment
-                .lines
-                .iter()
-                .flat_map(|line| strip_comment_prefix(line, comment).split_whitespace())
-                .filter_map(marker_at_start)
-                .filter(|m| seen.insert(*m))
-                .collect();
+            let mut found = Vec::new();
+            for line in &comment.lines {
+                let mut allow_bare = true;
+                for token in strip_comment_prefix(line, comment).split_whitespace() {
+                    if let Some(marker) = marker_at_start(token, allow_bare)
+                        && seen.insert(marker)
+                    {
+                        found.push(marker);
+                    }
+
+                    if token != "*" {
+                        allow_bare = token.starts_with('@');
+                    }
+                }
+            }
 
             if found.is_empty() {
                 continue;
@@ -70,13 +78,19 @@ fn is_control_comment(comment: &Comment) -> bool {
 }
 
 /// If `token` begins with a marker followed by a valid boundary, return that marker.
-fn marker_at_start(token: &str) -> Option<&str> {
+fn marker_at_start(token: &str, allow_bare: bool) -> Option<&str> {
     MARKERS.iter().find_map(|m| {
         let prefix = token.get(..m.len())?;
         if !prefix.eq_ignore_ascii_case(m) {
             return None;
         }
-        let mut trailing = token[m.len()..].chars();
+
+        let suffix = &token[m.len()..];
+        if suffix.is_empty() {
+            return allow_bare.then_some(*m);
+        }
+
+        let mut trailing = suffix.chars();
         let after = trailing.next()?;
         if !TRAILING.contains(&after)
             || (after == '.' && trailing.next().is_some_and(|c| c.is_alphanumeric() || c == '_'))

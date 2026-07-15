@@ -54,6 +54,38 @@ LL │     /// ToDo: document this properly
    │
    ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
+note[todo-comment]: unresolved `FIXME` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     // FIXME first, TODO second, and fixme third
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
+
+note[todo-comment]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     // TODO
+   │     ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
+
+note[todo-comment]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     // TODO implement access control
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
+
+note[todo-comment]: unresolved `FIXME` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     // FIXME this check is wrong
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
+
 note[todo-comment]: unresolved `TODO` comment
    ╭▸ ROOT/testdata/Todo.sol:LL:CC
    │
@@ -77,6 +109,14 @@ note[todo-comment]: unresolved `TODO` comment
    │
 LL │     ///@dev TODO: compact NatSpec should also be detected
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/todo-comment
+
+note[todo-comment]: unresolved `TODO` comment
+   ╭▸ ROOT/testdata/Todo.sol:LL:CC
+   │
+LL │     /// @dev TODO implement the actual logic here
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/todo-comment
 
