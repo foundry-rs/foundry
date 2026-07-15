@@ -7,7 +7,9 @@ use alloy_network::Network;
 use alloy_primitives::{Address, B256, U256, map::AddressMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::{
-    backend::{BlockchainDb, DatabaseResult, RevertStateSnapshotAction, StateSnapshot},
+    backend::{
+        BlockchainDb, DatabaseResult, RevertStateSnapshotAction, SharedBackend, StateSnapshot,
+    },
     fork::database::ForkDbStateSnapshot,
 };
 use revm::{
@@ -17,6 +19,20 @@ use revm::{
 };
 
 pub use foundry_evm::fork::database::ForkedDatabase;
+
+impl<N: Network> MaybeFullDatabase for SharedBackend<N> {
+    fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
+        StateSnapshot::default()
+    }
+
+    fn read_as_state_snapshot(&self) -> StateSnapshot {
+        StateSnapshot::default()
+    }
+
+    fn clear(&mut self) {}
+
+    fn init_from_state_snapshot(&mut self, _state_snapshot: StateSnapshot) {}
+}
 
 impl<N: Network> Db for ForkedDatabase<N> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -97,6 +113,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         Some(&self.database().cache.accounts)
     }
 
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        None
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
@@ -130,6 +150,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.local.cache.accounts)
+    }
+
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        None
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {

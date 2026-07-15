@@ -1,6 +1,6 @@
 //! Optimism-specific transact helpers for the in-memory backend.
 
-use super::Backend;
+use super::{Backend, SimulationPrecompileOverrides};
 use crate::eth::error::BlockchainError;
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_network::Network;
@@ -10,7 +10,8 @@ use op_revm::{OpHaltReason, OpTransaction};
 use revm::{
     DatabaseRef, Inspector,
     context::{
-        TxEnv,
+        ContextTr, TxEnv,
+        journaled_state::JournalTr,
         result::{EVMError, HaltReason, ResultAndState},
     },
     database_interface::WrapDatabaseRef,
@@ -33,6 +34,26 @@ impl<N: Network> Backend<N> {
         I: Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        let overrides = SimulationPrecompileOverrides::default();
+        self.transact_op_with_inspector_ref_and_precompile_overrides(
+            db, evm_env, inspector, tx_env, &overrides,
+        )
+    }
+
+    /// Optimism path with per-call precompile overrides.
+    pub(super) fn transact_op_with_inspector_ref_and_precompile_overrides<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: OpTransaction<TxEnv>,
+        overrides: &SimulationPrecompileOverrides,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
         let op_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork().into()),
             evm_env.block_env.clone(),
@@ -43,6 +64,9 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut());
+        let warm_precompile_addresses =
+            self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
+        evm.ctx_mut().journal_mut().warm_precompiles(&warm_precompile_addresses);
         let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
             EVMError::Database(db) => EVMError::Database(db),
             EVMError::Header(h) => EVMError::Header(h),
