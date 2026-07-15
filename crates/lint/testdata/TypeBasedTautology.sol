@@ -126,4 +126,30 @@ contract TypeBasedTautology {
     function int8EqAtMin(int8 x) public pure returns (bool) {
         return x == -128; // ok, -128 is within int8 range
     }
+
+    // --- boolean compositions over type boundaries ---
+
+    function uintLowerBoundaryOr(uint256 x) public pure returns (bool) {
+        return x > 0 || x == 0; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function uintUpperBoundaryOr(uint8 x) public pure returns (bool) {
+        return x < 255 || x == 255; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function intLowerBoundaryOr(int8 x) public pure returns (bool) {
+        return x > -128 || x == -128; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function intUpperBoundaryOr(int8 x) public pure returns (bool) {
+        return x < 127 || x == 127; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function interiorBoundaryOr(int8 x) public pure returns (bool) {
+        return x > 0 || x == 0; // ok, negative values are not covered
+    }
+
+    function differentVariableOr(uint256 x, uint256 y) public pure returns (bool) {
+        return x > 0 || y == 0; // ok, the comparisons refer to different values
+    }
 }

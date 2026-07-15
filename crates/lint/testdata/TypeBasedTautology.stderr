@@ -150,3 +150,35 @@ LL │         return x == -129;
    │
    ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
 
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x > 0 || x == 0;
+   │                ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x < 255 || x == 255;
+   │                ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x > -128 || x == -128;
+   │                ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x < 127 || x == 127;
+   │                ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
