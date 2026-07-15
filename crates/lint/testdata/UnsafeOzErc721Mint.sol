@@ -1850,3 +1850,180 @@ contract RepeatedGuardHelperNft is ERC721 {
         _mint(to, id);
     }
 }
+
+// A recognized `if` comparison cannot restore coverage after one of its other hook arguments
+// reassigns the token. The hook may have seen the old value while the later mint credits the new
+// one, just as with a mutating `require` argument.
+contract IfGuardArgReassignNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        if (
+            IERC721Receiver(to).onERC721Received(
+                msg.sender, address(0), tokenId, abi.encodePacked(tokenId = tokenId + 1)
+            ) != IERC721Receiver.onERC721Received.selector
+        ) {
+            revert("unsafe receiver");
+        }
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A helper receives value-type copies. Reassigning its token parameter before the check means
+// it acknowledges a different value from the unchanged token its caller later mints.
+contract RemappedGuardHelperNft is ERC721 {
+    function _check(address to, uint256 tokenId) private {
+        tokenId += 1;
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        _check(to, tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// Modifier parameters are copies too: this guard asks about the incremented local token while
+// the wrapped body still mints the function parameter passed to the modifier.
+contract RemappedGuardModifierNft is ERC721 {
+    modifier checked(address to, uint256 tokenId) {
+        tokenId += 1;
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+        _;
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override checked(to, tokenId) {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A public helper called by bare name still dispatches internally in the same EVM frame, so the
+// receiver sees the minting contract as its caller and the helper can establish coverage.
+contract PublicGuardHelperNft is ERC721 {
+    function _check(address to, uint256 tokenId) public {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        _check(to, tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+contract ExternalReceiverGuard {
+    function check(address to, uint256 tokenId) external {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+    }
+}
+
+// A cross-contract helper calls the hook from its own address. A receiver can accept that caller
+// while refusing the NFT contract itself, so this does not prove that the mint is receivable.
+contract ExternalGuardHelperNft is ERC721 {
+    ExternalReceiverGuard internal guard;
+
+    constructor(ExternalReceiverGuard guard_) {
+        guard = guard_;
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        guard.check(to, tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A guard's error argument can leave the entire frame through an internal assembly helper before
+// `require` reverts, preserving the mint that already ran.
+contract GuardArgumentAssemblyEscapeNft is ERC721 {
+    function _escapeMessage() private pure returns (string memory) {
+        assembly {
+            return(0, 0)
+        }
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            _escapeMessage()
+        );
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// Inline assembly can rewrite a Solidity local without producing an HIR assignment expression.
+// Coverage from the earlier guard must not survive that opaque block.
+contract AssemblyTokenRemapNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+        assembly {
+            tokenId := add(tokenId, 1)
+        }
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A fresh guard after the opaque assembly block checks the remapped token, so the later mint is
+// covered even though no prior coverage can cross the block.
+contract AssemblyTokenRemapThenGuardNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        assembly {
+            tokenId := add(tokenId, 1)
+        }
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}

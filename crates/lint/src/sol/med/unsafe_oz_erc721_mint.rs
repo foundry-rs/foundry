@@ -745,8 +745,8 @@ fn is_acceptance_condition<'hir>(
     accepts(lhs, rhs) || accepts(rhs, lhs)
 }
 
-/// A call handing both the recipient and the token to a function or a modifier whose body
-/// reverts on refusal for the parameters they land on. The arguments are matched by
+/// A call handing both the recipient and the token to a same-frame function or a modifier whose
+/// body reverts on refusal for the parameters they land on. The arguments are matched by
 /// [`is_exactly_var`] against the callee's parameters, by name for named arguments: bound by
 /// source position, `_check({actual: to, checked: other})` would analyze `to` as the parameter
 /// the runtime hands `other`. A helper never asked about the token cannot answer for it.
@@ -851,12 +851,23 @@ fn walk_guards<'hir>(
                 // A guard that also reassigns the recipient or the token cannot be trusted:
                 // evaluation order decides whether the hook read the value the mint credits, so
                 // an assignment tucked in the guard's other arguments retires coverage instead
-                // of granting it.
-                if mutates_var(hir, stmt, recipient) || mutates_var(hir, stmt, token) {
+                // of granting it. Nor can a guard that may leave the frame establish coverage:
+                // an assembly return in another argument can keep a pending mint before the
+                // builtin has a chance to revert.
+                let mutates = mutates_var(hir, stmt, recipient) || mutates_var(hir, stmt, token);
+                let escapes = may_return(gcx, hir, stmt);
+                if mutates {
                     if walk.pending {
                         walk.failed = true;
                     }
                     walk.covered = false;
+                } else if escapes {
+                    if walk.pending {
+                        walk.failed = true;
+                    }
+                    if !walk.covered {
+                        walk.escaped = true;
+                    }
                 } else {
                     walk.covered = true;
                     walk.pending = false;
@@ -865,22 +876,35 @@ fn walk_guards<'hir>(
             hir::StmtKind::If(cond, then, else_) => {
                 // The condition runs before either branch, so an assignment embedded in it,
                 // `if ((tokenId = tokenId + 1) > 0) {}`, retires coverage exactly as a bare
-                // assignment statement does. A genuine hook or account test carries none.
-                if expr_mutates_var(hir, cond, recipient) || expr_mutates_var(hir, cond, token) {
+                // assignment statement does. Even a recognized hook comparison may hide one in
+                // another argument, so mutation also prevents the comparison from covering.
+                let condition_mutates =
+                    expr_mutates_var(hir, cond, recipient) || expr_mutates_var(hir, cond, token);
+                let condition_escapes = expr_contains_frame_ending_assembly(gcx, hir, cond);
+                if condition_mutates {
                     if walk.pending {
                         walk.failed = true;
                     }
                     walk.covered = false;
                 }
+                if condition_escapes {
+                    if walk.pending {
+                        walk.failed = true;
+                    }
+                    if !walk.covered {
+                        walk.escaped = true;
+                    }
+                }
                 // The exiting branch must be the one a refusal takes, not the one an acceptance
                 // does. Continue reading the accepted branch from the covered state: it may
-                // still reassign the checked values before delegating.
-                let refusal_then =
-                    is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Ne)
-                        && branch_always_reverts(gcx, hir, then);
-                let refusal_else =
-                    is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq)
-                        && else_.is_some_and(|else_| branch_always_reverts(gcx, hir, else_));
+                // still reassign the checked values before delegating. A condition that itself
+                // reassigns one of them cannot establish coverage for the new value.
+                let refusal_then = !condition_mutates
+                    && is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Ne)
+                    && branch_always_reverts(gcx, hir, then);
+                let refusal_else = !condition_mutates
+                    && is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq)
+                    && else_.is_some_and(|else_| branch_always_reverts(gcx, hir, else_));
                 if refusal_then || refusal_else {
                     walk.covered = true;
                     walk.pending = false;
@@ -1141,9 +1165,10 @@ fn callable_contains_frame_ending_assembly<'hir>(
 }
 
 /// A statement expression that guards the recipient and the token: `require`/`assert` on an
-/// acceptance condition, or a call handing both to a helper that does. Only the condition is
-/// read: a hook call sitting in the revert message decides nothing, and neither does one in any
-/// other argument.
+/// acceptance condition, or an internal call handing both to a helper that does. Only the
+/// condition is read: a hook call sitting in the revert message decides nothing, and neither
+/// does one in any other argument. An external helper would ask from a different contract and
+/// cannot establish that the recipient accepts the minting contract's callback.
 fn is_guard_expr<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
@@ -1159,15 +1184,17 @@ fn is_guard_expr<'hir>(
             .next()
             .is_some_and(|cond| is_acceptance_condition(gcx, hir, cond, recipient, token));
     }
-    resolved_callee(gcx, expr.peel_parens()).is_some_and(|function_id| {
+    resolved_internal_callee(gcx, expr.peel_parens()).is_some_and(|function_id| {
         callee_guards_recipient(gcx, hir, function_id, args, recipient, token, false, seen)
     })
 }
 
 /// Whether a statement assigns to `var`: `var = x`, `var += x`, `var++`, `delete var`, or `var`
-/// as a component of a tuple assignment. Identity here is by variable, not by value, so a guard
-/// that checked `var` says nothing once `var` is reassigned: the delegation then credits a value
-/// or an address the guard never saw, though the two spell the same variable.
+/// as a component of a tuple assignment. An assembly block is treated as an opaque assignment,
+/// since it can rewrite Solidity locals outside the HIR expression tree. Identity here is by
+/// variable, not by value, so a guard that checked `var` says nothing once `var` is reassigned:
+/// the delegation then credits a value or an address the guard never saw, though the two spell
+/// the same variable.
 fn mutates_var<'hir>(
     hir: &'hir Hir<'hir>,
     stmt: &'hir hir::Stmt<'hir>,
@@ -1189,8 +1216,7 @@ fn expr_mutates_var<'hir>(
     finder.visit_expr(expr).is_break()
 }
 
-/// Finds an assignment to `var` anywhere in a subtree: `var = x`, `var += x`, `var++`,
-/// `delete var`, or `var` as a component of a tuple assignment.
+/// Finds an assignment to `var` anywhere in a subtree, conservatively including assembly.
 struct MutationFinder<'hir> {
     hir: &'hir Hir<'hir>,
     var: hir::VariableId,
@@ -1201,6 +1227,16 @@ impl<'hir> Visit<'hir> for MutationFinder<'hir> {
 
     fn hir(&self) -> &'hir Hir<'hir> {
         self.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        // Yul can assign to Solidity locals, but those assignments are not HIR expressions.
+        // Treat an assembly block as opaque mutation of every tracked value rather than keep
+        // coverage across a remap this visitor cannot inspect.
+        if matches!(stmt.kind, hir::StmtKind::AssemblyBlock(_)) {
+            return ControlFlow::Break(());
+        }
+        self.walk_stmt(stmt)
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
@@ -1299,9 +1335,20 @@ fn body_guards<'hir>(
     let guarded = if function.virtual_ || !function.modifiers.is_empty() {
         false
     } else if let Some(body) = &function.body {
-        let mut walk = GuardWalk::default();
-        walk_guards(gcx, hir, body.stmts, recipient, token, &[], bypass, seen, &mut walk);
-        walk.covered && !walk.escaped
+        // The caller relies on the values it passed in, not on a helper or modifier's local
+        // parameter after reassignment. Conservatively reject any body that mutates either
+        // bound parameter; a later guard may then be checking a different value.
+        let parameters_unchanged = !body
+            .stmts
+            .iter()
+            .any(|stmt| mutates_var(hir, stmt, recipient) || mutates_var(hir, stmt, token));
+        if parameters_unchanged {
+            let mut walk = GuardWalk::default();
+            walk_guards(gcx, hir, body.stmts, recipient, token, &[], bypass, seen, &mut walk);
+            walk.covered && !walk.escaped
+        } else {
+            false
+        }
     } else {
         false
     };
