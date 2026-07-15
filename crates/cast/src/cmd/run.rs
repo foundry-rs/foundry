@@ -382,17 +382,17 @@ impl RunArgs {
         }
 
         let l1_gas_used_by_tx = if is_arbitrum_chain(evm_env.cfg_env.chain_id) {
-            provider
-                .get_block_receipts(tx_block_number.into())
-                .await?
-                .ok_or_else(|| eyre::eyre!("block receipts not found: {tx_block_number}"))?
-                .into_iter()
-                .map(|receipt| {
-                    (receipt.transaction_hash(), arbitrum_l1_gas_used(receipt.other_fields()))
-                })
-                .collect::<B256HashMap<_>>()
+            Some(
+                provider
+                    .get_block_receipts(tx_block_number.into())
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("block receipts not found: {tx_block_number}"))?
+                    .into_iter()
+                    .map(|receipt| (receipt.transaction_hash(), receipt.other_fields().clone()))
+                    .collect::<B256HashMap<_>>(),
+            )
         } else {
-            B256HashMap::default()
+            None
         };
 
         let trace_requirements = TraceRequirements::none()
@@ -485,10 +485,9 @@ impl RunArgs {
                         break;
                     }
 
-                    let tx_env = replay_tx_env::<FEN>(
-                        tx,
-                        l1_gas_used_by_tx.get(&tx.tx_hash()).copied().unwrap_or_default(),
-                    )?;
+                    let l1_gas_used =
+                        arbitrum_l1_gas_used_for_tx(l1_gas_used_by_tx.as_ref(), tx.tx_hash())?;
+                    let tx_env = replay_tx_env::<FEN>(tx, l1_gas_used)?;
 
                     evm_env.cfg_env.disable_balance_check = true;
 
@@ -536,7 +535,8 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            let l1_gas_used = l1_gas_used_by_tx.get(&tx.tx_hash()).copied().unwrap_or_default();
+            let l1_gas_used =
+                arbitrum_l1_gas_used_for_tx(l1_gas_used_by_tx.as_ref(), tx.tx_hash())?;
             let tx_env = replay_tx_env::<FEN>(&tx, l1_gas_used)?;
 
             let from = tx.from();
@@ -557,7 +557,7 @@ impl RunArgs {
                     TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
                 }
             };
-            result.gas_used = result.gas_used.saturating_add(l1_gas_used);
+            result.gas_used = total_gas_used(tx.tx_hash(), result.gas_used, l1_gas_used)?;
             result
         };
 
@@ -588,16 +588,50 @@ fn replay_tx_env<FEN: FoundryEvmNetwork>(
     l1_gas_used: u64,
 ) -> Result<TxEnvFor<FEN>> {
     let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
-    tx_env.set_gas_limit(tx.gas_limit().saturating_sub(l1_gas_used));
+    let gas_limit = tx.gas_limit();
+    let execution_gas_limit = execution_gas_limit(tx.tx_hash(), gas_limit, l1_gas_used)?;
+    tx_env.set_gas_limit(execution_gas_limit);
     Ok(tx_env)
 }
 
-fn arbitrum_l1_gas_used(other_fields: &OtherFields) -> u64 {
-    other_fields
+fn execution_gas_limit(tx_hash: B256, gas_limit: u64, l1_gas_used: u64) -> Result<u64> {
+    gas_limit.checked_sub(l1_gas_used).ok_or_else(|| {
+        eyre::eyre!(
+            "Nitro poster gas {l1_gas_used} exceeds gas limit {gas_limit} for transaction {:?}",
+            tx_hash
+        )
+    })
+}
+
+fn total_gas_used(tx_hash: B256, execution_gas_used: u64, l1_gas_used: u64) -> Result<u64> {
+    execution_gas_used.checked_add(l1_gas_used).ok_or_else(|| {
+        eyre::eyre!(
+            "gas used overflow for transaction {tx_hash:?}: execution gas {execution_gas_used}, Nitro poster gas {l1_gas_used}"
+        )
+    })
+}
+
+fn arbitrum_l1_gas_used_for_tx(
+    receipt_fields_by_tx: Option<&B256HashMap<OtherFields>>,
+    tx_hash: B256,
+) -> Result<u64> {
+    let Some(receipt_fields_by_tx) = receipt_fields_by_tx else { return Ok(0) };
+    let other_fields = receipt_fields_by_tx
+        .get(&tx_hash)
+        .ok_or_else(|| eyre::eyre!("receipt not found for Nitro transaction {tx_hash:?}"))?;
+    arbitrum_l1_gas_used(other_fields)
+        .wrap_err_with(|| format!("invalid Nitro poster gas for transaction {tx_hash:?}"))
+}
+
+fn arbitrum_l1_gas_used(other_fields: &OtherFields) -> Result<u64> {
+    let value = other_fields
         .get_deserialized::<U256>("gasUsedForL1")
-        .and_then(|value| value.ok())
-        .map(|value| value.saturating_to())
-        .unwrap_or_default()
+        .ok_or_else(|| eyre::eyre!("missing `gasUsedForL1` receipt field"))?
+        .wrap_err("malformed `gasUsedForL1` receipt field")?;
+    if value > U256::from(u64::MAX) {
+        eyre::bail!("`gasUsedForL1` value {value} exceeds u64::MAX");
+    }
+    Ok(value.to())
 }
 
 fn parent_beacon_block_root_for_spec(
@@ -791,7 +825,46 @@ mod tests {
     fn parses_arbitrum_l1_gas_used() {
         let mut other_fields = OtherFields::default();
         other_fields.insert_value("gasUsedForL1".to_string(), "0x26ed52").unwrap();
-        assert_eq!(arbitrum_l1_gas_used(&other_fields), 2_551_122);
+        assert_eq!(arbitrum_l1_gas_used(&other_fields).unwrap(), 2_551_122);
+
+        other_fields.insert_value("gasUsedForL1".to_string(), "0x0").unwrap();
+        assert_eq!(arbitrum_l1_gas_used(&other_fields).unwrap(), 0);
+    }
+
+    #[test]
+    fn rejects_invalid_arbitrum_l1_gas_used() {
+        let mut other_fields = OtherFields::default();
+        let err = arbitrum_l1_gas_used(&other_fields).unwrap_err();
+        assert!(err.to_string().contains("missing `gasUsedForL1`"));
+
+        other_fields.insert_value("gasUsedForL1".to_string(), "invalid").unwrap();
+        let err = arbitrum_l1_gas_used(&other_fields).unwrap_err();
+        assert!(err.to_string().contains("malformed `gasUsedForL1`"));
+
+        other_fields
+            .insert_value("gasUsedForL1".to_string(), U256::from(u64::MAX) + U256::from(1))
+            .unwrap();
+        let err = arbitrum_l1_gas_used(&other_fields).unwrap_err();
+        assert!(err.to_string().contains("exceeds u64::MAX"));
+    }
+
+    #[test]
+    fn requires_matching_arbitrum_receipt() {
+        let tx_hash = B256::repeat_byte(0x42);
+        let receipt_fields_by_tx = B256HashMap::default();
+        let err = arbitrum_l1_gas_used_for_tx(Some(&receipt_fields_by_tx), tx_hash).unwrap_err();
+        assert!(err.to_string().contains("receipt not found for Nitro transaction"));
+        assert_eq!(arbitrum_l1_gas_used_for_tx(None, tx_hash).unwrap(), 0);
+    }
+
+    #[test]
+    fn rejects_invalid_nitro_gas_accounting() {
+        let tx_hash = B256::repeat_byte(0x42);
+        let err = execution_gas_limit(tx_hash, 100, 101).unwrap_err();
+        assert!(err.to_string().contains("poster gas 101 exceeds gas limit 100"));
+
+        let err = total_gas_used(tx_hash, u64::MAX, 1).unwrap_err();
+        assert!(err.to_string().contains("gas used overflow"));
     }
 
     #[test]
