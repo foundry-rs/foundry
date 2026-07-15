@@ -798,18 +798,43 @@ ignore them in the `.gitignore` file."
             .map(|url| Some(url.trim().to_string()))
     }
 
-    /// Returns whether the local config contains any values for the given submodule.
-    pub fn has_submodule_config(self, path: &Path) -> Result<bool> {
+    /// Returns all local config values for the given submodule.
+    pub fn submodule_config(self, path: &Path) -> Result<Vec<(String, String)>> {
         let pattern = format!(r"^submodule\.{}\.", regex::escape(&path.to_slash_lossy()));
-        let output = self.cmd().args(["config", "--local", "--get-regexp", &pattern]).output()?;
+        let output =
+            self.cmd().args(["config", "--local", "--null", "--get-regexp", &pattern]).output()?;
         match output.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
+            Some(0) => output
+                .stdout
+                .split(|byte| *byte == 0)
+                .filter(|entry| !entry.is_empty())
+                .map(|entry| {
+                    let Some(separator) = entry.iter().position(|byte| *byte == b'\n') else {
+                        return Err(eyre::eyre!("invalid submodule config entry"));
+                    };
+                    let (key, value) = entry.split_at(separator);
+                    let value = &value[1..];
+                    Ok((String::from_utf8(key.to_vec())?, String::from_utf8(value.to_vec())?))
+                })
+                .collect(),
+            Some(1) => Ok(Vec::new()),
             _ => Err(eyre::eyre!(
                 "failed to inspect submodule config: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             )),
         }
+    }
+
+    /// Replaces all local config values for the given submodule.
+    pub fn restore_submodule_config(self, path: &Path, config: &[(String, String)]) -> Result<()> {
+        if !self.submodule_config(path)?.is_empty() {
+            let section = format!("submodule.{}", path.to_slash_lossy());
+            self.cmd().args(["config", "--local", "--remove-section", &section]).exec()?;
+        }
+        for (key, value) in config {
+            self.cmd().args(["config", "--local", "--add", key, value]).exec()?;
+        }
+        Ok(())
     }
 
     /// Returns the absolute path to the repository's Git directory.

@@ -413,9 +413,9 @@ impl Installer<'_> {
         let gitmodules = root.join(".gitmodules");
         let gitmodules_existed = gitmodules.exists();
         let module_dir = git.absolute_git_dir()?.join("modules").join(relative_path);
+        let submodule_config = git.submodule_config(relative_path)?;
         let can_rollback = !path.exists()
             && !module_dir.exists()
-            && !git.has_submodule_config(relative_path)?
             && git.is_path_clean(relative_path)?
             && git.is_path_clean(Path::new(".gitmodules"))?;
 
@@ -458,9 +458,9 @@ impl Installer<'_> {
                 &root,
                 relative_path,
                 path,
-                &gitmodules,
                 gitmodules_existed,
                 &actual_module_dir,
+                &submodule_config,
             );
         }
 
@@ -472,11 +472,12 @@ impl Installer<'_> {
         root: &Path,
         relative_path: &Path,
         path: &Path,
-        gitmodules: &Path,
         gitmodules_existed: bool,
         module_dir: &Path,
+        submodule_config: &[(String, String)],
     ) {
         let git = self.git.root(root);
+        let gitmodules = root.join(".gitmodules");
         if let Err(err) = git.submodule_deinit(true, relative_path) {
             warn!(%err, "failed to remove submodule config after installation failure");
         }
@@ -489,7 +490,7 @@ impl Installer<'_> {
             warn!(%err, "failed to remove submodule Git directory after installation failure");
         }
         if !gitmodules_existed && gitmodules.exists() {
-            if let Err(err) = fs::remove_file(gitmodules) {
+            if let Err(err) = fs::remove_file(&gitmodules) {
                 warn!(%err, "failed to remove .gitmodules after installation failure");
             } else if let Err(err) = git.add(Some(".gitmodules")) {
                 warn!(%err, "failed to unstage .gitmodules after installation failure");
@@ -499,6 +500,9 @@ impl Installer<'_> {
             && let Err(err) = fs::remove_dir_all(path)
         {
             warn!(%err, "failed to remove dependency after installation failure");
+        }
+        if let Err(err) = git.restore_submodule_config(relative_path, submodule_config) {
+            warn!(%err, "failed to restore submodule config after installation failure");
         }
     }
 

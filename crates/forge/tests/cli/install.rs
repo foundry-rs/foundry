@@ -193,25 +193,37 @@ forgetest!(failed_install_preserves_gitmodules, |prj, cmd| {
 
 forgetest!(failed_install_preserves_submodule_config, |prj, cmd| {
     cmd.git_init();
-    let key = "submodule.lib/solady.update";
+    let git = Git::new(prj.root());
+    let key = "submodule.lib/solady.custom";
     let status = Command::new("git")
         .current_dir(prj.root())
-        .args(["config", "--local", key, "none"])
+        .args(["config", "--local", key, "keep"])
         .status()
         .unwrap();
     assert!(status.success());
+    assert_eq!(
+        git.submodule_config(Path::new("lib/solady")).unwrap(),
+        vec![(key.to_string(), "keep".to_string())]
+    );
 
     cmd.forge_fuse()
         .args(["install", "vectorized/solady@this-tag-does-not-exist"])
-        .assert_failure();
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Installing solady in [..] (url: https://github.com/vectorized/solady, tag: this-tag-does-not-exist)
+...
+Error: Tag: "this-tag-does-not-exist" not found for repo "https://github.com/vectorized/solady"!
 
-    let output = Command::new("git")
-        .current_dir(prj.root())
-        .args(["config", "--local", "--get", key])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "none");
+"#]]);
+
+    assert!(git.is_clean().unwrap());
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
+    assert_eq!(
+        git.submodule_config(Path::new("lib/solady")).unwrap(),
+        vec![(key.to_string(), "keep".to_string())]
+    );
 });
 
 // test to check we can run `forge install` in an empty dir <https://github.com/foundry-rs/foundry/issues/6519>
