@@ -211,9 +211,8 @@ contract ParseJsonTest is Test {
 
     function test_staticArrayPreservesSiblingInference() public {
         address inferredAddress = address(0x1234);
-        bytes memory data = vm.parseJson(
-            string.concat('{"fixedValues":[42],"inferredAddress":"', vm.toString(inferredAddress), '"}')
-        );
+        bytes memory data =
+            vm.parseJson(string.concat('{"fixedValues":[42],"inferredAddress":"', vm.toString(inferredAddress), '"}'));
         uint256[1] memory fixedValues = [uint256(42)];
         assertEq(data, abi.encode(fixedValues, inferredAddress));
     }
