@@ -942,7 +942,9 @@ impl TUIContext<'_> {
     }
 
     fn update_scroll_positions(&mut self) {
-        if let Some(stack) = &self.current_step().stack {
+        if let Some(stack) = &self.current_step().stack
+            && !stack.is_empty()
+        {
             self.draw_memory.current_stack_startline =
                 self.draw_memory.current_stack_startline.min(stack.len().saturating_sub(1));
         }
@@ -2847,5 +2849,33 @@ mod tests {
         assert_eq!(tui.draw_memory.inner_call_index, 1);
         assert_eq!(tui.draw_memory.current_buf_startline, 0);
         assert_eq!(tui.draw_memory.current_stack_startline, 0);
+    }
+
+    #[test]
+    fn navigation_preserves_stack_scroll_across_empty_snapshot() {
+        let address = Address::repeat_byte(1);
+        let mut empty_stack = step(2);
+        empty_stack.stack = Some(Vec::new().into_boxed_slice());
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![
+                step_with_stack(1, OpCode::STOP, &[0, 1, 2]),
+                empty_stack,
+                step_with_stack(3, OpCode::STOP, &[0, 1, 2]),
+            ],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.draw_memory.current_stack_startline = 2;
+
+        tui.step();
+        assert_eq!(tui.draw_memory.current_stack_startline, 2);
+
+        tui.step();
+        assert_eq!(tui.draw_memory.current_stack_startline, 2);
     }
 }
