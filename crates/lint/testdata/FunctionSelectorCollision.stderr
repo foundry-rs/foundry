@@ -1,0 +1,16 @@
+warning[function-selector-collision]: proxy function `TypedProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract TypedProxy {
+   │          ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ConcreteTypedProxy.burn(uint256)` collides with implementation function `ConcreteImplementation.collate_propagate_storage(bytes16)` at selector `0x42966c68`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ConcreteTypedProxy {
+   │          ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
