@@ -163,8 +163,8 @@ pub fn invariant_strat(
 }
 
 /// Strategy to select a sender address:
-/// * If `senders` is empty, then it is usually sampled from Foundry's fixed default sender pool.
-///   A random or dictionary address is used rarely to preserve broad exploration.
+/// * If `senders` is empty, then it is usually sampled from Foundry's fixed default sender pool. A
+///   random or dictionary address is used rarely to preserve broad exploration.
 /// * If `senders` is not empty, a random address is chosen from the list of senders.
 fn select_random_sender<S: FuzzStateReader>(
     fuzz_state: &S,
@@ -178,22 +178,19 @@ fn select_random_sender<S: FuzzStateReader>(
             100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address),
             dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state),
         ]
-        .prop_map({
-            let senders = senders.clone();
-            move |addr| {
-                let mut addr = addr.as_address().unwrap();
-                // Make sure the selected address is not in the list of excluded senders.
-                // We don't use proptest's filter to avoid reaching the `PROPTEST_MAX_LOCAL_REJECTS`
-                // max rejects and exiting test before all runs completes.
-                // See <https://github.com/foundry-rs/foundry/issues/11369>.
-                loop {
-                    if !senders.excluded.contains(&addr) {
-                        break;
-                    }
-                    addr = Address::random();
+        .prop_map(move |addr| {
+            let mut addr = addr.as_address().unwrap();
+            // Make sure the selected address is not in the list of excluded senders.
+            // We don't use proptest's filter to avoid reaching the `PROPTEST_MAX_LOCAL_REJECTS`
+            // max rejects and exiting test before all runs completes.
+            // See <https://github.com/foundry-rs/foundry/issues/11369>.
+            loop {
+                if !senders.excluded.contains(&addr) {
+                    break;
                 }
-                addr
+                addr = Address::random();
             }
+            addr
         });
 
         if default_senders.is_empty() {
