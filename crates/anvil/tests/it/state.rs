@@ -92,6 +92,48 @@ async fn test_load_state_continues_saved_timeline() {
     );
 }
 
+// Loading a state whose head has the same number as the fork block must keep the fork time
+// anchor: the canonical head stays the fork block, so the saved timeline does not apply.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_equal_height_fork_keeps_fork_anchor() {
+    // The state source: one block mined a year ahead of wall-clock time.
+    let (api_state, _handle_state) = spawn(NodeConfig::test()).await;
+    let one_year_ahead =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+            + 31_536_000;
+    api_state.evm_set_next_block_timestamp(one_year_ahead).unwrap();
+    api_state.mine_one().await;
+    let state = api_state.serialized_state(false).await.unwrap();
+
+    // The fork source: one block mined on the wall-clock timeline, same height as the state.
+    let (api_remote, handle_remote) = spawn(NodeConfig::test()).await;
+    api_remote.mine_one().await;
+
+    // Fork the remote head (height 1) and load the state (best height 1 as well): the
+    // canonical head keeps being the fork block, so its time anchor must be preserved.
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(handle_remote.http_endpoint()))
+            .with_init_state(Some(state)),
+    )
+    .await;
+
+    api.mine_one().await;
+    let new_head_timestamp = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
+
+    assert!(
+        new_head_timestamp < one_year_ahead,
+        "block after load_state jumped to the loaded state's timeline instead of keeping the \
+         fork anchor: {new_head_timestamp} >= {one_year_ahead}"
+    );
+}
+
 // <https://github.com/foundry-rs/foundry/issues/12645>
 #[tokio::test(flavor = "multi_thread")]
 async fn finalized_block_hash_consistent_after_load_state() {
