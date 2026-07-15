@@ -52,7 +52,7 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
 ];
 
 /// BSC secp256r1 precompile address introduced by the Haber hardfork.
-pub const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
+const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
 
 const BSC_MAINNET_CHAIN_ID: u64 = 56;
 const BSC_TESTNET_CHAIN_ID: u64 = 97;
