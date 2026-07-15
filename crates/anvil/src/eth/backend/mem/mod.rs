@@ -2497,6 +2497,18 @@ impl<N: Network> Backend<N> {
             // block-specific database can load it from disk.
             fork.database.read().await.maybe_flush_cache().map_err(BlockchainError::Internal)?;
             let fork_block_number = fork.block_number();
+            if rpc_url_changed {
+                let cache_path = self.node_config.read().await.block_cache_path(fork_block_number);
+                if let Some(cache_path) = cache_path
+                    && let Err(err) = std::fs::remove_file(&cache_path)
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    return Err(BlockchainError::Internal(format!(
+                        "failed to invalidate fork cache at {}: {err}",
+                        cache_path.display()
+                    )));
+                }
+            }
             let fork_block = fork
                 .block_by_number(fork_block_number)
                 .await?
@@ -2508,12 +2520,8 @@ impl<N: Network> Backend<N> {
                 } else {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
-                    {
-                        let maybe_fork_url =
-                            { self.node_config.read().await.fork_urls.first().cloned() };
-                        if let Some(fork_url) = maybe_fork_url {
-                            self.reset_block_number(fork_url, fork_block_number).await?;
-                        }
+                    if let Some(fork_url) = target_rpc_url.clone() {
+                        self.reset_block_number(fork_url, fork_block_number).await?;
                     }
 
                     let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);

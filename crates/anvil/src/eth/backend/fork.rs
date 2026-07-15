@@ -437,7 +437,6 @@ impl<N: Network> ClientFork<N> {
         let number = self.block_number();
         let block_hash = self.block_hash();
         self.database.write().await.insert_block_hash(U256::from(number), block_hash);
-        self.set_database_rpc_url(self.eth_rpc_url());
 
         Ok(())
     }
