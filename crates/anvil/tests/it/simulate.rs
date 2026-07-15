@@ -8,7 +8,7 @@ use alloy_rpc_types::{
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverridesBuilder},
 };
-use anvil::{NodeConfig, spawn};
+use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_test_utils::rpc;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -131,4 +131,54 @@ async fn test_simulate_rejects_call_above_remaining_block_gas() {
         provider.client().request("eth_simulateV1", (payload,)).await;
     let error = response.unwrap_err();
     assert_eq!(error.as_error_resp().unwrap().code, -38015);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_tracks_amsterdam_gas_dimensions_separately() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let sender = address!("0xc000000000000000000000000000000000000000");
+    let receiver = address!("0xc100000000000000000000000000000000000000");
+    let storage = address!("0xc200000000000000000000000000000000000000");
+    let gas_limit = 130_000;
+    let payload = SimulatePayload {
+        block_state_calls: vec![SimBlock {
+            block_overrides: Some(BlockOverrides {
+                gas_limit: Some(gas_limit),
+                ..Default::default()
+            }),
+            state_overrides: Some(
+                StateOverridesBuilder::with_capacity(1)
+                    .append(
+                        storage,
+                        AccountOverride {
+                            code: Some(Bytes::from_static(&[0x60, 0x01, 0x60, 0x00, 0x55, 0x00])),
+                            ..Default::default()
+                        },
+                    )
+                    .build(),
+            ),
+            calls: vec![
+                TransactionRequest {
+                    from: Some(sender),
+                    to: Some(TxKind::Call(storage)),
+                    ..Default::default()
+                },
+                TransactionRequest {
+                    from: Some(sender),
+                    to: Some(TxKind::Call(receiver)),
+                    ..Default::default()
+                },
+            ],
+        }],
+        ..Default::default()
+    };
+
+    let blocks = api.simulate_v1(payload, None).await.unwrap();
+    let block = &blocks[0];
+
+    assert!(block.calls.iter().all(|call| call.status));
+    let cumulative_gas_used = block.calls.iter().map(|call| call.gas_used).sum::<u64>();
+    assert!(cumulative_gas_used > gas_limit);
+    assert!(block.inner.header.gas_used <= gas_limit);
 }

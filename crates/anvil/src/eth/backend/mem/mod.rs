@@ -5049,13 +5049,19 @@ impl Backend<FoundryNetwork> {
             } = request;
             let mut cache_db = CacheDB::new(state);
             let mut block_res = Vec::with_capacity(block_state_calls.len());
+            let (is_amsterdam, tx_gas_limit_cap) = {
+                let cfg_env = &self.evm_env.read().cfg_env;
+                (cfg_env.spec >= SpecId::AMSTERDAM, cfg_env.tx_gas_limit_cap())
+            };
 
             // execute the blocks
             for block in block_state_calls {
                 let SimBlock { block_overrides, state_overrides, calls } = block;
                 let mut call_res = Vec::with_capacity(calls.len());
                 let mut log_index = 0;
-                let mut gas_used = 0;
+                let mut cumulative_gas_used = 0;
+                let mut block_regular_gas_used = 0;
+                let mut block_state_gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut logs= Vec::new();
 
@@ -5069,9 +5075,24 @@ impl Backend<FoundryNetwork> {
 
                 // execute all calls in that block
                 for (req_idx, mut request) in calls.into_iter().enumerate() {
-                    let remaining_gas = block_env.gas_limit.saturating_sub(gas_used);
+                    let remaining_regular_gas =
+                        block_env.gas_limit.saturating_sub(block_regular_gas_used);
+                    let remaining_state_gas =
+                        block_env.gas_limit.saturating_sub(block_state_gas_used);
+                    let remaining_gas = if is_amsterdam {
+                        remaining_regular_gas.min(remaining_state_gas)
+                    } else {
+                        block_env.gas_limit.saturating_sub(cumulative_gas_used)
+                    };
                     let requested_gas = request.gas.unwrap_or(remaining_gas);
-                    if requested_gas > remaining_gas {
+                    let exceeds_gas_limit = if is_amsterdam {
+                        let requested_regular_gas = requested_gas.min(tx_gas_limit_cap);
+                        requested_regular_gas > remaining_regular_gas
+                            || requested_gas > remaining_state_gas
+                    } else {
+                        requested_gas > remaining_gas
+                    };
+                    if exceeds_gas_limit {
                         return Err(BlockchainError::RpcError(RpcError {
                             code: ErrorCode::ServerError(-38015),
                             message: format!(
@@ -5096,6 +5117,12 @@ impl Backend<FoundryNetwork> {
                         fee_details,
                         block_env.clone(),
                     );
+
+                    if is_amsterdam {
+                        // Ensure simulated Amsterdam calls use EIP-8037's split gas schedule.
+                        let spec = evm_env.cfg_env.spec;
+                        evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+                    }
 
                     // Always disable EIP-3607
                     evm_env.cfg_env.disable_eip3607 = true;
@@ -5128,7 +5155,12 @@ impl Backend<FoundryNetwork> {
 
                     // commit the transaction
                     cache_db.commit(state);
-                    gas_used += result.tx_gas_used();
+                    cumulative_gas_used =
+                        cumulative_gas_used.saturating_add(result.tx_gas_used());
+                    block_regular_gas_used = block_regular_gas_used
+                        .saturating_add(result.gas().block_regular_gas_used());
+                    block_state_gas_used = block_state_gas_used
+                        .saturating_add(result.gas().block_state_gas_used());
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
@@ -5191,6 +5223,12 @@ impl Backend<FoundryNetwork> {
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
                 }
+
+                let gas_used = if is_amsterdam {
+                    block_regular_gas_used.max(block_state_gas_used)
+                } else {
+                    cumulative_gas_used
+                };
 
                 let transactions_envelopes: Vec<AnyTxEnvelope> = transactions
                 .iter()
