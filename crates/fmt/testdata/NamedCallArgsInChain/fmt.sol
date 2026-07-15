@@ -59,6 +59,22 @@ contract NamedCallArgsInChain {
             firstExtremelyLongArgumentName: firstExtremelyLongValueName,
             secondExtremelyLongArgumentName: secondExtremelyLongValueName
         });
+        factory()
+            .item( /* preserve */
+                firstExtremelyLongValueName
+            )
+            .update({
+                firstExtremelyLongArgumentName: firstExtremelyLongValueName,
+                secondExtremelyLongArgumentName: secondExtremelyLongValueName
+            });
+        factory().items()[0].update({
+            firstExtremelyLongArgumentName: firstExtremelyLongValueName,
+            secondExtremelyLongArgumentName: secondExtremelyLongValueName
+        });
+        (factory().item()).update({
+            firstExtremelyLongArgumentName: firstExtremelyLongValueName,
+            secondExtremelyLongArgumentName: secondExtremelyLongValueName
+        });
         foo{value: 1}()
             .bar({
                 firstExtremelyLongArgumentName: firstExtremelyLongValueName,

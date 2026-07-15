@@ -1315,6 +1315,7 @@ impl<'ast> State<'_, 'ast> {
                 .then(|| ChainedNamedCall {
                     callee: call_expr.span,
                     keep_inline: !call_chain_contains_options(call_expr)
+                        && !self.call_chain_contains_arg_comments(call_expr)
                         && self.estimate_size(call_expr.span)
                             + if call_args.is_empty() { 4 } else { 2 }
                             <= self.space_left(),
@@ -1447,6 +1448,19 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Err(_) => self.print_span(span),
         }
         self.cursor.advance_to(span.hi(), true);
+    }
+
+    fn call_chain_contains_arg_comments(&self, expr: &'ast ast::Expr<'ast>) -> bool {
+        match &expr.peel_parens().kind {
+            ast::ExprKind::Call(expr, args) => {
+                self.has_comments_between_elements(args.span, args.exprs())
+                    || self.call_chain_contains_arg_comments(expr)
+            }
+            ast::ExprKind::CallOptions(expr, ..)
+            | ast::ExprKind::Index(expr, ..)
+            | ast::ExprKind::Member(expr, ..) => self.call_chain_contains_arg_comments(expr),
+            _ => false,
+        }
     }
 
     /// Prints a simple assignment expression of the form `lhs = rhs`.
@@ -1733,12 +1747,16 @@ impl<'ast> State<'_, 'ast> {
             }
 
             // Determine if this chain will add its own indentation
-            let chain_has_indent = is_call_chain(&child_expr.kind, true)
-                || !(no_cmnt_or_mixed
-                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                || !callee_fits_line
-                || (member_depth(0, child_expr) >= 2
-                    && (!total_fits_line || member_or_args.has_comments()));
+            let keep_chain_inline = self
+                .chained_named_call
+                .is_some_and(|call| call.keep_inline && call.callee.contains(child_expr.span));
+            let chain_has_indent = !keep_chain_inline
+                && (is_call_chain(&child_expr.kind, true)
+                    || !(no_cmnt_or_mixed
+                        || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
+                    || !callee_fits_line
+                    || (member_depth(0, child_expr) >= 2
+                        && (!total_fits_line || member_or_args.has_comments())));
 
             // Start a new chain if needed
             if is_call_chain(&child_expr.kind, false) {
@@ -3055,10 +3073,14 @@ const fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
-    if let ast::ExprKind::Member(child, ..) = expr_kind {
-        is_call_chain(&child.kind, false)
-    } else {
-        !must_have_child && is_call(expr_kind)
+    match expr_kind {
+        ast::ExprKind::Index(child, ..) | ast::ExprKind::Member(child, ..) => {
+            is_call_chain(&child.kind, false)
+        }
+        ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(child)] = exprs.as_ref() => {
+            is_call_chain(&child.kind, must_have_child)
+        }
+        _ => !must_have_child && is_call(expr_kind),
     }
 }
 
