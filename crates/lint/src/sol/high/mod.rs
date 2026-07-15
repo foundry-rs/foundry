@@ -17,7 +17,7 @@ use controlled_delegatecall::CONTROLLED_DELEGATECALL;
 use encode_packed_collision::ENCODE_PACKED_COLLISION;
 use incorrect_exp::INCORRECT_EXP;
 use incorrect_shift::INCORRECT_SHIFT;
-use reentrancy::{REENTRANCY_ETH, REENTRANCY_NO_ETH};
+use reentrancy::{REENTRANCY_ETH, REENTRANCY_NO_ETH, REENTRANCY_UNLIMITED_GAS};
 use rtlo::RTLO;
 use unchecked_calls::{ERC20_UNCHECKED_TRANSFER, UNCHECKED_CALL};
 use unprotected_initializer::UNPROTECTED_INITIALIZER;
@@ -29,7 +29,7 @@ register_lints!(
     (EncodedPackedCollision, late, (ENCODE_PACKED_COLLISION)),
     (IncorrectExp, late, (INCORRECT_EXP)),
     (IncorrectShift, early, (INCORRECT_SHIFT)),
-    (ReentrancyEth, late, (REENTRANCY_ETH, REENTRANCY_NO_ETH)),
+    (ReentrancyEth, late, (REENTRANCY_ETH, REENTRANCY_NO_ETH, REENTRANCY_UNLIMITED_GAS)),
     (UncheckedCall, early, (UNCHECKED_CALL)),
     (UncheckedTransferERC20, late, (ERC20_UNCHECKED_TRANSFER)),
     (UnprotectedInitializer, late, (UNPROTECTED_INITIALIZER)),

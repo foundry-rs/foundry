@@ -14,6 +14,7 @@ use solar::{
     interface::{Span, kw, sym},
     sema::{
         Gcx, Ty,
+        builtins::Builtin,
         hir::{
             self, CallArgs, CallArgsKind, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId,
         },
@@ -34,6 +35,13 @@ declare_forge_lint!(
     Severity::Med,
     "reentrancy-no-eth",
     "state read before external call is written after the call"
+);
+
+declare_forge_lint!(
+    REENTRANCY_UNLIMITED_GAS,
+    Severity::Info,
+    "reentrancy-unlimited-gas",
+    "state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy"
 );
 
 impl<'hir> LateLintPass<'hir> for ReentrancyEth {
@@ -89,6 +97,7 @@ struct PendingCall {
 enum ReentrantCallKind {
     Eth,
     NoEth,
+    Stipend,
 }
 
 impl FlowState {
@@ -97,7 +106,7 @@ impl FlowState {
     }
 
     fn push_call(&mut self, span: Span, kind: ReentrantCallKind) {
-        if self.state_reads.is_empty() {
+        if self.state_reads.is_empty() && kind != ReentrantCallKind::Stipend {
             return;
         }
 
@@ -126,6 +135,7 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     direct_internal_calls: HashMap<FunctionId, Vec<FunctionId>>,
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
+    reentrancy_unlimited_gas_enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -155,11 +165,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             direct_internal_calls: HashMap::new(),
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
+            reentrancy_unlimited_gas_enabled: ctx.is_lint_enabled(REENTRANCY_UNLIMITED_GAS.id),
         }
     }
 
     const fn has_enabled_lints(&self) -> bool {
-        self.reentrancy_eth_enabled || self.reentrancy_no_eth_enabled
+        self.reentrancy_eth_enabled
+            || self.reentrancy_no_eth_enabled
+            || self.reentrancy_unlimited_gas_enabled
     }
 
     fn analyze_callable(
@@ -242,6 +255,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::Emit(expr) => {
                 self.analyze_expr(expr, state);
+                self.emit_pending_stipend_calls(state);
                 true
             }
             StmtKind::Revert(expr) => {
@@ -365,9 +379,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for func_id in resolved_function_ids(callee) {
                     self.analyze_internal_call(func_id, state);
                 }
-                if !state.state_reads.is_empty()
-                    && let Some(kind) = self.reentrant_call_kind(callee, args, *opts)
-                {
+                if let Some(kind) = self.reentrant_call_kind(callee, args, *opts) {
                     state.push_call(expr.span, kind);
                 }
             }
@@ -683,6 +695,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     fn emit_pending_calls(&mut self, state: &FlowState, written_vars: &[VariableId]) {
+        self.emit_pending_stipend_calls(state);
+
         for call in &state.pending_calls {
             let (lint, msg_prefix) = match call.kind {
                 ReentrantCallKind::Eth => {
@@ -691,6 +705,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 ReentrantCallKind::NoEth => {
                     (&REENTRANCY_NO_ETH, "external call can be reentered before")
                 }
+                ReentrantCallKind::Stipend => continue,
             };
             if !self.ctx.is_lint_enabled(lint.id) || self.emitted.contains(&call.span) {
                 continue;
@@ -715,12 +730,29 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
     }
 
+    fn emit_pending_stipend_calls(&mut self, state: &FlowState) {
+        if !self.reentrancy_unlimited_gas_enabled {
+            return;
+        }
+
+        for call in &state.pending_calls {
+            if call.kind == ReentrantCallKind::Stipend && self.emitted.insert(call.span) {
+                self.ctx.emit(&REENTRANCY_UNLIMITED_GAS, call.span);
+            }
+        }
+    }
+
     fn reentrant_call_kind(
         &self,
         callee: &'hir hir::Expr<'hir>,
         args: &CallArgs<'hir>,
         opts: Option<&hir::CallOptions<'hir>>,
     ) -> Option<ReentrantCallKind> {
+        if self.reentrancy_unlimited_gas_enabled
+            && is_stipend_value_call(self.gcx, self.hir, callee, args)
+        {
+            return Some(ReentrantCallKind::Stipend);
+        }
         if self.reentrancy_eth_enabled && is_uncapped_value_call(self.hir, callee, opts) {
             return Some(ReentrantCallKind::Eth);
         }
@@ -730,6 +762,57 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             return Some(ReentrantCallKind::NoEth);
         }
         None
+    }
+}
+
+fn is_stipend_value_call<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
+    callee: &'hir hir::Expr<'hir>,
+    args: &CallArgs<'hir>,
+) -> bool {
+    let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
+    if args.len() != 1
+        || !matches!(member.name, sym::transfer | sym::send)
+        || !is_stipend_receiver(gcx, hir, receiver)
+    {
+        return false;
+    }
+
+    let Some(receiver_ty) = expr_ty(gcx, hir, receiver) else { return false };
+    let Some(resolved) = unique(
+        gcx.members_of(receiver_ty, base_item_source(hir, receiver), base_contract(hir, receiver))
+            .filter(|candidate| candidate.name == member.name),
+    ) else {
+        return false;
+    };
+
+    matches!(
+        (member.name, resolved.res),
+        (sym::transfer, Some(Res::Builtin(Builtin::AddressPayableTransfer)))
+            | (sym::send, Some(Res::Builtin(Builtin::AddressPayableSend)))
+    )
+}
+
+fn is_stipend_receiver<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
+    receiver: &'hir hir::Expr<'hir>,
+) -> bool {
+    match &receiver.peel_parens().kind {
+        ExprKind::Payable(_) => true,
+        ExprKind::Call(callee, _, _) if is_address_type_expr(callee) => true,
+        ExprKind::Ident(reses) => reses.iter().any(|res| {
+            matches!(
+                res,
+                Res::Item(ItemId::Variable(var_id))
+                    if matches!(
+                        hir.variable(*var_id).ty.kind,
+                        hir::TypeKind::Elementary(ElementaryType::Address(_))
+                    )
+            )
+        }),
+        _ => gcx.type_of_expr(receiver.peel_parens().id).is_some_and(type_is_address_like),
     }
 }
 
