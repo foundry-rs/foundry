@@ -22,15 +22,20 @@ use std::{
 
 use heck::ToSnakeCase;
 
+const SERDE_ARRAY_IMPL_MAX_LEN: usize = 32;
+const SERDE_WITH_DEP: &str =
+    r#"serde_with = { version = "3.15", default-features = false, features = ["std"] }"#;
+
 pub struct SolMacroGen {
     pub path: PathBuf,
     pub name: String,
     pub expansion: Option<TokenStream>,
+    needs_serde_with: bool,
 }
 
 impl SolMacroGen {
     pub const fn new(path: PathBuf, name: String) -> Self {
-        Self { path, name, expansion: None }
+        Self { path, name, expansion: None, needs_serde_with: false }
     }
 
     pub fn get_sol_input(&self) -> Result<SolInput> {
@@ -105,7 +110,11 @@ impl MultiSolMacroGen {
             _ => unreachable!(),
         };
 
+        let (tokens, needs_serde_with) =
+            if all_derives { add_large_array_serde_attrs(tokens)? } else { (tokens, false) };
+
         instance.expansion = Some(tokens);
+        instance.needs_serde_with = needs_serde_with;
         Ok(())
     }
 
@@ -157,6 +166,9 @@ edition = "2021"
         if all_derives {
             let serde_dep = r#"serde = { version = "1.0", features = ["derive"] }"#;
             write!(toml_contents, "\n{serde_dep}")?;
+            if self.instances.iter().any(|instance| instance.needs_serde_with) {
+                write!(toml_contents, "\n{SERDE_WITH_DEP}")?;
+            }
         }
 
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
@@ -361,9 +373,13 @@ edition = "2021"
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
         let alloy_dep_check = Self::get_alloy_dep(alloy_version, alloy_rev);
+        let serde_with_consistent =
+            !self.instances.iter().any(|instance| instance.needs_serde_with)
+                || cargo_toml_contents.contains(SERDE_WITH_DEP);
         let toml_consistent = cargo_toml_contents.contains(&name_check)
             && cargo_toml_contents.contains(&version_check)
-            && cargo_toml_contents.contains(&alloy_dep_check);
+            && cargo_toml_contents.contains(&alloy_dep_check)
+            && serde_with_consistent;
         eyre::ensure!(
             toml_consistent,
             r#"The contents of Cargo.toml do not match the expected output of the latest `sol!` version.
@@ -388,6 +404,65 @@ edition = "2021"
         } else {
             r#"alloy = { version = "1.0", features = ["sol-types", "contract"] }"#.to_string()
         }
+    }
+}
+
+#[derive(Default)]
+struct LargeArraySerdeAttrs {
+    added: bool,
+}
+
+impl syn::visit_mut::VisitMut for LargeArraySerdeAttrs {
+    fn visit_item_struct_mut(&mut self, item: &mut syn::ItemStruct) {
+        for field in &mut item.fields {
+            if let Some(adapter) = large_array_serde_adapter(&field.ty) {
+                let adapter =
+                    syn::LitStr::new(&format!("::serde_with::As::<{adapter}>"), Span::call_site());
+                field.attrs.insert(0, syn::parse_quote!(#[serde(with = #adapter)]));
+                self.added = true;
+            }
+        }
+    }
+}
+
+/// Adds `serde_with` adapters where Serde's built-in array implementations stop.
+fn add_large_array_serde_attrs(tokens: TokenStream) -> Result<(TokenStream, bool)> {
+    let mut file = syn::parse2::<syn::File>(tokens)
+        .wrap_err("failed to parse generated bindings for large array support")?;
+    let mut visitor = LargeArraySerdeAttrs::default();
+    syn::visit_mut::VisitMut::visit_file_mut(&mut visitor, &mut file);
+    Ok((quote::quote!(#file), visitor.added))
+}
+
+fn large_array_serde_adapter(ty: &syn::Type) -> Option<String> {
+    match ty {
+        syn::Type::Array(array) => {
+            let syn::Expr::Lit(expr) = &array.len else { return None };
+            let syn::Lit::Int(length) = &expr.lit else { return None };
+            let element = large_array_serde_adapter(&array.elem);
+            let is_large =
+                length.base10_parse::<usize>().is_ok_and(|len| len > SERDE_ARRAY_IMPL_MAX_LEN);
+            if !is_large && element.is_none() {
+                return None;
+            }
+
+            let element = element.unwrap_or_else(|| "::serde_with::Same".to_string());
+            Some(format!("[{element}; {}]", length.base10_digits()))
+        }
+        syn::Type::Path(type_path) if type_path.qself.is_none() => {
+            let last = type_path.path.segments.last()?;
+            if last.ident == "Vec"
+                && let syn::PathArguments::AngleBracketed(arguments) = &last.arguments
+                && arguments.args.len() == 1
+                && let Some(syn::GenericArgument::Type(element)) = arguments.args.first()
+                && let Some(element) = large_array_serde_adapter(element)
+            {
+                Some(format!("::std::vec::Vec<{element}>"))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -465,4 +540,24 @@ fn public_enum_names(contents: &str) -> Vec<String> {
         .filter_map(|rest| rest.split_whitespace().next())
         .map(|name| name.trim_start_matches("r#").to_string())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::large_array_serde_adapter;
+
+    fn adapter(ty: &str) -> Option<String> {
+        large_array_serde_adapter(&syn::parse_str(ty).unwrap())
+    }
+
+    #[test]
+    fn builds_large_array_serde_adapters() {
+        assert_eq!(adapter("[u64; 32]"), None);
+        assert_eq!(adapter("[u64; 33]"), Some("[::serde_with::Same; 33]".to_string()));
+        assert_eq!(adapter("[[u64; 48]; 2]"), Some("[[::serde_with::Same; 48]; 2]".to_string()));
+        assert_eq!(
+            adapter("alloy::sol_types::private::Vec<[u64; 48]>"),
+            Some("::std::vec::Vec<[::serde_with::Same; 48]>".to_string())
+        );
+    }
 }
