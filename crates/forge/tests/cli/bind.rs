@@ -163,3 +163,51 @@ Bindings have been generated to [..]
     let bindings_path = prj.root().join("out/bindings");
     assert_bindings_compile(&bindings_path);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10911>
+forgetest!(bind_large_fixed_arrays, |prj, cmd| {
+    prj.add_source(
+        "BigArrays.sol",
+        r#"
+interface serde_with {
+    struct LargeArrays {
+        uint256[48] values;
+    }
+
+    error LargeArrayError(uint256[48]);
+    event LargeArrayEvent(uint256[48] values);
+
+    function consume(uint256[48] calldata) external;
+    function fixedArray() external returns (uint256[48] memory);
+    function nestedArray() external returns (uint256[48][] memory);
+    function wrappedArray() external returns (LargeArrays memory);
+}
+"#,
+    );
+
+    cmd.args(["bind", "--select", "^serde_with$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+
+    cmd.forge_fuse().args(["bind", "--select", "^serde_with$"]).assert_success().stderr_eq(str![[
+        r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
+
+"#
+    ]]);
+
+    let bindings_path = prj.root().join("out/bindings");
+    assert_bindings_compile(&bindings_path);
+});

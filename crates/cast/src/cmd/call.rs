@@ -205,7 +205,7 @@ pub enum CallSubcommands {
 }
 
 impl CallArgs {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
             return self.run_curl().await;
@@ -221,6 +221,9 @@ impl CallArgs {
             evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
         }
         evm_opts.infer_network_from_fork().await;
+        if self.chain.is_none() {
+            self.chain = evm_opts.env.chain_id.map(Chain::from_id);
+        }
 
         if evm_opts.networks.is_tempo() {
             return self.run_with_network::<TempoEvmNetwork>().await;
@@ -647,6 +650,9 @@ impl figment::Provider for CallArgs {
         if let Some(evm_version) = self.evm_version {
             map.insert("evm_version".into(), figment::value::Value::serialize(evm_version)?);
         }
+        if let Some(chain) = self.chain {
+            map.insert("chain_id".into(), chain.id().into());
+        }
 
         Ok(Map::from([(Config::selected_profile(), map)]))
     }
@@ -666,6 +672,14 @@ mod tests {
         let data = hex::encode_prefixed("hello");
         let args = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
         assert_eq!(args.data, Some(data));
+    }
+
+    #[test]
+    fn chain_is_merged_into_config() {
+        let args = CallArgs::parse_from(["foundry-cli", "--chain", "1"]);
+        let config = Config::from_provider(Config::figment().merge(&args)).unwrap();
+
+        assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 
     #[test]
