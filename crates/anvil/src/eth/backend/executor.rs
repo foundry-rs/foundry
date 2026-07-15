@@ -196,6 +196,19 @@ where
 
             self.evm.db_mut().commit(result.state);
         }
+        // EIP-4788: store the parent beacon block root. Anvil-generated blocks use the zero root.
+        if self.spec_id >= SpecId::CANCUN {
+            let result = self
+                .evm
+                .transact_system_call(
+                    eip4788::SYSTEM_ADDRESS,
+                    eip4788::BEACON_ROOTS_ADDRESS,
+                    Bytes::from(B256::ZERO),
+                )
+                .map_err(BlockExecutionError::other)?;
+
+            self.evm.db_mut().commit(result.state);
+        }
         Ok(())
     }
 

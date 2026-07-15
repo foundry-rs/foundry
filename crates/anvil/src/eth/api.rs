@@ -2939,7 +2939,7 @@ impl EthApi<FoundryNetwork> {
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
+            && fork.predates_fork_inclusive(number)
         {
             return Ok(fork.simulate_v1(&request, Some(number.into())).await?);
         }

@@ -163,7 +163,7 @@ async fn test_simulate_finalized_header_and_receipt_rpc() {
     let config = NodeConfig::test()
         .with_hardfork(Some(EthereumHardfork::Cancun.into()))
         .with_base_fee(Some(0));
-    let (_api, handle) = spawn(config).await;
+    let (api, handle) = spawn(config).await;
     let endpoint = handle.http_endpoint();
     let accounts = rpc_request(&endpoint, "eth_accounts", json!([])).await;
     let from = accounts["result"][0].as_str().unwrap();
@@ -242,6 +242,7 @@ async fn test_simulate_finalized_header_and_receipt_rpc() {
     rpc_request(&endpoint, "anvil_setCode", json!([emitter, emitter_code])).await;
     rpc_request(&endpoint, "anvil_setCode", json!([blockhash_contract, "0x6001405f5260205ff3"]))
         .await;
+    api.evm_set_next_block_timestamp(quantity(&first["timestamp"])).unwrap();
     let sent = rpc_request(
         &endpoint,
         "eth_sendTransaction",
@@ -303,12 +304,183 @@ async fn test_simulate_pending_block_metadata_rpc() {
     let pending = &pending["result"];
     assert_eq!(quantity(&pending["number"]), quantity(&latest["number"]) + 1);
 
-    let response =
-        rpc_request(&endpoint, "eth_simulateV1", json!([{"blockStateCalls": [{}]}, "pending"]))
-            .await;
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{
+            "stateOverrides": {
+                "0xc200000000000000000000000000000000000000": {
+                    "code": "0x6001405f5260205ff3"
+                }
+            },
+            "calls": [{"to": "0xc200000000000000000000000000000000000000"}]
+        }]}, "pending"]),
+    )
+    .await;
     let simulated = &response["result"][0];
     assert_eq!(quantity(&simulated["number"]), quantity(&pending["number"]) + 1);
     assert_eq!(simulated["parentHash"], pending["hash"]);
+    assert_eq!(simulated["calls"][0]["returnData"], pending["hash"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_rejects_empty_block_state_calls_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": []}, "latest"]),
+    )
+    .await;
+
+    assert_eq!(
+        response,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32602, "message": "empty input"}
+        })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_prague_max_used_gas_includes_calldata_floor_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let input = format!("0x{}", "ff".repeat(1_000));
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{"calls": [{
+            "to": "0xc100000000000000000000000000000000000000",
+            "input": input
+        }]}]}, "latest"]),
+    )
+    .await;
+    let call = &response["result"][0]["calls"][0];
+
+    assert!(
+        quantity(&call["maxUsedGas"]) >= quantity(&call["gasUsed"]),
+        "maxUsedGas must include the EIP-7623 floor: {call}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_cancun_beacon_root_override_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_genesis_timestamp(Some(1_000u64))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let root = format!("0x{}", "42".repeat(32));
+    let timestamp = format!("0x{:064x}", 1_012);
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{
+            "blockOverrides": {"parentBeaconBlockRoot": root, "time": "0x3f4"},
+            "calls": [{
+                "to": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                "input": timestamp
+            }]
+        }]}, "latest"]),
+    )
+    .await;
+    let block = &response["result"][0];
+
+    assert_eq!(block["parentBeaconBlockRoot"], root);
+    assert_eq!(block["calls"][0]["returnData"], root);
+    let nonce = rpc_request(
+        &handle.http_endpoint(),
+        "eth_getTransactionCount",
+        json!(["0x000f3df6d732807ef1319fb7b8bb8522d0beac02", "latest"]),
+    )
+    .await;
+    assert_eq!(nonce["result"], "0x1");
+}
+
+#[cfg(feature = "optimism")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_optimism_beacon_root_override_rpc() {
+    let config = NodeConfig::test().with_optimism().with_genesis_timestamp(Some(1_000u64));
+    let (_api, handle) = spawn(config).await;
+    let root = format!("0x{}", "42".repeat(32));
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{
+            "blockOverrides": {"parentBeaconBlockRoot": root, "time": "0x3f4"},
+            "calls": [{
+                "to": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                "input": format!("0x{:064x}", 1_012)
+            }]
+        }]}, "latest"]),
+    )
+    .await;
+
+    assert_eq!(response["result"][0]["calls"][0]["returnData"], root);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_prague_updates_block_hash_history_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [
+            {},
+            {"calls": [{
+                "to": "0x0000f90827f1c53a10cb7a02335b175320002935",
+                "input": format!("0x{:064x}", 1)
+            }]}
+        ]}, "latest"]),
+    )
+    .await;
+    let blocks = response["result"].as_array().unwrap();
+
+    assert_eq!(blocks[1]["calls"][0]["returnData"], blocks[0]["hash"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_prague_finalizes_execution_requests_rpc() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_base_fee(Some(0));
+    let (_api, handle) = spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    for address in [
+        "0x0000f90827f1c53a10cb7a02335b175320002935",
+        "0x00000961ef480eb55e80d19ad83579a64c007002",
+        "0x0000bbddc7ce488642fb579f8b00f3a590007251",
+    ] {
+        let code = rpc_request(&endpoint, "eth_getCode", json!([address, "latest"])).await;
+        assert_ne!(code["result"], "0x", "Prague system contract must be deployed");
+        let nonce =
+            rpc_request(&endpoint, "eth_getTransactionCount", json!([address, "latest"])).await;
+        assert_eq!(nonce["result"], "0x1", "Prague system contract nonce must be one");
+    }
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{
+            "stateOverrides": {
+                "0x00000961ef480eb55e80d19ad83579a64c007002": {
+                    "code": "0x60425f5360015ff3"
+                }
+            }
+        }]}, "latest"]),
+    )
+    .await;
+
+    assert_eq!(
+        response["result"][0]["requestsHash"],
+        "0x9baf07d89ef9cd65e92ed7eaa7803904f3861a19c47b21cb0f4068a36f8a2779"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

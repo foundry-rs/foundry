@@ -43,13 +43,19 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{
-    BlockNumHash, Encodable2718, eip2935, eip4844::kzg_to_versioned_hash,
-    eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams, eip7910::SystemContract,
+    BlockNumHash, Encodable2718, eip2935,
+    eip4844::kzg_to_versioned_hash,
+    eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS},
+    eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_TYPE},
+    eip7251::{CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_TYPE},
+    eip7685::{EMPTY_REQUESTS_HASH, Requests},
+    eip7840::BlobParams,
+    eip7910::SystemContract,
 };
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
     block::{BlockExecutionResult, BlockExecutor, StateDB},
-    eth::EthEvmContext,
+    eth::{EthEvmContext, eip6110::accumulate_deposits_from_receipts},
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
@@ -715,6 +721,27 @@ impl<N: Network> Backend<N> {
             }
         });
         Ok(warm_addresses)
+    }
+
+    fn transact_simulation_system_call<DB>(
+        &self,
+        db: &mut DB,
+        evm_env: &EvmEnv,
+        contract: Address,
+        input: Bytes,
+        precompile_overrides: &SimulationPrecompileOverrides,
+    ) -> Result<ExecutionResult<HaltReason>, BlockchainError>
+    where
+        DB: Database<Error = DatabaseError> + DatabaseCommit,
+    {
+        let mut evm = EthEvmFactory::default().create_evm(&mut *db, evm_env.clone());
+        self.inject_precompiles(evm.precompiles_mut());
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        self.apply_simulation_precompile_overrides(evm.precompiles_mut(), precompile_overrides)?;
+        let ResultAndState { result, state } =
+            evm.transact_system_call(alloy_eips::eip4788::SYSTEM_ADDRESS, contract, input)?;
+        evm.db_mut().commit(state);
+        Ok(result)
     }
 
     /// Returns the system contracts for the current spec.
@@ -2570,12 +2597,35 @@ impl<N: Network> Backend<N> {
             // the evm
             db.insert_block_hash(U256::from(self.best_number()), self.best_hash());
 
+            let is_ethereum = matches!(self.hardfork(), FoundryHardfork::Ethereum(_));
+            // Deploy EIP-4788 beacon roots contract if Cancun is active.
+            if (is_ethereum || self.is_optimism()) && self.spec_id() >= SpecId::CANCUN {
+                db.set_code(
+                    alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
+                    alloy_eips::eip4788::BEACON_ROOTS_CODE.clone(),
+                )?;
+                db.set_nonce(alloy_eips::eip4788::BEACON_ROOTS_ADDRESS, 1)?;
+            }
+
             // Deploy EIP-2935 blockhash history storage contract if Prague is active.
             if self.spec_id() >= SpecId::PRAGUE {
                 db.set_code(
                     eip2935::HISTORY_STORAGE_ADDRESS,
                     eip2935::HISTORY_STORAGE_CODE.clone(),
                 )?;
+                db.set_nonce(eip2935::HISTORY_STORAGE_ADDRESS, 1)?;
+                if is_ethereum {
+                    db.set_code(
+                        WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+                        alloy_eips::eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_CODE.clone(),
+                    )?;
+                    db.set_nonce(WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, 1)?;
+                    db.set_code(
+                        CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+                        alloy_eips::eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_CODE.clone(),
+                    )?;
+                    db.set_nonce(CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, 1)?;
+                }
             }
         }
 
@@ -5195,10 +5245,17 @@ impl Backend<FoundryNetwork> {
             let block_state_calls =
                 sanitize_simulation_blocks(block_state_calls, base_number, base_timestamp)?;
             let mut cache_db = CacheDB::new(state);
+            cache_db.cache.block_hashes.insert(U256::from(base_number), base_hash);
             let mut block_res = Vec::with_capacity(block_state_calls.len());
             let mut parent_hash = base_hash;
             let mut rpc_gas_budget = SIMULATE_GAS_CAP;
             block_env.basefee = if validation { base_fee } else { 0 };
+            let spec_id = self.spec_id();
+            let is_shanghai = spec_id >= SpecId::SHANGHAI;
+            let is_cancun = spec_id >= SpecId::CANCUN;
+            let is_prague = spec_id >= SpecId::PRAGUE;
+            let process_requests =
+                is_prague && matches!(self.hardfork(), FoundryHardfork::Ethereum(_));
 
             // execute the blocks
             for block in block_state_calls {
@@ -5217,6 +5274,9 @@ impl Backend<FoundryNetwork> {
                     .map(|overrides| self.simulation_precompile_overrides(overrides))
                     .transpose()?
                     .unwrap_or_default();
+                let parent_beacon_block_root = is_cancun.then(|| {
+                    block_overrides.as_ref().and_then(|o| o.beacon_root).unwrap_or_default()
+                });
 
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
@@ -5224,6 +5284,27 @@ impl Backend<FoundryNetwork> {
                 }
                 if let Some(block_overrides) = block_overrides {
                     cache_db.apply_block_overrides(block_overrides, &mut block_env);
+                }
+
+                let mut system_env = self.evm_env.read().clone();
+                system_env.block_env = block_env.clone();
+                if let Some(parent_beacon_block_root) = parent_beacon_block_root {
+                    self.transact_simulation_system_call(
+                        &mut cache_db,
+                        &system_env,
+                        alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
+                        Bytes::copy_from_slice(parent_beacon_block_root.as_slice()),
+                        &precompile_overrides,
+                    )?;
+                }
+                if is_prague {
+                    self.transact_simulation_system_call(
+                        &mut cache_db,
+                        &system_env,
+                        eip2935::HISTORY_STORAGE_ADDRESS,
+                        Bytes::copy_from_slice(parent_hash.as_slice()),
+                        &precompile_overrides,
+                    )?;
                 }
 
                 // execute all calls in that block
@@ -5408,7 +5489,9 @@ impl Backend<FoundryNetwork> {
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
-                        max_used_gas: Some(result.gas().total_gas_spent()),
+                        max_used_gas: Some(
+                            result.gas().total_gas_spent().max(result.gas().floor_gas()),
+                        ),
                         status: result.is_success(),
                         error,
                         logs: simulation_logs
@@ -5434,23 +5517,58 @@ impl Backend<FoundryNetwork> {
                     transactions.iter().map(|tx| AnyTxEnvelope::from(tx.clone())).collect();
                 let cumulative_blob_gas_used =
                     transactions_envelopes.iter().filter_map(|tx| tx.blob_gas_used()).sum();
-                let spec_id = self.spec_id();
-                let is_shanghai = spec_id >= SpecId::SHANGHAI;
-                let is_cancun = spec_id >= SpecId::CANCUN;
-                let is_prague = spec_id >= SpecId::PRAGUE;
                 let receipts_root = calculate_receipt_root(&receipts);
                 let bloom = receipts.iter().fold(Bloom::default(), |mut bloom, receipt| {
                     bloom.accrue_bloom(receipt.logs_bloom());
                     bloom
                 });
-                let state_root = cache_db.maybe_full_db().map(|state| state_root(&state));
+                let requests_hash = if process_requests {
+                    let mut requests = Requests::default();
+                    let mut deposits = Vec::new();
+                    accumulate_deposits_from_receipts(
+                        MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+                        &receipts,
+                        &mut deposits,
+                    )
+                    .map_err(|error| BlockchainError::Message(error.to_string()))?;
+                    requests.push_request_with_type(DEPOSIT_REQUEST_TYPE, deposits);
+
+                    let withdrawals = simulation_system_call_output(
+                        self.transact_simulation_system_call(
+                            &mut cache_db,
+                            &system_env,
+                            WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+                            Bytes::new(),
+                            &precompile_overrides,
+                        )?,
+                        "withdrawal requests",
+                    )?;
+                    requests.push_request_with_type(WITHDRAWAL_REQUEST_TYPE, withdrawals);
+
+                    let consolidations = simulation_system_call_output(
+                        self.transact_simulation_system_call(
+                            &mut cache_db,
+                            &system_env,
+                            CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+                            Bytes::new(),
+                            &precompile_overrides,
+                        )?,
+                        "consolidation requests",
+                    )?;
+                    requests.push_request_with_type(CONSOLIDATION_REQUEST_TYPE, consolidations);
+                    Some(requests.requests_hash())
+                } else {
+                    is_prague.then_some(EMPTY_REQUESTS_HASH)
+                };
+                let state = cache_db.maybe_full_db().ok_or(BlockchainError::DataUnavailable)?;
+                let state_root = state_root(&state);
                 let header = Header {
                     logs_bloom: bloom,
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
                     receipts_root,
                     parent_hash,
                     beneficiary: block_env.beneficiary,
-                    state_root: state_root.unwrap_or_default(),
+                    state_root,
                     difficulty: block_env.difficulty,
                     number: block_env.number.saturating_to(),
                     gas_limit: block_env.gas_limit,
@@ -5463,8 +5581,8 @@ impl Backend<FoundryNetwork> {
                     withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
                     blob_gas_used: is_cancun.then_some(cumulative_blob_gas_used),
                     excess_blob_gas: if is_cancun { block_env.blob_excess_gas() } else { None },
-                    parent_beacon_block_root: is_cancun.then_some(Default::default()),
-                    requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+                    parent_beacon_block_root,
+                    requests_hash,
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();
@@ -6213,11 +6331,30 @@ fn simulate_transaction_error(error: InvalidTransactionError) -> BlockchainError
     simulate_rpc_error(code, format!("err: {error}"))
 }
 
+fn simulation_system_call_output(
+    result: ExecutionResult<HaltReason>,
+    call: &str,
+) -> Result<Bytes, BlockchainError> {
+    match result {
+        ExecutionResult::Success { output, .. } => Ok(output.into_data()),
+        ExecutionResult::Revert { output, .. } => {
+            Err(BlockchainError::Message(format!("{call} system call reverted: {output}")))
+        }
+        ExecutionResult::Halt { reason, .. } => {
+            Err(BlockchainError::Message(format!("{call} system call halted: {reason}")))
+        }
+    }
+}
+
 fn sanitize_simulation_blocks(
     blocks: Vec<SimBlock>,
     base_number: u64,
     base_timestamp: u64,
 ) -> Result<Vec<SimBlock>, BlockchainError> {
+    if blocks.is_empty() {
+        return Err(simulate_rpc_error(-32602, "empty input"));
+    }
+
     let mut sanitized = Vec::with_capacity(blocks.len());
     let mut previous_number = base_number;
     let mut previous_timestamp = base_timestamp;

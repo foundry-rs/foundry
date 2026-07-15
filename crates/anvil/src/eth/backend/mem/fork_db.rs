@@ -113,6 +113,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         Some(&self.database().cache.accounts)
     }
 
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        None
+    }
+
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
         let db = self.inner().db();
         let accounts = std::mem::take(&mut *db.accounts.write());
@@ -146,6 +150,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
 impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
         Some(&self.local.cache.accounts)
+    }
+
+    fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
+        None
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
