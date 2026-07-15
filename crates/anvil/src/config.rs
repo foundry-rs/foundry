@@ -13,6 +13,7 @@ use crate::{
     },
     mem::{self, in_memory_db::StateRootDb},
 };
+use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
@@ -1238,9 +1239,14 @@ impl NodeConfig {
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
-        // Fork setup initializes its own timestamp. For a local chain, keep the initial EVM and
-        // genesis block on the same resolved timestamp, including the default current time.
-        if fork.is_none() {
+        // Fork setup initializes its own timestamp. For a local BSC chain, keep the initial EVM
+        // and genesis block on the same resolved timestamp so chain precompiles are available
+        // immediately. Preserve the default timestamp behavior for all other local chains.
+        let is_bsc = matches!(
+            NamedChain::try_from(evm_env.cfg_env.chain_id),
+            Ok(NamedChain::BinanceSmartChain | NamedChain::BinanceSmartChainTestnet)
+        );
+        if fork.is_none() && (self.genesis_timestamp.is_some() || is_bsc) {
             evm_env.block_env.timestamp = U256::from(genesis_timestamp);
         }
 
