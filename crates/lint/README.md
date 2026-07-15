@@ -45,6 +45,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `deprecated-oz-function`: OpenZeppelin deprecated `SafeERC20.safeApprove` (use `safeIncreaseAllowance` / `safeDecreaseAllowance`) and `AccessControl._setupRole` (use `_grantRole`).
   - `empty-block`: Flags regular functions with an empty body; constructors, `receive`/`fallback`, `virtual` functions, functions with modifiers and value-less `payable` functions are exempt.
   - `incorrect-modifier`: Modifiers should not be able to finish without executing `_` or reverting.
+  - `inconsistent-type-names`: Flags shorthand `uint`/`int` declarations when the same contract also uses `uint256`/`int256`.
   - `missing-events-access-control`: Access control changes should emit events.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
   - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
