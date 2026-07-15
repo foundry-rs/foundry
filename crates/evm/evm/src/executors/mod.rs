@@ -1248,6 +1248,53 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         (new_coverage, is_edge)
     }
 
+    /// Update provided history map with edge coverage info collected during this call and append
+    /// every hit edge index to `edges_covered`.
+    pub fn merge_edge_coverage_with_edges_into(
+        &mut self,
+        history_map: &mut Vec<u8>,
+        edge_indices: &mut EdgeIndexMap,
+        edges_covered: &mut Vec<usize>,
+    ) -> (bool, bool) {
+        let mut new_coverage = false;
+        let mut is_edge = false;
+        if let Some(x) = &mut self.edge_coverage {
+            match x {
+                EdgeCoverage::Hash(x) => {
+                    if history_map.len() < x.len() {
+                        history_map.resize(x.len(), 0);
+                    }
+                    for (idx, (curr, hist)) in
+                        std::iter::zip(x.iter_mut(), history_map.iter_mut()).enumerate()
+                    {
+                        if *curr > 0 {
+                            edges_covered.push(idx);
+                        }
+                        Self::merge_edge_count(*curr, hist, &mut new_coverage, &mut is_edge);
+                        *curr = 0;
+                    }
+                }
+                EdgeCoverage::CollisionFree(hits) => {
+                    for hit in hits.drain(..) {
+                        let edge_index = edge_indices.edge_index(hit.edge);
+                        edges_covered.push(edge_index);
+                        if history_map.len() <= edge_index {
+                            debug_assert_eq!(history_map.len(), edge_index);
+                            history_map.push(0);
+                        }
+                        Self::merge_edge_count(
+                            hit.count,
+                            &mut history_map[edge_index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                    }
+                }
+            }
+        }
+        (new_coverage, is_edge)
+    }
+
     const fn merge_edge_count(
         curr: u8,
         hist: &mut u8,
@@ -1312,6 +1359,41 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         (new_coverage, is_edge)
     }
 
+    /// Update provided history map with sancov coverage info collected during this call and append
+    /// every hit native edge index to `edges_covered`.
+    pub fn merge_sancov_coverage_with_edges_into(
+        &mut self,
+        history_map: &mut Vec<u8>,
+        edge_offset: usize,
+        edges_covered: &mut Vec<usize>,
+    ) -> (bool, bool) {
+        let mut new_coverage = false;
+        let mut is_edge = false;
+        if let Some(x) = &mut self.sancov_coverage {
+            if history_map.len() < x.len() {
+                history_map.resize(x.len(), 0);
+            }
+            for (idx, (curr, hist)) in
+                std::iter::zip(x.iter_mut(), history_map.iter_mut()).enumerate()
+            {
+                if *curr > 0 {
+                    edges_covered.push(idx.saturating_add(edge_offset));
+                    if let Some(bucket) = Self::bin_count(*curr)
+                        && *hist < bucket
+                    {
+                        if *hist == 0 {
+                            is_edge = true;
+                        }
+                        *hist = bucket;
+                        new_coverage = true;
+                    }
+                    *curr = 0;
+                }
+            }
+        }
+        (new_coverage, is_edge)
+    }
+
     /// Merge both EVM and sancov coverage into their respective history maps.
     /// Returns `(new_coverage, is_edge)` — true if either domain produced new coverage.
     pub fn merge_all_coverage(
@@ -1322,6 +1404,25 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     ) -> (bool, bool) {
         let (new_evm, edge_evm) = self.merge_edge_coverage(evm_history, evm_edge_indices);
         let (new_san, edge_san) = self.merge_sancov_coverage(sancov_history);
+        (new_evm || new_san, edge_evm || edge_san)
+    }
+
+    /// Merge both EVM and sancov coverage and append every hit coverage index to `edges_covered`.
+    pub fn merge_all_coverage_with_edges_into(
+        &mut self,
+        evm_history: &mut Vec<u8>,
+        evm_edge_indices: &mut EdgeIndexMap,
+        sancov_history: &mut Vec<u8>,
+        sancov_edge_offset: usize,
+        edges_covered: &mut Vec<usize>,
+    ) -> (bool, bool) {
+        let (new_evm, edge_evm) =
+            self.merge_edge_coverage_with_edges_into(evm_history, evm_edge_indices, edges_covered);
+        let (new_san, edge_san) = self.merge_sancov_coverage_with_edges_into(
+            sancov_history,
+            sancov_edge_offset,
+            edges_covered,
+        );
         (new_evm || new_san, edge_evm || edge_san)
     }
 }

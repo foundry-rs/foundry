@@ -125,9 +125,6 @@ pub struct FuzzCorpusConfig {
     pub frontier_limit: usize,
     // Whether corpus to use gzip file compression and decompression.
     pub corpus_gzip: bool,
-    // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
-    // Mutations will be performed at least `corpus_min_mutations` times.
-    pub corpus_min_mutations: usize,
     // Number of corpus that won't be evicted from memory.
     pub corpus_min_size: usize,
     /// Whether to collect and display edge coverage metrics.
@@ -240,7 +237,6 @@ impl Default for FuzzCorpusConfig {
             frontier_dir: None,
             frontier_limit: Self::DEFAULT_FRONTIER_LIMIT,
             corpus_gzip: true,
-            corpus_min_mutations: 5,
             corpus_min_size: 0,
             show_edge_coverage: false,
             evm_edge_coverage_collision_free: true,
@@ -270,6 +266,16 @@ pub struct FuzzCorpusMutationWeights {
     pub mutation_weight_abi: u32,
     /// Weight for comparison-operand guided argument mutation.
     pub mutation_weight_cmp: u32,
+    /// Weight for inserting a transaction loaded from the persisted corpus.
+    pub mutation_weight_crossover_insert: u32,
+    /// Weight for replacing a transaction with one loaded from the persisted corpus.
+    pub mutation_weight_crossover_replace: u32,
+    /// Weight for inserting a freshly generated transaction into a corpus sequence.
+    pub mutation_weight_insert: u32,
+    /// Weight for deleting a transaction from a corpus sequence.
+    pub mutation_weight_delete: u32,
+    /// Weight for swapping two transactions in a corpus sequence.
+    pub mutation_weight_swap: u32,
 }
 
 impl FuzzCorpusMutationWeights {
@@ -281,6 +287,11 @@ impl FuzzCorpusMutationWeights {
             + self.mutation_weight_suffix as u64
             + self.mutation_weight_abi as u64
             + self.mutation_weight_cmp as u64
+            + self.mutation_weight_crossover_insert as u64
+            + self.mutation_weight_crossover_replace as u64
+            + self.mutation_weight_insert as u64
+            + self.mutation_weight_delete as u64
+            + self.mutation_weight_swap as u64
     }
 
     /// Returns defaults if every configured weight is zero.
@@ -292,13 +303,18 @@ impl FuzzCorpusMutationWeights {
 impl Default for FuzzCorpusMutationWeights {
     fn default() -> Self {
         Self {
-            mutation_weight_splice: 1,
-            mutation_weight_repeat: 1,
-            mutation_weight_interleave: 1,
-            mutation_weight_prefix: 1,
-            mutation_weight_suffix: 1,
-            mutation_weight_abi: 1,
-            mutation_weight_cmp: 1,
+            mutation_weight_splice: 4,
+            mutation_weight_repeat: 4,
+            mutation_weight_interleave: 4,
+            mutation_weight_prefix: 4,
+            mutation_weight_suffix: 4,
+            mutation_weight_abi: 4,
+            mutation_weight_cmp: 4,
+            mutation_weight_crossover_insert: 1,
+            mutation_weight_crossover_replace: 1,
+            mutation_weight_insert: 4,
+            mutation_weight_delete: 4,
+            mutation_weight_swap: 4,
         }
     }
 }
