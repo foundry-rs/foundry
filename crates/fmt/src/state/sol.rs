@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::{
-    CommentConfig, Separator, State,
+    ChainedNamedCall, CommentConfig, Separator, State,
     common::{BlockFormat, ListFormat},
 };
 use crate::{
@@ -1303,7 +1303,24 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
             ast::ExprKind::Call(call_expr, call_args) => {
                 let cache = self.call_with_opts_and_args;
+                let chained_named_call_cache = self.chained_named_call;
+                // Keep calls within a chained callee inline when they fit, so a multiline named
+                // argument list does not force an earlier break inside the callee.
+                let keep_inline = chained_named_call_cache
+                    .is_some_and(|call| call.keep_inline && call.callee.contains(expr.span))
+                    && !self.has_comments_between_elements(call_args.span, call_args.exprs());
                 self.call_with_opts_and_args = is_call_with_opts_and_args(&expr.kind);
+                self.chained_named_call = (matches!(call_args.kind, ast::CallArgsKind::Named(_))
+                    && is_call_chain(&call_expr.kind, true))
+                .then(|| ChainedNamedCall {
+                    callee: call_expr.span,
+                    keep_inline: self.estimate_size(call_expr.span) <= self.space_left(),
+                });
+                let list_format = if keep_inline {
+                    ListFormat::inline()
+                } else {
+                    ListFormat::compact().break_cmnts().break_single(true)
+                };
                 self.print_member_or_call_chain(
                     call_expr,
                     MemberOrCallArgs::CallArgs(
@@ -1313,9 +1330,7 @@ impl<'ast> State<'_, 'ast> {
                     |s| {
                         s.print_call_args(
                             call_args,
-                            ListFormat::compact()
-                                .break_cmnts()
-                                .break_single(true)
+                            list_format
                                 .without_ind(s.return_bin_expr)
                                 .with_delimiters(!s.call_with_opts_and_args),
                             get_callee_head_size(call_expr),
@@ -1323,6 +1338,7 @@ impl<'ast> State<'_, 'ast> {
                     },
                 );
                 self.call_with_opts_and_args = cache;
+                self.chained_named_call = chained_named_call_cache;
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 // the flag is only meant to be used to format the call args
@@ -1357,6 +1373,9 @@ impl<'ast> State<'_, 'ast> {
                         match member_expr.kind {
                             ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
                             ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            _ if s.chained_named_call.is_some_and(|call| {
+                                call.keep_inline && call.callee == expr.span
+                            }) => {}
                             // Don't add break when accessing a field after a call with named args.
                             // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
                             // on the same line as the closing `})`.
@@ -1701,7 +1720,7 @@ impl<'ast> State<'_, 'ast> {
             let no_cmnt_or_mixed =
                 self.peek_comment_before(child_expr.span.hi()).is_none_or(|c| c.style.is_mixed());
 
-            // If call with options, add an extra box to prioritize breaking the call args
+            // If call with options, add an extra box to prioritize breaking the call args.
             if self.call_with_opts_and_args {
                 self.cbox(0);
                 extra_box = true;
@@ -1827,7 +1846,10 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.has_indented_parent_chain())
+                    .without_ind(
+                        self.call_stack.has_indented_parent_chain()
+                            && self.chained_named_call.is_none_or(|call| call.keep_inline),
+                    )
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -2246,7 +2268,9 @@ impl<'ast> State<'_, 'ast> {
             {
                 let current_block_multiline = self.is_multiline_block(block, false, true);
                 if !pos.is_first || !skip_ind {
-                    if prev_block_multiline && (current_block_multiline || pos.is_last) {
+                    if (pos.is_first && block.is_empty() && is_call_with_named_args(&expr.kind))
+                        || (prev_block_multiline && (current_block_multiline || pos.is_last))
+                    {
                         self.nbsp();
                     } else {
                         self.space();

@@ -196,6 +196,7 @@ fmt_tests! {
     LiteralExpression,
     MappingType,
     ModifierDefinition,
+    NamedCallArgsInChain,
     NamedFunctionCallExpression,
     NonKeywords,
     NumberLiteralUnderscore,
