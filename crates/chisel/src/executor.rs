@@ -77,6 +77,26 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             Ok(res) => (res, None),
             Err(err) => {
                 debug!(?err, %input, "execution failed");
+                let should_execute = self
+                    .clone_with_new_line(input.to_string())
+                    .ok()
+                    .and_then(|(source, do_execute)| {
+                        if !do_execute {
+                            return None;
+                        }
+                        source.build().ok().map(|output| {
+                            output.enter(|output| {
+                                let body = output.run_func_body();
+                                let Some(last) = body.last() else { return false };
+                                let StmtKind::Expr(expr) = last.kind else { return false };
+                                should_continue(expr)
+                            })
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_execute {
+                    return Ok((ControlFlow::Continue(()), None));
+                }
                 match source_without_inspector.execute().await {
                     Ok(res) => (res, Some(err)),
                     Err(_) => {
@@ -381,6 +401,8 @@ fn should_continue(expr: &Expr<'_>) -> bool {
     match &expr.kind {
         // assignments and compound assignments
         ExprKind::Assign(_, _, _) => true,
+        // Delete expressions.
+        ExprKind::Delete(_) => true,
         // ++/-- pre/post operations
         ExprKind::Unary(op, _) => matches!(
             op.kind,

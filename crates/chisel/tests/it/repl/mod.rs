@@ -260,6 +260,14 @@ repl_test!(enum_min_max, |repl| {
     repl.expect("Decimal: 2");
 });
 
+// Issue #7193: Test that inspected delete expressions persist in the session.
+repl_test!(delete_expression_persistence, |repl| {
+    repl.sendln("uint256 value = 42");
+    repl.sendln("delete value");
+    repl.sendln("value");
+    repl.expect("Decimal: 0");
+});
+
 // Issue #9377: Test correct hex formatting for uint256.
 repl_test!(uint256_hex_formatting, |repl| {
     repl.sendln("uint256 x = 42");
