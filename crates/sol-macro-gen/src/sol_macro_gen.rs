@@ -22,7 +22,9 @@ use std::{
 
 use heck::ToSnakeCase;
 
-const SERDE_WITH_DEP: &str = r#"serde_with = "3.15""#;
+const SERDE_ARRAY_IMPL_MAX_LEN: usize = 32;
+const SERDE_WITH_DEP: &str =
+    r#"serde_with = { version = "3.15", default-features = false, features = ["std"] }"#;
 
 pub struct SolMacroGen {
     pub path: PathBuf,
@@ -405,125 +407,62 @@ edition = "2021"
     }
 }
 
-/// Adds `serde_with` adapters where Serde's built-in array implementations stop at length 32.
+#[derive(Default)]
+struct LargeArraySerdeAttrs {
+    added: bool,
+}
+
+impl syn::visit_mut::VisitMut for LargeArraySerdeAttrs {
+    fn visit_item_struct_mut(&mut self, item: &mut syn::ItemStruct) {
+        for field in &mut item.fields {
+            if let Some(adapter) = large_array_serde_adapter(&field.ty) {
+                let adapter =
+                    syn::LitStr::new(&format!("::serde_with::As::<{adapter}>"), Span::call_site());
+                field.attrs.insert(0, syn::parse_quote!(#[serde(with = #adapter)]));
+                self.added = true;
+            }
+        }
+    }
+}
+
+/// Adds `serde_with` adapters where Serde's built-in array implementations stop.
 fn add_large_array_serde_attrs(tokens: TokenStream) -> Result<(TokenStream, bool)> {
     let mut file = syn::parse2::<syn::File>(tokens)
         .wrap_err("failed to parse generated bindings for large array support")?;
-    let needs_serde_with = add_large_array_serde_attrs_to_items(&mut file.items);
-    Ok((quote::quote!(#file), needs_serde_with))
+    let mut visitor = LargeArraySerdeAttrs::default();
+    syn::visit_mut::VisitMut::visit_file_mut(&mut visitor, &mut file);
+    Ok((quote::quote!(#file), visitor.added))
 }
 
-fn add_large_array_serde_attrs_to_items(items: &mut [syn::Item]) -> bool {
-    let mut needs_serde_with = false;
-
-    for item in items {
-        let item_needs_serde_with = match item {
-            syn::Item::Enum(item) => {
-                let mut needs = false;
-                for variant in &mut item.variants {
-                    needs |= add_large_array_serde_attrs_to_fields(&mut variant.fields);
-                }
-                if needs {
-                    item.attrs.insert(0, syn::parse_quote!(#[serde_with::serde_as]));
-                }
-                needs
-            }
-            syn::Item::Mod(item) => item
-                .content
-                .as_mut()
-                .is_some_and(|(_, items)| add_large_array_serde_attrs_to_items(items)),
-            syn::Item::Struct(item) => {
-                let needs = add_large_array_serde_attrs_to_fields(&mut item.fields);
-                if needs {
-                    item.attrs.insert(0, syn::parse_quote!(#[serde_with::serde_as]));
-                }
-                needs
-            }
-            _ => false,
-        };
-        needs_serde_with |= item_needs_serde_with;
-    }
-
-    needs_serde_with
-}
-
-fn add_large_array_serde_attrs_to_fields(fields: &mut syn::Fields) -> bool {
-    let mut needs_serde_with = false;
-
-    for field in fields {
-        if let Some(adapter) = serde_as_adapter(&field.ty) {
-            let adapter = syn::LitStr::new(&adapter, Span::call_site());
-            field.attrs.insert(0, syn::parse_quote!(#[serde_as(as = #adapter)]));
-            needs_serde_with = true;
-        }
-    }
-
-    needs_serde_with
-}
-
-fn serde_as_adapter(ty: &syn::Type) -> Option<String> {
-    let (adapter, needs_serde_with) = serde_as_adapter_inner(ty);
-    needs_serde_with.then_some(adapter)
-}
-
-fn serde_as_adapter_inner(ty: &syn::Type) -> (String, bool) {
+fn large_array_serde_adapter(ty: &syn::Type) -> Option<String> {
     match ty {
         syn::Type::Array(array) => {
-            let (element, element_needs_serde_with) = serde_as_adapter_inner(&array.elem);
-            let element = if element_needs_serde_with { element } else { "_".to_string() };
-            let (length, length_needs_serde_with) = match &array.len {
-                syn::Expr::Lit(expr) if let syn::Lit::Int(length) = &expr.lit => (
-                    length.base10_digits().to_string(),
-                    length.base10_parse::<usize>().is_ok_and(|length| length > 32),
-                ),
-                length => (quote::quote!(#length).to_string(), true),
-            };
-            (format!("[{element}; {length}]"), element_needs_serde_with || length_needs_serde_with)
-        }
-        syn::Type::Group(group) => serde_as_adapter_inner(&group.elem),
-        syn::Type::Paren(paren) => {
-            let (inner, needs_serde_with) = serde_as_adapter_inner(&paren.elem);
-            (format!("({inner})"), needs_serde_with)
+            let syn::Expr::Lit(expr) = &array.len else { return None };
+            let syn::Lit::Int(length) = &expr.lit else { return None };
+            let element = large_array_serde_adapter(&array.elem);
+            let is_large =
+                length.base10_parse::<usize>().is_ok_and(|len| len > SERDE_ARRAY_IMPL_MAX_LEN);
+            if !is_large && element.is_none() {
+                return None;
+            }
+
+            let element = element.unwrap_or_else(|| "::serde_with::Same".to_string());
+            Some(format!("[{element}; {}]", length.base10_digits()))
         }
         syn::Type::Path(type_path) if type_path.qself.is_none() => {
-            let Some(last) = type_path.path.segments.last() else {
-                return ("_".to_string(), false);
-            };
-            let syn::PathArguments::AngleBracketed(arguments) = &last.arguments else {
-                return ("_".to_string(), false);
-            };
-
-            let mut adapters = Vec::new();
-            let mut needs_serde_with = false;
-            for argument in &arguments.args {
-                let syn::GenericArgument::Type(ty) = argument else {
-                    return ("_".to_string(), false);
-                };
-                let (adapter, needs) = serde_as_adapter_inner(ty);
-                adapters.push(if needs { adapter } else { "_".to_string() });
-                needs_serde_with |= needs;
+            let last = type_path.path.segments.last()?;
+            if last.ident == "Vec"
+                && let syn::PathArguments::AngleBracketed(arguments) = &last.arguments
+                && arguments.args.len() == 1
+                && let Some(syn::GenericArgument::Type(element)) = arguments.args.first()
+                && let Some(element) = large_array_serde_adapter(element)
+            {
+                Some(format!("::std::vec::Vec<{element}>"))
+            } else {
+                None
             }
-
-            if !needs_serde_with {
-                return ("_".to_string(), false);
-            }
-
-            let mut path = type_path.path.clone();
-            path.segments.last_mut().unwrap().arguments = syn::PathArguments::None;
-            (format!("{}<{}>", quote::quote!(#path), adapters.join(", ")), true)
         }
-        syn::Type::Tuple(tuple) => {
-            let mut adapters = Vec::with_capacity(tuple.elems.len());
-            let mut needs_serde_with = false;
-            for element in &tuple.elems {
-                let (adapter, needs) = serde_as_adapter_inner(element);
-                adapters.push(if needs { adapter } else { "_".to_string() });
-                needs_serde_with |= needs;
-            }
-            let trailing_comma = if adapters.len() == 1 { "," } else { "" };
-            (format!("({}{trailing_comma})", adapters.join(", ")), needs_serde_with)
-        }
-        _ => ("_".to_string(), false),
+        _ => None,
     }
 }
 
@@ -601,4 +540,24 @@ fn public_enum_names(contents: &str) -> Vec<String> {
         .filter_map(|rest| rest.split_whitespace().next())
         .map(|name| name.trim_start_matches("r#").to_string())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::large_array_serde_adapter;
+
+    fn adapter(ty: &str) -> Option<String> {
+        large_array_serde_adapter(&syn::parse_str(ty).unwrap())
+    }
+
+    #[test]
+    fn builds_large_array_serde_adapters() {
+        assert_eq!(adapter("[u64; 32]"), None);
+        assert_eq!(adapter("[u64; 33]"), Some("[::serde_with::Same; 33]".to_string()));
+        assert_eq!(adapter("[[u64; 48]; 2]"), Some("[[::serde_with::Same; 48]; 2]".to_string()));
+        assert_eq!(
+            adapter("alloy::sol_types::private::Vec<[u64; 48]>"),
+            Some("::std::vec::Vec<[::serde_with::Same; 48]>".to_string())
+        );
+    }
 }
