@@ -1633,7 +1633,7 @@ impl WorkerCorpus {
                 self.current_mutated_index = None;
                 return Ok(self.new_tx(test_runner)?.call_details.calldata);
             };
-            self.current_mutated_index = Some(corpus_index);
+            self.current_mutated_index = corpus_index;
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
             match weighted_arg_mutation(test_runner.rng(), self.arg_mutation_distribution.as_ref())
