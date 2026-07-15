@@ -89,7 +89,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
     /// Whether `function_id` is a `_mint` whose execution skips the receiver check: the
     /// canonical OZ declaration, or a user override that transitively delegates to one.
     fn is_erc721_mint(&self, function_id: FunctionId) -> bool {
-        self.is_unsafe_mint_target(function_id, &mut Vec::new())
+        self.unsafe_mint_target(function_id, &mut Vec::new()).is_some()
     }
 
     /// The canonical case requires the exact OZ contract name AND an OpenZeppelin source
@@ -98,20 +98,24 @@ impl MintCallFinder<'_, '_, '_, '_> {
     /// unsafe (the capped/pausable pattern forwarding through `super._mint`): direct calls
     /// dispatch to the override, but the path still reaches the unchecked base. `seen`
     /// cuts override cycles.
-    fn is_unsafe_mint_target(&self, function_id: FunctionId, seen: &mut Vec<FunctionId>) -> bool {
+    fn unsafe_mint_target(
+        &self,
+        function_id: FunctionId,
+        seen: &mut Vec<FunctionId>,
+    ) -> Option<UnsafeMintTarget> {
         // A cycle of overrides never reaches the canonical declaration.
         if seen.contains(&function_id) {
-            return false;
+            return None;
         }
         seen.push(function_id);
         let function = self.hir.function(function_id);
         if function.name.is_none_or(|name| name.as_str() != "_mint") {
-            return false;
+            return None;
         }
-        let Some(contract_id) = function.contract else { return false };
+        let contract_id = function.contract?;
         let contract = self.hir.contract(contract_id);
         if contract.kind.is_library() {
-            return false;
+            return None;
         }
         // The canonical unchecked `_mint`: exact OZ name, OZ package provenance. Most
         // extensions (`ERC721Enumerable`, ...) inherit `_mint` rather than redeclare it, so
@@ -119,7 +123,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
         if is_canonical_erc721(contract.name.as_str())
             && is_openzeppelin_source(self.hir, function.source)
         {
-            return true;
+            return Some(UnsafeMintTarget { preserves_identity: true });
         }
         // A delegating override: any call in its body dispatching to an unsafe `_mint`. An
         // override that reverts when the recipient refuses the token is a safe wrapper like the
@@ -143,6 +147,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
             // recorded the first.
             let mut unsafe_targets: Vec<FunctionId> = Vec::new();
             let mut judged: Vec<FunctionId> = Vec::new();
+            let mut targets_preserve_identity = true;
             for (callee, _) in &scan.calls {
                 if judged.contains(callee) {
                     continue;
@@ -151,8 +156,9 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 // Each callee gets its own `seen`: a cycle is a property of one path, and two
                 // siblings sharing a transitive target would otherwise silence the second.
                 let mut branch = seen.clone();
-                if self.is_unsafe_mint_target(*callee, &mut branch) {
+                if let Some(target) = self.unsafe_mint_target(*callee, &mut branch) {
                     unsafe_targets.push(*callee);
+                    targets_preserve_identity &= target.preserves_identity;
                 }
             }
             let mut delegates = false;
@@ -196,10 +202,11 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 }
             }
             if !delegates {
-                return false;
+                return None;
             }
             if only_to_recipient
                 && token_consistent
+                && targets_preserve_identity
                 && let Some(recipient) = recipient
                 && let Some(token) = token
             {
@@ -224,13 +231,47 @@ impl MintCallFinder<'_, '_, '_, '_> {
                     &mut walk,
                 );
                 if !walk.failed && !walk.pending {
-                    return false;
+                    return None;
                 }
             }
-            return true;
+            // A guard in an outer override can cover this target only when every intermediate
+            // override forwards the two values it was handed unchanged. The current override's
+            // own guard above may legitimately check a remapped local value, so this summary is
+            // only propagated to its callers; it does not gate its own guard correlation.
+            let recipient_parameter = function.parameters.first().copied();
+            let token_parameter = function.parameters.get(1).copied();
+            let parameters_unchanged = recipient_parameter.is_some_and(|recipient| {
+                !body.stmts.iter().any(|stmt| mutates_var(self.hir, stmt, recipient))
+            }) && token_parameter.is_some_and(|token| {
+                !body.stmts.iter().any(|stmt| mutates_var(self.hir, stmt, token))
+            });
+            let forwards_parameters = recipient_parameter.is_some_and(|recipient| {
+                token_parameter.is_some_and(|token| {
+                    scan.calls.iter().filter(|(callee, _)| unsafe_targets.contains(callee)).all(
+                        |(callee, args)| {
+                            argument_bound_to_parameter(self.hir, *callee, args, 0)
+                                .is_some_and(|argument| is_exactly_var(argument, recipient))
+                                && argument_bound_to_parameter(self.hir, *callee, args, 1)
+                                    .is_some_and(|argument| is_exactly_var(argument, token))
+                        },
+                    )
+                })
+            });
+            return Some(UnsafeMintTarget {
+                preserves_identity: targets_preserve_identity
+                    && parameters_unchanged
+                    && forwards_parameters,
+            });
         }
-        false
+        None
     }
+}
+
+/// An unsafe mint target and whether every recursive hop preserves the recipient and token it
+/// receives. A caller's own guard can only cover a target with that identity guarantee.
+#[derive(Clone, Copy)]
+struct UnsafeMintTarget {
+    preserves_identity: bool,
 }
 
 /// The package-root directory names of the OpenZeppelin distributions: the npm scope and the
@@ -308,6 +349,16 @@ fn resolved_function(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<FunctionId> {
 fn resolved_callee(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<FunctionId> {
     let ExprKind::Call(callee, ..) = &expr.kind else { return None };
     resolved_function(gcx, callee)
+}
+
+/// The declaration a call executes in the current EVM frame. A public function called by name
+/// is internal here, while `this.f()` and other external calls run in another frame whose
+/// assembly `return` cannot bypass the caller's later statements.
+fn resolved_internal_callee(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<FunctionId> {
+    let ExprKind::Call(callee, ..) = &expr.kind else { return None };
+    let ty = gcx.type_of_expr(callee.peel_parens().id)?;
+    let TyKind::Fn(function_ty) = ty.kind else { return None };
+    function_ty.is_internal().then_some(function_ty.function_id).flatten()
 }
 
 /// Whether a resolved declaration is the ERC721 receiver hook: the exact name, the exact
@@ -446,13 +497,18 @@ fn is_received_selector<'hir>(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>, expr: &Expr<
         ExprKind::Lit(lit) => {
             matches!(&lit.kind, LitKind::Number(value) if *value == U256::from(ERC721_RECEIVED))
         }
-        // `bytes4(0x150b7a02)` and other conversions of a literal.
+        // `bytes4(0x150b7a02)` and other conversions that preserve the four-byte value at
+        // every hop. Fixed bytes are left-aligned while integers are right-aligned, so merely
+        // peeling casts by width would accept lossy chains through a narrower integer.
         ExprKind::Call(callee, args, _)
             if matches!(callee.peel_parens().kind, ExprKind::Type(..)) =>
         {
             let mut operands = args.exprs();
             match (operands.next(), operands.next()) {
-                (Some(inner), None) => is_received_selector(gcx, hir, inner),
+                (Some(inner), None) => {
+                    selector_cast_preserves(gcx, expr, inner)
+                        && is_received_selector(gcx, hir, inner)
+                }
                 _ => false,
             }
         }
@@ -475,6 +531,39 @@ fn is_received_selector<'hir>(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>, expr: &Expr<
         }),
         _ => false,
     }
+}
+
+/// The representation of a selector-sized constant at one conversion step.
+#[derive(Clone, Copy)]
+enum SelectorEncoding {
+    Literal,
+    Integer(u16),
+    FixedBytes(u8),
+}
+
+/// Whether a cast preserves the recognized selector's value and byte alignment. A recognized
+/// integer is exactly the positive selector, so any integer width of at least 32 bits keeps it.
+/// Crossing between right-aligned integers and left-aligned fixed bytes is only trusted at the
+/// four-byte boundary.
+fn selector_cast_preserves(gcx: Gcx<'_>, cast: &Expr<'_>, inner: &Expr<'_>) -> bool {
+    let encoding = |expr: &Expr<'_>| match gcx.type_of_expr(expr.peel_parens().id)?.kind {
+        TyKind::IntLiteral(..) => Some(SelectorEncoding::Literal),
+        TyKind::Elementary(ElementaryType::Int(size) | ElementaryType::UInt(size)) => {
+            Some(SelectorEncoding::Integer(size.bits()))
+        }
+        TyKind::Elementary(ElementaryType::FixedBytes(size)) => {
+            Some(SelectorEncoding::FixedBytes(size.bytes()))
+        }
+        _ => None,
+    };
+    matches!(
+        (encoding(inner), encoding(cast)),
+        (
+            Some(SelectorEncoding::Literal | SelectorEncoding::Integer(_)),
+            Some(SelectorEncoding::Integer(32..) | SelectorEncoding::FixedBytes(4))
+        ) | (Some(SelectorEncoding::FixedBytes(4)), Some(SelectorEncoding::Integer(32)))
+            | (Some(SelectorEncoding::FixedBytes(4..)), Some(SelectorEncoding::FixedBytes(4..)))
+    )
 }
 
 /// `recipient.onERC721Received(...) <op> x`, and nothing else. The comparison must be the whole
@@ -504,25 +593,31 @@ fn is_hook_comparison<'hir>(
 /// Whether executing `stmt` always reverts, undoing everything the transaction did. Only a
 /// revert counts, the guards being matched without an order: see [`may_return`] for the escapes
 /// that leave the transaction standing.
-fn branch_always_reverts(stmt: &hir::Stmt<'_>) -> bool {
+fn branch_always_reverts<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    stmt: &'hir hir::Stmt<'hir>,
+) -> bool {
     match &stmt.kind {
-        hir::StmtKind::Revert(_) => true,
-        hir::StmtKind::Expr(expr) => is_revert_call(expr),
+        hir::StmtKind::Revert(_) => !may_return(gcx, hir, stmt),
+        hir::StmtKind::Expr(expr) => is_revert_call(expr) && !may_return(gcx, hir, stmt),
         hir::StmtKind::Block(block) | hir::StmtKind::UncheckedBlock(block) => {
             // Read in order: a `revert` further down is only reached when nothing before it can
             // leave the function on its own, and a `return` is exactly such an escape.
             for stmt in block.stmts {
-                if branch_always_reverts(stmt) {
+                if branch_always_reverts(gcx, hir, stmt) {
                     return true;
                 }
-                if may_return(stmt) {
+                if may_return(gcx, hir, stmt) {
                     return false;
                 }
             }
             false
         }
-        hir::StmtKind::If(_, then, Some(else_)) => {
-            branch_always_reverts(then) && branch_always_reverts(else_)
+        hir::StmtKind::If(cond, then, Some(else_)) => {
+            !expr_contains_frame_ending_assembly(gcx, hir, cond)
+                && branch_always_reverts(gcx, hir, then)
+                && branch_always_reverts(gcx, hir, else_)
         }
         _ => false,
     }
@@ -532,7 +627,10 @@ fn branch_always_reverts(stmt: &hir::Stmt<'_>) -> bool {
 /// A `return` does, and so does the EVM `return`/`stop` an assembly block can hold. Only the
 /// statements that provably cannot leave answer no, so a guard is never credited on a path this
 /// analysis does not read.
-fn may_return(stmt: &hir::Stmt<'_>) -> bool {
+fn may_return<'hir>(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>, stmt: &'hir hir::Stmt<'hir>) -> bool {
+    if contains_frame_ending_assembly(gcx, hir, std::slice::from_ref(stmt), &mut Vec::new()) {
+        return true;
+    }
     match &stmt.kind {
         hir::StmtKind::DeclSingle(_)
         | hir::StmtKind::DeclMulti(..)
@@ -544,10 +642,12 @@ fn may_return(stmt: &hir::Stmt<'_>) -> bool {
         | hir::StmtKind::Placeholder
         | hir::StmtKind::Err(_) => false,
         hir::StmtKind::Block(block) | hir::StmtKind::UncheckedBlock(block) => {
-            block.stmts.iter().any(may_return)
+            block.stmts.iter().any(|stmt| may_return(gcx, hir, stmt))
         }
-        hir::StmtKind::If(_, then, else_) => may_return(then) || else_.is_some_and(may_return),
-        hir::StmtKind::Loop(block, _) => block.stmts.iter().any(may_return),
+        hir::StmtKind::If(_, then, else_) => {
+            may_return(gcx, hir, then) || else_.is_some_and(|else_| may_return(gcx, hir, else_))
+        }
+        hir::StmtKind::Loop(block, _) => block.stmts.iter().any(|stmt| may_return(gcx, hir, stmt)),
         hir::StmtKind::Return(_) | hir::StmtKind::AssemblyBlock(_) => true,
         hir::StmtKind::Try(_) | hir::StmtKind::Switch(_) => true,
     }
@@ -773,15 +873,34 @@ fn walk_guards<'hir>(
                     walk.covered = false;
                 }
                 // The exiting branch must be the one a refusal takes, not the one an acceptance
-                // does. The branch the guard lets through holds nothing to read: a mint there
-                // runs checked, and an exit there leaves with the recipient's answer in hand.
-                if (is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Ne)
-                    && branch_always_reverts(then))
-                    || (is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq)
-                        && else_.is_some_and(branch_always_reverts))
-                {
+                // does. Continue reading the accepted branch from the covered state: it may
+                // still reassign the checked values before delegating.
+                let refusal_then =
+                    is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Ne)
+                        && branch_always_reverts(gcx, hir, then);
+                let refusal_else =
+                    is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq)
+                        && else_.is_some_and(|else_| branch_always_reverts(gcx, hir, else_));
+                if refusal_then || refusal_else {
                     walk.covered = true;
                     walk.pending = false;
+                    if refusal_then {
+                        if let Some(accepted) = else_ {
+                            walk_one(
+                                gcx,
+                                hir,
+                                accepted,
+                                recipient,
+                                token,
+                                delegations,
+                                bypass,
+                                seen,
+                                walk,
+                            );
+                        }
+                    } else {
+                        walk_one(gcx, hir, then, recipient, token, delegations, bypass, seen, walk);
+                    }
                     continue;
                 }
                 // Each branch is read on its own, from what already ran. The branch a
@@ -849,7 +968,7 @@ fn walk_guards<'hir>(
                 if !walk.covered && contains_delegation(gcx, hir, stmt, delegations) {
                     walk.pending = true;
                 }
-                if may_return(stmt) || (bypass && contains_placeholder(hir, stmt)) {
+                if may_return(gcx, hir, stmt) || (bypass && contains_placeholder(hir, stmt)) {
                     if walk.pending {
                         walk.failed = true;
                     }
@@ -911,13 +1030,22 @@ fn contains_placeholder<'hir>(hir: &'hir Hir<'hir>, stmt: &'hir hir::Stmt<'hir>)
     finder.visit_stmt(stmt).is_break()
 }
 
-/// Whether a subtree holds an assembly block, whose EVM `return` leaves the call frame without
-/// running what a modifier holds after its placeholder.
-fn contains_assembly<'hir>(hir: &'hir Hir<'hir>, stmts: &'hir [hir::Stmt<'hir>]) -> bool {
-    struct AssemblyFinder<'hir> {
+/// Whether a subtree can reach an assembly block in the same EVM frame, directly or through an
+/// internal call. An assembly `return` leaves the frame without running a later revert or what
+/// an outer modifier holds after its placeholder. Every assembly block is treated as capable of
+/// doing so, conservatively matching [`may_return`].
+fn contains_frame_ending_assembly<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    stmts: &'hir [hir::Stmt<'hir>],
+    seen: &mut Vec<FunctionId>,
+) -> bool {
+    struct AssemblyFinder<'a, 'hir> {
+        gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
+        seen: &'a mut Vec<FunctionId>,
     }
-    impl<'hir> Visit<'hir> for AssemblyFinder<'hir> {
+    impl<'hir> Visit<'hir> for AssemblyFinder<'_, 'hir> {
         type BreakValue = ();
 
         fn hir(&self) -> &'hir Hir<'hir> {
@@ -930,9 +1058,86 @@ fn contains_assembly<'hir>(hir: &'hir Hir<'hir>, stmts: &'hir [hir::Stmt<'hir>])
             }
             self.walk_stmt(stmt)
         }
+
+        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+            if let Some(function_id) = resolved_internal_callee(self.gcx, expr)
+                && callable_contains_frame_ending_assembly(
+                    self.gcx,
+                    self.hir,
+                    function_id,
+                    self.seen,
+                )
+            {
+                return ControlFlow::Break(());
+            }
+            self.walk_expr(expr)
+        }
     }
-    let mut finder = AssemblyFinder { hir };
+    let mut finder = AssemblyFinder { gcx, hir, seen };
     stmts.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
+}
+
+/// [`contains_frame_ending_assembly`] over an expression, used for a refusal condition that may
+/// itself leave before either branch runs.
+fn expr_contains_frame_ending_assembly<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    expr: &'hir Expr<'hir>,
+) -> bool {
+    struct ExprAssemblyFinder<'a, 'hir> {
+        gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        seen: &'a mut Vec<FunctionId>,
+    }
+    impl<'hir> Visit<'hir> for ExprAssemblyFinder<'_, 'hir> {
+        type BreakValue = ();
+
+        fn hir(&self) -> &'hir Hir<'hir> {
+            self.hir
+        }
+
+        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+            if let Some(function_id) = resolved_internal_callee(self.gcx, expr)
+                && callable_contains_frame_ending_assembly(
+                    self.gcx,
+                    self.hir,
+                    function_id,
+                    self.seen,
+                )
+            {
+                return ControlFlow::Break(());
+            }
+            self.walk_expr(expr)
+        }
+    }
+    let mut seen = Vec::new();
+    let mut finder = ExprAssemblyFinder { gcx, hir, seen: &mut seen };
+    finder.visit_expr(expr).is_break()
+}
+
+/// Whether a resolved same-frame callable or one of its applied modifiers can reach assembly.
+/// The recursion set is a path stack so independent calls are summarized independently.
+fn callable_contains_frame_ending_assembly<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    function_id: FunctionId,
+    seen: &mut Vec<FunctionId>,
+) -> bool {
+    if seen.contains(&function_id) {
+        return false;
+    }
+    seen.push(function_id);
+    let function = hir.function(function_id);
+    let in_modifiers = function.modifiers.iter().any(|modifier| {
+        matches!(modifier.id, hir::ItemId::Function(id)
+            if callable_contains_frame_ending_assembly(gcx, hir, id, seen))
+    });
+    let in_body = function
+        .body
+        .as_ref()
+        .is_some_and(|body| contains_frame_ending_assembly(gcx, hir, body.stmts, seen));
+    seen.pop();
+    in_modifiers || in_body
 }
 
 /// A statement expression that guards the recipient and the token: `require`/`assert` on an
@@ -1088,20 +1293,28 @@ fn body_guards<'hir>(
     seen.push(function_id);
     let function = hir.function(function_id);
     // A `virtual` callee may be replaced by an override that drops the guard, and the body seen
-    // here is the statically resolved one, not the one dispatched.
-    if function.virtual_ {
-        return false;
-    }
-    let Some(body) = &function.body else { return false };
-    let mut walk = GuardWalk::default();
-    walk_guards(gcx, hir, body.stmts, recipient, token, &[], bypass, seen, &mut walk);
-    walk.covered && !walk.escaped
+    // here is the statically resolved one, not the one dispatched. A helper carrying modifiers
+    // is likewise not credited until their expansion is modeled: one may skip the placeholder
+    // and let the helper return without ever running its body.
+    let guarded = if function.virtual_ || !function.modifiers.is_empty() {
+        false
+    } else if let Some(body) = &function.body {
+        let mut walk = GuardWalk::default();
+        walk_guards(gcx, hir, body.stmts, recipient, token, &[], bypass, seen, &mut walk);
+        walk.covered && !walk.escaped
+    } else {
+        false
+    };
+    seen.pop();
+    guarded
 }
 
 /// Whether one of the modifiers a function carries reverts on refusal for the recipient and the
 /// token it is handed. A base-constructor call in the same list carries no body to analyze. A
-/// body holding an assembly block can leave the call frame without ever coming back to the
-/// modifier, so a guard after `_;` is only guaranteed for a body that cannot.
+/// wrapped body or inner modifier reaching assembly can leave the call frame without ever coming
+/// back to an outer modifier, so a guard after `_;` is only guaranteed when the expansion inside
+/// that placeholder cannot. Modifier order matters: an outer modifier runs after an inner tail
+/// guard has already completed and cannot bypass it retroactively.
 fn modifiers_revert_on_refusal<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
@@ -1109,10 +1322,27 @@ fn modifiers_revert_on_refusal<'hir>(
     recipient: hir::VariableId,
     token: hir::VariableId,
 ) -> bool {
-    let bypass = function.body.as_ref().is_some_and(|body| contains_assembly(hir, body.stmts));
-    function.modifiers.iter().any(|modifier| {
+    let body_bypass = function
+        .body
+        .as_ref()
+        .is_some_and(|body| contains_frame_ending_assembly(gcx, hir, body.stmts, &mut Vec::new()));
+    function.modifiers.iter().enumerate().any(|(index, modifier)| {
+        let inner_modifier_bypass = function.modifiers[index + 1..].iter().any(|inner| {
+            matches!(inner.id, hir::ItemId::Function(id)
+                if callable_contains_frame_ending_assembly(gcx, hir, id, &mut Vec::new()))
+        });
+        let bypass = body_bypass || inner_modifier_bypass;
         matches!(modifier.id, hir::ItemId::Function(id)
-            if callee_guards_recipient(gcx, hir, id, &modifier.args, recipient, token, bypass, &mut Vec::new()))
+        if callee_guards_recipient(
+            gcx,
+            hir,
+            id,
+            &modifier.args,
+            recipient,
+            token,
+            bypass,
+            &mut Vec::new(),
+        ))
     })
 }
 

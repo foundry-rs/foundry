@@ -1541,3 +1541,312 @@ contract UsesLocalErc721 is LocalERC721 {
         _mint(to, id);
     }
 }
+
+// Recursive unsafe targets preserve both identities when every intermediate override forwards
+// the values it received unchanged, so an outer guard covers the canonical mint.
+contract RecursiveIdentityBaseNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+    }
+}
+
+contract RecursiveIdentityCheckedNft is RecursiveIdentityBaseNft {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// An intermediate override remaps the token before reaching the canonical mint. The outer
+// guard acknowledged the original token, so it cannot exempt callers through this target.
+contract RecursiveTokenRemapBaseNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId + 1);
+    }
+}
+
+contract RecursiveTokenRemapCheckedNft is RecursiveTokenRemapBaseNft {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// The same recursive identity requirement applies to the recipient: the intermediate target
+// credits another address even though the outer override checked `to`.
+contract RecursiveRecipientRemapBaseNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        to = address(1);
+        super._mint(to, tokenId);
+    }
+}
+
+contract RecursiveRecipientRemapCheckedNft is RecursiveRecipientRemapBaseNft {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A mint in the accepted branch is covered: the refusing branch always reverts.
+contract AcceptedBranchMintNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        if (
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector
+        ) {
+            super._mint(to, tokenId);
+        } else {
+            revert("unsafe receiver");
+        }
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// Recognizing the refusal guard does not skip its accepted branch. It changes the token before
+// the later mint, invalidating the coverage established by the comparison.
+contract AcceptedBranchTokenRemapNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        if (
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector
+        ) {
+            tokenId += 1;
+        } else {
+            revert("unsafe receiver");
+        }
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A helper's body is not guaranteed to run when one of its modifiers can skip the placeholder.
+contract ModifiedGuardHelperNft is ERC721 {
+    bool internal checksEnabled;
+
+    modifier whenChecksEnabled() {
+        if (checksEnabled) {
+            _;
+        }
+    }
+
+    function _check(address to, uint256 tokenId) private whenChecksEnabled {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        _check(to, tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// An inner sibling modifier can leave the whole frame after its placeholder, bypassing an outer
+// modifier's tail guard.
+contract SiblingModifierTailEscapeNft is ERC721 {
+    modifier checkedAfter(address to, uint256 tokenId) {
+        _;
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+    }
+
+    modifier escapeAfter() {
+        _;
+        assembly {
+            return(0, 0)
+        }
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        checkedAfter(to, tokenId)
+        escapeAfter
+    {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// The reverse order is safe: the inner tail guard runs before the outer modifier can leave the
+// frame, so modifier bypass analysis must respect expansion order.
+contract InnerModifierTailGuardNft is ERC721 {
+    modifier escapeAfter() {
+        _;
+        assembly {
+            return(0, 0)
+        }
+    }
+
+    modifier checkedAfter(address to, uint256 tokenId) {
+        _;
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        escapeAfter
+        checkedAfter(to, tokenId)
+    {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// An ordinary internal helper before the refusal revert does not leave the current frame, so
+// the branch still always reverts and the wrapper remains safe.
+contract RefusalNoopHelperNft is ERC721 {
+    function _noop() private pure {}
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+        if (
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                != IERC721Receiver.onERC721Received.selector
+        ) {
+            _noop();
+            revert("unsafe receiver");
+        }
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// An internal helper can transitively execute an assembly return in the caller's frame. The
+// later revert is then unreachable and cannot make the refusal branch safe.
+contract RefusalHelperAssemblyEscapeNft is ERC721 {
+    function _escape() private pure {
+        assembly {
+            return(0, 0)
+        }
+    }
+
+    function _escapeIndirectly() private pure {
+        _escape();
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+        if (
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                != IERC721Receiver.onERC721Received.selector
+        ) {
+            _escapeIndirectly();
+            revert("unsafe receiver");
+        }
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// Same-width selector conversions preserve the four-byte accepting answer.
+contract PreservingSelectorCastNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == bytes4(uint32(0x150b7a02)),
+            "unsafe receiver"
+        );
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// The `uint8` conversion truncates the selector to `0x02`; later widening cannot restore it.
+contract TruncatedSelectorCastNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == bytes4(uint32(uint8(uint32(0x150b7a02)))),
+            "unsafe receiver"
+        );
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// Helper recursion detection is path scoped. The first check is retired by the mutation, and an
+// independent second call to the same helper establishes fresh coverage for the remapped token.
+contract RepeatedGuardHelperNft is ERC721 {
+    function _check(address to, uint256 tokenId) private {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        _check(to, tokenId);
+        tokenId += 1;
+        _check(to, tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
