@@ -164,6 +164,21 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(&self, filter: &dyn TestFilter) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+        self.list_with(filter, |func| func.name.clone())
+    }
+
+    pub(crate) fn list_signatures(
+        &self,
+        filter: &dyn TestFilter,
+    ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+        self.list_with(filter, |func| func.signature())
+    }
+
+    fn list_with(
+        &self,
+        filter: &dyn TestFilter,
+        format_test: impl Fn(&Function) -> String + Copy,
+    ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         let matcher = self.test_function_matcher();
         self.matching_contracts(filter)
             .map(move |(id, c)| {
@@ -192,7 +207,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                                 kind,
                             )
                     })
-                    .map(|func| func.name.clone())
+                    .map(format_test)
                     .collect::<Vec<_>>();
                 (source, name, tests)
             })

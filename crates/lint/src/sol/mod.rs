@@ -71,6 +71,7 @@ pub struct SolidityLinter<'a> {
     lints_excluded: Option<Vec<SolLint>>,
     with_description: bool,
     with_json_emitter: bool,
+    json_emitter_stdout: bool,
     // lint-specific configuration
     lint_specific: &'a LintSpecificConfig,
 }
@@ -84,6 +85,7 @@ impl<'a> SolidityLinter<'a> {
             lints_included: None,
             lints_excluded: None,
             with_json_emitter: false,
+            json_emitter_stdout: false,
             lint_specific: &DEFAULT_LINT_SPECIFIC_CONFIG,
         }
     }
@@ -110,6 +112,11 @@ impl<'a> SolidityLinter<'a> {
 
     pub const fn with_json_emitter(mut self, with: bool) -> Self {
         self.with_json_emitter = with;
+        self
+    }
+
+    pub const fn with_json_emitter_stdout(mut self, with: bool) -> Self {
+        self.json_emitter_stdout = with;
         self
     }
 
@@ -315,7 +322,12 @@ impl<'a> Linter for SolidityLinter<'a> {
 
         let sm = compiler.sess().clone_source_map();
         let prev_emitter = compiler.dcx().set_emitter(if self.with_json_emitter {
-            let writer = Box::new(std::io::BufWriter::new(std::io::stderr()));
+            let writer: Box<dyn std::io::Write + Send> = if self.json_emitter_stdout && !ui_testing
+            {
+                Box::new(std::io::BufWriter::new(std::io::stdout()))
+            } else {
+                Box::new(std::io::BufWriter::new(std::io::stderr()))
+            };
             let json_emitter = JsonEmitter::new(writer, sm).rustc_like(true).ui_testing(ui_testing);
             Box::new(json_emitter)
         } else {
