@@ -8,8 +8,8 @@ bugs that have not been resolved before the code reached production.
 
 ## What it does
 
-Scans every comment in the source file (single-line `//`, block `/* */`, and NatSpec `///`)
-and reports comments containing a `TODO` or `FIXME` marker.
+Scans every line, block, and NatSpec comment in the source file (`//`, `/* */`, `///`, and
+`/** */`) and reports comments containing a `TODO` or `FIXME` marker.
 
 A marker is recognized when it appears at the start of a whitespace-delimited token and is
 immediately followed by one of `:` `(` `,` `;` `.` `)`. Bare `TODO` and `FIXME` tokens are also
@@ -20,7 +20,8 @@ so `todo:`, `ToDo:`, and `FixMe:` all match.
 
 ## Why is this bad?
 
-`TODO` and `FIXME` comments are development notes. Shipping them into production contracts signals incomplete work.
+`TODO` and `FIXME` comments are development notes. Shipping them into production contracts
+signals incomplete work.
 
 ## Example
 

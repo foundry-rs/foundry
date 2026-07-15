@@ -39,8 +39,15 @@ contract Todo {
     // FIXME first, TODO second, and fixme third
     function combined() public {}
 
+    // TODO: first, todo: second, FIXME: third, fixme: fourth
+    function deduplicated() public {}
+
     // a perfectly normal comment, no markers
     function clean() public {}
+
+    // forge-lint: disable-next-line(todo-comment)
+    // TODO: this marker is intentionally suppressed
+    function suppressed() public {}
 
     // TODO
     function bareMarker() public {}
@@ -59,6 +66,16 @@ contract Todo {
     */
     function blockComment() public {}
 
+    /* Context for this block comment.
+     * TODO implement the starred block-comment work
+     */
+    function starredBareBlockComment() public {}
+
+    /* Context for this block comment.
+       FIXME implement the plain block-comment work
+    */
+    function plainBareBlockComment() public {}
+
     /// @notice This function does something important
     /// @dev TODO: implement the actual logic here
     function natSpec() public pure returns (uint256) {
@@ -70,6 +87,11 @@ contract Todo {
 
     /// @dev TODO implement the actual logic here
     function bareNatSpec() public {}
+
+    /**
+     * @dev TODO implement the block NatSpec logic here
+     */
+    function bareBlockNatSpec() public {}
 
     function noFalsePositiveInStrings() public pure returns (string memory) {
         // The marker below is inside a string literal, must NOT fire:

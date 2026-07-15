@@ -70,7 +70,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
-  - `todo-comment`: Detects the usage of todo keyword in comments
+  - `todo-comment`: Detects unresolved `TODO` and `FIXME` markers in comments.
   - `unused-error`: Custom error declarations that are never referenced should be removed.
   - `literal-instead-of-constant`: A literal value repeated inside a contract should be a named constant.
   - `function-init-state`: State variable initializers run before the constructor; depending on a non-pure function or another state variable there observes partial state.

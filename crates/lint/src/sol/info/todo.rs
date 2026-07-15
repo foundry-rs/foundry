@@ -3,7 +3,6 @@ use crate::{
     linter::{EarlyLintPass, Lint, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashSet;
 use foundry_common::comments::{Comment, Comments};
 use solar::ast;
 
@@ -22,30 +21,30 @@ const TRAILING: &[char] = &[':', '(', ',', ';', '.', ')'];
 impl<'ast> EarlyLintPass<'ast> for TodoComment {
     fn check_full_source_unit(
         &mut self,
-        _ctx: &LintContext<'ast, '_>,
+        ctx: &LintContext<'ast, '_>,
         _ast: &'ast ast::SourceUnit<'ast>,
     ) {
-        if !_ctx.is_lint_enabled(TODO_COMMENT.id()) {
+        if !ctx.is_lint_enabled(TODO_COMMENT.id()) {
             return;
         }
 
-        let Some(file) = _ctx.source_file() else { return };
+        let Some(file) = ctx.source_file() else { return };
 
         // Build comments from the source, same call the crate already uses in mod.rs.
-        let comments = Comments::new(file, _ctx.session().source_map(), false, false, None);
+        let comments = Comments::new(file, ctx.session().source_map(), false, false, None);
 
         for comment in comments.iter() {
             if is_control_comment(comment) {
                 continue;
             }
 
-            let mut seen = HashSet::new();
             let mut found = Vec::new();
-            for line in &comment.lines {
+            // Unnormalized block comments are stored as one string, so split physical lines here.
+            for line in comment.lines.iter().flat_map(|line| line.lines()) {
                 let mut allow_bare = true;
                 for token in strip_comment_prefix(line, comment).split_whitespace() {
                     if let Some(marker) = marker_at_start(token, allow_bare)
-                        && seen.insert(marker)
+                        && !found.contains(&marker)
                     {
                         found.push(marker);
                     }
@@ -62,7 +61,7 @@ impl<'ast> EarlyLintPass<'ast> for TodoComment {
 
             let markers = found.join(", ");
             let noun = if found.len() > 1 { "comments" } else { "comment" };
-            _ctx.emit_with_msg(
+            ctx.emit_with_msg(
                 &TODO_COMMENT,
                 comment.span,
                 format!("unresolved `{markers}` {noun}"),
