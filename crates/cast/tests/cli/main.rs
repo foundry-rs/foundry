@@ -6096,13 +6096,29 @@ casttest!(abi_encode_event_no_indexed, |_prj, cmd| {
 "#]]);
 });
 
-// Test cast abi-encode-event with dynamic indexed parameter (string)
+// Test cast abi-encode-event with dynamic indexed parameter (string).
+// The topic of an indexed `string` is `keccak256` of the raw contents, not of the ABI
+// encoding: `keccak256("hello")` == 0x1c8aff95...
 casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
     cmd.args(["abi-encode-event", "Log(string indexed message, uint256 data)", "hello", "42"])
         .assert_success()
         .stdout_eq(str![[r#"
 [topic0]: 0xdd970dd9b5bfe707922155b058a407655cb18288b807e2216442bca8ad83d6b5
-[topic1]: 0x984002fcc0ca639f96622add24c2edd2fe72c65e71ca3faa243e091e0bc7cdab
+[topic1]: 0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8
+[data]: 0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]]);
+});
+
+// Test cast abi-encode-event with dynamic indexed parameter (bytes).
+// The topic of an indexed `bytes` is `keccak256` of the raw bytes, not of the ABI encoding:
+// `keccak256(0xdeadbeef)` == 0xd4fd4e18...
+casttest!(abi_encode_event_dynamic_indexed_bytes, |_prj, cmd| {
+    cmd.args(["abi-encode-event", "Log(bytes indexed message, uint256 data)", "0xdeadbeef", "42"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x2c3af94f3304a9c884c0e74503327fb15ee45c874e155fd13b4d1f9ba9fb8857
+[topic1]: 0xd4fd4e189132273036449fc9e11198c739161b4c0116a9a2dccdfa1c492006f1
 [data]: 0x000000000000000000000000000000000000000000000000000000000000002a
 
 "#]]);
