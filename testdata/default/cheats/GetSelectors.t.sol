@@ -42,6 +42,11 @@ contract GetSelectorsTest is Test {
         assertEq(selectors.length, 3, "should return 3 selectors");
     }
 
+    function testGetSelectorsUnknownContractReverts() public {
+        vm._expectCheatcodeRevert("no matching artifact found");
+        vm.getSelectors("ThisContractDoesNotExist");
+    }
+
     function _contains(bytes4[] memory arr, bytes4 val) internal pure returns (bool) {
         for (uint256 i = 0; i < arr.length; i++) {
             if (arr[i] == val) return true;
