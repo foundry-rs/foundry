@@ -644,6 +644,13 @@ ignore them in the `.gitignore` file."
         let Some(root) = self.root.ancestors().find(|root| root.join(".git").exists()) else {
             return Ok(false);
         };
+        if paths.iter().any(|path| {
+            Path::new(path)
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        }) {
+            return Ok(false);
+        }
         let relative_root = self.root.strip_prefix(root).unwrap_or_else(|_| Path::new(""));
         let gitmodules = root.join(".gitmodules");
         if !gitmodules.is_file() {
@@ -956,6 +963,11 @@ mod tests {
         let git = Git::new(root);
         assert!(git.submodules_initialized(&["lib".into()]).unwrap());
         assert!(git.submodules_initialized(&[root.join("lib").into()]).unwrap());
+
+        let nested = root.join("packages/contracts");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert!(!Git::new(&nested).submodules_initialized(&["../../lib".into()]).unwrap());
+
         // The fast path succeeds even though this is not a real Git repository.
         assert!(!git.has_missing_dependencies(["lib"]).unwrap());
 
