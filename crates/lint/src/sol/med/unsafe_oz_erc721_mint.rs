@@ -361,6 +361,22 @@ fn resolved_internal_callee(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<FunctionId>
     function_ty.is_internal().then_some(function_ty.function_id).flatten()
 }
 
+/// Whether a call dispatches through an internal function-pointer variable whose target is not
+/// available from the callee type. Such a target may contain assembly that leaves the frame, so
+/// exit analysis must treat the call conservatively.
+fn is_unresolved_internal_pointer_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
+    let ExprKind::Call(callee, ..) = &expr.kind else { return false };
+    let Some(ty) = gcx.type_of_expr(callee.peel_parens().id) else { return false };
+    let TyKind::Fn(function_ty) = ty.kind else { return false };
+    function_ty.is_internal()
+        && function_ty.function_id.is_none()
+        && matches!(&callee.peel_parens().kind, ExprKind::Ident(resolutions)
+        if resolutions.iter().any(|resolution| matches!(
+            resolution,
+            hir::Res::Item(hir::ItemId::Variable(_))
+        )))
+}
+
 /// Whether a resolved declaration is the ERC721 receiver hook: the exact name, the exact
 /// `(address, address, uint256, bytes)` shape, and an externally callable declaration of a
 /// non-library contract. The name alone would let a call to a same-name function of an
@@ -1084,13 +1100,15 @@ fn contains_frame_ending_assembly<'hir>(
         }
 
         fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-            if let Some(function_id) = resolved_internal_callee(self.gcx, expr)
-                && callable_contains_frame_ending_assembly(
-                    self.gcx,
-                    self.hir,
-                    function_id,
-                    self.seen,
-                )
+            if is_unresolved_internal_pointer_call(self.gcx, expr)
+                || resolved_internal_callee(self.gcx, expr).is_some_and(|function_id| {
+                    callable_contains_frame_ending_assembly(
+                        self.gcx,
+                        self.hir,
+                        function_id,
+                        self.seen,
+                    )
+                })
             {
                 return ControlFlow::Break(());
             }
@@ -1121,13 +1139,15 @@ fn expr_contains_frame_ending_assembly<'hir>(
         }
 
         fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-            if let Some(function_id) = resolved_internal_callee(self.gcx, expr)
-                && callable_contains_frame_ending_assembly(
-                    self.gcx,
-                    self.hir,
-                    function_id,
-                    self.seen,
-                )
+            if is_unresolved_internal_pointer_call(self.gcx, expr)
+                || resolved_internal_callee(self.gcx, expr).is_some_and(|function_id| {
+                    callable_contains_frame_ending_assembly(
+                        self.gcx,
+                        self.hir,
+                        function_id,
+                        self.seen,
+                    )
+                })
             {
                 return ControlFlow::Break(());
             }

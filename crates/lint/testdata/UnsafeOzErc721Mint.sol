@@ -1796,6 +1796,32 @@ contract RefusalHelperAssemblyEscapeNft is ERC721 {
     }
 }
 
+// An internal function-pointer target is unresolved at its call site. It can reach assembly that
+// leaves the current frame before the later revert, so the refusal branch is not proven safe.
+contract RefusalPointerAssemblyEscapeNft is ERC721 {
+    function _escape() private pure {
+        assembly {
+            return(0, 0)
+        }
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        function() internal escape = _escape;
+        super._mint(to, tokenId);
+        if (
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                != IERC721Receiver.onERC721Received.selector
+        ) {
+            escape();
+            revert("unsafe receiver");
+        }
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
 // Same-width selector conversions preserve the four-byte accepting answer.
 contract PreservingSelectorCastNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
