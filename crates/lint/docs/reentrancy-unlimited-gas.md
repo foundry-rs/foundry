@@ -9,15 +9,22 @@ make new callback behavior affordable within that stipend.
 
 ## What it does
 
-The lint tracks `transfer` and `send` calls on address-typed receivers through public and external
-entry points, modifiers, and bare internal helper calls. It warns when a later reachable operation
-writes contract state or emits an event. Both calls are tracked regardless of the transferred
-amount because even a zero-value call executes recipient code.
+The lint tracks Solidity's built-in `transfer` and `send` calls through public and external entry
+points, modifiers, inherited helpers, and other internal calls. It follows branches and loop
+backedges and warns when a later reachable operation writes contract state or emits an event.
+Writes through storage references and storage-array `push`/`pop` calls count as state changes.
+Both calls are tracked regardless of the transferred amount because even a zero-value call
+executes recipient code.
+
+For `send` used in a Boolean control-flow condition, only continuations on which the call may have
+succeeded are treated as reentrant because a failed call reverts its callee's effects. Sibling
+expression order is conservatively treated as unspecified, matching Solidity's evaluation-order
+rules.
 
 Contract methods that merely reuse the names `transfer` or `send` are excluded by checking the
-receiver type. Low-level calls, including calls with an explicit 2,300 gas cap, are outside this
-detector's Slither-compatible scope. Constructors, local-variable writes, effects that occur only
-before the call, and effects on mutually exclusive paths are not reported.
+compiler-resolved call target. Low-level calls, including calls with an explicit 2,300 gas cap, are
+outside this detector's Slither-compatible scope. Constructors, local-variable writes, effects
+that occur only before the call, and effects on mutually exclusive paths are not reported.
 
 ## Why is this bad?
 

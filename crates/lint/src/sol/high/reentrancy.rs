@@ -16,7 +16,8 @@ use solar::{
         Gcx, Ty,
         builtins::Builtin,
         hir::{
-            self, CallArgs, CallArgsKind, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId,
+            self, CallArgs, CallArgsKind, ExprKind, FunctionId, ItemId, LoopSource, Res, StmtKind,
+            VariableId,
         },
         ty::{TyFnKind, TyKind},
     },
@@ -93,11 +94,61 @@ struct PendingCall {
     state_reads: BTreeSet<VariableId>,
 }
 
+#[derive(Default)]
+struct LoopJumps<'hir> {
+    breaks: Option<FlowState>,
+    continues: Option<FlowState>,
+    continue_epilogue: Option<&'hir hir::Expr<'hir>>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ReentrantCallKind {
     Eth,
     NoEth,
     Stipend,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SendEvaluation {
+    NotEvaluated,
+    Failed,
+    Succeeded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BooleanOutcome {
+    value: bool,
+    send: SendEvaluation,
+}
+
+fn unconstrained_boolean_outcomes(contains_target: bool) -> Vec<BooleanOutcome> {
+    let evaluations: &[_] = if contains_target {
+        &[SendEvaluation::NotEvaluated, SendEvaluation::Failed, SendEvaluation::Succeeded]
+    } else {
+        &[SendEvaluation::NotEvaluated]
+    };
+    evaluations
+        .iter()
+        .flat_map(|&send| {
+            [BooleanOutcome { value: true, send }, BooleanOutcome { value: false, send }]
+        })
+        .collect()
+}
+
+const fn merge_send_evaluations(lhs: SendEvaluation, rhs: SendEvaluation) -> SendEvaluation {
+    match (lhs, rhs) {
+        (SendEvaluation::NotEvaluated, other) | (other, SendEvaluation::NotEvaluated) => other,
+        (SendEvaluation::Succeeded, _) | (_, SendEvaluation::Succeeded) => {
+            SendEvaluation::Succeeded
+        }
+        _ => SendEvaluation::Failed,
+    }
+}
+
+fn push_unique_boolean_outcome(outcomes: &mut Vec<BooleanOutcome>, outcome: BooleanOutcome) {
+    if !outcomes.contains(&outcome) {
+        outcomes.push(outcome);
+    }
 }
 
 impl FlowState {
@@ -122,6 +173,66 @@ impl FlowState {
             });
         }
     }
+
+    fn remove_call(&mut self, span: Span, kind: ReentrantCallKind) {
+        self.pending_calls.retain(|call| call.span != span || call.kind != kind);
+    }
+}
+
+fn merge_optional_state(target: &mut Option<FlowState>, state: &FlowState) {
+    if let Some(target) = target {
+        target.merge(state);
+    } else {
+        *target = Some(state.clone());
+    }
+}
+
+/// Returns the update expression that Solar lowers after a `for` loop body.
+///
+/// A source-level `continue` skips this synthetic statement in HIR, even though Solidity executes
+/// the update before the next condition check.
+fn for_loop_continue_epilogue<'hir>(
+    block: hir::Block<'hir>,
+    source: LoopSource,
+) -> Option<&'hir hir::Expr<'hir>> {
+    if source != LoopSource::For || block.stmts.len() != 1 {
+        return None;
+    }
+
+    let stmt = block.stmts.first()?;
+    let body = match stmt.kind {
+        StmtKind::If(_, then_stmt, Some(else_stmt))
+            if matches!(else_stmt.kind, StmtKind::Break) =>
+        {
+            then_stmt
+        }
+        _ => stmt,
+    };
+    let StmtKind::Block(body) = body.kind else { return None };
+    if body.span != block.span || body.stmts.len() < 2 {
+        return None;
+    }
+
+    let StmtKind::Expr(epilogue) = body.stmts.last()?.kind else { return None };
+    Some(epilogue)
+}
+
+fn is_state_mutating_array_call(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
+    matches!(
+        gcx.builtin_callee(callee.peel_parens().id),
+        Some(Builtin::ArrayPush0 | Builtin::ArrayPush | Builtin::ArrayPop)
+    )
+}
+
+fn is_builtin_assertion(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
+    matches!(gcx.builtin_callee(callee.peel_parens().id), Some(Builtin::Require | Builtin::Assert))
+}
+
+fn is_non_returning_builtin_call(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
+    matches!(
+        gcx.builtin_callee(callee.peel_parens().id),
+        Some(Builtin::Revert | Builtin::RevertMsg | Builtin::Selfdestruct)
+    )
 }
 
 struct Analyzer<'ctx, 's, 'c, 'hir> {
@@ -130,9 +241,12 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     hir: &'hir hir::Hir<'hir>,
     emitted: HashSet<Span>,
     call_stack: Vec<FunctionId>,
-    inline_cache: HelperAnalysisCache<InlineCallKey, FlowState>,
+    inline_cache: HelperAnalysisCache<InlineCallKey, InlineCallResult>,
     recursive_cut_frontiers: HashMap<RecursiveFrontierKey, Vec<FunctionId>>,
     direct_internal_calls: HashMap<FunctionId, Vec<FunctionId>>,
+    loop_jumps: Vec<LoopJumps<'hir>>,
+    call_returns: Vec<Option<FlowState>>,
+    state_effects: usize,
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
     reentrancy_unlimited_gas_enabled: bool,
@@ -144,6 +258,13 @@ struct InlineCallKey {
     /// First active function that can cut recursion from this callee.
     recursive_cut: Option<FunctionId>,
     state: FlowState,
+}
+
+#[derive(Clone)]
+struct InlineCallResult {
+    state: FlowState,
+    may_return: bool,
+    has_state_effect: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -163,6 +284,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
             recursive_cut_frontiers: HashMap::new(),
             direct_internal_calls: HashMap::new(),
+            loop_jumps: Vec::new(),
+            call_returns: Vec::new(),
+            state_effects: 0,
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
             reentrancy_unlimited_gas_enabled: ctx.is_lint_enabled(REENTRANCY_UNLIMITED_GAS.id),
@@ -196,7 +320,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         };
 
         for arg in modifier.args.exprs() {
-            self.analyze_expr(arg, state);
+            if !self.analyze_expr(arg, state) {
+                return false;
+            }
         }
 
         let Some(modifier_id) = modifier.id.as_function() else {
@@ -242,20 +368,21 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
                 if let Some(init) = self.hir.variable(var_id).initializer {
-                    self.analyze_expr(init, state);
+                    self.analyze_expr(init, state)
+                } else {
+                    true
                 }
-                true
             }
-            StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => {
-                self.analyze_expr(expr, state);
-                true
-            }
+            StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => self.analyze_expr(expr, state),
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
                 self.analyze_block(block, placeholder, state)
             }
             StmtKind::Emit(expr) => {
-                self.analyze_expr(expr, state);
+                if !self.analyze_expr(expr, state) {
+                    return false;
+                }
                 self.emit_pending_stipend_calls(state);
+                self.record_state_effect();
                 true
             }
             StmtKind::Revert(expr) => {
@@ -263,28 +390,79 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 false
             }
             StmtKind::Return(expr) => {
-                if let Some(expr) = expr {
-                    self.analyze_expr(expr, state);
+                let completes = expr.is_none_or(|expr| self.analyze_expr(expr, state));
+                if completes && let Some(returns) = self.call_returns.last_mut() {
+                    merge_optional_state(returns, state);
                 }
                 false
             }
-            StmtKind::Break | StmtKind::Continue => false,
-            StmtKind::Loop(block, _) => {
+            StmtKind::Break => {
+                if let Some(jumps) = self.loop_jumps.last_mut() {
+                    merge_optional_state(&mut jumps.breaks, state);
+                }
+                false
+            }
+            StmtKind::Continue => {
+                let epilogue = self.loop_jumps.last().and_then(|jumps| jumps.continue_epilogue);
+                let completes = if let Some(epilogue) = epilogue {
+                    self.analyze_expr(epilogue, state)
+                } else {
+                    true
+                };
+                if completes && let Some(jumps) = self.loop_jumps.last_mut() {
+                    merge_optional_state(&mut jumps.continues, state);
+                }
+                false
+            }
+            StmtKind::Loop(block, source) => {
                 let before_loop = state.clone();
-                let mut body_state = state.clone();
-                self.analyze_block(block, placeholder, &mut body_state);
-                state.clear();
-                state.merge(&before_loop);
-                state.merge(&body_state);
-                true
+                let mut header_state = before_loop.clone();
+                let mut exit_state = None;
+                let continue_epilogue = for_loop_continue_epilogue(block, source);
+
+                loop {
+                    self.loop_jumps.push(LoopJumps { continue_epilogue, ..Default::default() });
+                    let mut body_state = header_state.clone();
+                    let falls_through = self.analyze_block(block, placeholder, &mut body_state);
+                    let jumps = self.loop_jumps.pop().expect("loop jump state exists");
+
+                    if let Some(breaks) = jumps.breaks {
+                        merge_optional_state(&mut exit_state, &breaks);
+                    }
+
+                    let mut next_header = before_loop.clone();
+                    if falls_through {
+                        next_header.merge(&body_state);
+                    }
+                    if let Some(continues) = jumps.continues {
+                        next_header.merge(&continues);
+                    }
+
+                    if next_header == header_state {
+                        break;
+                    }
+                    header_state = next_header;
+                }
+
+                if let Some(exit_state) = exit_state {
+                    *state = exit_state;
+                    true
+                } else {
+                    state.clear();
+                    false
+                }
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
-                self.analyze_expr(cond, state);
+                if !self.analyze_expr(cond, state) {
+                    return false;
+                }
 
                 let mut then_state = state.clone();
+                let mut else_state = state.clone();
+                self.remove_failed_send_calls(cond, true, &mut then_state);
+                self.remove_failed_send_calls(cond, false, &mut else_state);
                 let then_falls_through = self.analyze_stmt(then_stmt, placeholder, &mut then_state);
 
-                let mut else_state = state.clone();
                 let else_falls_through = if let Some(else_stmt) = else_stmt {
                     self.analyze_stmt(else_stmt, placeholder, &mut else_state)
                 } else {
@@ -302,7 +480,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 then_falls_through || else_falls_through
             }
             StmtKind::Try(try_stmt) => {
-                self.analyze_expr(&try_stmt.expr, state);
+                if !self.analyze_expr(&try_stmt.expr, state) {
+                    return false;
+                }
 
                 let mut merged = FlowState::default();
                 let mut any_falls_through = false;
@@ -321,7 +501,20 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::Placeholder => {
                 if let Some((modifiers, index, body)) = placeholder {
-                    self.analyze_modifier_chain(modifiers, index, body, state)
+                    self.call_returns.push(None);
+                    let falls_through = self.analyze_modifier_chain(modifiers, index, body, state);
+                    let mut completions =
+                        self.call_returns.pop().expect("modifier return state exists");
+                    if falls_through {
+                        merge_optional_state(&mut completions, state);
+                    }
+                    if let Some(completions) = completions {
+                        *state = completions;
+                        true
+                    } else {
+                        state.clear();
+                        false
+                    }
                 } else {
                     true
                 }
@@ -330,25 +523,38 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
     }
 
-    fn analyze_expr(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut FlowState) {
+    fn analyze_expr(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut FlowState) -> bool {
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
+                let mut completes = true;
                 if op.is_some() {
-                    self.analyze_expr(lhs, state);
+                    completes &= self.analyze_expr(lhs, state);
                 }
-                self.analyze_expr(rhs, state);
-                self.analyze_lhs_indices(lhs, state);
-                let written_vars = state_write_lhs_vars(self.hir, lhs);
-                if !written_vars.is_empty() {
-                    self.emit_pending_calls(state, &written_vars);
+                completes &= self.analyze_expr(rhs, state);
+                completes &= self.analyze_lhs_indices(lhs, state);
+                if completes {
+                    let written_vars = state_write_lhs_vars(self.hir, lhs);
+                    if !written_vars.is_empty()
+                        || is_storage_write_lhs(self.gcx, self.hir, lhs, false)
+                    {
+                        self.emit_pending_calls(state, &written_vars);
+                        self.record_state_effect();
+                    }
                 }
+                completes
             }
             ExprKind::Delete(inner) => {
-                self.analyze_lhs_indices(inner, state);
-                let written_vars = state_write_lhs_vars(self.hir, inner);
-                if !written_vars.is_empty() {
-                    self.emit_pending_calls(state, &written_vars);
+                let completes = self.analyze_lhs_indices(inner, state);
+                if completes {
+                    let written_vars = state_write_lhs_vars(self.hir, inner);
+                    if !written_vars.is_empty()
+                        || is_storage_write_lhs(self.gcx, self.hir, inner, true)
+                    {
+                        self.emit_pending_calls(state, &written_vars);
+                        self.record_state_effect();
+                    }
                 }
+                completes
             }
             ExprKind::Unary(op, inner)
                 if matches!(
@@ -356,79 +562,149 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
                 ) =>
             {
-                self.analyze_expr(inner, state);
-                let written_vars = state_write_lhs_vars(self.hir, inner);
-                if !written_vars.is_empty() {
-                    self.emit_pending_calls(state, &written_vars);
+                let completes = self.analyze_expr(inner, state);
+                if completes {
+                    let written_vars = state_write_lhs_vars(self.hir, inner);
+                    if !written_vars.is_empty()
+                        || is_storage_write_lhs(self.gcx, self.hir, inner, true)
+                    {
+                        self.emit_pending_calls(state, &written_vars);
+                        self.record_state_effect();
+                    }
                 }
+                completes
             }
-            ExprKind::Unary(_, inner) => {
-                self.analyze_expr(inner, state);
-            }
+            ExprKind::Unary(_, inner) => self.analyze_expr(inner, state),
             ExprKind::Call(callee, args, opts) => {
-                self.analyze_expr(callee, state);
+                let mut children =
+                    Vec::with_capacity(1 + opts.map_or(0, |opts| opts.args.len()) + args.len());
+                children.push(*callee);
                 if let Some(opts) = opts {
                     for opt in opts.args {
-                        self.analyze_expr(&opt.value, state);
+                        children.push(&opt.value);
                     }
                 }
                 for arg in args.exprs() {
-                    self.analyze_expr(arg, state);
+                    children.push(arg);
+                }
+                let assertion_condition =
+                    is_builtin_assertion(self.gcx, callee).then(|| args.exprs().next()).flatten();
+                let mut completes =
+                    self.analyze_unordered_exprs(&children, assertion_condition, state);
+
+                if completes {
+                    let func_ids =
+                        resolved_function_ids(self.gcx, self.hir, callee).collect::<Vec<_>>();
+                    if !func_ids.is_empty() {
+                        let before_call = state.clone();
+                        let mut returned_state = FlowState::default();
+                        let mut any_returns = false;
+                        for func_id in func_ids {
+                            let mut candidate_state = before_call.clone();
+                            if self.analyze_internal_call(func_id, &mut candidate_state) {
+                                returned_state.merge(&candidate_state);
+                                any_returns = true;
+                            }
+                        }
+                        *state = returned_state;
+                        completes = any_returns;
+                    }
                 }
 
-                for func_id in resolved_function_ids(callee) {
-                    self.analyze_internal_call(func_id, state);
+                if completes {
+                    if is_state_mutating_array_call(self.gcx, callee) {
+                        self.emit_pending_stipend_calls(state);
+                        self.record_state_effect();
+                    }
+                    if let Some(kind) = self.reentrant_call_kind(callee, args, *opts) {
+                        state.push_call(expr.span, kind);
+                    }
+
+                    if is_builtin_assertion(self.gcx, callee)
+                        && let Some(condition) = args.exprs().next()
+                    {
+                        self.remove_failed_send_calls(condition, true, state);
+                    }
+                    if is_non_returning_builtin_call(self.gcx, callee) {
+                        state.clear();
+                        completes = false;
+                    }
                 }
-                if let Some(kind) = self.reentrant_call_kind(callee, args, *opts) {
-                    state.push_call(expr.span, kind);
-                }
+                completes
             }
-            ExprKind::Binary(lhs, _, rhs) => {
-                self.analyze_expr(lhs, state);
-                self.analyze_expr(rhs, state);
+            ExprKind::Binary(lhs, op, rhs) => {
+                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) {
+                    if !self.analyze_expr(lhs, state) {
+                        return false;
+                    }
+
+                    let rhs_outcome = op.kind == BinOpKind::And;
+                    let mut short_circuit_state = state.clone();
+                    self.remove_failed_send_calls(lhs, !rhs_outcome, &mut short_circuit_state);
+
+                    let mut rhs_state = state.clone();
+                    self.remove_failed_send_calls(lhs, rhs_outcome, &mut rhs_state);
+                    let rhs_completes = self.analyze_expr(rhs, &mut rhs_state);
+
+                    *state = short_circuit_state;
+                    if rhs_completes {
+                        state.merge(&rhs_state);
+                    }
+                    true
+                } else {
+                    self.analyze_unordered_exprs(&[lhs, rhs], None, state)
+                }
             }
             ExprKind::Index(base, index) => {
-                self.analyze_expr(base, state);
                 if let Some(index) = index {
-                    self.analyze_expr(index, state);
+                    self.analyze_unordered_exprs(&[base, index], None, state)
+                } else {
+                    self.analyze_expr(base, state)
                 }
             }
             ExprKind::Slice(base, start, end) => {
-                self.analyze_expr(base, state);
+                let mut children = Vec::with_capacity(3);
+                children.push(*base);
                 if let Some(start) = start {
-                    self.analyze_expr(start, state);
+                    children.push(*start);
                 }
                 if let Some(end) = end {
-                    self.analyze_expr(end, state);
+                    children.push(*end);
                 }
+                self.analyze_unordered_exprs(&children, None, state)
             }
             ExprKind::Ternary(cond, true_expr, false_expr) => {
-                self.analyze_expr(cond, state);
+                if !self.analyze_expr(cond, state) {
+                    return false;
+                }
 
                 let mut true_state = state.clone();
-                self.analyze_expr(true_expr, &mut true_state);
+                self.remove_failed_send_calls(cond, true, &mut true_state);
+                let true_completes = self.analyze_expr(true_expr, &mut true_state);
 
                 let mut false_state = state.clone();
-                self.analyze_expr(false_expr, &mut false_state);
+                self.remove_failed_send_calls(cond, false, &mut false_state);
+                let false_completes = self.analyze_expr(false_expr, &mut false_state);
 
                 state.clear();
-                state.merge(&true_state);
-                state.merge(&false_state);
+                if true_completes {
+                    state.merge(&true_state);
+                }
+                if false_completes {
+                    state.merge(&false_state);
+                }
+                true_completes || false_completes
             }
             ExprKind::Array(exprs) => {
-                for expr in *exprs {
-                    self.analyze_expr(expr, state);
-                }
+                let children = exprs.iter().collect::<Vec<_>>();
+                self.analyze_unordered_exprs(&children, None, state)
             }
             ExprKind::Tuple(exprs) => {
-                for expr in exprs.iter().copied().flatten() {
-                    self.analyze_expr(expr, state);
-                }
+                let children = exprs.iter().copied().flatten().collect::<Vec<_>>();
+                self.analyze_unordered_exprs(&children, None, state)
             }
-            ExprKind::Member(base, _) | ExprKind::Payable(base) => {
-                self.analyze_expr(base, state);
-            }
-            ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
+            ExprKind::Member(base, _) | ExprKind::Payable(base) => self.analyze_expr(base, state),
+            ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => true,
             ExprKind::Ident(reses) => {
                 for &res in *reses {
                     if let Res::Item(ItemId::Variable(var_id)) = res
@@ -437,18 +713,219 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                         state.push_read(var_id);
                     }
                 }
+                true
             }
-            ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
+            ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => true,
         }
     }
 
-    fn analyze_internal_call(&mut self, func_id: FunctionId, state: &mut FlowState) {
-        if self.call_stack.contains(&func_id) {
+    fn analyze_unordered_exprs(
+        &mut self,
+        exprs: &[&'hir hir::Expr<'hir>],
+        assertion_condition: Option<&'hir hir::Expr<'hir>>,
+        state: &mut FlowState,
+    ) -> bool {
+        if !self.reentrancy_unlimited_gas_enabled {
+            let mut all_complete = true;
+            for &expr in exprs {
+                all_complete &= self.analyze_expr(expr, state);
+            }
+            return all_complete;
+        }
+
+        let mut summaries = Vec::with_capacity(exprs.len());
+        let mut all_complete = true;
+        for &expr in exprs {
+            let prior_calls = state
+                .pending_calls
+                .iter()
+                .filter(|call| call.kind == ReentrantCallKind::Stipend)
+                .map(|call| call.span)
+                .collect::<HashSet<_>>();
+            let prior_effects = self.state_effects;
+            all_complete &= self.analyze_expr(expr, state);
+            let calls = state
+                .pending_calls
+                .iter()
+                .filter(|call| {
+                    call.kind == ReentrantCallKind::Stipend && !prior_calls.contains(&call.span)
+                })
+                .map(|call| call.span)
+                .collect::<Vec<_>>();
+            summaries.push((calls, self.state_effects != prior_effects));
+        }
+
+        for (index, (calls, _)) in summaries.iter().enumerate() {
+            if summaries
+                .iter()
+                .enumerate()
+                .any(|(other_index, (_, has_effect))| other_index != index && *has_effect)
+            {
+                for &span in calls {
+                    let call_can_succeed = assertion_condition.is_none_or(|condition| {
+                        !condition.span.contains(span)
+                            || self.send_can_succeed_for_outcome(condition, span, true)
+                    });
+                    if call_can_succeed {
+                        self.emit_stipend_call(span);
+                    }
+                }
+            }
+        }
+        all_complete
+    }
+
+    const fn record_state_effect(&mut self) {
+        if self.reentrancy_unlimited_gas_enabled {
+            self.state_effects = self.state_effects.saturating_add(1);
+        }
+    }
+
+    fn remove_failed_send_calls(
+        &self,
+        condition: &'hir hir::Expr<'hir>,
+        outcome: bool,
+        state: &mut FlowState,
+    ) {
+        if !self.reentrancy_unlimited_gas_enabled {
             return;
         }
 
+        let calls = state
+            .pending_calls
+            .iter()
+            .filter(|call| {
+                call.kind == ReentrantCallKind::Stipend && condition.span.contains(call.span)
+            })
+            .map(|call| call.span)
+            .collect::<Vec<_>>();
+        for span in calls {
+            if !self.send_can_succeed_for_outcome(condition, span, outcome) {
+                state.remove_call(span, ReentrantCallKind::Stipend);
+            }
+        }
+    }
+
+    fn send_can_succeed_for_outcome(
+        &self,
+        condition: &'hir hir::Expr<'hir>,
+        span: Span,
+        outcome: bool,
+    ) -> bool {
+        self.boolean_outcomes_for_send(condition, span).iter().any(|candidate| {
+            candidate.value == outcome && candidate.send == SendEvaluation::Succeeded
+        })
+    }
+
+    fn boolean_outcomes_for_send(
+        &self,
+        expr: &'hir hir::Expr<'hir>,
+        target: Span,
+    ) -> Vec<BooleanOutcome> {
+        let expr = expr.peel_parens();
+        match &expr.kind {
+            ExprKind::Call(callee, _, _)
+                if expr.span == target
+                    && self.gcx.builtin_callee(callee.peel_parens().id)
+                        == Some(Builtin::AddressPayableSend) =>
+            {
+                vec![
+                    BooleanOutcome { value: true, send: SendEvaluation::Succeeded },
+                    BooleanOutcome { value: false, send: SendEvaluation::Failed },
+                ]
+            }
+            ExprKind::Lit(lit) => match lit.kind {
+                LitKind::Bool(value) => {
+                    vec![BooleanOutcome { value, send: SendEvaluation::NotEvaluated }]
+                }
+                _ => unconstrained_boolean_outcomes(expr.span.contains(target)),
+            },
+            ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => self
+                .boolean_outcomes_for_send(inner, target)
+                .into_iter()
+                .map(|outcome| BooleanOutcome { value: !outcome.value, ..outcome })
+                .collect(),
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+                let lhs_outcomes = self.boolean_outcomes_for_send(lhs, target);
+                let rhs_outcomes = self.boolean_outcomes_for_send(rhs, target);
+                let mut outcomes = Vec::new();
+                for lhs_outcome in lhs_outcomes {
+                    let short_circuits = if op.kind == BinOpKind::And {
+                        !lhs_outcome.value
+                    } else {
+                        lhs_outcome.value
+                    };
+                    if short_circuits {
+                        push_unique_boolean_outcome(&mut outcomes, lhs_outcome);
+                    } else {
+                        for rhs_outcome in &rhs_outcomes {
+                            push_unique_boolean_outcome(
+                                &mut outcomes,
+                                BooleanOutcome {
+                                    value: rhs_outcome.value,
+                                    send: merge_send_evaluations(
+                                        lhs_outcome.send,
+                                        rhs_outcome.send,
+                                    ),
+                                },
+                            );
+                        }
+                    }
+                }
+                outcomes
+            }
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) => {
+                let lhs_outcomes = self.boolean_outcomes_for_send(lhs, target);
+                let rhs_outcomes = self.boolean_outcomes_for_send(rhs, target);
+                let mut outcomes = Vec::new();
+                for lhs_outcome in lhs_outcomes {
+                    for rhs_outcome in &rhs_outcomes {
+                        let equal = lhs_outcome.value == rhs_outcome.value;
+                        push_unique_boolean_outcome(
+                            &mut outcomes,
+                            BooleanOutcome {
+                                value: if op.kind == BinOpKind::Eq { equal } else { !equal },
+                                send: merge_send_evaluations(lhs_outcome.send, rhs_outcome.send),
+                            },
+                        );
+                    }
+                }
+                outcomes
+            }
+            ExprKind::Ternary(cond, true_expr, false_expr) => {
+                let condition_outcomes = self.boolean_outcomes_for_send(cond, target);
+                let true_outcomes = self.boolean_outcomes_for_send(true_expr, target);
+                let false_outcomes = self.boolean_outcomes_for_send(false_expr, target);
+                let mut outcomes = Vec::new();
+                for condition_outcome in condition_outcomes {
+                    let branch_outcomes =
+                        if condition_outcome.value { &true_outcomes } else { &false_outcomes };
+                    for branch_outcome in branch_outcomes {
+                        push_unique_boolean_outcome(
+                            &mut outcomes,
+                            BooleanOutcome {
+                                value: branch_outcome.value,
+                                send: merge_send_evaluations(
+                                    condition_outcome.send,
+                                    branch_outcome.send,
+                                ),
+                            },
+                        );
+                    }
+                }
+                outcomes
+            }
+            _ => unconstrained_boolean_outcomes(expr.span.contains(target)),
+        }
+    }
+
+    fn analyze_internal_call(&mut self, func_id: FunctionId, state: &mut FlowState) -> bool {
+        if self.call_stack.contains(&func_id) {
+            return true;
+        }
+
         let func = self.hir.function(func_id);
-        let Some(body) = func.body else { return };
+        let Some(body) = func.body else { return true };
 
         let key = InlineCallKey {
             func_id,
@@ -456,21 +933,42 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             state: state.clone(),
         };
         if self.inline_cache.is_in_progress(&key) {
-            return;
+            return true;
         }
         if let Some(cached) = self.inline_cache.get(&key) {
-            *state = cached.clone();
-            return;
+            *state = cached.state.clone();
+            let may_return = cached.may_return;
+            if cached.has_state_effect {
+                self.record_state_effect();
+            }
+            return may_return;
         }
 
         let mut after = state.clone();
+        let prior_effects = self.state_effects;
         self.inline_cache.start(key.clone());
         self.call_stack.push(func_id);
-        self.analyze_callable(func, body, &mut after);
+        self.call_returns.push(None);
+        let falls_through = self.analyze_callable(func, body, &mut after);
+        let mut returned_state = self.call_returns.pop().expect("call return state exists");
         self.call_stack.pop();
 
-        self.inline_cache.finish(key, after.clone());
+        if falls_through {
+            merge_optional_state(&mut returned_state, &after);
+        }
+        let may_return = returned_state.is_some();
+        after = returned_state.unwrap_or_default();
+
+        self.inline_cache.finish(
+            key,
+            InlineCallResult {
+                state: after.clone(),
+                may_return,
+                has_state_effect: self.state_effects != prior_effects,
+            },
+        );
         *state = after;
+        may_return
     }
 
     fn first_recursive_cut(&mut self, func_id: FunctionId) -> Option<FunctionId> {
@@ -621,7 +1119,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for arg in args.exprs() {
                     self.collect_direct_internal_calls_expr(arg, calls);
                 }
-                for func_id in resolved_function_ids(callee) {
+                for func_id in resolved_function_ids(self.gcx, self.hir, callee) {
                     calls.insert(func_id);
                 }
             }
@@ -665,32 +1163,37 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
     }
 
-    fn analyze_lhs_indices(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut FlowState) {
+    fn analyze_lhs_indices(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut FlowState) -> bool {
         match &expr.kind {
             ExprKind::Index(base, index) => {
-                self.analyze_lhs_indices(base, state);
+                let mut completes = self.analyze_lhs_indices(base, state);
                 if let Some(index) = index {
-                    self.analyze_expr(index, state);
+                    completes &= self.analyze_expr(index, state);
                 }
+                completes
             }
             ExprKind::Slice(base, start, end) => {
-                self.analyze_lhs_indices(base, state);
+                let mut completes = self.analyze_lhs_indices(base, state);
                 if let Some(start) = start {
-                    self.analyze_expr(start, state);
+                    completes &= self.analyze_expr(start, state);
                 }
                 if let Some(end) = end {
-                    self.analyze_expr(end, state);
+                    completes &= self.analyze_expr(end, state);
                 }
+                completes
             }
             ExprKind::Member(base, _) | ExprKind::Payable(base) => {
-                self.analyze_lhs_indices(base, state);
+                self.analyze_lhs_indices(base, state)
             }
             ExprKind::Tuple(exprs) => {
+                let mut completes = true;
                 for expr in exprs.iter().copied().flatten() {
-                    self.analyze_lhs_indices(expr, state);
+                    completes &= self.analyze_lhs_indices(expr, state);
                 }
+                completes
             }
-            _ => {}
+            ExprKind::Call(..) => self.analyze_expr(expr, state),
+            _ => true,
         }
     }
 
@@ -736,9 +1239,15 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
 
         for call in &state.pending_calls {
-            if call.kind == ReentrantCallKind::Stipend && self.emitted.insert(call.span) {
-                self.ctx.emit(&REENTRANCY_UNLIMITED_GAS, call.span);
+            if call.kind == ReentrantCallKind::Stipend {
+                self.emit_stipend_call(call.span);
             }
+        }
+    }
+
+    fn emit_stipend_call(&mut self, span: Span) {
+        if self.reentrancy_unlimited_gas_enabled && self.emitted.insert(span) {
+            self.ctx.emit(&REENTRANCY_UNLIMITED_GAS, span);
         }
     }
 
@@ -748,9 +1257,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         args: &CallArgs<'hir>,
         opts: Option<&hir::CallOptions<'hir>>,
     ) -> Option<ReentrantCallKind> {
-        if self.reentrancy_unlimited_gas_enabled
-            && is_stipend_value_call(self.gcx, self.hir, callee, args)
-        {
+        if self.reentrancy_unlimited_gas_enabled && is_stipend_value_call(self.gcx, callee) {
             return Some(ReentrantCallKind::Stipend);
         }
         if self.reentrancy_eth_enabled && is_uncapped_value_call(self.hir, callee, opts) {
@@ -765,55 +1272,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 }
 
-fn is_stipend_value_call<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    callee: &'hir hir::Expr<'hir>,
-    args: &CallArgs<'hir>,
-) -> bool {
-    let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
-    if args.len() != 1
-        || !matches!(member.name, sym::transfer | sym::send)
-        || !is_stipend_receiver(gcx, hir, receiver)
-    {
-        return false;
-    }
-
-    let Some(receiver_ty) = expr_ty(gcx, hir, receiver) else { return false };
-    let Some(resolved) = unique(
-        gcx.members_of(receiver_ty, base_item_source(hir, receiver), base_contract(hir, receiver))
-            .filter(|candidate| candidate.name == member.name),
-    ) else {
-        return false;
-    };
-
+fn is_stipend_value_call<'hir>(gcx: Gcx<'hir>, callee: &'hir hir::Expr<'hir>) -> bool {
     matches!(
-        (member.name, resolved.res),
-        (sym::transfer, Some(Res::Builtin(Builtin::AddressPayableTransfer)))
-            | (sym::send, Some(Res::Builtin(Builtin::AddressPayableSend)))
+        gcx.builtin_callee(callee.peel_parens().id),
+        Some(Builtin::AddressPayableTransfer | Builtin::AddressPayableSend)
     )
-}
-
-fn is_stipend_receiver<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    receiver: &'hir hir::Expr<'hir>,
-) -> bool {
-    match &receiver.peel_parens().kind {
-        ExprKind::Payable(_) => true,
-        ExprKind::Call(callee, _, _) if is_address_type_expr(callee) => true,
-        ExprKind::Ident(reses) => reses.iter().any(|res| {
-            matches!(
-                res,
-                Res::Item(ItemId::Variable(var_id))
-                    if matches!(
-                        hir.variable(*var_id).ty.kind,
-                        hir::TypeKind::Elementary(ElementaryType::Address(_))
-                    )
-            )
-        }),
-        _ => gcx.type_of_expr(receiver.peel_parens().id).is_some_and(type_is_address_like),
-    }
 }
 
 impl FlowState {
@@ -1294,22 +1757,88 @@ fn gas_option_forwards_all(expr: &hir::Expr<'_>) -> bool {
 }
 
 fn resolved_function_ids<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
     callee: &'hir hir::Expr<'hir>,
-) -> impl Iterator<Item = FunctionId> + 'hir {
+) -> impl Iterator<Item = FunctionId> + use<'hir> {
+    let resolved =
+        gcx.resolved_callee(callee.peel_parens().id).and_then(|resolved| match resolved.res {
+            Res::Item(ItemId::Function(func_id))
+                if is_internal_function_dispatch(hir, callee, func_id) =>
+            {
+                Some(func_id)
+            }
+            _ => None,
+        });
     let reses = match &callee.peel_parens().kind {
         ExprKind::Ident(reses) => *reses,
         _ => &[],
     };
-    reses.iter().filter_map(|res| match res {
-        Res::Item(ItemId::Function(func_id)) => Some(*func_id),
+    resolved.into_iter().chain(reses.iter().filter_map(move |res| match res {
+        Res::Item(ItemId::Function(func_id)) if resolved.is_none() => Some(*func_id),
         _ => None,
-    })
+    }))
+}
+
+fn is_internal_function_dispatch(
+    hir: &hir::Hir<'_>,
+    callee: &hir::Expr<'_>,
+    func_id: FunctionId,
+) -> bool {
+    match &callee.peel_parens().kind {
+        ExprKind::Ident(_) => true,
+        ExprKind::Member(receiver, _) => {
+            is_super(receiver)
+                || matches!(
+                    hir.function(func_id).visibility,
+                    Visibility::Internal | Visibility::Private
+                )
+        }
+        _ => false,
+    }
 }
 
 fn state_write_lhs_vars(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Vec<VariableId> {
     let mut vars = Vec::new();
     collect_state_write_lhs_vars(hir, expr, &mut vars);
     vars
+}
+
+fn is_storage_write_lhs(
+    gcx: Gcx<'_>,
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+    storage_ref_is_dereferenced: bool,
+) -> bool {
+    match &expr.kind {
+        ExprKind::Ident(reses) => reses.iter().any(|res| {
+            matches!(
+                res,
+                Res::Item(ItemId::Variable(var_id))
+                    if hir.variable(*var_id).kind.is_state()
+                        || (storage_ref_is_dereferenced
+                            && hir.variable(*var_id).data_location
+                                == Some(DataLocation::Storage))
+            )
+        }),
+        ExprKind::Index(base, _) | ExprKind::Slice(base, ..) | ExprKind::Member(base, _) => {
+            is_storage_write_lhs(gcx, hir, base, true)
+        }
+        ExprKind::Payable(base) | ExprKind::Unary(_, base) | ExprKind::Delete(base) => {
+            is_storage_write_lhs(gcx, hir, base, storage_ref_is_dereferenced)
+        }
+        ExprKind::Call(callee, _, _) => {
+            is_state_mutating_array_call(gcx, callee)
+                || (storage_ref_is_dereferenced
+                    && gcx
+                        .type_of_expr(expr.peel_parens().id)
+                        .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage)))
+        }
+        ExprKind::Tuple(exprs) => {
+            exprs.iter().copied().flatten().any(|expr| is_storage_write_lhs(gcx, hir, expr, false))
+        }
+        _ => false,
+    }
 }
 
 fn collect_state_write_lhs_vars(
