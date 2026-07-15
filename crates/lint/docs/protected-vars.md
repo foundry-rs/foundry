@@ -15,11 +15,17 @@ A state variable can declare a required protection with an exact function or mod
 address owner;
 ```
 
-The lint follows modifiers and resolved internal call paths from public, external, and fallback
-entry points. If an entry point writes the variable directly or through a reachable helper, the
-required function or modifier must also be reachable from that entry point. Inherited variables,
-entry points, functions, and modifiers are resolved in the most-derived contract. External calls
-such as `this.onlyOwner()` do not satisfy an internal write-protection requirement.
+The lint follows modifiers, library calls, and resolved internal call paths from public, external,
+fallback, and receive entry points. If an entry point writes the variable directly or through a
+reachable helper, the required function or modifier must also be reachable from that entry point.
+This includes writes through storage references, returned storage locations, collection
+`push`/`pop` operations, and resolvable inline-assembly storage slots.
+
+Overloads are matched by their exact signature. Inherited variables, entry points, functions, and
+modifiers are resolved in the most-derived contract, including virtual dispatch. External calls
+such as `this.onlyOwner()` do not satisfy an internal write-protection requirement. An unresolved
+signature or malformed `write-protection` value is treated as unsatisfied so an invalid annotation
+cannot silently disable the lint.
 
 Like Slither's annotation semantics, this rule is reachability-based rather than order- or
 path-sensitive: the annotation identifies a required internal call, not a proof that the call

@@ -78,11 +78,27 @@ LL │     function derivedUnsafe(address newOwner) external {
    │
    ╰ help: https://getfoundry.sh/forge/linting/protected-vars
 
-warning[protected-vars]: protected variable `owner` is written without `onlyOwner()`
+warning[protected-vars]: protected variable `owner` is written without `onlyOwner()` in most-derived contract `DerivedProtection`
    ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
    │
 LL │     function inheritedUnsafe(address newOwner) public {
    │              ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `notDeclared()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setOwner(address newOwner) external {
+   │              ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` has a malformed write-protection annotation
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function setOwner(address newOwner) external {
+   │              ━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/protected-vars
 

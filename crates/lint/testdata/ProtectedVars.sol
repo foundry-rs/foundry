@@ -237,8 +237,24 @@ contract UnresolvedProtection {
     /// @custom:security write-protection="notDeclared()"
     address public owner;
 
-    // An unresolved annotation is ignored instead of guessing from a name.
-    function setOwner(address newOwner) external {
+    // Invalid requirements fail closed instead of silently disabling the security annotation.
+    function setOwner(address newOwner) external { //~WARN: protected variable `owner` is written without `notDeclared()`
         owner = newOwner;
+    }
+}
+
+contract MalformedProtection {
+    /// @custom:security write-protection="onlyOwner()
+    address public owner;
+
+    /// @custom:security no-write-protection
+    address public unprotected;
+
+    function setOwner(address newOwner) external { //~WARN: protected variable `owner` has a malformed write-protection annotation
+        owner = newOwner;
+    }
+
+    function setUnprotected(address newValue) external {
+        unprotected = newValue;
     }
 }

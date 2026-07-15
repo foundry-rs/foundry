@@ -1,0 +1,184 @@
+warning[protected-vars]: protected variable `protectedValue` is written without `guard(uint256)`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function unsafeWrongOverload() external {
+   │              ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()` in most-derived contract `VirtualGuardRemoved`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function writeThroughHook() external {
+   │              ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()` in most-derived contract `ModifierGuardRemoved`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function writeWithModifier() external checked {
+   │              ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function unsafeWrite() external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function returnedAlias() external {
+   │              ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function earlyReturnedAlias(bool chooseProtected) external {
+   │              ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedList` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function pushedAlias() external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function conditionalAlias(bool chooseProtected) external {
+   │              ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function loopAlias() external {
+   │              ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function breakAlias(bool shouldIterate, bool shouldBreak) external {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function continueAlias(bool shouldIterate, bool shouldContinue) external {
+   │              ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function recursiveAlias() external {
+   │              ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedSettings` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function namedArguments() external {
+   │              ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `modifierGuard(SignatureType)`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function unsafeWrite() external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `modifierGuard(function(uint256) returns(bool))`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function unsafeWrite() external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `functionProtected` is written without `functionGuard(function(uint256) returns(bool))`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function unsafeFunctionWrite() external {
+   │              ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function directWrite() external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function helperParameterWrite() external {
+   │              ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function helperReturnWrite() external {
+   │              ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()` in most-derived contract `SharedLeafOne`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function unsafeWrite() external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()` in most-derived contract `SharedLeafTwo`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     function unsafeWrite() external {
+   │              ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     fallback() external {
+   │     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `protectedValue` is written without `guard()`
+   ╭▸ ROOT/testdata/ProtectedVarsAdvanced.sol:LL:CC
+   │
+LL │     receive() external payable {
+   │     ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
