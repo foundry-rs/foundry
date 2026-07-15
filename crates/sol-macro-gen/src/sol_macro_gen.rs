@@ -22,15 +22,18 @@ use std::{
 
 use heck::ToSnakeCase;
 
+const SERDE_WITH_DEP: &str = r#"serde_with = "3.15""#;
+
 pub struct SolMacroGen {
     pub path: PathBuf,
     pub name: String,
     pub expansion: Option<TokenStream>,
+    needs_serde_with: bool,
 }
 
 impl SolMacroGen {
     pub const fn new(path: PathBuf, name: String) -> Self {
-        Self { path, name, expansion: None }
+        Self { path, name, expansion: None, needs_serde_with: false }
     }
 
     pub fn get_sol_input(&self) -> Result<SolInput> {
@@ -105,7 +108,11 @@ impl MultiSolMacroGen {
             _ => unreachable!(),
         };
 
+        let (tokens, needs_serde_with) =
+            if all_derives { add_large_array_serde_attrs(tokens)? } else { (tokens, false) };
+
         instance.expansion = Some(tokens);
+        instance.needs_serde_with = needs_serde_with;
         Ok(())
     }
 
@@ -157,6 +164,9 @@ edition = "2021"
         if all_derives {
             let serde_dep = r#"serde = { version = "1.0", features = ["derive"] }"#;
             write!(toml_contents, "\n{serde_dep}")?;
+            if self.instances.iter().any(|instance| instance.needs_serde_with) {
+                write!(toml_contents, "\n{SERDE_WITH_DEP}")?;
+            }
         }
 
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
@@ -361,9 +371,13 @@ edition = "2021"
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
         let alloy_dep_check = Self::get_alloy_dep(alloy_version, alloy_rev);
+        let serde_with_consistent =
+            !self.instances.iter().any(|instance| instance.needs_serde_with)
+                || cargo_toml_contents.contains(SERDE_WITH_DEP);
         let toml_consistent = cargo_toml_contents.contains(&name_check)
             && cargo_toml_contents.contains(&version_check)
-            && cargo_toml_contents.contains(&alloy_dep_check);
+            && cargo_toml_contents.contains(&alloy_dep_check)
+            && serde_with_consistent;
         eyre::ensure!(
             toml_consistent,
             r#"The contents of Cargo.toml do not match the expected output of the latest `sol!` version.
@@ -388,6 +402,128 @@ edition = "2021"
         } else {
             r#"alloy = { version = "1.0", features = ["sol-types", "contract"] }"#.to_string()
         }
+    }
+}
+
+/// Adds `serde_with` adapters where Serde's built-in array implementations stop at length 32.
+fn add_large_array_serde_attrs(tokens: TokenStream) -> Result<(TokenStream, bool)> {
+    let mut file = syn::parse2::<syn::File>(tokens)
+        .wrap_err("failed to parse generated bindings for large array support")?;
+    let needs_serde_with = add_large_array_serde_attrs_to_items(&mut file.items);
+    Ok((quote::quote!(#file), needs_serde_with))
+}
+
+fn add_large_array_serde_attrs_to_items(items: &mut [syn::Item]) -> bool {
+    let mut needs_serde_with = false;
+
+    for item in items {
+        let item_needs_serde_with = match item {
+            syn::Item::Enum(item) => {
+                let mut needs = false;
+                for variant in &mut item.variants {
+                    needs |= add_large_array_serde_attrs_to_fields(&mut variant.fields);
+                }
+                if needs {
+                    item.attrs.insert(0, syn::parse_quote!(#[serde_with::serde_as]));
+                }
+                needs
+            }
+            syn::Item::Mod(item) => item
+                .content
+                .as_mut()
+                .is_some_and(|(_, items)| add_large_array_serde_attrs_to_items(items)),
+            syn::Item::Struct(item) => {
+                let needs = add_large_array_serde_attrs_to_fields(&mut item.fields);
+                if needs {
+                    item.attrs.insert(0, syn::parse_quote!(#[serde_with::serde_as]));
+                }
+                needs
+            }
+            _ => false,
+        };
+        needs_serde_with |= item_needs_serde_with;
+    }
+
+    needs_serde_with
+}
+
+fn add_large_array_serde_attrs_to_fields(fields: &mut syn::Fields) -> bool {
+    let mut needs_serde_with = false;
+
+    for field in fields {
+        if let Some(adapter) = serde_as_adapter(&field.ty) {
+            let adapter = syn::LitStr::new(&adapter, Span::call_site());
+            field.attrs.insert(0, syn::parse_quote!(#[serde_as(as = #adapter)]));
+            needs_serde_with = true;
+        }
+    }
+
+    needs_serde_with
+}
+
+fn serde_as_adapter(ty: &syn::Type) -> Option<String> {
+    let (adapter, needs_serde_with) = serde_as_adapter_inner(ty);
+    needs_serde_with.then_some(adapter)
+}
+
+fn serde_as_adapter_inner(ty: &syn::Type) -> (String, bool) {
+    match ty {
+        syn::Type::Array(array) => {
+            let (element, element_needs_serde_with) = serde_as_adapter_inner(&array.elem);
+            let element = if element_needs_serde_with { element } else { "_".to_string() };
+            let (length, length_needs_serde_with) = match &array.len {
+                syn::Expr::Lit(expr) if let syn::Lit::Int(length) = &expr.lit => (
+                    length.base10_digits().to_string(),
+                    length.base10_parse::<usize>().is_ok_and(|length| length > 32),
+                ),
+                length => (quote::quote!(#length).to_string(), true),
+            };
+            (format!("[{element}; {length}]"), element_needs_serde_with || length_needs_serde_with)
+        }
+        syn::Type::Group(group) => serde_as_adapter_inner(&group.elem),
+        syn::Type::Paren(paren) => {
+            let (inner, needs_serde_with) = serde_as_adapter_inner(&paren.elem);
+            (format!("({inner})"), needs_serde_with)
+        }
+        syn::Type::Path(type_path) if type_path.qself.is_none() => {
+            let Some(last) = type_path.path.segments.last() else {
+                return ("_".to_string(), false);
+            };
+            let syn::PathArguments::AngleBracketed(arguments) = &last.arguments else {
+                return ("_".to_string(), false);
+            };
+
+            let mut adapters = Vec::new();
+            let mut needs_serde_with = false;
+            for argument in &arguments.args {
+                let syn::GenericArgument::Type(ty) = argument else {
+                    return ("_".to_string(), false);
+                };
+                let (adapter, needs) = serde_as_adapter_inner(ty);
+                adapters.push(if needs { adapter } else { "_".to_string() });
+                needs_serde_with |= needs;
+            }
+
+            if !needs_serde_with {
+                return ("_".to_string(), false);
+            }
+
+            let mut path = type_path.path.clone();
+            path.segments.last_mut().unwrap().arguments = syn::PathArguments::None;
+            (format!("{}<{}>", quote::quote!(#path), adapters.join(", ")), true)
+        }
+        syn::Type::Tuple(tuple) => {
+            let mut adapters = Vec::with_capacity(tuple.elems.len());
+            let mut needs_serde_with = false;
+            for element in &tuple.elems {
+                let (adapter, needs) = serde_as_adapter_inner(element);
+                adapters.push(if needs { adapter } else { "_".to_string() });
+                needs_serde_with |= needs;
+            }
+            let trailing_comma = if adapters.len() == 1 { "," } else { "" };
+            (format!("({}{trailing_comma})", adapters.join(", ")), needs_serde_with)
+        }
+        _ => ("_".to_string(), false),
     }
 }
 
