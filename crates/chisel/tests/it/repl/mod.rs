@@ -35,6 +35,24 @@ repl_test!(abi_encode_decode, |repl| {
     repl.expect("hello");
 });
 
+// Issue #5253: Dynamic bytes should be displayed as their raw value.
+repl_test!(dynamic_bytes_display, |repl| {
+    repl.sendln(r#"bytes memory encoded = abi.encode("Not initialized")"#);
+    repl.sendln("bytes memory decoded = abi.decode(encoded, (bytes))");
+    repl.sendln(r#"bytes memory raw = bytes("Not initialized")"#);
+
+    repl.sendln("encoded");
+    repl.expect(
+        "Data: 0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000f4e6f7420696e697469616c697a65640000000000000000000000000000000000",
+    );
+
+    repl.sendln("decoded");
+    repl.expect("Data: 0x4e6f7420696e697469616c697a6564");
+
+    repl.sendln("raw");
+    repl.expect("Data: 0x4e6f7420696e697469616c697a6564");
+});
+
 // Test 0x prefixed strings.
 repl_test!(hex_string_interpretation, |repl| {
     repl.sendln("string memory s = \"0x1234\"");
