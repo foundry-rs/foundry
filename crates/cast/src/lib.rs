@@ -38,6 +38,7 @@ use foundry_common::{
     flatten,
     fmt::*,
     fs, shell,
+    tempo::classify_payment_lane,
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
@@ -1219,10 +1220,9 @@ where
             format!("0x{}", hex::encode(encoded))
         } else if lane {
             let encoded = tx.as_ref().encoded_2718();
-            let mut data = encoded.as_slice();
-            let tx = FoundryTxEnvelope::decode_2718(&mut data)
+            FoundryTxEnvelope::decode_2718(&mut encoded.as_slice())
                 .wrap_err("failed to decode transaction for lane classification")?;
-            crate::args::format_lane_classification(&tx.classify_t5_payment_lane())?
+            crate::args::format_lane_classification(&classify_payment_lane(&encoded))?
         } else if let Some(ref field) = field {
             if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
                 value

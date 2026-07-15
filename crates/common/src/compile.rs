@@ -233,7 +233,9 @@ impl ProjectCompiler {
                 }
             }
 
-            self.handle_output(&output)?;
+            if !(shell::is_json() && output.has_compiler_errors()) {
+                self.handle_output(&output)?;
+            }
         }
 
         Ok(output)

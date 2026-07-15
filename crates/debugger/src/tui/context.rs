@@ -307,22 +307,21 @@ impl TUIContext<'_> {
             KeyCode::Char('g') => {
                 self.draw_memory.inner_call_index = 0;
                 self.current_step = 0;
-                self.scroll_memory_to_current_write();
+                self.update_scroll_positions();
             }
 
             // Go to bottom of file
             KeyCode::Char('G') => {
                 self.draw_memory.inner_call_index = self.debug_arena().len() - 1;
                 self.current_step = self.n_steps() - 1;
-                self.scroll_memory_to_current_write();
+                self.update_scroll_positions();
             }
 
             // Go to previous call
-            KeyCode::Char('c') => {
-                self.draw_memory.inner_call_index =
-                    self.draw_memory.inner_call_index.saturating_sub(1);
+            KeyCode::Char('c') if self.draw_memory.inner_call_index > 0 => {
+                self.draw_memory.inner_call_index -= 1;
                 self.current_step = self.n_steps() - 1;
-                self.scroll_memory_to_current_write();
+                self.update_scroll_positions();
             }
 
             // Go to next call
@@ -331,7 +330,7 @@ impl TUIContext<'_> {
             {
                 self.draw_memory.inner_call_index += 1;
                 self.current_step = 0;
-                self.scroll_memory_to_current_write();
+                self.update_scroll_positions();
             }
 
             // Step forward
@@ -344,7 +343,7 @@ impl TUIContext<'_> {
                     })
                 {
                     this.current_step += i;
-                    this.scroll_memory_to_current_write();
+                    this.update_scroll_positions();
                 }
             }),
 
@@ -362,7 +361,7 @@ impl TUIContext<'_> {
                     })
                     .map(|(i, _)| i)
                     .unwrap_or_default();
-                this.scroll_memory_to_current_write();
+                this.update_scroll_positions();
             }),
 
             // Toggle stack labels
@@ -517,7 +516,7 @@ impl TUIContext<'_> {
         };
 
         self.current_step = step_index;
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
 
         let pc = self.current_step().pc;
         let opcode = self.opcode_list.get(step_index).map(String::as_str).unwrap_or_default();
@@ -586,7 +585,7 @@ impl TUIContext<'_> {
         self.current_step = target.step_index;
         self.draw_memory.current_buf_startline = 0;
         self.draw_memory.current_stack_startline = 0;
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
         self.key_buffer.clear();
 
         let pc = candidate.pc;
@@ -776,7 +775,7 @@ impl TUIContext<'_> {
         self.current_step = target.step_index;
         self.draw_memory.current_buf_startline = 0;
         self.draw_memory.current_stack_startline = 0;
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
         self.key_buffer.clear();
 
         let pc = self.current_step().pc;
@@ -847,7 +846,7 @@ impl TUIContext<'_> {
         self.current_step = access.step_index();
         self.draw_memory.current_buf_startline = 0;
         self.draw_memory.current_stack_startline = 0;
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
         self.key_buffer.clear();
         self.set_info(format!(
             "Jumped to {} at PC 0x{:x} ({})",
@@ -898,7 +897,7 @@ impl TUIContext<'_> {
 
         self.draw_memory.inner_call_index = inner_call_index;
         self.current_step = step_index;
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
 
         let action = if already_at_target { "Already at" } else { "Jumped to" };
         self.set_info(format!("{action} breakpoint '{c}' at PC 0x{pc:x} ({pc})"));
@@ -929,7 +928,7 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index -= 1;
             self.current_step = self.n_steps() - 1;
         }
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
     }
 
     fn step(&mut self) {
@@ -939,16 +938,28 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index += 1;
             self.current_step = 0;
         }
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
     }
 
-    fn scroll_memory_to_current_write(&mut self) {
-        if self.active_buffer != BufferKind::Memory {
-            return;
+    fn update_scroll_positions(&mut self) {
+        if let Some(stack) = &self.current_step().stack
+            && !stack.is_empty()
+        {
+            self.draw_memory.current_stack_startline =
+                self.draw_memory.current_stack_startline.min(stack.len().saturating_sub(1));
         }
 
-        if let Some(line) = self.current_memory_write_line() {
+        if self.active_buffer == BufferKind::Memory
+            && let Some(line) = self.current_memory_write_line()
+        {
             self.draw_memory.current_buf_startline = line;
+        }
+
+        let buffer_len = self.active_buffer().len();
+        if buffer_len > 0 {
+            let max_line = buffer_len.div_ceil(32) - 1;
+            self.draw_memory.current_buf_startline =
+                self.draw_memory.current_buf_startline.min(max_line);
         }
     }
 
@@ -1714,6 +1725,24 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('h')));
         assert!(tui.show_shortcuts);
         assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: shown");
+    }
+
+    #[test]
+    fn previous_call_shortcut_respects_root_boundary() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![
+            node(address, CallKind::Call, &[1, 2]),
+            node(address, CallKind::Call, &[3]),
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('c')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (0, 0));
+
+        tui.draw_memory.inner_call_index = 1;
+        let _ = tui.handle_key_event(key(KeyCode::Char('c')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (0, 1));
     }
 
     #[test]
@@ -2773,7 +2802,7 @@ mod tests {
             address,
             CallKind::Call,
             vec![step_with_stack(1, OpCode::MSTORE, &[0, 128]), step(2)],
-            Bytes::new(),
+            Bytes::from(vec![0; 256]),
             0,
             None,
         )]);
@@ -2786,5 +2815,67 @@ mod tests {
 
         assert_eq!(tui.current_step, 1);
         assert_eq!(tui.draw_memory.current_buf_startline, 7);
+    }
+
+    #[test]
+    fn navigation_clamps_scroll_positions_to_non_empty_data() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![
+            DebugNode::new(
+                address,
+                CallKind::Call,
+                vec![step_with_stack(1, OpCode::STOP, &[0, 1, 2])],
+                Bytes::from(vec![0; 64]),
+                0,
+                None,
+            ),
+            DebugNode::new(
+                address,
+                CallKind::Call,
+                vec![step_with_stack(2, OpCode::STOP, &[0])],
+                Bytes::from(vec![0; 4]),
+                0,
+                None,
+            ),
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+        tui.draw_memory.current_buf_startline = 1;
+        tui.draw_memory.current_stack_startline = 2;
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('C')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 0);
+        assert_eq!(tui.draw_memory.current_stack_startline, 0);
+    }
+
+    #[test]
+    fn navigation_preserves_stack_scroll_across_empty_snapshot() {
+        let address = Address::repeat_byte(1);
+        let mut empty_stack = step(2);
+        empty_stack.stack = Some(Vec::new().into_boxed_slice());
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![
+                step_with_stack(1, OpCode::STOP, &[0, 1, 2]),
+                empty_stack,
+                step_with_stack(3, OpCode::STOP, &[0, 1, 2]),
+            ],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.draw_memory.current_stack_startline = 2;
+
+        tui.step();
+        assert_eq!(tui.draw_memory.current_stack_startline, 2);
+
+        tui.step();
+        assert_eq!(tui.draw_memory.current_stack_startline, 2);
     }
 }

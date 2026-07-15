@@ -2486,11 +2486,36 @@ impl<N: Network> Backend<N> {
             // reset the fork entirely and reapply the genesis config
             let reset_urls =
                 forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
+            let target_rpc_url = forking.json_rpc_url.clone().or_else(|| fork.eth_rpc_url());
+            let rpc_url_changed = target_rpc_url != fork.database_rpc_url();
+            fork.prepare_reset(reset_urls, block_number.into()).await?;
+            if rpc_url_changed {
+                // Clear state fetched from the previous RPC URL before persisting the cache.
+                fork.database.write().await.clear_into_state_snapshot();
+            }
             // Persist fetched remote state before rebuilding the fork database so the new
             // block-specific database can load it from disk.
             fork.database.read().await.maybe_flush_cache().map_err(BlockchainError::Internal)?;
-            fork.prepare_reset(reset_urls, block_number.into()).await?;
             let fork_block_number = fork.block_number();
+            if rpc_url_changed {
+                let cache_dir = {
+                    let config = self.node_config.read().await;
+                    if config.no_storage_caching || config.fork_urls.is_empty() {
+                        None
+                    } else {
+                        foundry_config::Config::foundry_chain_cache_dir(config.get_chain_id())
+                    }
+                };
+                if let Some(cache_dir) = cache_dir
+                    && let Err(err) = std::fs::remove_dir_all(&cache_dir)
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    return Err(BlockchainError::Internal(format!(
+                        "failed to invalidate fork cache at {}: {err}",
+                        cache_dir.display()
+                    )));
+                }
+            }
             let fork_block = fork
                 .block_by_number(fork_block_number)
                 .await?
@@ -2502,12 +2527,8 @@ impl<N: Network> Backend<N> {
                 } else {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
-                    {
-                        let maybe_fork_url =
-                            { self.node_config.read().await.fork_urls.first().cloned() };
-                        if let Some(fork_url) = maybe_fork_url {
-                            self.reset_block_number(fork_url, fork_block_number).await?;
-                        }
+                    if let Some(fork_url) = target_rpc_url.clone() {
+                        self.reset_block_number(fork_url, fork_block_number).await?;
                     }
 
                     let gas_limit = self.node_config.read().await.fork_gas_limit(&fork_block);
@@ -2553,6 +2574,7 @@ impl<N: Network> Backend<N> {
             );
             self.states.write().clear();
             self.apply_genesis().await?;
+            fork.set_database_rpc_url(target_rpc_url);
 
             trace!(target: "backend", "reset fork");
 
@@ -3000,14 +3022,14 @@ where
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
-            let mut input = Vec::with_capacity(40);
-            input.extend_from_slice(best_hash.as_slice());
-            input.extend_from_slice(&block_number.to_le_bytes());
+            let mut input = [0u8; 40];
+            input[..32].copy_from_slice(best_hash.as_slice());
+            input[32..].copy_from_slice(&block_number.to_le_bytes());
             // Use the `prevrandao` value set via `anvil_setNextBlockPrevRandao` for this block if
             // one was provided, otherwise derive it from the parent hash and block number. The
             // manual override is consumed here so it only applies to this single block.
             evm_env.block_env.prevrandao =
-                Some(self.cheats.take_next_block_prevrandao().unwrap_or_else(|| keccak256(&input)));
+                Some(self.cheats.take_next_block_prevrandao().unwrap_or_else(|| keccak256(input)));
 
             if self.prune_state_history_config.is_state_history_supported() {
                 let db = self.db.read().await.current_state();

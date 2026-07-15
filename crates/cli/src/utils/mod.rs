@@ -9,7 +9,7 @@ use path_slash::PathExt;
 use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,
@@ -627,11 +627,61 @@ ignore them in the `.gitignore` file."
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        let paths = paths.into_iter().map(|path| path.as_ref().to_owned()).collect::<Vec<_>>();
+        if self.submodules_initialized(&paths).unwrap_or(false) {
+            return Ok(false);
+        }
+
         self.cmd()
             .args(["submodule", "status"])
-            .args(paths)
+            .args(&paths)
             .get_stdout_lossy()
             .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
+    }
+
+    /// Returns true if all submodules matching `paths` have initialized worktrees.
+    fn submodules_initialized(self, paths: &[OsString]) -> Result<bool> {
+        let Some(root) = self.root.ancestors().find(|root| root.join(".git").exists()) else {
+            return Ok(false);
+        };
+        if paths.iter().any(|path| {
+            Path::new(path)
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        }) {
+            return Ok(false);
+        }
+        let relative_root = self.root.strip_prefix(root).unwrap_or_else(|_| Path::new(""));
+        let gitmodules = root.join(".gitmodules");
+        if !gitmodules.is_file() {
+            return Ok(false);
+        }
+
+        let output = Command::new("git")
+            .args(["config", "--null", "--file"])
+            .arg(gitmodules)
+            .args(["--get-regexp", r"^submodule\..*\.path$"])
+            .get_stdout_lossy()?;
+
+        for entry in output.split_terminator('\0') {
+            let (_, path) = entry
+                .split_once('\n')
+                .ok_or_else(|| eyre::eyre!("invalid submodule path config"))?;
+            let path = Path::new(path);
+            let matches = paths.is_empty()
+                || paths.iter().any(|prefix| {
+                    let prefix = Path::new(prefix);
+                    if prefix.is_absolute() {
+                        prefix.strip_prefix(root).is_ok_and(|prefix| path.starts_with(prefix))
+                    } else {
+                        path.starts_with(relative_root.join(prefix))
+                    }
+                });
+            if matches && !root.join(path).join(".git").exists() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Returns true if the given path has submodules by checking `git submodule status`
@@ -893,6 +943,36 @@ mod tests {
         assert_eq!(subs[0].path(), Path::new("lib/forge-std"));
         assert_eq!(subs[1].rev(), "8829465a08cac423dcf59852f21e448449c1a1a8");
         assert_eq!(subs[1].path(), Path::new("lib/openzeppelin-contracts"));
+    }
+
+    #[test]
+    fn skips_submodule_status_if_dependencies_are_initialized() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(
+            root.join(".gitmodules"),
+            r#"[submodule "lib/forge-std"]
+	path = lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("lib/forge-std/.git")).unwrap();
+
+        let git = Git::new(root);
+        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.submodules_initialized(&[root.join("lib").into()]).unwrap());
+
+        let nested = root.join("packages/contracts");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert!(!Git::new(&nested).submodules_initialized(&["../../lib".into()]).unwrap());
+
+        // The fast path succeeds even though this is not a real Git repository.
+        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+
+        std::fs::remove_dir(root.join("lib/forge-std/.git")).unwrap();
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
     }
 
     #[test]

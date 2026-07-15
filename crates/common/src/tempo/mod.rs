@@ -19,6 +19,7 @@ use tempo_alloy::contracts::precompiles::{
 use tempo_primitives::TempoAddressExt;
 
 mod keystore;
+mod lane;
 mod registry;
 mod session;
 mod session_policy;
@@ -29,6 +30,7 @@ mod tip20;
 pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use keystore::*;
+pub use lane::{PaymentLane, PaymentLaneClassification, PaymentLaneReason, classify_payment_lane};
 pub use session::*;
 pub use session_policy::{
     GeneratedSessionKey, PreparedSessionAuthorization, SessionAuthorizationRequest,
