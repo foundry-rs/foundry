@@ -1,9 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::{
-    tempo::tempo_provider,
-    tx::{SendTxOpts, TxParams},
-};
+use crate::tx::{SendTxOpts, TxParams};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::B256;
@@ -12,6 +9,7 @@ use alloy_rpc_types::TransactionInputKind;
 use alloy_sol_types::{SolCall, SolError};
 use alloy_transport::{RpcError, TransportErrorKind};
 use foundry_cli::utils::LoadConfig;
+use foundry_common::provider::ProviderBuilder;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{
     TIP20_FACTORY_ADDRESS, UnknownFunctionSelector, createTokenWithLogoCall, is_iso4217_currency,
@@ -69,7 +67,7 @@ pub(super) async fn run(
         }
     }
 
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     let quote_token_addr = quote_token.resolve(&provider).await?;
     let admin_addr = admin.resolve(&provider).await?;
 

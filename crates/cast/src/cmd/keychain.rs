@@ -1,4 +1,3 @@
-use crate::tempo::tempo_provider;
 use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
 use foundry_wallets::BrowserWalletOpts;
@@ -21,7 +20,9 @@ use foundry_cli::{
     utils::{LoadConfig, maybe_print_resolved_lane, parse_fee_token_address, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder, sh_warn, shell,
+    FoundryTransactionBuilder,
+    provider::ProviderBuilder,
+    sh_warn, shell,
     tempo::{
         self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType, maybe_print_fee_token,
         read_tempo_keys_file, resolve_and_set_fee_token, tempo_keys_path,
@@ -965,7 +966,7 @@ async fn run_inspect(
 ) -> Result<()> {
     let metadata = resolve_key_metadata(key_address, root_account)?;
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
     let info: KeyInfo = provider.get_keychain_key(metadata.root_account, key_address).await?;
     let provisioned = info.keyId != Address::ZERO;
@@ -1087,7 +1088,7 @@ async fn run_inspect(
 /// `cast keychain check` / `cast keychain info` — query on-chain key status.
 async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
     let info: KeyInfo = provider.get_keychain_key(wallet_address, key_address).await?;
 
@@ -1379,7 +1380,9 @@ async fn run_doctor(
             return finalize_doctor(steps, context);
         }
     };
-    let provider = match tempo_provider(&config) {
+    let provider = match ProviderBuilder::<TempoNetwork>::from_config(&config)
+        .and_then(|builder| builder.build())
+    {
         Ok(p) => p,
         Err(err) => {
             steps.push(DoctorStep::fail(
@@ -2794,7 +2797,7 @@ async fn run_authorize(
     let enforce = enforce_limits || !limits.is_empty();
 
     let config = send_tx.eth.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
     // T6 admin keys are key-management only and use a dedicated precompile entrypoint.
     if admin {
@@ -3231,7 +3234,7 @@ async fn run_burn_witness(
     send_tx: SendTxOpts,
 ) -> Result<()> {
     let config = send_tx.eth.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_tempo_hardfork(
         &provider,
         TempoHardfork::T5,
@@ -3247,7 +3250,7 @@ async fn run_burn_witness(
 /// `cast keychain is-witness-burned` — check TIP-1053 witness burn state.
 async fn run_is_witness_burned(account: Address, witness: B256, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_tempo_hardfork(
         &provider,
         TempoHardfork::T5,
@@ -3278,7 +3281,7 @@ async fn run_is_witness_burned(account: Address, witness: B256, rpc: RpcOpts) ->
 /// `cast keychain is-admin` — check whether a key is the root or an active admin key (T6).
 async fn run_is_admin(account: Address, key_address: Address, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_tempo_hardfork(
         &provider,
         TempoHardfork::T6,
@@ -3311,7 +3314,7 @@ async fn run_verify_keychain(
     admin: bool,
 ) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     let command = if admin { "verify-admin" } else { "verify" };
     ensure_tempo_hardfork(
         &provider,
@@ -3351,7 +3354,7 @@ async fn run_remaining_limit(
     rpc: RpcOpts,
 ) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
     let remaining: U256 = if is_tempo_hardfork_active(&provider, TempoHardfork::T3).await? {
         provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?
@@ -3429,7 +3432,7 @@ async fn run_policy_add_call(
 ) -> Result<()> {
     let metadata = resolve_key_metadata(key_address, root_account)?;
     let config = send_tx.eth.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
     ensure_tempo_hardfork(
         &provider,
@@ -3593,7 +3596,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     let config = send_tx.eth.load_config()?;
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
     if let Some(interval) = send_tx.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval));

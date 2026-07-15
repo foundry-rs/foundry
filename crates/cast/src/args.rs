@@ -2,7 +2,6 @@ use crate::{
     Cast, SimpleCast,
     cmd::erc20::IERC20,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
-    tempo::tempo_provider,
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
 };
@@ -423,7 +422,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                             .await?
                     }
                     Some(NetworkVariant::Tempo) => {
-                        let provider = tempo_provider(&config)?;
+                        let provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                         Cast::new(&provider)
                             .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
                             .await?
@@ -729,7 +729,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .await?
                 }
                 Some(NetworkVariant::Tempo) => {
-                    let provider = tempo_provider(&config)?;
+                    let provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     Cast::new(&provider)
                         .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?

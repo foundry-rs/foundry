@@ -3,7 +3,6 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
     format_uint_exp, tempo,
-    tempo::tempo_provider,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_consensus::{SignableTransaction, Signed};
@@ -377,7 +376,8 @@ impl Erc20Subcommand {
                 let mut tx_opts = $tx_opts;
                 tempo::ensure_session_not_browser(&tx_opts.tempo, $send_tx.browser.browser)?;
                 let (pre_resolved_signer, tempo_keychain) = if has_session {
-                    let $provider = tempo_provider(&config)?;
+                    let $provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     let chain = get_chain(config.chain, &$provider).await?;
                     tempo::resolve_session_or_wallet_signer(
                         &tx_opts.tempo,
@@ -403,7 +403,8 @@ impl Erc20Subcommand {
                     let signer = pre_resolved_signer
                         .as_ref()
                         .ok_or_else(|| eyre::eyre!("signer required for access key"))?;
-                    let $provider = tempo_provider(&config)?;
+                    let $provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;

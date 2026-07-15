@@ -1,7 +1,6 @@
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key, validate_sponsor_url},
     tempo,
-    tempo::tempo_provider,
     tx::{CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -17,6 +16,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder,
+    provider::ProviderBuilder,
     tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
@@ -191,7 +191,7 @@ pub(crate) async fn resolve_tip20_signer(
     tempo::ensure_session_not_browser(&tx_params.tempo, send_tx.browser.browser)?;
 
     let config = send_tx.eth.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
     tempo::resolve_session_or_wallet_signer(&tx_params.tempo, &send_tx.eth.wallet, chain.id()).await
 }
@@ -227,7 +227,7 @@ pub(crate) async fn send_tip20_transaction(
     }
 
     let config = send_tx.eth.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     if let Some(interval) = send_tx.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }

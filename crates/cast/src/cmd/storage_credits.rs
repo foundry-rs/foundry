@@ -3,13 +3,14 @@ use crate::{
         keychain::ensure_tempo_precompile_active,
         tip20::{resolve_tip20_signer, send_tip20_transaction},
     },
-    tempo::{print_payload, tempo_provider},
+    tempo::print_payload,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
 use clap::{Parser, ValueEnum};
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
+use foundry_common::provider::ProviderBuilder;
 use foundry_evm::hardfork::TempoHardfork;
 use serde_json::json;
 use std::str::FromStr;
@@ -116,7 +117,7 @@ impl StorageCreditsSubcommand {
 
 async fn balance(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_storage_credits_t7(&provider, "cast storage-credits balance").await?;
     let account = account.resolve(&provider).await?;
 
@@ -134,7 +135,7 @@ async fn balance(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
 
 async fn mode(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_storage_credits_t7(&provider, "cast storage-credits mode").await?;
     let account = account.resolve(&provider).await?;
 
@@ -152,7 +153,7 @@ async fn mode(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
 
 async fn budget(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_storage_credits_t7(&provider, "cast storage-credits budget").await?;
     let account = account.resolve(&provider).await?;
 
@@ -219,7 +220,7 @@ where
 /// so a transaction to it would silently succeed as a no-op.
 async fn ensure_send_storage_credits_t7(send_tx: &SendTxOpts, command: &str) -> Result<()> {
     let config = send_tx.eth.rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_storage_credits_t7(&provider, command).await
 }
 

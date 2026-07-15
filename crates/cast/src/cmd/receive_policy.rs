@@ -3,7 +3,7 @@ use crate::{
         keychain::ensure_tempo_precompile_active,
         tip20::{resolve_tip20_signer, send_tip20_transaction},
     },
-    tempo::{print_payload, tempo_provider},
+    tempo::print_payload,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -17,7 +17,7 @@ use foundry_cli::{
     opts::RpcOpts,
     utils::{LoadConfig, get_provider},
 };
-use foundry_common::shell;
+use foundry_common::{provider::ProviderBuilder, shell};
 use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use serde_json::{Value, json};
@@ -412,7 +412,7 @@ where
 async fn burn_receipt(receipt: Bytes, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
     decode_claim_receipt(&receipt)?;
     let config = send_tx.eth.rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_receive_policy_t6(&provider, "cast receive-policy receipt burn").await?;
     let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
     send_tip20_transaction(
@@ -430,7 +430,7 @@ async fn burn_receipt(receipt: Bytes, send_tx: SendTxOpts, tx: TxParams) -> Resu
 async fn claim(to: NameOrAddress, receipt: Bytes, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
     decode_claim_receipt(&receipt)?;
     let config = send_tx.eth.rpc.load_config()?;
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     ensure_receive_policy_t6(&provider, "cast receive-policy claim").await?;
     let to = to.resolve(&provider).await?;
     let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;

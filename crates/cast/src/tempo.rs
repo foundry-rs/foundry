@@ -5,22 +5,13 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_cli::{json::print_json_success, opts::TempoOpts};
-use foundry_common::{
-    FoundryTransactionBuilder,
-    provider::{ProviderBuilder, RetryProvider},
-    shell,
-};
-use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
+use foundry_common::{FoundryTransactionBuilder, shell};
+use foundry_config::{Chain, Eip1559FeeEstimatePreset};
 use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use serde_json::Value;
 use tempo_alloy::TempoNetwork;
 
 pub use foundry_common::tempo::{TempoSponsor, TempoSponsorPreview, resolve_tempo_sponsor_signer};
-
-/// Builds the Tempo network provider from a loaded config.
-pub(crate) fn tempo_provider(config: &Config) -> Result<RetryProvider<TempoNetwork>> {
-    ProviderBuilder::<TempoNetwork>::from_config(config)?.build()
-}
 
 /// Prints a command result: the raw payload in JSON mode, the human rendering otherwise.
 pub(crate) fn print_payload<F>(payload: Value, human: F) -> Result<()>

@@ -5,7 +5,6 @@ use crate::{
         tip20::mine,
     },
     tempo,
-    tempo::tempo_provider,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_network::Network;
@@ -20,6 +19,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
+    provider::ProviderBuilder,
     shell,
     tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
@@ -157,7 +157,7 @@ async fn register(
 ) -> Result<B256> {
     let config = send_tx.eth.load_config()?;
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = tempo_provider(&config)?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
     tempo::ensure_session_not_browser(&tx_opts.tempo, send_tx.browser.browser)?;
     let (signer, tempo_access_key) =
