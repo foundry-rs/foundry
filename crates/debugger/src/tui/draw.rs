@@ -2,7 +2,7 @@
 
 use super::{
     context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext},
-    storage::{StorageAccess, storage_access_at},
+    storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at},
 };
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
@@ -144,8 +144,8 @@ impl TUIContext<'_> {
         if self.show_stack {
             self.draw_stack(f, *panes.next().expect("stack pane is visible"));
         }
-        let memory_pane = *panes.next().expect("memory pane is always visible");
-        self.draw_buffer(f, memory_pane);
+        let data_pane = *panes.next().expect("data pane is always visible");
+        self.draw_data(f, data_pane);
         if self.show_source {
             self.draw_src(f, *panes.next().expect("source pane is visible"));
         }
@@ -235,7 +235,7 @@ impl TUIContext<'_> {
         if self.show_stack {
             self.draw_stack(f, *panes.next().expect("stack pane is visible"));
         }
-        self.draw_buffer(f, *panes.next().expect("memory pane is always visible"));
+        self.draw_data(f, *panes.next().expect("data pane is always visible"));
     }
 
     fn footer_height(&self) -> u16 {
@@ -610,6 +610,47 @@ impl TUIContext<'_> {
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
         storage_access_at(self.debug_steps(), self.current_step).map(storage_access_line)
+    }
+
+    fn draw_data(&mut self, f: &mut Frame<'_>, area: Rect) {
+        if let Some(space) = self.active_storage() {
+            self.draw_storage(f, area, space);
+        } else {
+            self.draw_buffer(f, area);
+        }
+    }
+
+    fn draw_storage(&mut self, f: &mut Frame<'_>, area: Rect, space: StorageSpace) {
+        let accesses = self.storage_accesses(space);
+        let current_slot = storage_access_at(self.debug_steps(), self.current_step)
+            .filter(|access| access.space() == space)
+            .map(StorageAccess::slot);
+        self.draw_memory.current_storage_startline =
+            self.draw_memory.current_storage_startline.min(accesses.len().saturating_sub(1));
+
+        let index_width = decimal_digits(accesses.len()).max(2);
+        let mut lines = accesses
+            .values()
+            .copied()
+            .enumerate()
+            .skip(self.draw_memory.current_storage_startline)
+            .flat_map(|(index, access)| {
+                storage_slot_lines(index, index_width, access, current_slot == Some(access.slot()))
+            })
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("No {} accessed in current call", space.noun()),
+                Style::new().add_modifier(Modifier::DIM),
+            )));
+        }
+
+        let count = accesses.len();
+        let suffix = if count == 1 { "slot" } else { "slots" };
+        let title = format!("{}: {count} accessed {suffix}", space.label());
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+        f.render_widget(paragraph, area);
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
@@ -1034,7 +1075,7 @@ fn shortcut_lines() -> Vec<Line<'static>> {
             dimmed,
         )),
         Line::from(Span::styled(
-            "[t] labels | [m] decode | [h] help | [J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint",
+            "[t] labels | [m] decode | [h] help | [J/K] stack scroll | [ctrl+j/k] data scroll | ['<char>] breakpoint",
             dimmed,
         )),
     ]
@@ -1119,6 +1160,33 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
 
 fn storage_access_line(access: StorageAccess) -> Line<'static> {
     Line::from(Span::styled(access.describe(), Style::new().fg(Color::Yellow)))
+}
+
+fn storage_slot_lines(
+    index: usize,
+    index_width: usize,
+    access: StorageAccess,
+    current: bool,
+) -> [Line<'static>; 2] {
+    let value_style = if current {
+        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(Color::White)
+    };
+    let prefix_width = index_width + 2;
+    [
+        Line::from(vec![
+            Span::styled(format!("{index:0index_width$}| "), Style::new().fg(Color::Gray)),
+            Span::styled(access.op(), value_style),
+            Span::raw(" slot "),
+            Span::styled(hex_u256(access.slot()), value_style),
+        ]),
+        Line::from(vec![
+            Span::raw(" ".repeat(prefix_width)),
+            Span::raw("value "),
+            Span::styled(hex_u256(access.value()), value_style),
+        ]),
+    ]
 }
 
 fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) -> String {
@@ -1474,6 +1542,53 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn storage_explorer_draws_accessed_slots() {
+        let mut first = trace_step(Vec::new());
+        first.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(42),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut second = trace_step(Vec::new());
+        second.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(1),
+            value: U256::from(0xbeef),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut latest = trace_step(Vec::new());
+        latest.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(43),
+            had_value: Some(U256::from(42)),
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![first, second, latest])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 2;
+        let backend = TestBackend::new(100, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| tui.draw_storage(f, Rect::new(0, 0, 100, 6), super::StorageSpace::Persistent))
+            .unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Storage: 2 accessed slots"));
+        assert!(screen.contains("SSTORE slot 0x0"));
+        assert!(screen.contains("value 0x2b"));
+        assert!(screen.contains("SSTORE slot 0x1"));
+        assert!(screen.contains("value 0xbeef"));
     }
 
     #[test]

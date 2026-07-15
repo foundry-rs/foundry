@@ -13,6 +13,7 @@ use crate::{
     },
     mem::{self, in_memory_db::StateRootDb},
 };
+use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
@@ -1195,8 +1196,8 @@ impl NodeConfig {
 
         self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
-        let base_fee_params: BaseFeeParams =
-            self.networks.base_fee_params(self.get_genesis_timestamp());
+        let genesis_timestamp = self.get_genesis_timestamp();
+        let base_fee_params: BaseFeeParams = self.networks.base_fee_params(genesis_timestamp);
 
         // On Tempo, the base fee follows the chain's hardfork rules instead of EIP-1559.
         let tempo_hardfork =
@@ -1238,11 +1239,22 @@ impl NodeConfig {
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
+        // Fork setup initializes its own timestamp. For a local BSC chain, keep the initial EVM
+        // and genesis block on the same resolved timestamp so chain precompiles are available
+        // immediately. Preserve the default timestamp behavior for all other local chains.
+        let is_bsc = matches!(
+            NamedChain::try_from(evm_env.cfg_env.chain_id),
+            Ok(NamedChain::BinanceSmartChain | NamedChain::BinanceSmartChainTestnet)
+        );
+        if fork.is_none() && (self.genesis_timestamp.is_some() || is_bsc) {
+            evm_env.block_env.timestamp = U256::from(genesis_timestamp);
+        }
+
         self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
         let genesis = GenesisConfig {
             number: self.get_genesis_number(),
-            timestamp: self.get_genesis_timestamp(),
+            timestamp: genesis_timestamp,
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
             genesis_init: self.genesis.clone(),

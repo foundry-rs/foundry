@@ -615,11 +615,18 @@ impl<N: Network> Backend<N> {
     /// Returns the precompiles for the current spec.
     pub fn precompiles(&self) -> BTreeMap<String, Address> {
         let spec_id = self.spec_id();
-        let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec_id));
+        let mut precompiles =
+            PrecompilesMap::from_static(Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)));
+        let (chain_id, timestamp) = {
+            let evm_env = self.evm_env.read();
+            (evm_env.cfg_env.chain_id, evm_env.block_env.timestamp.saturating_to())
+        };
+        self.networks.inject_chain_precompiles(&mut precompiles, chain_id, timestamp);
 
         let mut precompiles_map = BTreeMap::<String, Address>::default();
-        for (address, precompile) in precompiles.inner() {
-            precompiles_map.insert(precompile.id().name().to_string(), *address);
+        for address in precompiles.addresses() {
+            let precompile = precompiles.get(address).expect("precompile address must resolve");
+            precompiles_map.insert(precompile.precompile_id().name().to_string(), *address);
         }
 
         // Extend with configured network precompiles.
@@ -1224,12 +1231,18 @@ impl<N: Network> Backend<N> {
 
     /// Injects all configured precompiles into the given precompile map.
     ///
-    /// This applies three layers:
+    /// This applies four layers:
     /// 1. Network-specific precompiles (e.g. Tempo, OP)
-    /// 2. User-provided precompiles via [`PrecompileFactory`]
-    /// 3. Cheatcode ecrecover overrides (if active)
-    fn inject_precompiles(&self, precompiles: &mut PrecompilesMap) {
+    /// 2. Chain- and timestamp-specific precompiles
+    /// 3. User-provided precompiles via [`PrecompileFactory`]
+    /// 4. Cheatcode ecrecover overrides (if active)
+    fn inject_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         self.networks.inject_precompiles(precompiles);
+        self.networks.inject_chain_precompiles(
+            precompiles,
+            evm_env.cfg_env.chain_id,
+            evm_env.block_env.timestamp.saturating_to(),
+        );
 
         if let Some(factory) = &self.precompile_factory {
             factory.install(precompiles);
@@ -1254,12 +1267,15 @@ impl<N: Network> Backend<N> {
         });
     }
 
-    fn inject_tempo_precompiles<DB, I>(&self, evm: &mut tempo_evm::evm::TempoEvm<DB, I>)
-    where
+    fn inject_tempo_precompiles<DB, I>(
+        &self,
+        evm: &mut tempo_evm::evm::TempoEvm<DB, I>,
+        evm_env: &EvmEnv,
+    ) where
         DB: Database,
         I: Inspector<TempoContext<DB>>,
     {
-        self.inject_precompiles(evm.precompiles_mut());
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
         // Re-extend Tempo precompiles, preserving shared non-creditable slots.
         let cfg = evm.ctx().cfg.clone();
         let non_creditable_slots = evm.non_creditable_slots();
@@ -1321,7 +1337,7 @@ impl<N: Network> Backend<N> {
             evm_env.clone(),
             inspector,
         );
-        self.inject_precompiles(evm.precompiles_mut());
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
         self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         Ok(evm.transact(tx_env)?)
     }
@@ -1396,7 +1412,7 @@ impl<N: Network> Backend<N> {
             tempo_env,
             inspector,
         );
-        self.inject_tempo_precompiles(&mut evm);
+        self.inject_tempo_precompiles(&mut evm, evm_env);
         let result = evm.transact(tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {
@@ -1431,7 +1447,7 @@ impl<N: Network> Backend<N> {
 
         macro_rules! run {
             ($evm:expr) => {{
-                self.inject_precompiles($evm.precompiles_mut());
+                self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
                 executor.apply_pre_execution_changes().expect("pre-execution changes failed");
