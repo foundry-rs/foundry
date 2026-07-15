@@ -5,6 +5,7 @@ pragma solidity ^0.8.18;
 
 interface SameName {
     function ecrecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address);
+    function observe(bytes32 value) external pure;
 }
 
 contract Ecrecover {
@@ -13,6 +14,18 @@ contract Ecrecover {
     uint256 private constant HALF_ORDER_PLUS_ONE = HALF_ORDER + 1;
     uint256 private constant TOP_BIT_MASK =
         0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+    bytes32 private storedS;
+
+    function mutateStoredS(bytes32 replacement) internal {
+        storedS = replacement;
+    }
+
+    function mutateAndReturn(bytes32 replacement) internal returns (bytes32) {
+        storedS = replacement;
+        return replacement;
+    }
+
+    function observe(bytes32) internal pure {}
 
     function bare(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
@@ -141,6 +154,182 @@ contract Ecrecover {
         return uint256(s) <= HALF_ORDER ? ecrecover(hash, v, r, s) : address(0);
     }
 
+    function constantS(bytes32 hash, uint8 v, bytes32 r) external pure returns (address) {
+        return ecrecover(hash, v, r, bytes32(0));
+    }
+
+    function tupleSwapSafe(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        bytes32 unsafeS = s;
+        bytes32 safeS = bytes32(0);
+        (unsafeS, safeS) = (safeS, unsafeS);
+        return ecrecover(hash, v, r, unsafeS);
+    }
+
+    function tupleSwapUnsafe(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        bytes32 unsafeS = s;
+        bytes32 safeS = bytes32(0);
+        (unsafeS, safeS) = (safeS, unsafeS);
+        return ecrecover(hash, v, r, safeS); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function ternarySafe(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bool flag
+    ) external pure returns (address) {
+        bytes32 s = flag ? bytes32(0) : bytes32(1);
+        return ecrecover(hash, v, r, s);
+    }
+
+    function branchSafe(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bool flag
+    ) external pure returns (address) {
+        if (flag) {
+            s = bytes32(0);
+        } else {
+            s = bytes32(1);
+        }
+        return ecrecover(hash, v, r, s);
+    }
+
+    function loopCarried(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement,
+        bool repeat
+    ) external pure returns (address signer) {
+        require(uint256(s) <= HALF_ORDER);
+        while (repeat) {
+            signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+            s = replacement;
+        }
+    }
+
+    function forContinue(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement
+    ) external pure returns (address signer) {
+        require(uint256(s) <= HALF_ORDER);
+        for (uint256 i; i < 2; s = replacement) {
+            signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+            ++i;
+            continue;
+        }
+    }
+
+    function guardedLoop(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement
+    ) external pure returns (address signer) {
+        while (uint256(s) <= HALF_ORDER) {
+            signer = ecrecover(hash, v, r, s);
+            s = replacement;
+        }
+    }
+
+    function singleIteration(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement
+    ) external pure returns (address signer) {
+        require(uint256(s) <= HALF_ORDER);
+        do {
+            signer = ecrecover(hash, v, r, s);
+            s = replacement;
+        } while (false);
+    }
+
+    function doWhileBreak(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bool skipGuard
+    ) external pure returns (address) {
+        do {
+            if (skipGuard) break;
+            require(uint256(s) <= HALF_ORDER);
+        } while (false);
+        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function stateChangedByCall(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 replacement
+    ) external returns (address) {
+        require(uint256(storedS) <= HALF_ORDER);
+        mutateStoredS(replacement);
+        return ecrecover(hash, v, r, storedS); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function statePreservedByPureCall(bytes32 hash, uint8 v, bytes32 r) external view returns (address) {
+        require(uint256(storedS) <= HALF_ORDER);
+        observe(storedS);
+        return ecrecover(hash, v, r, storedS);
+    }
+
+    function stateChangedInTryArgument(
+        SameName helper,
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 replacement
+    ) external returns (address) {
+        require(uint256(storedS) <= HALF_ORDER);
+        try helper.observe(mutateAndReturn(replacement)) {
+            return address(0);
+        } catch {}
+        return ecrecover(hash, v, r, storedS); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function looseInclusive(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        require(uint256(s) <= HALF_ORDER_PLUS_ONE);
+        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function looseStrict(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        unchecked {
+            require(uint256(s) < HALF_ORDER_PLUS_ONE + 1);
+        }
+        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function uncheckedWrap(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        unchecked {
+            require(uint256(s) <= type(uint256).max + 1);
+        }
+        return ecrecover(hash, v, r, s);
+    }
+
+    function safeAfterLoop(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        while (uint256(s) > HALF_ORDER) {
+            return address(0);
+        }
+        return ecrecover(hash, v, r, s);
+    }
+
+    function strictReversed(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        require(HALF_ORDER_PLUS_ONE > uint256(s));
+        return ecrecover(hash, v, r, s);
+    }
+
     function userDefined(
         SameName helper,
         bytes32 hash,
@@ -149,5 +338,20 @@ contract Ecrecover {
         bytes32 s
     ) external pure returns (address) {
         return helper.ecrecover(hash, v, r, s);
+    }
+}
+
+contract SameNameEcrecover {
+    function ecrecover(bytes32, uint8, bytes32, bytes32) internal pure returns (address) {
+        return address(1);
+    }
+
+    function userDefinedBare(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (address) {
+        return ecrecover(hash, v, r, s);
     }
 }

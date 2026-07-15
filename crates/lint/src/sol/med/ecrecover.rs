@@ -13,8 +13,11 @@ use solar::{
     sema::{
         Gcx,
         builtins::Builtin,
-        eval::ConstantEvaluator,
-        hir::{self, ExprKind, ItemId, LoopSource, Res, StmtKind, TypeKind, Visit},
+        eval::{ConstValue, ConstantEvaluator},
+        hir::{
+            self, ExprKind, ItemId, LoopSource, Res, StateMutability, StmtKind, TypeKind, Visit,
+        },
+        ty::TyKind,
     },
 };
 use std::{
@@ -61,10 +64,31 @@ enum ValueId {
     Assigned(u32),
 }
 
+#[derive(Clone, Copy, Default)]
+struct AssignedValue {
+    value: Option<ValueId>,
+    low_s: bool,
+}
+
 #[derive(Clone, Default)]
 struct FlowState {
     values: HashMap<hir::VariableId, ValueId>,
     low_s: HashSet<ValueId>,
+}
+
+#[derive(Clone, Default)]
+struct LoopEffects {
+    values: HashSet<hir::VariableId>,
+    mutable_state: bool,
+    all_values: bool,
+}
+
+impl LoopEffects {
+    fn merge(&mut self, other: Self) {
+        self.values.extend(other.values);
+        self.mutable_state |= other.mutable_state;
+        self.all_values |= other.all_values;
+    }
 }
 
 impl FlowState {
@@ -86,7 +110,7 @@ impl<'hir> Analyzer<'hir> {
         Self { gcx, hir, state: FlowState::default(), next_value: 0, hits: Vec::new() }
     }
 
-    fn fresh_value(&mut self) -> ValueId {
+    const fn fresh_value(&mut self) -> ValueId {
         let value = ValueId::Assigned(self.next_value);
         self.next_value += 1;
         value
@@ -144,24 +168,88 @@ impl<'hir> Analyzer<'hir> {
     }
 
     fn const_value(&self, expr: &'hir hir::Expr<'hir>) -> Option<U256> {
-        ConstantEvaluator::new(self.gcx).try_eval(expr).ok()?.as_u256()
+        if let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind
+            && is_transparent_signature_cast(callee)
+            && args.len() == 1
+        {
+            return args.exprs().next().and_then(|arg| self.const_value(arg));
+        }
+        if self.gcx.builtin_member(expr.peel_parens().id) == Some(Builtin::TypeMax)
+            && let Some(ty) = self.gcx.type_of_expr(expr.peel_parens().id)
+            && let TyKind::Elementary(ElementaryType::UInt(size)) = ty.kind
+        {
+            return Some(U256::MAX >> (256 - size.bits()));
+        }
+        if let ExprKind::Binary(lhs, op, rhs) = &expr.peel_parens().kind
+            && matches!(op.kind, BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul)
+        {
+            let lhs = self.const_value(lhs)?;
+            let rhs = self.const_value(rhs)?;
+            return match op.kind {
+                BinOpKind::Add => Some(lhs.wrapping_add(rhs)),
+                BinOpKind::Sub => Some(lhs.wrapping_sub(rhs)),
+                BinOpKind::Mul => Some(lhs.wrapping_mul(rhs)),
+                _ => unreachable!(),
+            };
+        }
+        if let Some(value) =
+            ConstantEvaluator::new(self.gcx).try_eval(expr).ok().and_then(|value| value.as_u256())
+        {
+            return Some(value);
+        }
+        None
+    }
+
+    fn const_bool(&self, expr: &'hir hir::Expr<'hir>) -> Option<bool> {
+        match ConstantEvaluator::new(self.gcx).try_eval_value(expr).ok()? {
+            ConstValue::Bool(value) => Some(value),
+            _ => None,
+        }
     }
 
     fn is_proven_low_s(&self, expr: &'hir hir::Expr<'hir>) -> bool {
         self.const_value(expr).is_some_and(|value| value <= SECP256K1_HALF_ORDER)
             || self.current_value(expr).is_some_and(|value| self.state.low_s.contains(&value))
+            || matches!(
+                &expr.peel_parens().kind,
+                ExprKind::Ternary(_, then_expr, else_expr)
+                    if self.is_proven_low_s(then_expr) && self.is_proven_low_s(else_expr)
+            )
     }
 
-    fn assign_var(&mut self, var: hir::VariableId, rhs: Option<&'hir hir::Expr<'hir>>) {
-        let value =
-            rhs.and_then(|rhs| self.current_value(rhs)).unwrap_or_else(|| self.fresh_value());
-        if rhs.is_some_and(|rhs| self.is_proven_low_s(rhs)) {
+    fn assigned_value(&self, rhs: Option<&'hir hir::Expr<'hir>>) -> AssignedValue {
+        AssignedValue {
+            value: rhs.and_then(|rhs| self.current_value(rhs)),
+            low_s: rhs.is_some_and(|rhs| self.is_proven_low_s(rhs)),
+        }
+    }
+
+    fn assign_var_value(&mut self, var: hir::VariableId, assigned: AssignedValue) {
+        let value = assigned.value.unwrap_or_else(|| self.fresh_value());
+        if assigned.low_s {
             self.state.low_s.insert(value);
         }
         self.state.values.insert(var, value);
     }
 
+    fn assign_var(&mut self, var: hir::VariableId, rhs: Option<&'hir hir::Expr<'hir>>) {
+        self.assign_var_value(var, self.assigned_value(rhs));
+    }
+
     fn assign_lhs(&mut self, lhs: &'hir hir::Expr<'hir>, rhs: Option<&'hir hir::Expr<'hir>>) {
+        let mut assignments = Vec::new();
+        self.collect_assignments(lhs, rhs, &mut assignments);
+        for (var, assigned) in assignments {
+            self.assign_var_value(var, assigned);
+        }
+    }
+
+    fn collect_assignments(
+        &self,
+        lhs: &'hir hir::Expr<'hir>,
+        rhs: Option<&'hir hir::Expr<'hir>>,
+        assignments: &mut Vec<(hir::VariableId, AssignedValue)>,
+    ) {
         if let ExprKind::Tuple(lhs_elems) = &lhs.peel_parens().kind {
             let rhs_elems = match rhs.map(|rhs| &rhs.peel_parens().kind) {
                 Some(ExprKind::Tuple(elems)) => Some(*elems),
@@ -170,10 +258,10 @@ impl<'hir> Analyzer<'hir> {
             for (index, lhs) in lhs_elems.iter().enumerate() {
                 let Some(lhs) = lhs else { continue };
                 let rhs = rhs_elems.and_then(|elems| elems.get(index)).copied().flatten();
-                self.assign_lhs(lhs, rhs);
+                self.collect_assignments(lhs, rhs, assignments);
             }
         } else if let Some(var) = underlying_var(lhs) {
-            self.assign_var(var, rhs);
+            assignments.push((var, self.assigned_value(rhs)));
         }
     }
 
@@ -186,12 +274,291 @@ impl<'hir> Analyzer<'hir> {
 
     fn invalidate(&mut self, target: &'hir hir::Expr<'hir>) {
         let Some(var) = underlying_var(target) else { return };
+        self.invalidate_var(var);
+    }
+
+    fn invalidate_var(&mut self, var: hir::VariableId) {
         let value = self.fresh_value();
         self.state.values.insert(var, value);
     }
 
+    fn tracked_vars(&self) -> HashSet<hir::VariableId> {
+        self.state
+            .values
+            .keys()
+            .copied()
+            .chain(self.state.low_s.iter().filter_map(|value| match value {
+                ValueId::Initial(var) => Some(*var),
+                ValueId::Assigned(_) => None,
+            }))
+            .collect()
+    }
+
+    fn invalidate_mutable_state(&mut self) {
+        let vars: Vec<_> = self
+            .tracked_vars()
+            .into_iter()
+            .filter(|var| {
+                let var = self.hir.variable(*var);
+                var.kind.is_state() && !var.is_constant() && !var.is_immutable()
+            })
+            .collect();
+        for var in vars {
+            self.invalidate_var(var);
+        }
+    }
+
+    fn invalidate_loop_carried(&mut self, block: &'hir hir::Block<'hir>, source: LoopSource) {
+        if matches!(source, LoopSource::DoWhile)
+            && block.stmts.last().is_some_and(|stmt| {
+                matches!(
+                    &stmt.kind,
+                    StmtKind::If(condition, _, _) if self.const_bool(condition) == Some(false)
+                )
+            })
+        {
+            return;
+        }
+
+        let mut backedges = Vec::new();
+        if let Some(fallthrough) =
+            self.collect_loop_effects_stmts(block.stmts, LoopEffects::default(), &mut backedges)
+        {
+            backedges.push(fallthrough);
+        }
+        let Some(mut effects) = backedges.into_iter().reduce(|mut left, right| {
+            left.merge(right);
+            left
+        }) else {
+            return;
+        };
+        if matches!(source, LoopSource::For)
+            && let Some(next) = for_loop_next_expr(block)
+        {
+            self.add_expr_effects(next, &mut effects);
+        }
+
+        if effects.all_values {
+            effects.values.extend(self.tracked_vars());
+        }
+        if effects.mutable_state {
+            self.invalidate_mutable_state();
+        }
+        for var in effects.values {
+            self.invalidate_var(var);
+        }
+    }
+
+    fn collect_loop_effects_stmts(
+        &self,
+        stmts: &'hir [hir::Stmt<'hir>],
+        mut effects: LoopEffects,
+        backedges: &mut Vec<LoopEffects>,
+    ) -> Option<LoopEffects> {
+        for stmt in stmts {
+            effects = self.collect_loop_effects_stmt(stmt, effects, backedges)?;
+        }
+        Some(effects)
+    }
+
+    fn collect_loop_effects_stmt(
+        &self,
+        stmt: &'hir hir::Stmt<'hir>,
+        mut effects: LoopEffects,
+        backedges: &mut Vec<LoopEffects>,
+    ) -> Option<LoopEffects> {
+        match &stmt.kind {
+            StmtKind::Break => None,
+            StmtKind::Continue => {
+                backedges.push(effects);
+                None
+            }
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                self.collect_loop_effects_stmts(block.stmts, effects, backedges)
+            }
+            StmtKind::If(condition, then_stmt, else_stmt) => {
+                self.add_expr_effects(condition, &mut effects);
+                match self.const_bool(condition) {
+                    Some(true) => self.collect_loop_effects_stmt(then_stmt, effects, backedges),
+                    Some(false) => {
+                        if let Some(else_stmt) = else_stmt {
+                            self.collect_loop_effects_stmt(else_stmt, effects, backedges)
+                        } else {
+                            Some(effects)
+                        }
+                    }
+                    None => {
+                        let after_then =
+                            self.collect_loop_effects_stmt(then_stmt, effects.clone(), backedges);
+                        let after_else = if let Some(else_stmt) = else_stmt {
+                            self.collect_loop_effects_stmt(else_stmt, effects, backedges)
+                        } else {
+                            Some(effects)
+                        };
+                        merge_loop_effect_paths(after_then, after_else)
+                    }
+                }
+            }
+            StmtKind::Try(stmt_try) => {
+                self.add_expr_effects(&stmt_try.expr, &mut effects);
+                let mut fallthrough = None;
+                for clause in stmt_try.clauses {
+                    let clause_effects = self.collect_loop_effects_stmts(
+                        clause.block.stmts,
+                        effects.clone(),
+                        backedges,
+                    );
+                    fallthrough = merge_loop_effect_paths(fallthrough, clause_effects);
+                }
+                fallthrough
+            }
+            StmtKind::Loop(..) => {
+                self.add_stmt_effects(stmt, &mut effects);
+                Some(effects)
+            }
+            StmtKind::Return(expr) => {
+                if let Some(expr) = expr {
+                    self.add_expr_effects(expr, &mut effects);
+                }
+                None
+            }
+            StmtKind::Revert(expr) => {
+                self.add_expr_effects(expr, &mut effects);
+                None
+            }
+            StmtKind::AssemblyBlock(_) | StmtKind::Err(_) => {
+                effects.all_values = true;
+                Some(effects)
+            }
+            _ => {
+                self.add_stmt_effects(stmt, &mut effects);
+                (!branch_always_exits(stmt)).then_some(effects)
+            }
+        }
+    }
+
+    fn add_stmt_effects(&self, stmt: &'hir hir::Stmt<'hir>, effects: &mut LoopEffects) {
+        match &stmt.kind {
+            StmtKind::DeclSingle(var) => {
+                if let Some(initializer) = self.hir.variable(*var).initializer {
+                    self.add_expr_effects(initializer, effects);
+                }
+            }
+            StmtKind::DeclMulti(_, initializer)
+            | StmtKind::Emit(initializer)
+            | StmtKind::Revert(initializer)
+            | StmtKind::Expr(initializer) => self.add_expr_effects(initializer, effects),
+            StmtKind::Return(Some(expr)) => self.add_expr_effects(expr, effects),
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+                for stmt in block.stmts {
+                    self.add_stmt_effects(stmt, effects);
+                }
+            }
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
+                effects.all_values = true;
+            }
+            StmtKind::If(condition, then_stmt, else_stmt) => {
+                self.add_expr_effects(condition, effects);
+                self.add_stmt_effects(then_stmt, effects);
+                if let Some(else_stmt) = else_stmt {
+                    self.add_stmt_effects(else_stmt, effects);
+                }
+            }
+            StmtKind::Try(stmt_try) => {
+                self.add_expr_effects(&stmt_try.expr, effects);
+                for clause in stmt_try.clauses {
+                    for stmt in clause.block.stmts {
+                        self.add_stmt_effects(stmt, effects);
+                    }
+                }
+            }
+            StmtKind::Return(None)
+            | StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder => {}
+        }
+    }
+
+    fn add_expr_effects(&self, expr: &'hir hir::Expr<'hir>, effects: &mut LoopEffects) {
+        match &expr.peel_parens().kind {
+            ExprKind::Assign(lhs, _, rhs) => {
+                self.add_expr_effects(lhs, effects);
+                self.add_expr_effects(rhs, effects);
+                collect_lhs_vars(lhs, &mut effects.values);
+            }
+            ExprKind::Delete(target) => {
+                self.add_expr_effects(target, effects);
+                collect_lhs_vars(target, &mut effects.values);
+            }
+            ExprKind::Unary(op, target) => {
+                self.add_expr_effects(target, effects);
+                if matches!(
+                    op.kind,
+                    UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
+                ) {
+                    collect_lhs_vars(target, &mut effects.values);
+                }
+            }
+            ExprKind::Array(exprs) => {
+                for expr in *exprs {
+                    self.add_expr_effects(expr, effects);
+                }
+            }
+            ExprKind::Binary(lhs, _, rhs) => {
+                self.add_expr_effects(lhs, effects);
+                self.add_expr_effects(rhs, effects);
+            }
+            ExprKind::Call(callee, args, options) => {
+                self.add_expr_effects(callee, effects);
+                for arg in args.exprs() {
+                    self.add_expr_effects(arg, effects);
+                }
+                if let Some(options) = options {
+                    for arg in options.args {
+                        self.add_expr_effects(&arg.value, effects);
+                    }
+                }
+                effects.mutable_state |= call_may_mutate_state(self.gcx, self.hir, callee);
+            }
+            ExprKind::Index(base, index) => {
+                self.add_expr_effects(base, effects);
+                if let Some(index) = index {
+                    self.add_expr_effects(index, effects);
+                }
+            }
+            ExprKind::Slice(base, start, end) => {
+                self.add_expr_effects(base, effects);
+                if let Some(start) = start {
+                    self.add_expr_effects(start, effects);
+                }
+                if let Some(end) = end {
+                    self.add_expr_effects(end, effects);
+                }
+            }
+            ExprKind::Member(base, _) | ExprKind::Payable(base) | ExprKind::YulMember(base, _) => {
+                self.add_expr_effects(base, effects);
+            }
+            ExprKind::Ternary(condition, then_expr, else_expr) => {
+                self.add_expr_effects(condition, effects);
+                self.add_expr_effects(then_expr, effects);
+                self.add_expr_effects(else_expr, effects);
+            }
+            ExprKind::Tuple(exprs) => {
+                for expr in exprs.iter().flatten() {
+                    self.add_expr_effects(expr, effects);
+                }
+            }
+            ExprKind::Lit(_)
+            | ExprKind::Ident(_)
+            | ExprKind::New(_)
+            | ExprKind::TypeCall(_)
+            | ExprKind::Type(_)
+            | ExprKind::Err(_) => {}
+        }
+    }
+
     fn add_facts(&mut self, predicate: &'hir hir::Expr<'hir>, negate: bool) {
-        if expr_has_fact_side_effect(predicate) {
+        if expr_has_fact_side_effect(self.gcx, self.hir, predicate) {
             return;
         }
         match &predicate.peel_parens().kind {
@@ -257,10 +624,85 @@ impl<'hir> Analyzer<'hir> {
 
     fn is_unsafe_ecrecover(&self, expr: &'hir hir::Expr<'hir>) -> bool {
         let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-        if !is_ecrecover_builtin(callee) || args.len() != 4 {
+        if !is_ecrecover_builtin(self.gcx, callee) || args.len() != 4 {
             return false;
         }
         args.exprs().nth(3).is_some_and(|s| !self.is_proven_low_s(s))
+    }
+
+    fn join_all(&mut self, states: Vec<FlowState>) -> Option<FlowState> {
+        states.into_iter().reduce(|left, right| self.join(left, right))
+    }
+
+    fn visit_loop_stmts(
+        &mut self,
+        stmts: &'hir [hir::Stmt<'hir>],
+        exits: &mut Vec<FlowState>,
+    ) -> Option<FlowState> {
+        for stmt in stmts {
+            self.visit_loop_stmt(stmt, exits)?;
+        }
+        Some(self.snapshot())
+    }
+
+    fn visit_loop_stmt(
+        &mut self,
+        stmt: &'hir hir::Stmt<'hir>,
+        exits: &mut Vec<FlowState>,
+    ) -> Option<FlowState> {
+        match &stmt.kind {
+            StmtKind::Break | StmtKind::Continue => {
+                exits.push(self.snapshot());
+                None
+            }
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                self.visit_loop_stmts(block.stmts, exits)
+            }
+            StmtKind::If(condition, then_stmt, else_stmt) => {
+                let _ = self.visit_expr(condition);
+                let baseline = self.snapshot();
+
+                self.add_facts(condition, false);
+                let after_then = self.visit_loop_stmt(then_stmt, exits);
+
+                self.restore(baseline);
+                self.add_facts(condition, true);
+                let after_else = if let Some(else_stmt) = else_stmt {
+                    self.visit_loop_stmt(else_stmt, exits)
+                } else {
+                    Some(self.snapshot())
+                };
+
+                let joined = match (after_then, after_else) {
+                    (Some(then_state), Some(else_state)) => self.join(then_state, else_state),
+                    (Some(state), None) | (None, Some(state)) => state,
+                    (None, None) => return None,
+                };
+                self.restore(joined.clone());
+                Some(joined)
+            }
+            StmtKind::Try(stmt_try) => {
+                let _ = self.visit_expr(&stmt_try.expr);
+                let after_call = self.snapshot();
+                let mut fallthrough = Vec::new();
+                for clause in stmt_try.clauses {
+                    // Argument expressions execute in the caller even when the external call
+                    // reverts, so caught paths must retain their effects. Keeping the call's
+                    // effects too is conservative for mutable state.
+                    self.restore(after_call.clone());
+                    if let Some(state) = self.visit_loop_stmts(clause.block.stmts, exits) {
+                        fallthrough.push(state);
+                    }
+                }
+                let joined = self.join_all(fallthrough)?;
+                self.restore(joined.clone());
+                Some(joined)
+            }
+            _ => {
+                let _ = self.visit_stmt(stmt);
+                (!branch_always_exits(stmt)).then(|| self.snapshot())
+            }
+        }
     }
 }
 
@@ -311,25 +753,21 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             }
             StmtKind::Loop(block, source) => {
                 let baseline = self.snapshot();
-                for stmt in block.stmts {
-                    let _ = self.visit_stmt(stmt);
-                    if branch_always_exits(stmt) {
-                        break;
-                    }
+                self.invalidate_loop_carried(block, *source);
+                let mut exits = Vec::new();
+                if let Some(fallthrough) = self.visit_loop_stmts(block.stmts, &mut exits) {
+                    exits.push(fallthrough);
                 }
-                if !matches!(source, LoopSource::DoWhile) {
-                    let after_loop = self.snapshot();
-                    let joined = self.join(baseline, after_loop);
-                    self.restore(joined);
-                }
+                let joined = self.join_all(exits).unwrap_or(baseline);
+                self.restore(joined);
                 return ControlFlow::Continue(());
             }
             StmtKind::Try(stmt_try) => {
                 let _ = self.visit_expr(&stmt_try.expr);
-                let baseline = self.snapshot();
+                let after_call = self.snapshot();
                 let mut fallthrough = Vec::new();
                 for clause in stmt_try.clauses {
-                    self.restore(baseline.clone());
+                    self.restore(after_call.clone());
                     for stmt in clause.block.stmts {
                         let _ = self.visit_stmt(stmt);
                         if branch_always_exits(stmt) {
@@ -343,7 +781,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 let joined = fallthrough
                     .into_iter()
                     .reduce(|left, right| self.join(left, right))
-                    .unwrap_or(baseline);
+                    .unwrap_or(after_call);
                 self.restore(joined);
                 return ControlFlow::Continue(());
             }
@@ -438,6 +876,11 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         }
 
         let result = self.walk_expr(expr);
+        if let ExprKind::Call(callee, _, _) = &expr.kind
+            && call_may_mutate_state(self.gcx, self.hir, callee)
+        {
+            self.invalidate_mutable_state();
+        }
         if self.is_unsafe_ecrecover(expr) {
             self.hits.push(expr.span);
         }
@@ -460,6 +903,45 @@ fn underlying_var(expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
     }
 }
 
+fn collect_lhs_vars(expr: &hir::Expr<'_>, vars: &mut HashSet<hir::VariableId>) {
+    if let ExprKind::Tuple(exprs) = &expr.peel_parens().kind {
+        for expr in exprs.iter().flatten() {
+            collect_lhs_vars(expr, vars);
+        }
+    } else if let Some(var) = underlying_var(expr) {
+        vars.insert(var);
+    }
+}
+
+fn for_loop_next_expr<'hir>(block: &'hir hir::Block<'hir>) -> Option<&'hir hir::Expr<'hir>> {
+    let [stmt] = block.stmts else { return None };
+    let stmt = match &stmt.kind {
+        StmtKind::If(_, then_stmt, _) => *then_stmt,
+        _ => stmt,
+    };
+    let StmtKind::Block(inner) = &stmt.kind else { return None };
+    if inner.span != block.span {
+        return None;
+    }
+    let [_, next] = inner.stmts else { return None };
+    let StmtKind::Expr(next) = &next.kind else { return None };
+    Some(*next)
+}
+
+fn merge_loop_effect_paths(
+    left: Option<LoopEffects>,
+    right: Option<LoopEffects>,
+) -> Option<LoopEffects> {
+    match (left, right) {
+        (Some(mut left), Some(right)) => {
+            left.merge(right);
+            Some(left)
+        }
+        (Some(effects), None) | (None, Some(effects)) => Some(effects),
+        (None, None) => None,
+    }
+}
+
 fn is_transparent_signature_cast(callee: &hir::Expr<'_>) -> bool {
     matches!(
         &callee.peel_parens().kind,
@@ -472,7 +954,10 @@ fn is_transparent_signature_cast(callee: &hir::Expr<'_>) -> bool {
     )
 }
 
-fn is_ecrecover_builtin(callee: &hir::Expr<'_>) -> bool {
+fn is_ecrecover_builtin(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
+    if let Some(resolved) = gcx.resolved_callee(callee.peel_parens().id) {
+        return matches!(resolved.res, Res::Builtin(Builtin::EcRecover));
+    }
     matches!(
         &callee.peel_parens().kind,
         ExprKind::Ident(reses)
@@ -480,7 +965,7 @@ fn is_ecrecover_builtin(callee: &hir::Expr<'_>) -> bool {
     )
 }
 
-fn negate_comparison(op: BinOpKind) -> BinOpKind {
+const fn negate_comparison(op: BinOpKind) -> BinOpKind {
     match op {
         BinOpKind::Lt => BinOpKind::Ge,
         BinOpKind::Le => BinOpKind::Gt,
@@ -492,7 +977,7 @@ fn negate_comparison(op: BinOpKind) -> BinOpKind {
     }
 }
 
-fn reverse_comparison(op: BinOpKind) -> BinOpKind {
+const fn reverse_comparison(op: BinOpKind) -> BinOpKind {
     match op {
         BinOpKind::Lt => BinOpKind::Gt,
         BinOpKind::Le => BinOpKind::Ge,
@@ -502,44 +987,70 @@ fn reverse_comparison(op: BinOpKind) -> BinOpKind {
     }
 }
 
-fn expr_has_fact_side_effect(expr: &hir::Expr<'_>) -> bool {
+fn call_may_mutate_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
+    let callee = callee.peel_parens();
+    if matches!(callee.kind, ExprKind::Type(_)) {
+        return false;
+    }
+    if let Some(ty) = gcx.type_of_expr(callee.id)
+        && let TyKind::Fn(function) = ty.peel_refs().kind
+    {
+        return function.state_mutability > StateMutability::View;
+    }
+    match &callee.kind {
+        ExprKind::Ident(reses) => !reses.iter().all(|res| match res {
+            Res::Builtin(_) => true,
+            Res::Item(ItemId::Function(function)) => {
+                hir.function(*function).state_mutability <= StateMutability::View
+            }
+            _ => false,
+        }),
+        _ => true,
+    }
+}
+
+fn expr_has_fact_side_effect(gcx: Gcx<'_>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Assign(..) | ExprKind::Delete(_) => true,
         ExprKind::Unary(op, inner) => {
             matches!(
                 op.kind,
                 UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-            ) || expr_has_fact_side_effect(inner)
+            ) || expr_has_fact_side_effect(gcx, hir, inner)
         }
-        ExprKind::Array(exprs) => exprs.iter().any(expr_has_fact_side_effect),
+        ExprKind::Array(exprs) => {
+            exprs.iter().any(|expr| expr_has_fact_side_effect(gcx, hir, expr))
+        }
         ExprKind::Binary(lhs, _, rhs) => {
-            expr_has_fact_side_effect(lhs) || expr_has_fact_side_effect(rhs)
+            expr_has_fact_side_effect(gcx, hir, lhs) || expr_has_fact_side_effect(gcx, hir, rhs)
         }
         ExprKind::Call(callee, args, options) => {
-            expr_has_fact_side_effect(callee)
-                || args.exprs().any(expr_has_fact_side_effect)
+            call_may_mutate_state(gcx, hir, callee)
+                || expr_has_fact_side_effect(gcx, hir, callee)
+                || args.exprs().any(|expr| expr_has_fact_side_effect(gcx, hir, expr))
                 || options.is_some_and(|options| {
-                    options.args.iter().any(|arg| expr_has_fact_side_effect(&arg.value))
+                    options.args.iter().any(|arg| expr_has_fact_side_effect(gcx, hir, &arg.value))
                 })
         }
         ExprKind::Index(base, index) => {
-            expr_has_fact_side_effect(base) || index.is_some_and(expr_has_fact_side_effect)
+            expr_has_fact_side_effect(gcx, hir, base)
+                || index.is_some_and(|expr| expr_has_fact_side_effect(gcx, hir, expr))
         }
         ExprKind::Slice(base, start, end) => {
-            expr_has_fact_side_effect(base)
-                || start.is_some_and(expr_has_fact_side_effect)
-                || end.is_some_and(expr_has_fact_side_effect)
+            expr_has_fact_side_effect(gcx, hir, base)
+                || start.is_some_and(|expr| expr_has_fact_side_effect(gcx, hir, expr))
+                || end.is_some_and(|expr| expr_has_fact_side_effect(gcx, hir, expr))
         }
         ExprKind::Member(base, _) | ExprKind::Payable(base) | ExprKind::YulMember(base, _) => {
-            expr_has_fact_side_effect(base)
+            expr_has_fact_side_effect(gcx, hir, base)
         }
         ExprKind::Ternary(condition, then_expr, else_expr) => {
-            expr_has_fact_side_effect(condition)
-                || expr_has_fact_side_effect(then_expr)
-                || expr_has_fact_side_effect(else_expr)
+            expr_has_fact_side_effect(gcx, hir, condition)
+                || expr_has_fact_side_effect(gcx, hir, then_expr)
+                || expr_has_fact_side_effect(gcx, hir, else_expr)
         }
         ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().any(|expr| expr_has_fact_side_effect(expr))
+            exprs.iter().flatten().any(|expr| expr_has_fact_side_effect(gcx, hir, expr))
         }
         ExprKind::Lit(_)
         | ExprKind::Ident(_)
