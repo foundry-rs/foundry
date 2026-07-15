@@ -2248,6 +2248,223 @@ mod tests {
         assert_eq!((ok, err), (1, 1), "the corrupt file must read as Err, the valid one as Ok");
     }
 
+    fn empty_targeted_contracts() -> FuzzRunIdentifiedContracts {
+        FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false)
+    }
+
+    #[test]
+    fn invariant_crossover_insert_loads_tx_from_persisted_corpus() {
+        let corpus_root = temp_corpus_dir();
+        let mut config = corpus_config(corpus_root.clone());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 1,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
+        };
+
+        let base = basic_tx_with_calldata(vec![0xaa]);
+        let donor = basic_tx_with_calldata(vec![0xbb]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![base.clone()])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
+        let worker_corpus_dir = corpus_root.join(format!("{WORKER}0")).join(CORPUS_DIR);
+        CorpusEntry::new(vec![donor.clone()]).write_to_disk_in(&worker_corpus_dir, false).unwrap();
+
+        let mut runner = TestRunner::default();
+        let sequence = manager
+            .new_inputs(
+                &mut runner,
+                &empty_fuzz_state().into_invariant(),
+                &empty_targeted_contracts(),
+            )
+            .unwrap();
+
+        assert_eq!(sequence.len(), 2);
+        assert!(sequence.iter().any(|tx| tx.call_details.calldata == base.call_details.calldata));
+        assert!(sequence.iter().any(|tx| tx.call_details.calldata == donor.call_details.calldata));
+        assert_eq!(manager.current_mutated_index, Some(0));
+    }
+
+    #[test]
+    fn invariant_crossover_replace_loads_tx_from_persisted_corpus() {
+        let corpus_root = temp_corpus_dir();
+        let mut config = corpus_config(corpus_root.clone());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 1,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
+        };
+
+        let donor = basic_tx_with_calldata(vec![0xcc]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0xdd])])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
+        let worker_corpus_dir = corpus_root.join(format!("{WORKER}0")).join(CORPUS_DIR);
+        CorpusEntry::new(vec![donor.clone()]).write_to_disk_in(&worker_corpus_dir, false).unwrap();
+
+        let mut runner = TestRunner::default();
+        let sequence = manager
+            .new_inputs(
+                &mut runner,
+                &empty_fuzz_state().into_invariant(),
+                &empty_targeted_contracts(),
+            )
+            .unwrap();
+
+        assert_eq!(sequence.len(), 1);
+        assert_eq!(sequence[0].call_details.calldata, donor.call_details.calldata);
+        assert_eq!(manager.current_mutated_index, Some(0));
+    }
+
+    #[test]
+    fn invariant_insert_adds_generated_tx_to_sequence() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 1,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 0,
+        };
+
+        let base = basic_tx_with_calldata(vec![0xaa]);
+        let generated = basic_tx_with_calldata(vec![0xbb]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![base.clone()])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, generated.clone(), seed);
+        let mut runner = TestRunner::default();
+
+        let sequence = manager
+            .new_inputs(
+                &mut runner,
+                &empty_fuzz_state().into_invariant(),
+                &empty_targeted_contracts(),
+            )
+            .unwrap();
+
+        assert_eq!(sequence.len(), 2);
+        assert!(sequence.iter().any(|tx| tx.call_details.calldata == base.call_details.calldata));
+        assert!(
+            sequence.iter().any(|tx| tx.call_details.calldata == generated.call_details.calldata)
+        );
+        assert_eq!(manager.current_mutated_index, Some(0));
+    }
+
+    #[test]
+    fn invariant_delete_removes_tx_from_sequence() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 1,
+            mutation_weight_swap: 0,
+        };
+
+        let first = basic_tx_with_calldata(vec![0xaa]);
+        let second = basic_tx_with_calldata(vec![0xbb]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![first.clone(), second.clone()])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
+        let mut runner = TestRunner::default();
+
+        let sequence = manager
+            .new_inputs(
+                &mut runner,
+                &empty_fuzz_state().into_invariant(),
+                &empty_targeted_contracts(),
+            )
+            .unwrap();
+
+        assert_eq!(sequence.len(), 1);
+        assert!(
+            sequence[0].call_details.calldata == first.call_details.calldata
+                || sequence[0].call_details.calldata == second.call_details.calldata
+        );
+        assert_eq!(manager.current_mutated_index, Some(0));
+    }
+
+    #[test]
+    fn invariant_swap_exchanges_two_txs() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
+            mutation_weight_insert: 0,
+            mutation_weight_delete: 0,
+            mutation_weight_swap: 1,
+        };
+
+        let first = basic_tx_with_calldata(vec![0xaa]);
+        let second = basic_tx_with_calldata(vec![0xbb]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![first.clone(), second.clone()])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
+        let mut runner = TestRunner::default();
+
+        let sequence = manager
+            .new_inputs(
+                &mut runner,
+                &empty_fuzz_state().into_invariant(),
+                &empty_targeted_contracts(),
+            )
+            .unwrap();
+
+        assert_eq!(sequence.len(), 2);
+        assert_eq!(sequence[0].call_details.calldata, second.call_details.calldata);
+        assert_eq!(sequence[1].call_details.calldata, first.call_details.calldata);
+        assert_eq!(manager.current_mutated_index, Some(0));
+    }
+
     #[test]
     fn sync_inbox_loads_entries_regardless_of_timestamp() {
         let corpus_root = temp_corpus_dir();
