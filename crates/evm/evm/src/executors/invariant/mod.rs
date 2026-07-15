@@ -748,6 +748,8 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     inputs: Vec<BasicTxDetails>,
     // Per-call EVM comparison operands (parallel to `inputs`), captured for I2S corpus mutation.
     cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
+    // Coverage indices hit during this run.
+    corpus_edges: Vec<usize>,
     // Current invariant run executor.
     executor: Executor<FEN>,
     // Invariant run stat reports (eg. gas usage).
@@ -790,6 +792,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
         Self {
             inputs,
             cmp_seq: Vec::with_capacity(depth),
+            corpus_edges: Vec::new(),
             executor,
             fuzz_runs: Vec::with_capacity(depth),
             created_contracts: vec![],
@@ -815,6 +818,8 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
         self.inputs.shrink_to_fit();
         self.cmp_seq.clear();
         self.cmp_seq.shrink_to_fit();
+        self.corpus_edges.clear();
+        self.corpus_edges.shrink_to_fit();
     }
 }
 
@@ -1227,7 +1232,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     None
                 };
                 // Collect edge coverage and set the flag in the current run.
-                let new_call_coverage = corpus_manager.merge_edge_coverage(&mut call_result);
+                let new_call_coverage = corpus_manager.merge_edge_coverage_with_edges_into(
+                    &mut call_result,
+                    &mut current_run.corpus_edges,
+                );
                 if new_call_coverage {
                     current_run.new_coverage = true;
                 }
@@ -1508,6 +1516,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &current_run.inputs,
                     &current_run.cmp_seq,
                     current_run.new_coverage,
+                    std::mem::take(&mut current_run.corpus_edges),
                     optimization,
                 ) {
                     corpus_entries.push(input);
@@ -1517,6 +1526,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &current_run.inputs,
                     &current_run.cmp_seq,
                     current_run.new_coverage,
+                    std::mem::take(&mut current_run.corpus_edges),
                     optimization,
                 );
             }
