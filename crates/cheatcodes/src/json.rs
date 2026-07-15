@@ -559,8 +559,10 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
                                 .find(|(field, _)| field == name)
                                 .is_some_and(|(_, ty)| ty == type_description)
                         });
-                        if unambiguous && let Some(ty) = fixed_array_type(type_description, defs) {
-                            parse_json_as(value, &ty)
+                        if unambiguous
+                            && let Some(parsed) = parse_fixed_array(value, type_description, defs)
+                        {
+                            parsed
                         } else {
                             _json_value_to_token(value, defs)
                         }
@@ -661,13 +663,50 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
     }
 }
 
-fn fixed_array_type(type_description: &str, defs: &StructDefinitions) -> Option<DynSolType> {
-    let root = type_description.split('[').next()?;
-    if !matches!(defs.get(root), Ok(None)) {
+fn parse_fixed_array(
+    value: &Value,
+    type_description: &str,
+    defs: &StructDefinitions,
+) -> Option<Result<DynSolValue>> {
+    let root_end = type_description.find('[')?;
+    let root = &type_description[..root_end];
+    let (ty, custom) = match defs.get(root) {
+        Ok(Some(_)) => {
+            (DynSolType::parse(&format!("bool{}", &type_description[root_end..])).ok()?, true)
+        }
+        Ok(None) if root.contains('.') => return None,
+        Ok(None) => (DynSolType::parse(type_description).ok()?, false),
+        Err(_) => return None,
+    };
+    if !contains_fixed_array(&ty) {
         return None;
     }
 
-    DynSolType::parse(type_description).ok().filter(contains_fixed_array)
+    Some(if custom { parse_json_custom_array(value, &ty, defs) } else { parse_json_as(value, &ty) })
+}
+
+fn parse_json_custom_array(
+    value: &Value,
+    ty: &DynSolType,
+    defs: &StructDefinitions,
+) -> Result<DynSolValue> {
+    match (value, ty) {
+        (Value::Array(values), DynSolType::Array(inner)) => values
+            .iter()
+            .map(|value| parse_json_custom_array(value, inner, defs))
+            .collect::<Result<_>>()
+            .map(DynSolValue::Array),
+        (Value::Array(values), DynSolType::FixedArray(inner, len)) => {
+            ensure!(values.len() == *len, "array length mismatch");
+            values
+                .iter()
+                .map(|value| parse_json_custom_array(value, inner, defs))
+                .collect::<Result<_>>()
+                .map(DynSolValue::FixedArray)
+        }
+        (_, DynSolType::Bool) => _json_value_to_token(value, defs),
+        _ => bail!("expected array"),
+    }
 }
 
 fn contains_fixed_array(ty: &DynSolType) -> bool {
@@ -1013,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fixed_array_type() {
+    fn test_parse_fixed_array() {
         let mut struct_defs = TypeDefMap::new();
         struct_defs.insert(
             "Contract.Child".to_string(),
@@ -1021,15 +1060,36 @@ mod tests {
         );
         let struct_defs = StructDefinitions::from(struct_defs);
 
-        assert_eq!(
-            fixed_array_type("uint256[1][]", &struct_defs),
-            Some(DynSolType::Array(Box::new(DynSolType::FixedArray(
-                Box::new(DynSolType::Uint(256)),
-                1,
-            ))))
-        );
-        assert!(fixed_array_type("uint256[", &struct_defs).is_none());
-        assert!(fixed_array_type("Contract.Child[1]", &struct_defs).is_none());
+        let value = serde_json::json!([[1], [2]]);
+        assert!(parse_fixed_array(&value, "uint256[1][]", &struct_defs).unwrap().is_ok());
+        assert!(parse_fixed_array(&value, "uint256[", &struct_defs).is_none());
+        assert!(parse_fixed_array(&value, "uint256[0]", &struct_defs).is_none());
+        assert!(parse_fixed_array(&value, "Contract.Child[", &struct_defs).is_none());
+        assert!(parse_fixed_array(&value, "Missing.Child[1]", &struct_defs).is_none());
+
+        let value = serde_json::json!([[{"value": 1}, {"value": 2}]]);
+        let parsed =
+            parse_fixed_array(&value, "Contract.Child[2][1]", &struct_defs).unwrap().unwrap();
+        assert!(matches!(
+            parsed,
+            DynSolValue::FixedArray(outer)
+                if matches!(&outer[..], [DynSolValue::FixedArray(inner)] if matches!(&inner[..], [DynSolValue::Tuple(_), DynSolValue::Tuple(_)]))
+        ));
+
+        let value = serde_json::json!([[{"value": 1}], [{"value": 2}]]);
+        assert!(parse_fixed_array(&value, "Contract.Child[1][]", &struct_defs).unwrap().is_ok());
+        let value = serde_json::json!([[]]);
+        assert!(parse_fixed_array(&value, "Contract.Child[][1]", &struct_defs).unwrap().is_ok());
+
+        let mut ambiguous_defs = TypeDefMap::new();
+        ambiguous_defs
+            .insert("A.Child".to_string(), vec![("value".to_string(), "uint256".to_string())]);
+        ambiguous_defs
+            .insert("B.Child".to_string(), vec![("value".to_string(), "uint256".to_string())]);
+        let ambiguous_defs = StructDefinitions::from(ambiguous_defs);
+        let value = serde_json::json!([{"value": 1}]);
+        assert!(parse_fixed_array(&value, "Child[1]", &ambiguous_defs).is_none());
+        assert!(parse_fixed_array(&value, "A.Child[1]", &ambiguous_defs).unwrap().is_ok());
     }
 
     #[test]

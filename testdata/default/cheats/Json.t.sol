@@ -92,6 +92,23 @@ contract ParseJsonTest is Test {
         string inferredAddress;
     }
 
+    struct StaticStructChild {
+        uint256 value;
+        string label;
+    }
+
+    struct StaticStructParent {
+        StaticStructChild[1] children;
+    }
+
+    struct NestedStaticStructChild {
+        uint256[1] values;
+    }
+
+    struct NestedStaticStructParent {
+        NestedStaticStructChild[2][1] nestedChildren;
+    }
+
     struct FlatJson {
         uint256 a;
         int24[][] arr;
@@ -215,6 +232,25 @@ contract ParseJsonTest is Test {
             vm.parseJson(string.concat('{"fixedValues":[42],"inferredAddress":"', vm.toString(inferredAddress), '"}'));
         uint256[1] memory fixedValues = [uint256(42)];
         assertEq(data, abi.encode(fixedValues, inferredAddress));
+    }
+
+    function test_staticStructArray() public {
+        bytes memory data = vm.parseJson('{"children":[{"label":"child","value":42}]}');
+        StaticStructParent memory decodedData = abi.decode(data, (StaticStructParent));
+        assertEq(42, decodedData.children[0].value);
+        assertEq("child", decodedData.children[0].label);
+    }
+
+    function test_nestedStaticStructArray() public {
+        bytes memory data = vm.parseJson('{"nestedChildren":[[{"values":[42]},{"values":[43]}]]}');
+        NestedStaticStructParent memory decodedData = abi.decode(data, (NestedStaticStructParent));
+        assertEq(42, decodedData.nestedChildren[0][0].values[0]);
+        assertEq(43, decodedData.nestedChildren[0][1].values[0]);
+    }
+
+    function test_staticStructArrayLengthMismatch() public {
+        vm._expectCheatcodeRevert("array length mismatch");
+        vm.parseJson('{"children":[]}');
     }
 
     // Object keys are sorted alphabetically, regardless of input.
