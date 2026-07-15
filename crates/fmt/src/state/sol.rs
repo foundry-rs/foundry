@@ -1315,7 +1315,7 @@ impl<'ast> State<'_, 'ast> {
                 .then(|| ChainedNamedCall {
                     callee: call_expr.span,
                     keep_inline: !call_chain_contains_options(call_expr)
-                        && !self.call_chain_contains_arg_comments(call_expr)
+                        && !self.has_comment_between(call_expr.span.lo(), call_expr.span.hi())
                         && self.estimate_size(call_expr.span)
                             + if call_args.is_empty() { 4 } else { 2 }
                             <= self.space_left(),
@@ -1448,19 +1448,6 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Err(_) => self.print_span(span),
         }
         self.cursor.advance_to(span.hi(), true);
-    }
-
-    fn call_chain_contains_arg_comments(&self, expr: &'ast ast::Expr<'ast>) -> bool {
-        match &expr.peel_parens().kind {
-            ast::ExprKind::Call(expr, args) => {
-                self.has_comments_between_elements(args.span, args.exprs())
-                    || self.call_chain_contains_arg_comments(expr)
-            }
-            ast::ExprKind::CallOptions(expr, ..)
-            | ast::ExprKind::Index(expr, ..)
-            | ast::ExprKind::Member(expr, ..) => self.call_chain_contains_arg_comments(expr),
-            _ => false,
-        }
     }
 
     /// Prints a simple assignment expression of the form `lhs = rhs`.

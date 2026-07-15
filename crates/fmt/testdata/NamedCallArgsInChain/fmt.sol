@@ -59,6 +59,12 @@ contract NamedCallArgsInChain {
             firstExtremelyLongArgumentName: firstExtremelyLongValueName,
             secondExtremelyLongArgumentName: secondExtremelyLongValueName
         });
+        factory() // preserve
+            .item()
+            .update({
+                firstExtremelyLongArgumentName: firstExtremelyLongValueName,
+                secondExtremelyLongArgumentName: secondExtremelyLongValueName
+            });
         factory()
             .item( /* preserve */
                 firstExtremelyLongValueName
