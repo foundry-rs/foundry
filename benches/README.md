@@ -301,6 +301,8 @@ The artifact bundle exposes:
 - `--output-dir <DIR>` - Directory for output files (default: current working directory)
 - `--output-file <FILE_NAME.md>` - Name of the Markdown output file. Defaults to `LATEST.md`
   unless `--json-output` is set, in which case Markdown is omitted unless explicitly requested
+- `--common-json-output <FILE.json>` - Write results using the common benchmark schema in
+  `benches/schema/benchmark-result-v1.schema.json`
 - `--symbolic-sidecar-output <FILE.json>` - Write the opt-in v1 symbolic samples sidecar (requires exactly one version)
 
 ## Benchmark Structure
