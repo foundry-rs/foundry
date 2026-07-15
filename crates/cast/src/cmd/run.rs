@@ -12,7 +12,7 @@ use alloy_network::{
     AnyNetwork, AnyRpcTransaction, BlockResponse, Network, ReceiptResponse, TransactionResponse,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, U256,
+    Address, B256, Bytes, TxKind, U256,
     map::{AddressHashMap, AddressSet, B256HashMap},
 };
 use alloy_provider::{Provider, ext::DebugApi};
@@ -52,7 +52,11 @@ use foundry_evm::{
 };
 use foundry_evm_networks::arbitrum::is_arbitrum_chain;
 use futures::TryFutureExt;
-use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
+use revm::{
+    DatabaseRef,
+    context::{Block, Transaction as _},
+    primitives::hardfork::SpecId,
+};
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -488,33 +492,36 @@ impl RunArgs {
 
                     evm_env.cfg_env.disable_balance_check = true;
 
-                    if let Some(to) = Transaction::to(tx) {
-                        trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
-                        executor.transact_with_env(evm_env.clone(), tx_env.clone()).wrap_err_with(
-                            || {
-                                format!(
-                                    "Failed to execute transaction: {:?} in block {}",
-                                    tx.tx_hash(),
-                                    evm_env.block_env.number()
-                                )
-                            },
-                        )?;
-                    } else {
-                        trace!(tx=?tx.tx_hash(), "executing previous create transaction");
-                        if let Err(error) =
-                            executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)
-                        {
-                            match error {
-                                // Reverted transactions should be skipped
-                                EvmError::Execution(_) => (),
-                                error => {
-                                    return Err(error).wrap_err_with(|| {
-                                        format!(
-                                            "Failed to deploy transaction: {:?} in block {}",
-                                            tx.tx_hash(),
-                                            evm_env.block_env.number()
-                                        )
-                                    });
+                    match tx_env.kind() {
+                        TxKind::Call(to) => {
+                            trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
+                            executor
+                                .transact_with_env(evm_env.clone(), tx_env.clone())
+                                .wrap_err_with(|| {
+                                    format!(
+                                        "Failed to execute transaction: {:?} in block {}",
+                                        tx.tx_hash(),
+                                        evm_env.block_env.number()
+                                    )
+                                })?;
+                        }
+                        TxKind::Create => {
+                            trace!(tx=?tx.tx_hash(), "executing previous create transaction");
+                            if let Err(error) =
+                                executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)
+                            {
+                                match error {
+                                    // Reverted transactions should be skipped
+                                    EvmError::Execution(_) => (),
+                                    error => {
+                                        return Err(error).wrap_err_with(|| {
+                                            format!(
+                                                "Failed to deploy transaction: {:?} in block {}",
+                                                tx.tx_hash(),
+                                                evm_env.block_env.number()
+                                            )
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -540,12 +547,15 @@ impl RunArgs {
                 evm_env.cfg_env.disable_balance_check = true;
             }
 
-            let mut result = if let Some(to) = Transaction::to(&tx) {
-                trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
-            } else {
-                trace!(tx=?tx.tx_hash(), "executing create transaction");
-                TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
+            let mut result = match tx_env.kind() {
+                TxKind::Call(to) => {
+                    trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
+                    TraceResult::from(executor.transact_with_env(evm_env, tx_env)?)
+                }
+                TxKind::Create => {
+                    trace!(tx=?tx.tx_hash(), "executing create transaction");
+                    TraceResult::try_from(executor.deploy_with_env(evm_env, tx_env, None))?
+                }
             };
             result.gas_used = result.gas_used.saturating_add(l1_gas_used);
             result

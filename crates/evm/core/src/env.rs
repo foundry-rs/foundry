@@ -20,6 +20,7 @@ use revm::{
     inspector::JournalExt,
     primitives::{TxKind, hardfork::SpecId},
 };
+use tempo_alloy::primitives::{AASigned, TempoSignature, TempoTransaction};
 use tempo_revm::{TempoBlockEnv, TempoTxEnv};
 
 use crate::backend::JournaledState;
@@ -527,7 +528,6 @@ impl FromAnyRpcTransaction for TxEnv {
 
 impl FromAnyRpcTransaction for TempoTxEnv {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
-        use alloy_consensus::Transaction as _;
         if let Some(envelope) = tx.as_envelope() {
             return Ok(TxEnv::from_recovered_tx(envelope, tx.from()).into());
         }
@@ -536,23 +536,21 @@ impl FromAnyRpcTransaction for TempoTxEnv {
         if let AnyTxEnvelope::Unknown(unknown) = &*tx.inner.inner
             && unknown.ty() == tempo_alloy::primitives::TEMPO_TX_TYPE_ID
         {
-            let base = TxEnv {
-                tx_type: unknown.ty(),
-                caller: tx.from(),
-                gas_limit: unknown.gas_limit(),
-                gas_price: unknown.max_fee_per_gas(),
-                gas_priority_fee: unknown.max_priority_fee_per_gas(),
-                kind: unknown.kind(),
-                value: unknown.value(),
-                data: unknown.input().clone(),
-                nonce: unknown.nonce(),
-                chain_id: unknown.chain_id(),
-                access_list: unknown.access_list().cloned().unwrap_or_default(),
-                ..Default::default()
-            };
-            let fee_token =
-                unknown.inner.fields.get_deserialized::<Address>("feeToken").and_then(Result::ok);
-            return Ok(Self { inner: base, fee_token, ..Default::default() });
+            let tempo_tx = unknown
+                .inner
+                .fields
+                .clone()
+                .deserialize_into::<TempoTransaction>()
+                .map_err(|err| eyre::eyre!("failed to deserialize Tempo transaction: {err}"))?;
+            let signature = unknown
+                .inner
+                .fields
+                .get_deserialized::<TempoSignature>("signature")
+                .transpose()
+                .map_err(|err| eyre::eyre!("failed to deserialize Tempo signature: {err}"))?
+                .ok_or_else(|| eyre::eyre!("missing Tempo transaction signature"))?;
+            let signed = AASigned::new_unchecked(tempo_tx, signature, unknown.hash);
+            return Ok(Self::from_recovered_tx(&signed, tx.from()));
         }
 
         eyre::bail!("cannot convert unknown transaction type to TempoTxEnv")
@@ -789,7 +787,7 @@ mod tests {
     use foundry_evm_hardforks::TempoHardfork;
     use revm::database::EmptyDB;
     use tempo_alloy::primitives::{
-        AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
+        TempoTxEnvelope,
         transaction::{Call, PrimitiveSignature},
     };
     use tempo_evm::TempoEvmFactory;
@@ -965,6 +963,20 @@ mod tests {
             gas_limit: 424242,
             fee_token,
             nonce_key: U256::from(4242),
+            calls: vec![
+                Call {
+                    to: Address::repeat_byte(0x11).into(),
+                    value: U256::from(101),
+                    input: Bytes::from_static(b"first"),
+                },
+                Call {
+                    to: Address::repeat_byte(0x22).into(),
+                    value: U256::from(202),
+                    input: Bytes::from_static(b"second"),
+                },
+            ],
+            fee_payer_signature: Some(Signature::new(U256::from(1), U256::from(2), false)),
+            valid_before: NonZeroU64::new(1800000100),
             valid_after: NonZeroU64::new(1800000000),
             ..Default::default()
         };
@@ -976,6 +988,7 @@ mod tests {
                 false,
             ))),
         );
+        let expected = TempoTxEnv::from_recovered_tx(&aa_signed, from);
 
         // Build a concrete Tempo RPC transaction, serialize to JSON, deserialize as
         // AnyRpcTransaction.
@@ -987,11 +1000,20 @@ mod tests {
         let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
 
         let tx_env = TempoTxEnv::from_any_rpc_transaction(&any_tx).unwrap();
-        assert_eq!(tx_env.inner.caller, from);
-        assert_eq!(tx_env.inner.nonce, 42);
-        assert_eq!(tx_env.inner.gas_limit, 424242);
-        assert_eq!(tx_env.inner.chain_id, Some(42431));
-        assert_eq!(tx_env.fee_token, fee_token);
+        assert_eq!(tx_env.inner, expected.inner);
+        assert_eq!(tx_env.fee_token, expected.fee_token);
+        assert_eq!(tx_env.unique_tx_identifier, expected.unique_tx_identifier);
+        assert_eq!(tx_env.fee_payer, expected.fee_payer);
+
+        let tx_aa = tx_env.tempo_tx_env.unwrap();
+        let expected_aa = expected.tempo_tx_env.unwrap();
+        assert_eq!(tx_aa.signature, expected_aa.signature);
+        assert_eq!(tx_aa.valid_before, expected_aa.valid_before);
+        assert_eq!(tx_aa.valid_after, expected_aa.valid_after);
+        assert_eq!(tx_aa.aa_calls, expected_aa.aa_calls);
+        assert_eq!(tx_aa.nonce_key, expected_aa.nonce_key);
+        assert_eq!(tx_aa.signature_hash, expected_aa.signature_hash);
+        assert_eq!(tx_aa.tx_hash, expected_aa.tx_hash);
     }
 
     #[cfg(feature = "optimism")]
