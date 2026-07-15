@@ -51,6 +51,47 @@ async fn can_load_state() {
     assert_eq!(num, U256::from(num_from_tag));
 }
 
+// <https://github.com/foundry-rs/foundry/issues/10331>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_continues_saved_timeline() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    // Move the chain's timeline one year ahead of wall-clock time, then mine on it.
+    let one_year_ahead =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+            + 31_536_000;
+    api.evm_set_next_block_timestamp(one_year_ahead).unwrap();
+    api.mine_one().await;
+
+    let saved_head_timestamp = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
+    assert_eq!(saved_head_timestamp, one_year_ahead);
+
+    let state = api.serialized_state(false).await.unwrap();
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state(Some(state))).await;
+
+    api.mine_one().await;
+    let new_head_timestamp = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
+
+    // The block mined after loading the state must continue the saved timeline instead of
+    // falling back to the wall-clock anchor of the fresh node.
+    assert!(
+        new_head_timestamp >= saved_head_timestamp,
+        "block after load_state went back in time: {new_head_timestamp} < {saved_head_timestamp}"
+    );
+}
+
 // <https://github.com/foundry-rs/foundry/issues/12645>
 #[tokio::test(flavor = "multi_thread")]
 async fn finalized_block_hash_consistent_after_load_state() {

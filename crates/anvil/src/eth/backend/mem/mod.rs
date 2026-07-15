@@ -4758,6 +4758,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     header.timestamp,
                 ),
             ));
+
+            // Re-anchor block time to the loaded head so subsequent blocks continue the saved
+            // timeline instead of the node's startup anchor (genesis or fork block). Skip when
+            // the canonical head is not the loaded one (state file older than the fork block).
+            if header.number == self.blockchain.storage.read().best_number {
+                self.time.reset(header.timestamp);
+            }
         }
 
         if !self.db.write().await.load_state(state.clone())? {
