@@ -10,19 +10,16 @@ use alloy_chains::{
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
 use alloy_eips::eip1559::BaseFeeParams;
-use alloy_evm::precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap};
-use alloy_primitives::{Address, Bytes, ChainId, address, map::AddressHashMap};
+use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
+use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use revm::precompile::{
-    Precompile as RevmPrecompile, PrecompileOutput,
+    Precompile as RevmPrecompile,
     secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, RwLock},
-};
+use std::collections::BTreeMap;
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, CURRENT_COMMITTEE_ADDRESS,
     NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
@@ -80,54 +77,6 @@ const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option
     } else {
         Some(Some(P256VERIFY_OSAKA))
     }
-}
-
-/// Shared chain context used by Foundry EVMs whose active fork can change during execution.
-#[derive(Clone, Debug, Default)]
-pub struct ChainPrecompileState(Arc<RwLock<(ChainId, u64)>>);
-
-impl ChainPrecompileState {
-    /// Returns an independent state initialized from the current chain context.
-    pub fn fork(&self) -> Self {
-        Self(Arc::new(RwLock::new(self.get())))
-    }
-
-    /// Updates the active chain context.
-    pub fn set(&self, chain_id: ChainId, timestamp: u64) {
-        *self.0.write().unwrap_or_else(|err| err.into_inner()) = (chain_id, timestamp);
-    }
-
-    /// Returns the active chain context.
-    pub fn get(&self) -> (ChainId, u64) {
-        *self.0.read().unwrap_or_else(|err| err.into_inner())
-    }
-}
-
-fn dynamic_p256_precompile(
-    has_fallback: bool,
-    state: Option<ChainPrecompileState>,
-) -> DynPrecompile {
-    DynPrecompile::new_stateful(P256VERIFY.id().clone(), move |input: PrecompileInput<'_>| {
-        let chain_id = input.internals.chain_id();
-        let timestamp = input.internals.block_timestamp().saturating_to();
-        match bsc_p256_precompile(chain_id, timestamp) {
-            Some(Some(precompile)) => precompile.execute(input.data, input.gas, input.reservoir),
-            Some(None) => Ok(PrecompileOutput::new(0, Bytes::new(), input.reservoir)),
-            None => {
-                if has_fallback {
-                    P256VERIFY_OSAKA.execute(input.data, input.gas, input.reservoir)
-                } else if let Some(state) = &state {
-                    let (chain_id, timestamp) = state.get();
-                    if let Some(Some(precompile)) = bsc_p256_precompile(chain_id, timestamp) {
-                        return precompile.execute(input.data, input.gas, input.reservoir);
-                    }
-                    Ok(PrecompileOutput::new(0, Bytes::new(), input.reservoir))
-                } else {
-                    Ok(PrecompileOutput::new(0, Bytes::new(), input.reservoir))
-                }
-            }
-        }
-    })
 }
 
 /// All well-known Tempo precompile addresses.
@@ -428,71 +377,6 @@ impl NetworkConfigs {
         });
     }
 
-    /// Configures chain-specific precompiles for an EVM that can switch forks while running.
-    pub fn inject_dynamic_chain_precompiles(
-        self,
-        precompiles: &mut PrecompilesMap,
-        state: ChainPrecompileState,
-    ) {
-        let (chain_id, timestamp) = state.get();
-        let mut has_fallback = false;
-        precompiles.apply_precompile(&BSC_P256_ADDRESS, |existing| {
-            has_fallback = existing.is_some();
-            None
-        });
-
-        let p256verify = bsc_p256_precompile(chain_id, timestamp);
-        let install_static = match &p256verify {
-            Some(Some(_)) => true,
-            None => has_fallback,
-            Some(None) => false,
-        };
-        if install_static {
-            let precompile = dynamic_p256_precompile(has_fallback, Some(state));
-            precompiles.apply_precompile(&BSC_P256_ADDRESS, |_| Some(precompile));
-        } else {
-            precompiles.set_precompile_lookup(move |address: &Address| {
-                if address != &BSC_P256_ADDRESS {
-                    return None;
-                }
-
-                let (chain_id, timestamp) = state.get();
-                match bsc_p256_precompile(chain_id, timestamp) {
-                    Some(Some(precompile)) => {
-                        Some(DynPrecompile::new(precompile.id().clone(), move |input| {
-                            precompile.execute(input.data, input.gas, input.reservoir)
-                        }))
-                    }
-                    Some(None) => None,
-                    None if has_fallback => {
-                        Some(DynPrecompile::new(P256VERIFY_OSAKA.id().clone(), move |input| {
-                            P256VERIFY_OSAKA.execute(input.data, input.gas, input.reservoir)
-                        }))
-                    }
-                    None => None,
-                }
-            });
-        }
-    }
-
-    /// Applies chain-specific precompile activation to a warm-address set.
-    pub fn inject_chain_precompile_addresses(
-        self,
-        addresses: &mut alloy_primitives::map::AddressSet,
-        chain_id: ChainId,
-        timestamp: u64,
-    ) {
-        match bsc_p256_precompile(chain_id, timestamp) {
-            Some(Some(_)) => {
-                addresses.insert(BSC_P256_ADDRESS);
-            }
-            Some(None) => {
-                addresses.remove(&BSC_P256_ADDRESS);
-            }
-            None => {}
-        }
-    }
-
     /// Returns precompiles label for configured networks, to be used in traces.
     pub fn precompiles_label(
         self,
@@ -621,41 +505,6 @@ mod tests {
             BSC_MAINNET_HABER_TIMESTAMP - 1,
         );
         assert!(precompiles.get(&BSC_P256_ADDRESS).is_none());
-    }
-
-    #[test]
-    fn dynamic_bsc_p256_tracks_pre_haber_to_haber_roll() {
-        let state = ChainPrecompileState::default();
-        state.set(BSC_MAINNET_CHAIN_ID, BSC_MAINNET_HABER_TIMESTAMP - 1);
-        let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
-        NetworkConfigs::default().inject_dynamic_chain_precompiles(&mut precompiles, state.clone());
-        assert!(precompiles.get(&BSC_P256_ADDRESS).is_none());
-
-        state.set(BSC_MAINNET_CHAIN_ID, BSC_MAINNET_HABER_TIMESTAMP);
-        assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());
-
-        state.set(BSC_MAINNET_CHAIN_ID, BSC_MAINNET_HABER_TIMESTAMP - 1);
-        assert!(precompiles.get(&BSC_P256_ADDRESS).is_none());
-    }
-
-    #[test]
-    fn bsc_p256_warm_address_tracks_haber_boundary() {
-        let mut addresses = Precompiles::osaka().addresses_set().clone();
-        assert!(addresses.contains(&BSC_P256_ADDRESS));
-
-        NetworkConfigs::default().inject_chain_precompile_addresses(
-            &mut addresses,
-            BSC_MAINNET_CHAIN_ID,
-            BSC_MAINNET_HABER_TIMESTAMP - 1,
-        );
-        assert!(!addresses.contains(&BSC_P256_ADDRESS));
-
-        NetworkConfigs::default().inject_chain_precompile_addresses(
-            &mut addresses,
-            BSC_MAINNET_CHAIN_ID,
-            BSC_MAINNET_HABER_TIMESTAMP,
-        );
-        assert!(addresses.contains(&BSC_P256_ADDRESS));
     }
 
     #[test]

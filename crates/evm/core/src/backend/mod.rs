@@ -21,7 +21,7 @@ use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, 
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
-use foundry_evm_networks::{ChainPrecompileState, NetworkConfigs};
+use foundry_evm_networks::NetworkConfigs;
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
     Database, DatabaseCommit, JournalEntry,
@@ -124,11 +124,6 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Deletes all state snapshots.
     fn delete_state_snapshots(&mut self);
-
-    /// Returns the shared chain context used by dynamic precompile selection.
-    fn chain_precompile_state(&mut self) -> ChainPrecompileState {
-        ChainPrecompileState::default()
-    }
 
     /// Creates and also selects a new fork
     ///
@@ -484,8 +479,6 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     ///
     /// If this is set, then the Backend is currently in forking mode
     active_fork_ids: Option<(LocalForkId, ForkLookupIndex)>,
-    /// Chain context shared with the active EVM's dynamic precompile map.
-    chain_precompile_state: ChainPrecompileState,
     /// holds additional Backend data
     inner: BackendInner<FEN>,
 }
@@ -497,7 +490,6 @@ impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
             mem_db: self.mem_db.clone(),
             fork_init_journaled_state: self.fork_init_journaled_state.clone(),
             active_fork_ids: self.active_fork_ids,
-            chain_precompile_state: self.chain_precompile_state.fork(),
             inner: self.inner.clone(),
         }
     }
@@ -510,7 +502,6 @@ impl<FEN: FoundryEvmNetwork> Debug for Backend<FEN> {
             .field("mem_db", &self.mem_db)
             .field("fork_init_journaled_state", &self.fork_init_journaled_state)
             .field("active_fork_ids", &self.active_fork_ids)
-            .field("chain_precompile_state", &self.chain_precompile_state)
             .field("inner", &self.inner)
             .finish()
     }
@@ -547,7 +538,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: inner.new_journaled_state(),
             active_fork_ids: None,
-            chain_precompile_state: ChainPrecompileState::default(),
             inner,
         };
 
@@ -589,7 +579,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
-            chain_precompile_state: ChainPrecompileState::default(),
             inner: Default::default(),
         }
     }
@@ -829,24 +818,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.set_test_contract(test_contract);
     }
 
-    fn update_chain_precompiles(
-        &self,
-        evm_env: &EvmEnvFor<FEN>,
-        journaled_state: &mut JournaledState,
-    ) {
-        let chain_id = evm_env.cfg_env.chain_id;
-        let timestamp = evm_env.block_env.timestamp().saturating_to();
-        self.chain_precompile_state.set(chain_id, timestamp);
-
-        let mut addresses = journaled_state.warm_addresses.precompiles().clone();
-        NetworkConfigs::default().inject_chain_precompile_addresses(
-            &mut addresses,
-            chain_id,
-            timestamp,
-        );
-        journaled_state.warm_addresses.set_precompile_addresses(&addresses);
-    }
-
     /// Executes the configured test call of the `env` without committing state changes.
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
@@ -874,14 +845,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Returns true if the address is a precompile
     pub fn is_existing_precompile(&self, addr: &Address) -> bool {
-        let mut addresses = self.inner.precompile_addresses();
-        let (chain_id, timestamp) = self.chain_precompile_state.get();
-        NetworkConfigs::default().inject_chain_precompile_addresses(
-            &mut addresses,
-            chain_id,
-            timestamp,
-        );
-        addresses.contains(addr)
+        self.inner.precompile_addresses().contains(addr)
     }
 
     /// Sets the initial journaled state to use when initializing forks
@@ -1036,10 +1000,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
-    fn chain_precompile_state(&mut self) -> ChainPrecompileState {
-        self.chain_precompile_state.clone()
-    }
-
     fn snapshot_state(
         &mut self,
         journaled_state: &JournaledState,
@@ -1295,7 +1255,6 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         tx_env.set_chain_id(Some(fork_evm_env.cfg_env.chain_id));
         *evm_env = fork_evm_env;
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
-        self.update_chain_precompiles(evm_env, active_journaled_state);
 
         Ok(())
     }
@@ -1363,7 +1322,6 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                 }
 
                 *journaled_state = active.journaled_state.clone();
-                self.update_chain_precompiles(evm_env, journaled_state);
             }
         }
         Ok(())
@@ -1398,7 +1356,6 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         // replay all transactions that came before
         self.replay_until(id, evm_env.clone(), transaction, journaled_state)?;
-        self.update_chain_precompiles(evm_env, journaled_state);
 
         Ok(())
     }

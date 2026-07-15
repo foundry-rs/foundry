@@ -1195,8 +1195,8 @@ impl NodeConfig {
 
         self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
-        let base_fee_params: BaseFeeParams =
-            self.networks.base_fee_params(self.get_genesis_timestamp());
+        let genesis_timestamp = self.get_genesis_timestamp();
+        let base_fee_params: BaseFeeParams = self.networks.base_fee_params(genesis_timestamp);
 
         // On Tempo, the base fee follows the chain's hardfork rules instead of EIP-1559.
         let tempo_hardfork =
@@ -1238,19 +1238,17 @@ impl NodeConfig {
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
-        // Keep the default EVM timestamp when none was configured. Fork setup initializes its own
-        // timestamp, and an explicit flag takes precedence over a genesis file in non-fork mode.
-        if fork.is_none()
-            && let Some(timestamp) = self.genesis_timestamp
-        {
-            evm_env.block_env.timestamp = U256::from(timestamp);
+        // Fork setup initializes its own timestamp. For a local chain, keep the initial EVM and
+        // genesis block on the same resolved timestamp, including the default current time.
+        if fork.is_none() {
+            evm_env.block_env.timestamp = U256::from(genesis_timestamp);
         }
 
         self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
         let genesis = GenesisConfig {
             number: self.get_genesis_number(),
-            timestamp: self.get_genesis_timestamp(),
+            timestamp: genesis_timestamp,
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
             genesis_init: self.genesis.clone(),

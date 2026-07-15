@@ -156,6 +156,26 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn bsc_default_timestamp_enables_p256_immediately() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(BSC_MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Cancun.into())),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    assert!(
+        api.config().unwrap().current.precompiles.values().any(|&address| address == P256_VERIFY)
+    );
+    let output = provider
+        .call(TransactionRequest::default().with_to(P256_VERIFY).with_input(P256_INPUT).into())
+        .await
+        .unwrap();
+    assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn bsc_pre_haber_eth_config_omits_p256() {
     let (api, _handle) = spawn(
         NodeConfig::test()

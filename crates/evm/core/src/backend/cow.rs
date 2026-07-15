@@ -17,12 +17,11 @@ use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use eyre::WrapErr;
-use foundry_evm_networks::ChainPrecompileState;
 use foundry_fork_db::DatabaseError;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
-    context::{Block, ContextTr, Transaction},
+    context::{ContextTr, Transaction},
     context_interface::result::ResultAndState,
     database::DatabaseRef,
     primitives::AddressMap,
@@ -54,17 +53,11 @@ pub struct CowBackend<'a, FEN: FoundryEvmNetwork> {
     /// Pending initialization params for the backend on first mutable access.
     /// `None` means the backend has already been initialized for the current call.
     pending_init: Option<(SpecFor<FEN>, Address, TxKind)>,
-    /// Chain context shared with this call's dynamic precompile map.
-    chain_precompile_state: ChainPrecompileState,
 }
 
 impl<FEN: FoundryEvmNetwork> Clone for CowBackend<'_, FEN> {
     fn clone(&self) -> Self {
-        Self {
-            backend: self.backend.clone(),
-            pending_init: self.pending_init,
-            chain_precompile_state: self.chain_precompile_state.fork(),
-        }
+        Self { backend: self.backend.clone(), pending_init: self.pending_init }
     }
 }
 
@@ -73,19 +66,14 @@ impl<FEN: FoundryEvmNetwork> Debug for CowBackend<'_, FEN> {
         f.debug_struct("CowBackend")
             .field("backend", &self.backend)
             .field("pending_init", &self.pending_init)
-            .field("chain_precompile_state", &self.chain_precompile_state)
             .finish()
     }
 }
 
 impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
     /// Creates a new `CowBackend` with the given `Backend`.
-    pub fn new_borrowed(backend: &'a Backend<FEN>) -> Self {
-        Self {
-            backend: Cow::Borrowed(backend),
-            pending_init: None,
-            chain_precompile_state: ChainPrecompileState::default(),
-        }
+    pub const fn new_borrowed(backend: &'a Backend<FEN>) -> Self {
+        Self { backend: Cow::Borrowed(backend), pending_init: None }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
@@ -146,10 +134,6 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN> {
-    fn chain_precompile_state(&mut self) -> ChainPrecompileState {
-        self.chain_precompile_state.clone()
-    }
-
     fn snapshot_state(
         &mut self,
         journaled_state: &JournaledState,
@@ -202,10 +186,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         tx_env: &mut TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut().select_fork(id, evm_env, tx_env, journaled_state)?;
-        self.chain_precompile_state
-            .set(evm_env.cfg_env.chain_id, evm_env.block_env.timestamp().saturating_to());
-        Ok(())
+        self.backend_mut().select_fork(id, evm_env, tx_env, journaled_state)
     }
 
     fn roll_fork(
@@ -215,10 +196,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut().roll_fork(id, block_number, evm_env, journaled_state)?;
-        self.chain_precompile_state
-            .set(evm_env.cfg_env.chain_id, evm_env.block_env.timestamp().saturating_to());
-        Ok(())
+        self.backend_mut().roll_fork(id, block_number, evm_env, journaled_state)
     }
 
     fn roll_fork_to_transaction(
@@ -228,10 +206,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
-        self.backend_mut().roll_fork_to_transaction(id, transaction, evm_env, journaled_state)?;
-        self.chain_precompile_state
-            .set(evm_env.cfg_env.chain_id, evm_env.block_env.timestamp().saturating_to());
-        Ok(())
+        self.backend_mut().roll_fork_to_transaction(id, transaction, evm_env, journaled_state)
     }
 
     fn transact(
