@@ -1314,7 +1314,9 @@ impl<'ast> State<'_, 'ast> {
                     && is_call_chain(&call_expr.kind, true))
                 .then(|| ChainedNamedCall {
                     callee: call_expr.span,
-                    keep_inline: self.estimate_size(call_expr.span) <= self.space_left(),
+                    keep_inline: self.estimate_size(call_expr.span)
+                        + if call_args.is_empty() { 4 } else { 2 }
+                        <= self.space_left(),
                 });
                 let list_format = if keep_inline {
                     ListFormat::inline()

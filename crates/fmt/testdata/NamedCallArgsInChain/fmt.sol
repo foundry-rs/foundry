@@ -47,6 +47,13 @@ contract NamedCallArgsInChain {
             });
     }
 
+    function calleeAtLineBoundary(address vault, uint256 positionId, uint256 batchId) external {
+        IVault(vault)
+            .updatePositionAtTheExactConfiguredLineLengthBoundaryWithoutForcingTheBaseInterfaceConversionToWrap({
+                positionId_: positionId, batchId_: batchId
+            });
+    }
+
     function attempted(
         address vault,
         uint256 positionId,
