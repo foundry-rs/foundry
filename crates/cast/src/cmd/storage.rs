@@ -1,7 +1,7 @@
 use crate::{Cast, opts::parse_slot};
 use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
@@ -18,7 +18,7 @@ use foundry_common::{
     shell,
 };
 use foundry_compilers::{
-    Artifact, Project,
+    Artifact, ArtifactId, Project, ProjectCompileOutput,
     artifacts::{ConfigurableContractArtifact, Contract, StorageLayout},
     compilers::{
         Compiler,
@@ -126,16 +126,12 @@ impl StorageArgs {
         }
 
         // Check if we're in a forge project and if we can find the address' code
-        let mut project = build.project()?;
+        let project = build.project()?;
         if project.paths.has_input_files() {
-            // Find in artifacts and pretty print
-            add_storage_layout_output(&mut project);
-            let out = ProjectCompiler::new().quiet(shell::is_json()).compile(&project)?;
-            let artifact = out.artifacts().find(|(_, artifact)| {
-                artifact.get_deployed_bytecode_bytes().is_some_and(|b| *b == address_code)
-            });
-            if let Some((_, artifact)) = artifact {
-                return fetch_and_print_storage(provider, address, block, artifact).await;
+            if let Some(artifact) =
+                compile_local_storage_layout(&project, &address_code, shell::is_json())?
+            {
+                return fetch_and_print_storage(provider, address, block, &artifact).await;
             }
         }
 
@@ -238,6 +234,78 @@ impl StorageArgs {
         drop(temp_dir);
         fetch_and_print_storage(provider, address, block, artifact).await
     }
+}
+
+/// Finds the local artifact matching `address_code`, then compiles only its source for the storage
+/// layout if the normal project output does not already contain one.
+fn compile_local_storage_layout(
+    project: &Project,
+    address_code: &Bytes,
+    quiet: bool,
+) -> Result<Option<ConfigurableContractArtifact>> {
+    if project.build_info {
+        let output = compile_full_storage_layout(project, quiet)?;
+        return Ok(find_artifact_by_code(output, address_code).map(|(_, artifact)| artifact));
+    }
+
+    let output = ProjectCompiler::new().quiet(quiet).compile(project)?;
+    let Some((target, artifact)) = find_artifact_by_code(output, address_code) else {
+        return Ok(None);
+    };
+
+    if artifact.storage_layout.is_some() {
+        return Ok(Some(artifact));
+    }
+
+    if let Ok(output) = compile_target_storage_layout(project, &target)
+        && let Some(artifact) = output.into_artifacts().find_map(|(id, artifact)| {
+            (same_artifact(&id, &target) && artifact.storage_layout.is_some()).then_some(artifact)
+        })
+    {
+        return Ok(Some(artifact));
+    }
+
+    let output = compile_full_storage_layout(project, quiet)?;
+    Ok(find_artifact_by_code(output, address_code).map(|(_, artifact)| artifact))
+}
+
+fn find_artifact_by_code(
+    output: ProjectCompileOutput,
+    address_code: &Bytes,
+) -> Option<(ArtifactId, ConfigurableContractArtifact)> {
+    output.into_artifacts().find(|(_, artifact)| {
+        artifact
+            .get_deployed_bytecode_bytes()
+            .is_some_and(|bytecode| bytecode.as_ref() == address_code)
+    })
+}
+
+fn compile_target_storage_layout(
+    project: &Project,
+    target: &ArtifactId,
+) -> Result<ProjectCompileOutput> {
+    let mut project = project.clone();
+    project.no_artifacts = true;
+    add_storage_layout_output(&mut project);
+    ProjectCompiler::new().quiet(true).files([target.source.clone()]).compile(&project)
+}
+
+fn compile_full_storage_layout(project: &Project, quiet: bool) -> Result<ProjectCompileOutput> {
+    let mut project = project.clone();
+    add_storage_layout_output(&mut project);
+    ProjectCompiler::new().quiet(quiet).compile(&project)
+}
+
+/// Returns whether two artifact IDs identify the same contract across compiler runs.
+///
+/// Changing the output selection changes the build ID, and compiling fewer files can change an
+/// artifact path that was disambiguated due to a name collision. Neither can be used to match the
+/// normal compile against the targeted storage-layout compile.
+fn same_artifact(left: &ArtifactId, right: &ArtifactId) -> bool {
+    left.name == right.name
+        && left.source == right.source
+        && left.version == right.version
+        && left.profile == right.profile
 }
 
 /// Represents the value of a storage slot `eth_getStorageAt` call.
@@ -396,6 +464,43 @@ const fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_compilers::PathStyle;
+    use foundry_test_utils::TestProject;
+
+    #[test]
+    fn local_storage_layout_compiles_only_target_source() {
+        let prj = TestProject::new("cast-storage-target", PathStyle::Dapptools);
+        foundry_test_utils::util::initialize(prj.root());
+        let unrelated_path = prj.add_source("Target", "contract Target { uint256 unrelated; }");
+        let target_path = prj.add_source(
+            "nested/Target",
+            "contract Target { uint256 value; function marker() external pure returns (bool) { return true; } }",
+        );
+        let project = Config::with_root(prj.root()).canonic_at(prj.root()).project().unwrap();
+        assert!(project.paths.has_input_files(), "{:?}", project.paths);
+
+        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
+        let (target, artifact) =
+            output.artifact_ids().find(|(id, _)| id.source == target_path).unwrap();
+        let address_code = artifact.get_deployed_bytecode_bytes().unwrap().into_owned();
+        let artifact_before = std::fs::read(&target.path).unwrap();
+        let cache_before = std::fs::read(project.cache_path()).unwrap();
+
+        let output = compile_target_storage_layout(&project, &target).unwrap();
+        let (compiled, artifact) = output
+            .artifact_ids()
+            .find(|(id, _)| same_artifact(id, &target))
+            .expect("target artifact should be present");
+        assert_ne!(compiled.path, target.path);
+        assert!(artifact.storage_layout.is_some());
+        assert!(!output.artifact_ids().any(|(id, _)| id.source == unrelated_path));
+
+        let artifact =
+            compile_local_storage_layout(&project, &address_code, true).unwrap().unwrap();
+        assert!(artifact.storage_layout.is_some());
+        assert_eq!(std::fs::read(&target.path).unwrap(), artifact_before);
+        assert_eq!(std::fs::read(project.cache_path()).unwrap(), cache_before);
+    }
 
     #[test]
     fn parse_storage_etherscan_api_key() {
