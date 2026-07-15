@@ -13,7 +13,7 @@ use revm::{
     database::DbAccount,
     state::{Account, AccountInfo},
 };
-use std::mem;
+use std::{array, mem};
 
 /// Incrementally maintains the state trie used for mined block headers.
 ///
@@ -25,6 +25,8 @@ use std::mem;
 pub struct StateRootCache {
     trie: Option<IncrementalStateTrie>,
     dirty: AddressMap<DirtyAccount>,
+    /// Reused while encoding dirty trie nodes.
+    rlp_buf: Vec<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -65,14 +67,15 @@ impl StateRootCache {
 
     /// Returns the current root, applying only changes recorded since the previous call.
     pub fn root(&mut self, accounts: &AddressMap<DbAccount>) -> B256 {
-        if self.trie.is_none() {
-            self.trie = Some(IncrementalStateTrie::from_accounts(accounts));
-            self.dirty.clear();
-            return self.trie.as_mut().unwrap().root();
+        let Self { trie, dirty, rlp_buf } = self;
+        if trie.is_none() {
+            *trie = Some(IncrementalStateTrie::from_accounts(accounts, rlp_buf));
+            dirty.clear();
+            return trie.as_mut().unwrap().root(rlp_buf);
         }
 
-        let trie = self.trie.as_mut().unwrap();
-        for (address, dirty) in mem::take(&mut self.dirty) {
+        let trie = trie.as_mut().unwrap();
+        for (address, dirty) in mem::take(dirty) {
             let hashed_address = keccak256(address);
             let Some(account) = accounts.get(&address) else {
                 trie.accounts.remove(hashed_address);
@@ -97,14 +100,14 @@ impl StateRootCache {
                 }
                 storage_trie
             };
-            let storage_root = storage_trie.root();
+            let storage_root = storage_trie.root_with_buf(rlp_buf);
             trie.accounts.insert(
                 hashed_address,
                 trie_account_rlp_with_storage_root(&account.info, storage_root),
             );
         }
 
-        trie.root()
+        trie.root(rlp_buf)
     }
 }
 
@@ -115,12 +118,12 @@ struct IncrementalStateTrie {
 }
 
 impl IncrementalStateTrie {
-    fn from_accounts(accounts: &AddressMap<DbAccount>) -> Self {
+    fn from_accounts(accounts: &AddressMap<DbAccount>, rlp_buf: &mut Vec<u8>) -> Self {
         let mut trie = Self::default();
         for (address, account) in accounts {
             let hashed_address = keccak256(address);
             let mut storage_trie = IncrementalTrie::from_storage(&account.storage);
-            let storage_root = storage_trie.root();
+            let storage_root = storage_trie.root_with_buf(rlp_buf);
             trie.accounts.insert(
                 hashed_address,
                 trie_account_rlp_with_storage_root(&account.info, storage_root),
@@ -130,8 +133,8 @@ impl IncrementalStateTrie {
         trie
     }
 
-    fn root(&mut self) -> B256 {
-        self.accounts.root()
+    fn root(&mut self, rlp_buf: &mut Vec<u8>) -> B256 {
+        self.accounts.root_with_buf(rlp_buf)
     }
 }
 
@@ -158,8 +161,13 @@ impl IncrementalTrie {
         self.root.remove(Nibbles::unpack(key));
     }
 
+    #[cfg(test)]
     fn root(&mut self) -> B256 {
-        let Some(root) = self.root.rlp() else { return EMPTY_ROOT_HASH };
+        self.root_with_buf(&mut Vec::new())
+    }
+
+    fn root_with_buf(&mut self, rlp_buf: &mut Vec<u8>) -> B256 {
+        let Some(root) = self.root.rlp(rlp_buf) else { return EMPTY_ROOT_HASH };
         root.as_hash().unwrap_or_else(|| keccak256(root.as_ref()))
     }
 }
@@ -324,7 +332,7 @@ impl TrieNode {
         }
     }
 
-    fn rlp(&mut self) -> Option<RlpNode> {
+    fn rlp(&mut self, out: &mut Vec<u8>) -> Option<RlpNode> {
         if let Some(rlp) = &self.rlp {
             return Some(rlp.clone());
         }
@@ -332,22 +340,27 @@ impl TrieNode {
         let rlp = match &mut self.kind {
             TrieNodeKind::Empty => return None,
             TrieNodeKind::Leaf { path, value } => {
-                LeafNodeRef::new(path, value).rlp(&mut Vec::new())
+                out.clear();
+                LeafNodeRef::new(path, value).rlp(out)
             }
             TrieNodeKind::Extension { path, child } => {
-                let child = child.rlp().expect("extension nodes have a child");
-                ExtensionNodeRef::new(path, child.as_ref()).rlp(&mut Vec::new())
+                let child = child.rlp(out).expect("extension nodes have a child");
+                out.clear();
+                ExtensionNodeRef::new(path, child.as_ref()).rlp(out)
             }
             TrieNodeKind::Branch { children } => {
-                let mut stack = Vec::new();
+                let mut stack: [RlpNode; 16] = array::from_fn(|_| RlpNode::default());
+                let mut stack_len = 0;
                 let mut state_mask = TrieMask::default();
                 for (index, child) in children.iter_mut().enumerate() {
                     if let Some(child) = child {
-                        stack.push(child.rlp().expect("branch children are not empty"));
+                        stack[stack_len] = child.rlp(out).expect("branch children are not empty");
+                        stack_len += 1;
                         state_mask.set_bit(index as u8);
                     }
                 }
-                BranchNodeRef::new(&stack, state_mask).rlp(&mut Vec::new())
+                out.clear();
+                BranchNodeRef::new(&stack[..stack_len], state_mask).rlp(out)
             }
         };
         self.rlp = Some(rlp.clone());

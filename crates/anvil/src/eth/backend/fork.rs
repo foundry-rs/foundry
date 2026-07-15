@@ -59,12 +59,20 @@ pub struct ClientFork<N: Network = AnyNetwork> {
     pub config: Arc<RwLock<ClientForkConfig<N>>>,
     /// This also holds a handle to the underlying database
     pub database: Arc<AsyncRwLock<Box<dyn Db>>>,
+    /// The RPC URL associated with the state in the underlying database.
+    database_rpc_url: Arc<RwLock<Option<String>>>,
 }
 
 impl<N: Network> ClientFork<N> {
     /// Creates a new instance of the fork
     pub fn new(config: ClientForkConfig<N>, database: Arc<AsyncRwLock<Box<dyn Db>>>) -> Self {
-        Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
+        let database_rpc_url = config.eth_rpc_url().map(ToOwned::to_owned);
+        Self {
+            storage: Default::default(),
+            config: Arc::new(RwLock::new(config)),
+            database,
+            database_rpc_url: Arc::new(RwLock::new(database_rpc_url)),
+        }
     }
 
     /// Removes all data cached from previous responses
@@ -109,6 +117,14 @@ impl<N: Network> ClientFork<N> {
 
     pub fn eth_rpc_url(&self) -> Option<String> {
         self.config.read().eth_rpc_url().map(|s| s.to_string())
+    }
+
+    pub(crate) fn database_rpc_url(&self) -> Option<String> {
+        self.database_rpc_url.read().clone()
+    }
+
+    pub(crate) fn set_database_rpc_url(&self, url: Option<String>) {
+        *self.database_rpc_url.write() = url;
     }
 
     pub fn chain_id(&self) -> u64 {
