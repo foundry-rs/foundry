@@ -3,7 +3,7 @@ name: Ingest Foundry Benchmarks
 permissions: {}
 
 on:
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers] trusted default-branch ingestion boundary
     workflows: [Foundry Benchmarks]
     types: [completed]
 
