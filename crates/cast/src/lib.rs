@@ -2025,7 +2025,7 @@ impl SimpleCast {
                     // raw (unpadded) contents as the topic, not the hash of the ABI encoding.
                     topics.push(keccak256(token.abi_encode_packed()));
                 } else if matches!(ty, DynSolType::Array(_) | DynSolType::Tuple(_)) {
-                    // For dynamic arrays/tuples, hash the ABI-encoded value.
+                    // Preserve the existing encoding behavior for arrays/tuples.
                     let encoded = token.abi_encode();
                     let hash = keccak256(encoded);
                     topics.push(hash);
