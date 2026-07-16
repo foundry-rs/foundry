@@ -17,9 +17,11 @@ modifiers are tracked when their bodies are available.
 This detector intentionally covers native ETH held by the current contract. It is not the later
 token `balanceOf(address)` detector with a similar name. It does not report token balances,
 balances of other addresses, mutable state or storage baselines, view or static calls, calls capped
-at the 2,300-gas stipend or less, checks on directly mutually exclusive branches, baselines
-overwritten after the call, or expressions that do not compare a fresh contract-balance read with
-the stale local value.
+at a total callee budget of 2,300 gas or less after accounting for the value-transfer stipend,
+checks on directly mutually exclusive branches, baselines overwritten after the call, or
+expressions that do not compare a fresh contract-balance read with the stale local value. It also
+recognizes standard state-lock `nonReentrant` modifiers when the same lock guards every mutable
+entry point on each concrete deployment of the function.
 
 ## Why is this bad?
 

@@ -63,7 +63,7 @@ impl<'hir> LateLintPass<'hir> for ReentrancyEth {
 
         let Some(body) = func.body else { return };
 
-        let mut analyzer = Analyzer::new(ctx, gcx, hir, func.span);
+        let mut analyzer = Analyzer::new(ctx, gcx, hir, func);
         if !analyzer.has_enabled_lints() {
             return;
         }
@@ -91,6 +91,7 @@ struct FlowState {
     pending_calls: Vec<PendingCall>,
     balance_locals: BTreeSet<VariableId>,
     pending_balance_calls: Vec<PendingBalanceCall>,
+    invalidated_balance_guards: BTreeSet<VariableId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -156,7 +157,6 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     hir: &'hir hir::Hir<'hir>,
     emitted: HashSet<Span>,
     emitted_balance: HashSet<Span>,
-    entry_function_span: Span,
     call_stack: Vec<FunctionId>,
     inline_cache: HelperAnalysisCache<InlineCallKey, InlineCallResult>,
     recursive_cut_frontiers: HashMap<RecursiveFrontierKey, Vec<FunctionId>>,
@@ -167,6 +167,8 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     balance_only_analysis: bool,
     call_balance_values: HashMap<Span, Vec<BalanceValue>>,
     return_collectors: Vec<ReturnCollector>,
+    active_balance_guards: Vec<VariableId>,
+    balance_reentry_lock: Option<VariableId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -175,8 +177,12 @@ struct InlineCallKey {
     /// First active function that can cut recursion from this callee.
     recursive_cut: Option<FunctionId>,
     balance_only: bool,
+    active_balance_guards: Vec<VariableId>,
     state: FlowState,
 }
+
+type ModifierContinuation<'hir> =
+    (&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>, Option<VariableId>);
 
 #[derive(Clone, Debug)]
 struct InlineCallResult {
@@ -203,6 +209,12 @@ enum BalanceQuery {
     Stale(Span),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LockValue {
+    Bool(bool),
+    Number(U256),
+}
+
 #[derive(Debug)]
 struct ReturnCollector {
     func_id: FunctionId,
@@ -214,25 +226,29 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         ctx: &'ctx LintContext<'s, 'c>,
         gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
-        entry_function_span: Span,
+        entry: &'hir hir::Function<'hir>,
     ) -> Self {
+        let reentrancy_balance_enabled = ctx.is_lint_enabled(REENTRANCY_BALANCE.id);
         Self {
             ctx,
             gcx,
             hir,
             emitted: HashSet::new(),
             emitted_balance: HashSet::new(),
-            entry_function_span,
             call_stack: Vec::new(),
             inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
             recursive_cut_frontiers: HashMap::new(),
             direct_internal_calls: HashMap::new(),
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
-            reentrancy_balance_enabled: ctx.is_lint_enabled(REENTRANCY_BALANCE.id),
+            reentrancy_balance_enabled,
             balance_only_analysis: false,
             call_balance_values: HashMap::new(),
             return_collectors: Vec::new(),
+            active_balance_guards: Vec::new(),
+            balance_reentry_lock: reentrancy_balance_enabled
+                .then(|| balance_reentry_lock(gcx, hir, entry))
+                .flatten(),
         }
     }
 
@@ -281,8 +297,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
         self.seed_balance_parameters(modifier_func, &modifier.args, state);
         self.call_stack.push(modifier_id);
-        let falls_through =
-            self.analyze_block(modifier_body, Some((modifiers, index + 1, body)), state);
+        let balance_guard = self
+            .reentrancy_balance_enabled
+            .then(|| standard_reentrancy_guard_lock(self.hir, modifier_func))
+            .flatten();
+        let continuation = Some((modifiers, index + 1, body, balance_guard));
+        let falls_through = self.analyze_block(modifier_body, continuation, state);
         self.call_stack.pop();
         self.clear_function_balance_locals(modifier_id, state);
         falls_through
@@ -291,7 +311,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn analyze_block(
         &mut self,
         block: hir::Block<'hir>,
-        placeholder: Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>)>,
+        placeholder: Option<ModifierContinuation<'hir>>,
         state: &mut FlowState,
     ) -> bool {
         for stmt in block.stmts {
@@ -305,7 +325,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn analyze_stmt(
         &mut self,
         stmt: &'hir hir::Stmt<'hir>,
-        placeholder: Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>)>,
+        placeholder: Option<ModifierContinuation<'hir>>,
         state: &mut FlowState,
     ) -> bool {
         match stmt.kind {
@@ -419,13 +439,25 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 any_falls_through
             }
             StmtKind::Placeholder => {
-                if let Some((modifiers, index, body)) = placeholder {
-                    self.analyze_modifier_chain(modifiers, index, body, state)
+                if let Some((modifiers, index, body, balance_guard)) = placeholder {
+                    if let Some(lock_var) = balance_guard {
+                        state.invalidated_balance_guards.remove(&lock_var);
+                        self.active_balance_guards.push(lock_var);
+                    }
+                    let falls_through = self.analyze_modifier_chain(modifiers, index, body, state);
+                    if balance_guard.is_some() {
+                        self.active_balance_guards.pop();
+                    }
+                    falls_through
                 } else {
                     true
                 }
             }
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) => {
+                state.invalidated_balance_guards.extend(self.active_balance_guards.iter().copied());
+                true
+            }
+            StmtKind::Err(_) => true,
         }
     }
 
@@ -440,6 +472,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 let written_vars = state_write_lhs_vars(self.hir, lhs);
                 if !written_vars.is_empty() {
                     self.emit_pending_calls(state, &written_vars);
+                    self.invalidate_balance_guards(state, &written_vars);
                 }
                 if self.reentrancy_balance_enabled {
                     self.update_balance_assignment(state, lhs, rhs, op.is_some());
@@ -450,6 +483,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 let written_vars = state_write_lhs_vars(self.hir, inner);
                 if !written_vars.is_empty() {
                     self.emit_pending_calls(state, &written_vars);
+                    self.invalidate_balance_guards(state, &written_vars);
                 }
                 if self.reentrancy_balance_enabled
                     && let Some(var_id) = lhs_local_var(self.hir, inner)
@@ -467,12 +501,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 let written_vars = state_write_lhs_vars(self.hir, inner);
                 if !written_vars.is_empty() {
                     self.emit_pending_calls(state, &written_vars);
+                    self.invalidate_balance_guards(state, &written_vars);
                 }
             }
             ExprKind::Unary(_, inner) => {
                 self.analyze_expr(inner, state);
             }
             ExprKind::Call(callee, args, opts) => {
+                let uses_delegate_context = call_uses_delegate_context(self.gcx, callee);
                 let mut operands = Vec::with_capacity(1 + args.len() + usize::from(opts.is_some()));
                 operands.push(*callee);
                 if let Some(opts) = opts {
@@ -519,8 +555,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 }
                 if self.reentrancy_balance_enabled
                     && is_balance_reentrant_call(self.gcx, self.hir, callee, args, *opts)
+                    && !self.balance_guard_blocks_call(state, callee)
                 {
                     state.push_balance_call(expr.span);
+                }
+                if uses_delegate_context {
+                    state
+                        .invalidated_balance_guards
+                        .extend(self.active_balance_guards.iter().copied());
                 }
             }
             ExprKind::Binary(lhs, _, rhs) => {
@@ -588,9 +630,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         args: &CallArgs<'hir>,
         state: &mut FlowState,
     ) -> Vec<BalanceValue> {
-        if self.call_stack.contains(&func_id)
-            || self.hir.function(func_id).span == self.entry_function_span
-        {
+        if self.call_stack.contains(&func_id) {
             return Vec::new();
         }
 
@@ -605,6 +645,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             func_id,
             recursive_cut: self.first_recursive_cut(func_id),
             balance_only: self.balance_only_analysis,
+            active_balance_guards: self.active_balance_guards.clone(),
             state: state.clone(),
         };
         if self.inline_cache.is_in_progress(&key) {
@@ -975,16 +1016,23 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     .copied()
                     .collect::<BTreeSet<_>>();
                 (is_comparison
-                    && self.expr_depends_on_balance(
-                        expr,
+                    && ((self.expr_depends_on_balance(
+                        lhs,
                         &current_locals,
                         BalanceQuery::Current(call.span),
-                    )
-                    && self.expr_depends_on_balance(
-                        expr,
+                    ) && self.expr_depends_on_balance(
+                        rhs,
                         &call.stale_locals,
                         BalanceQuery::Stale(call.span),
-                    ))
+                    )) || (self.expr_depends_on_balance(
+                        rhs,
+                        &current_locals,
+                        BalanceQuery::Current(call.span),
+                    ) && self.expr_depends_on_balance(
+                        lhs,
+                        &call.stale_locals,
+                        BalanceQuery::Stale(call.span),
+                    ))))
                     || self.guard_has_stale_balance_comparison(lhs, call, state)
                     || self.guard_has_stale_balance_comparison(rhs, call, state)
             }
@@ -1248,6 +1296,25 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
         None
     }
+
+    fn invalidate_balance_guards(&self, state: &mut FlowState, written_vars: &[VariableId]) {
+        state.invalidated_balance_guards.extend(
+            written_vars
+                .iter()
+                .filter(|var_id| self.active_balance_guards.contains(var_id))
+                .copied(),
+        );
+    }
+
+    fn balance_guard_blocks_call(&self, state: &FlowState, callee: &'hir hir::Expr<'hir>) -> bool {
+        !call_uses_delegate_context(self.gcx, callee)
+            && self.balance_reentry_lock.is_some_and(|reentry_lock| {
+                self.active_balance_guards.iter().any(|lock_var| {
+                    *lock_var == reentry_lock
+                        && !state.invalidated_balance_guards.contains(lock_var)
+                })
+            })
+    }
 }
 
 impl FlowState {
@@ -1256,6 +1323,7 @@ impl FlowState {
         self.pending_calls.clear();
         self.balance_locals.clear();
         self.pending_balance_calls.clear();
+        self.invalidated_balance_guards.clear();
     }
 
     fn merge(&mut self, other: &Self) {
@@ -1272,6 +1340,7 @@ impl FlowState {
             }
         }
         self.balance_locals.extend(other.balance_locals.iter().copied());
+        self.invalidated_balance_guards.extend(other.invalidated_balance_guards.iter().copied());
         for call in &other.pending_balance_calls {
             if let Some(existing) =
                 self.pending_balance_calls.iter_mut().find(|existing| existing.span == call.span)
@@ -1287,12 +1356,14 @@ impl FlowState {
         Self {
             balance_locals: self.balance_locals.clone(),
             pending_balance_calls: self.pending_balance_calls.clone(),
+            invalidated_balance_guards: self.invalidated_balance_guards.clone(),
             ..Self::default()
         }
     }
 
     fn merge_balance(&mut self, other: &Self) {
         self.balance_locals.extend(other.balance_locals.iter().copied());
+        self.invalidated_balance_guards.extend(other.invalidated_balance_guards.iter().copied());
         for call in &other.pending_balance_calls {
             if let Some(existing) =
                 self.pending_balance_calls.iter_mut().find(|existing| existing.span == call.span)
@@ -1335,13 +1406,19 @@ fn is_balance_reentrant_call<'hir>(
 }
 
 fn call_options_allow_reentrancy(hir: &hir::Hir<'_>, opts: Option<&hir::CallOptions<'_>>) -> bool {
-    let Some(gas) = opts.and_then(|opts| opts.args.iter().find(|opt| opt.name.name == kw::Gas))
-    else {
+    let Some(opts) = opts else { return true };
+    let Some(gas) = opts.args.iter().find(|opt| opt.name.name == kw::Gas) else {
         return true;
     };
+    let may_transfer_value = opts
+        .args
+        .iter()
+        .find(|opt| opt.name.name == sym::value)
+        .is_some_and(|value| !is_zero_value(hir, &value.value));
     let mut seen = BTreeSet::new();
-    concrete_gas_cap(hir, &gas.value, &mut seen)
-        .is_none_or(|gas| gas > U256::from(REENTRANCY_GAS_STIPEND))
+    concrete_gas_cap(hir, &gas.value, &mut seen).is_none_or(|gas| {
+        gas > U256::from(REENTRANCY_GAS_STIPEND) || (may_transfer_value && !gas.is_zero())
+    })
 }
 
 fn concrete_gas_cap(
@@ -1390,6 +1467,303 @@ fn branch_stops_current_path(stmt: &hir::Stmt<'_>) -> bool {
         }
         _ => branch_always_exits(stmt),
     }
+}
+
+fn standard_reentrancy_guard_lock(
+    hir: &hir::Hir<'_>,
+    modifier: &hir::Function<'_>,
+) -> Option<VariableId> {
+    if !matches!(modifier.kind, hir::FunctionKind::Modifier) || !modifier.modifiers.is_empty() {
+        return None;
+    }
+    let body = modifier.body?;
+    if body.stmts.iter().map(count_modifier_placeholders).sum::<usize>() != 1 {
+        return None;
+    }
+    let mut placeholders = body
+        .stmts
+        .iter()
+        .enumerate()
+        .filter(|(_, stmt)| matches!(stmt.kind, StmtKind::Placeholder));
+    let (placeholder_index, _) = placeholders.next()?;
+    debug_assert!(placeholders.next().is_none());
+
+    let mut seen = BTreeSet::new();
+    let (lock_var, entered) =
+        guard_activation_from_stmts(hir, &body.stmts[..placeholder_index], &mut seen)?;
+    let mut seen = BTreeSet::new();
+    let (restored_var, restored) =
+        guard_restoration_from_stmt(hir, body.stmts.get(placeholder_index + 1)?, &mut seen)?;
+    (lock_var == restored_var && entered != restored).then_some(lock_var)
+}
+
+fn count_modifier_placeholders(stmt: &hir::Stmt<'_>) -> usize {
+    match stmt.kind {
+        StmtKind::Placeholder => 1,
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+            block.stmts.iter().map(count_modifier_placeholders).sum()
+        }
+        StmtKind::If(_, then_stmt, else_stmt) => {
+            count_modifier_placeholders(then_stmt)
+                + else_stmt.map_or(0, count_modifier_placeholders)
+        }
+        StmtKind::Try(try_stmt) => try_stmt
+            .clauses
+            .iter()
+            .flat_map(|clause| clause.block.stmts)
+            .map(count_modifier_placeholders)
+            .sum(),
+        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => 2,
+        StmtKind::DeclSingle(_)
+        | StmtKind::DeclMulti(_, _)
+        | StmtKind::Emit(_)
+        | StmtKind::Revert(_)
+        | StmtKind::Return(_)
+        | StmtKind::Break
+        | StmtKind::Continue
+        | StmtKind::Expr(_) => 0,
+    }
+}
+
+fn balance_reentry_lock<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
+    entry: &'hir hir::Function<'hir>,
+) -> Option<VariableId> {
+    let entry_id = hir.function_ids().find(|&id| std::ptr::eq(hir.function(id), entry))?;
+    let defining_contract = entry.contract?;
+    reentrancy_guard_locks(hir, entry).into_iter().find(|&lock_var| {
+        let mut has_effective_deployment = false;
+        for contract_id in hir.contract_ids() {
+            let contract = hir.contract(contract_id);
+            if !contract.can_be_deployed()
+                || contract.is_abstract()
+                || !contract.linearized_bases.contains(&defining_contract)
+            {
+                continue;
+            }
+
+            let interface = gcx.interface_functions(contract_id);
+            let entry_is_effective = interface.iter().any(|function| function.id == entry_id)
+                || contract.fallback == Some(entry_id)
+                || contract.receive == Some(entry_id);
+            if !entry_is_effective {
+                continue;
+            }
+            has_effective_deployment = true;
+
+            let ordinary_entries_are_guarded = interface.iter().all(|function| {
+                let function = hir.function(function.id);
+                matches!(function.state_mutability, StateMutability::Pure | StateMutability::View)
+                    || function_has_reentrancy_guard(hir, function, lock_var)
+            });
+            let special_entries_are_guarded =
+                [contract.fallback, contract.receive].into_iter().flatten().all(|function_id| {
+                    function_has_reentrancy_guard(hir, hir.function(function_id), lock_var)
+                });
+            if !ordinary_entries_are_guarded || !special_entries_are_guarded {
+                return false;
+            }
+        }
+        has_effective_deployment
+    })
+}
+
+fn reentrancy_guard_locks(hir: &hir::Hir<'_>, function: &hir::Function<'_>) -> Vec<VariableId> {
+    function
+        .modifiers
+        .iter()
+        .filter(|modifier| modifier.args.exprs().next().is_none())
+        .filter_map(|modifier| modifier.id.as_function())
+        .filter_map(|modifier_id| standard_reentrancy_guard_lock(hir, hir.function(modifier_id)))
+        .collect()
+}
+
+fn function_has_reentrancy_guard(
+    hir: &hir::Hir<'_>,
+    function: &hir::Function<'_>,
+    lock_var: VariableId,
+) -> bool {
+    reentrancy_guard_locks(hir, function).contains(&lock_var)
+}
+
+fn guard_activation_from_stmts(
+    hir: &hir::Hir<'_>,
+    stmts: &[hir::Stmt<'_>],
+    seen: &mut BTreeSet<FunctionId>,
+) -> Option<(VariableId, LockValue)> {
+    let (activation, prefix) = stmts.split_last()?;
+    if let Some((lock_var, entered)) = state_lock_assignment(hir, activation) {
+        return prefix
+            .iter()
+            .any(|stmt| stmt_rejects_lock_value(hir, stmt, lock_var, entered))
+            .then_some((lock_var, entered));
+    }
+
+    let helper_id = simple_internal_call(activation)?;
+    if !seen.insert(helper_id) {
+        return None;
+    }
+    let helper = hir.function(helper_id);
+    let result = if helper.modifiers.is_empty() {
+        guard_activation_from_stmts(hir, helper.body?.stmts, seen)
+    } else {
+        None
+    };
+    seen.remove(&helper_id);
+    result
+}
+
+fn guard_restoration_from_stmt(
+    hir: &hir::Hir<'_>,
+    stmt: &hir::Stmt<'_>,
+    seen: &mut BTreeSet<FunctionId>,
+) -> Option<(VariableId, LockValue)> {
+    if let Some(restoration) = state_lock_assignment(hir, stmt) {
+        return Some(restoration);
+    }
+
+    let helper_id = simple_internal_call(stmt)?;
+    if !seen.insert(helper_id) {
+        return None;
+    }
+    let helper = hir.function(helper_id);
+    let body = helper.modifiers.is_empty().then_some(helper.body?)?;
+    let result = match body.stmts {
+        [stmt] => state_lock_assignment(hir, stmt),
+        _ => None,
+    };
+    seen.remove(&helper_id);
+    result
+}
+
+fn simple_internal_call(stmt: &hir::Stmt<'_>) -> Option<FunctionId> {
+    let StmtKind::Expr(expr) = stmt.kind else { return None };
+    let ExprKind::Call(callee, args, opts) = &expr.peel_parens().kind else { return None };
+    if opts.is_some() || args.exprs().next().is_some() {
+        return None;
+    }
+    let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return None };
+    unique(reses.iter().filter_map(|res| match res {
+        Res::Item(ItemId::Function(func_id)) => Some(*func_id),
+        _ => None,
+    }))
+}
+
+fn state_lock_assignment(
+    hir: &hir::Hir<'_>,
+    stmt: &hir::Stmt<'_>,
+) -> Option<(VariableId, LockValue)> {
+    let StmtKind::Expr(expr) = stmt.kind else { return None };
+    let ExprKind::Assign(lhs, None, rhs) = &expr.peel_parens().kind else { return None };
+    let lock_var = direct_state_var(hir, lhs)?;
+    Some((lock_var, constant_lock_value(hir, rhs)?))
+}
+
+fn direct_state_var(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<VariableId> {
+    let ExprKind::Ident(reses) = &expr.peel_parens().kind else { return None };
+    unique(reses.iter().filter_map(|res| match res {
+        Res::Item(ItemId::Variable(var_id)) if hir.variable(*var_id).kind.is_state() => {
+            Some(*var_id)
+        }
+        _ => None,
+    }))
+}
+
+fn stmt_rejects_lock_value(
+    hir: &hir::Hir<'_>,
+    stmt: &hir::Stmt<'_>,
+    lock_var: VariableId,
+    entered: LockValue,
+) -> bool {
+    match stmt.kind {
+        StmtKind::Expr(expr) => {
+            let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+            is_require_or_assert(callee)
+                && args.exprs().next().is_some_and(|condition| {
+                    eval_lock_condition(hir, condition, lock_var, entered) == Some(false)
+                })
+        }
+        StmtKind::If(condition, then_stmt, else_stmt) => {
+            let condition = eval_lock_condition(hir, condition, lock_var, entered);
+            (condition == Some(true) && branch_always_exits(then_stmt))
+                || (condition == Some(false) && else_stmt.is_some_and(branch_always_exits))
+        }
+        _ => false,
+    }
+}
+
+fn constant_lock_value(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<LockValue> {
+    eval_lock_value_inner(hir, expr, None, None, &mut BTreeSet::new())
+}
+
+fn eval_lock_condition(
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+    lock_var: VariableId,
+    entered: LockValue,
+) -> Option<bool> {
+    match eval_lock_value_inner(hir, expr, Some(lock_var), Some(entered), &mut BTreeSet::new())? {
+        LockValue::Bool(value) => Some(value),
+        LockValue::Number(_) => None,
+    }
+}
+
+fn eval_lock_value_inner(
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+    lock_var: Option<VariableId>,
+    entered: Option<LockValue>,
+    seen: &mut BTreeSet<VariableId>,
+) -> Option<LockValue> {
+    match &expr.peel_parens().kind {
+        ExprKind::Lit(lit) => match lit.kind {
+            LitKind::Bool(value) => Some(LockValue::Bool(value)),
+            LitKind::Number(value) => Some(LockValue::Number(value)),
+            _ => None,
+        },
+        ExprKind::Ident(reses) => {
+            let var_id = unique(reses.iter().filter_map(|res| match res {
+                Res::Item(ItemId::Variable(var_id)) => Some(*var_id),
+                _ => None,
+            }))?;
+            if Some(var_id) == lock_var {
+                return entered;
+            }
+            let var = hir.variable(var_id);
+            if !var.is_constant() || !seen.insert(var_id) {
+                return None;
+            }
+            let value = eval_lock_value_inner(hir, var.initializer?, lock_var, entered, seen);
+            seen.remove(&var_id);
+            value
+        }
+        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
+            let LockValue::Bool(value) =
+                eval_lock_value_inner(hir, inner, lock_var, entered, seen)?
+            else {
+                return None;
+            };
+            Some(LockValue::Bool(!value))
+        }
+        ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) => {
+            let lhs = eval_lock_value_inner(hir, lhs, lock_var, entered, seen)?;
+            let rhs = eval_lock_value_inner(hir, rhs, lock_var, entered, seen)?;
+            Some(LockValue::Bool(if op.kind == BinOpKind::Eq { lhs == rhs } else { lhs != rhs }))
+        }
+        _ => None,
+    }
+}
+
+fn call_uses_delegate_context(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
+    if let ExprKind::Member(_, member) = &callee.peel_parens().kind
+        && matches!(member.name, kw::Callcode | kw::Delegatecall)
+    {
+        return true;
+    }
+    gcx.type_of_expr(callee.peel_parens().id).is_some_and(
+        |ty| matches!(ty.kind, TyKind::Fn(function) if function.kind == TyFnKind::DelegateCall),
+    )
 }
 
 fn is_self_balance(expr: &hir::Expr<'_>) -> bool {

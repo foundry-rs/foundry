@@ -4,7 +4,7 @@
 pragma solidity ^0.8.18;
 
 interface IReentrancyBalanceCallback {
-    function pay() external;
+    function pay() external payable;
     function observe() external view returns (uint256);
     function amount() external returns (uint256);
 }
@@ -44,7 +44,7 @@ contract ReentrancyBalance {
 
     function assertAfterLowLevelCall(address target, uint256 amount) external {
         uint256 balanceBefore = address(this).balance;
-        (bool ok,) = target.call(""); //~WARN: external call can be reentered before a stale contract balance is checked
+        (bool ok,) = target.call("");
         require(ok, "call failed");
         assert(address(this).balance - balanceBefore >= amount);
     }
@@ -121,6 +121,26 @@ contract ReentrancyBalance {
         callback.pay{gas: gasAmount}(); //~WARN: external call can be reentered before a stale contract balance is checked
         callback.pay{gas: gasleft() - 1}(); //~WARN: external call can be reentered before a stale contract balance is checked
         require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function valueStipendGasCap(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external payable {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay{value: 1, gas: 2_300}(); //~WARN: external call can be reentered before a stale contract balance is checked
+        callback.pay{value: amount, gas: 2_300}(); //~WARN: external call can be reentered before a stale contract balance is checked
+        callback.pay{value: 0, gas: 2_300}();
+        callback.pay{value: 1, gas: 0}();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function sameOperandBalanceDependencies(
+        IReentrancyBalanceCallback callback
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay();
+        require(address(this).balance + balanceBefore > 0, "empty balance");
     }
 
     function sameNamedMethods(IReentrancyBalanceSameNames callback, uint256 amount) external {
@@ -321,6 +341,191 @@ contract ReentrancyBalanceConstructor {
     constructor(IReentrancyBalanceCallback callback, uint256 amount) {
         uint256 balanceBefore = address(this).balance;
         callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+}
+
+contract ReentrancyBalanceGuarded {
+    uint256 private locked;
+
+    modifier nonReentrant() {
+        require(locked == 0, "reentrant");
+        locked = 1;
+        _;
+        locked = 0;
+    }
+
+    function guarded(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external nonReentrant {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+}
+
+contract ReentrancyBalanceHelperGuarded {
+    error ReentrantCall();
+
+    uint256 private constant NOT_ENTERED = 1;
+    uint256 private constant ENTERED = 2;
+    uint256 private status = NOT_ENTERED;
+
+    modifier nonReentrant() {
+        nonReentrantBefore();
+        _;
+        nonReentrantAfter();
+    }
+
+    function guarded(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external nonReentrant {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function nonReentrantBefore() private {
+        if (status == ENTERED) revert ReentrantCall();
+        status = ENTERED;
+    }
+
+    function nonReentrantAfter() private {
+        status = NOT_ENTERED;
+    }
+}
+
+contract ReentrancyBalanceLaterGuard {
+    uint256 private locked;
+
+    modifier onlyOwner() {
+        _;
+    }
+
+    modifier nonReentrant() {
+        require(locked == 0, "reentrant");
+        locked = 1;
+        _;
+        locked = 0;
+    }
+
+    function guarded(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external onlyOwner nonReentrant {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+}
+
+contract ReentrancyBalanceInvalidatedGuard {
+    uint256 private locked;
+
+    modifier nonReentrant() {
+        require(locked == 0, "reentrant");
+        locked = 1;
+        _;
+        locked = 0;
+    }
+
+    function unlocksBeforeCall(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external nonReentrant {
+        uint256 balanceBefore = address(this).balance;
+        locked = 0;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+}
+
+contract ReentrancyBalanceNameOnlyGuard {
+    modifier nonReentrant() {
+        _;
+    }
+
+    function guarded(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external nonReentrant {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+}
+
+contract ReentrancyBalanceCrossFunctionGuard {
+    uint256 private locked;
+
+    modifier nonReentrant() {
+        require(locked == 0, "reentrant");
+        locked = 1;
+        _;
+        locked = 0;
+    }
+
+    function guarded(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external nonReentrant {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function unguarded(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+}
+
+contract ReentrancyBalanceDelegateInvalidatesGuard {
+    uint256 private locked;
+
+    modifier nonReentrant() {
+        require(locked == 0, "reentrant");
+        locked = 1;
+        _;
+        locked = 0;
+    }
+
+    function guarded(
+        address target,
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external nonReentrant {
+        uint256 balanceBefore = address(this).balance;
+        (bool ok,) = target.delegatecall(""); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(ok, "delegatecall failed");
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+}
+
+contract ReentrancyBalanceMultiplePlaceholderGuard {
+    uint256 private locked;
+
+    modifier nonReentrantTwice() {
+        require(locked == 0, "reentrant");
+        locked = 1;
+        _;
+        locked = 0;
+        _;
+    }
+
+    function guarded(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external nonReentrantTwice {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
         require(address(this).balance >= balanceBefore + amount, "insufficient payment");
     }
 }
