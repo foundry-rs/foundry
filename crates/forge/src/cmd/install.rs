@@ -191,7 +191,9 @@ impl DependencyInstallOpts {
                 if commit {
                     git.ensure_clean()?;
                 }
-                installed_tag = installer.install_as_submodule(&dep, &path)?;
+                let (tag, mut transaction) =
+                    installer.install_as_submodule(&dep, &path, &config.root)?;
+                installed_tag = tag;
 
                 let mut new_insertion = false;
                 // Pin branch to submodule if branch is used
@@ -233,6 +235,9 @@ impl DependencyInstallOpts {
                     || out_of_sync_deps.as_ref().is_some_and(|o| !o.is_empty())
                     || !lockfile.exists()
                 {
+                    if let Some(transaction) = &mut transaction {
+                        transaction.mark_lockfile_touched();
+                    }
                     lockfile.write()?;
                 }
 
@@ -256,6 +261,9 @@ impl DependencyInstallOpts {
                         git.root(&config.root).add(Some(FOUNDRY_LOCK))?;
                     }
                     git.commit(&msg)?;
+                }
+                if let Some(transaction) = &mut transaction {
+                    transaction.disarm();
                 }
             }
 
@@ -325,6 +333,90 @@ async fn install_soldeer_deps_if_needed(dep_path: &Path) -> Result<()> {
 struct Installer<'a> {
     git: Git<'a>,
     commit: bool,
+}
+
+struct NewSubmoduleTransaction {
+    root: PathBuf,
+    relative_path: PathBuf,
+    path: PathBuf,
+    module_dir: PathBuf,
+    gitmodules_contents: Option<Vec<u8>>,
+    submodule_config: Vec<(String, String)>,
+    lockfile_path: PathBuf,
+    lockfile_contents: Option<Vec<u8>>,
+    stage_lockfile: bool,
+    lockfile_touched: bool,
+    armed: bool,
+}
+
+impl NewSubmoduleTransaction {
+    const fn mark_lockfile_touched(&mut self) {
+        self.lockfile_touched = true;
+    }
+
+    const fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn rollback(&self) {
+        let git = Git::new(&self.root);
+        let owns_worktree = !self.path.is_symlink()
+            && self.path.exists()
+            && Git::new(&self.path).absolute_git_dir().ok().as_deref() == Some(&self.module_dir);
+        if owns_worktree && let Err(err) = git.submodule_deinit(true, &self.relative_path) {
+            warn!(%err, "failed to remove submodule config after installation failure");
+        }
+        if let Err(err) = git.remove_index_path(&self.relative_path) {
+            warn!(%err, "failed to remove submodule after installation failure");
+        }
+        if owns_worktree
+            && self.module_dir.exists()
+            && let Err(err) = fs::remove_dir_all(&self.module_dir)
+        {
+            warn!(%err, "failed to remove submodule Git directory after installation failure");
+        }
+        restore_file(&self.root.join(".gitmodules"), self.gitmodules_contents.as_deref());
+        if let Err(err) = git.add(Some(".gitmodules")) {
+            warn!(%err, "failed to restore staged .gitmodules after installation failure");
+        }
+        if self.lockfile_touched {
+            restore_file(&self.lockfile_path, self.lockfile_contents.as_deref());
+            if self.stage_lockfile
+                && let Err(err) = git.add(Some(&self.lockfile_path))
+            {
+                warn!(%err, "failed to restore staged lockfile after installation failure");
+            }
+        }
+        if owns_worktree
+            && self.path.exists()
+            && let Err(err) = fs::remove_dir_all(&self.path)
+        {
+            warn!(%err, "failed to remove dependency after installation failure");
+        }
+        if let Err(err) = git.restore_submodule_config(&self.relative_path, &self.submodule_config)
+        {
+            warn!(%err, "failed to restore submodule config after installation failure");
+        }
+    }
+}
+
+impl Drop for NewSubmoduleTransaction {
+    fn drop(&mut self) {
+        if self.armed {
+            self.rollback();
+        }
+    }
+}
+
+fn restore_file(path: &Path, contents: Option<&[u8]>) {
+    let result = match contents {
+        Some(contents) => fs::write(path, contents),
+        None if path.exists() => fs::remove_file(path),
+        None => Ok(()),
+    };
+    if let Err(err) = result {
+        warn!(%err, path = %path.display(), "failed to restore file after installation failure");
+    }
 }
 
 impl Installer<'_> {
@@ -407,7 +499,12 @@ impl Installer<'_> {
     ///
     /// This will add the git submodule to the given dir, initialize it and checkout the tag if
     /// provided or try to find the latest semver, release tag.
-    fn install_as_submodule(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
+    fn install_as_submodule(
+        self,
+        dep: &Dependency,
+        path: &Path,
+        project_root: &Path,
+    ) -> Result<(Option<String>, Option<NewSubmoduleTransaction>)> {
         let root = Git::root_of(self.git.root)?;
         let relative_path = path.strip_prefix(&root)?;
         let git = self.git.root(&root);
@@ -436,6 +533,7 @@ impl Installer<'_> {
             let can_rollback = !path.is_symlink()
                 && !path.exists()
                 && !module_dir.exists()
+                && !git.has_index_entries(relative_path)?
                 && git.is_path_clean(relative_path)?
                 && git.is_path_worktree_clean(Path::new(".gitmodules"))?;
             if !can_rollback {
@@ -457,10 +555,31 @@ impl Installer<'_> {
             && !path.is_symlink()
             && path.is_dir()
             && std::fs::read_dir(path)?.next().is_none();
+        let worktree_existed = path.exists();
+        let module_dir_existed = module_dir.exists();
+        let original_head = (existing_submodule && worktree_existed && !uninitialized_worktree)
+            .then(|| self.git.root(path).head())
+            .transpose()?;
         if existing_submodule && (path.is_symlink() || path.exists()) && !uninitialized_worktree {
             self.ensure_submodule_worktree(path, &module_dir, relative_path)?;
         }
 
+        let lockfile_path = project_root.join(FOUNDRY_LOCK);
+        let lockfile_contents =
+            lockfile_path.exists().then(|| fs::read(&lockfile_path)).transpose()?;
+        let mut transaction = (!existing_submodule).then(|| NewSubmoduleTransaction {
+            root: root.clone(),
+            relative_path: relative_path.to_path_buf(),
+            path: path.to_path_buf(),
+            module_dir: module_dir.clone(),
+            gitmodules_contents: gitmodules_contents.clone(),
+            submodule_config: submodule_config.clone(),
+            lockfile_path,
+            lockfile_contents,
+            stage_lockfile: self.commit,
+            lockfile_touched: false,
+            armed: true,
+        });
         let setup = if existing_submodule {
             if !path.exists() || uninitialized_worktree {
                 git.submodule_update(false, false, false, false, Some(relative_path))
@@ -497,30 +616,41 @@ impl Installer<'_> {
             self.git.root(path).submodule_sync()?;
 
             if self.commit {
-                self.git.add(Some(path))?;
+                self.git.add_literal(path)?;
             }
 
             Ok(dep.tag)
         });
 
-        let actual_module_dir = if path.exists() {
-            self.git.root(path).absolute_git_dir().unwrap_or_else(|_| module_dir.clone())
-        } else {
-            module_dir.clone()
-        };
-
-        if result.is_err() && !existing_submodule && actual_module_dir == module_dir {
-            self.rollback_submodule(
-                &root,
-                relative_path,
-                path,
-                gitmodules_contents.as_deref(),
-                &actual_module_dir,
-                &submodule_config,
-            );
+        if result.is_err() && existing_submodule {
+            if let Some(head) = original_head
+                && let Err(err) = self.git.root(path).checkout(false, head)
+            {
+                warn!(%err, "failed to restore submodule HEAD after installation failure");
+            }
+            if (uninitialized_worktree || !worktree_existed)
+                && let Err(err) = git.submodule_deinit(true, relative_path)
+            {
+                warn!(%err, "failed to restore deinitialized submodule after installation failure");
+            }
+            if !worktree_existed
+                && path.exists()
+                && let Err(err) = fs::remove_dir_all(path)
+            {
+                warn!(%err, "failed to restore missing submodule worktree");
+            }
+            if !module_dir_existed
+                && module_dir.exists()
+                && let Err(err) = fs::remove_dir_all(&module_dir)
+            {
+                warn!(%err, "failed to remove created submodule Git directory");
+            }
+            if let Err(err) = git.restore_submodule_config(module_name, &submodule_config) {
+                warn!(%err, "failed to restore submodule config after installation failure");
+            }
         }
 
-        result
+        result.map(|tag| (tag, transaction.take()))
     }
 
     fn ensure_submodule_worktree(
@@ -541,55 +671,6 @@ impl Installer<'_> {
             );
         }
         Ok(())
-    }
-
-    fn rollback_submodule(
-        self,
-        root: &Path,
-        relative_path: &Path,
-        path: &Path,
-        gitmodules_contents: Option<&[u8]>,
-        module_dir: &Path,
-        submodule_config: &[(String, String)],
-    ) {
-        let git = self.git.root(root);
-        let gitmodules = root.join(".gitmodules");
-        if let Err(err) = git.submodule_deinit(true, relative_path) {
-            warn!(%err, "failed to remove submodule config after installation failure");
-        }
-        if let Err(err) = git.rm(true, Some(relative_path)) {
-            warn!(%err, "failed to remove submodule after installation failure");
-        }
-        if module_dir.exists()
-            && let Err(err) = fs::remove_dir_all(module_dir)
-        {
-            warn!(%err, "failed to remove submodule Git directory after installation failure");
-        }
-        match gitmodules_contents {
-            Some(contents) => {
-                if let Err(err) = fs::write(&gitmodules, contents) {
-                    warn!(%err, "failed to restore .gitmodules after installation failure");
-                } else if let Err(err) = git.add(Some(".gitmodules")) {
-                    warn!(%err, "failed to restore staged .gitmodules after installation failure");
-                }
-            }
-            None if gitmodules.exists() => {
-                if let Err(err) = fs::remove_file(&gitmodules) {
-                    warn!(%err, "failed to remove .gitmodules after installation failure");
-                } else if let Err(err) = git.add(Some(".gitmodules")) {
-                    warn!(%err, "failed to unstage .gitmodules after installation failure");
-                }
-            }
-            None => {}
-        }
-        if path.exists()
-            && let Err(err) = fs::remove_dir_all(path)
-        {
-            warn!(%err, "failed to remove dependency after installation failure");
-        }
-        if let Err(err) = git.restore_submodule_config(relative_path, submodule_config) {
-            warn!(%err, "failed to restore submodule config after installation failure");
-        }
     }
 
     fn last_tag(self, path: &Path) -> Option<String> {

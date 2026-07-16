@@ -8,6 +8,8 @@ use foundry_test_utils::util::{
     ExtTester, FORGE_STD_REVISION, OutputExt, TestCommand, pretty_err, read_string,
 };
 use semver::Version;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -170,6 +172,120 @@ Error: Tag: "this-tag-does-not-exist" not found for repo "https://github.com/vec
     assert!(!prj.root().join("lib/solady").exists());
     assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
     assert!(git.submodule_url(Path::new("lib/solady")).unwrap_or(None).is_none());
+});
+
+forgetest!(install_rejects_assume_unchanged_orphan_gitlink, |prj, cmd| {
+    cmd.git_init();
+    fs::write(prj.root().join("README.md"), "baseline").unwrap();
+    cmd.git_add();
+    cmd.git_commit("baseline");
+    let head = Command::new("git")
+        .current_dir(prj.root())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    let head = String::from_utf8(head).unwrap();
+    let git = |args: &[&str]| {
+        assert!(Command::new("git").current_dir(prj.root()).args(args).status().unwrap().success());
+    };
+    git(&["update-index", "--add", "--cacheinfo", "160000", head.trim(), "lib/solady"]);
+    git(&["update-index", "--assume-unchanged", "lib/solady"]);
+    let index = fs::read(prj.root().join(".git/index")).unwrap();
+    let status = Command::new("git")
+        .current_dir(prj.root())
+        .args(["status", "--porcelain=v2"])
+        .output()
+        .unwrap()
+        .stdout;
+
+    cmd.forge_fuse().args(["install", "vectorized/solady"]).assert_failure();
+
+    assert_eq!(fs::read(prj.root().join(".git/index")).unwrap(), index);
+    assert_eq!(
+        Command::new("git")
+            .current_dir(prj.root())
+            .args(["status", "--porcelain=v2"])
+            .output()
+            .unwrap()
+            .stdout,
+        status
+    );
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!prj.root().join("lib/solady").exists());
+});
+
+forgetest!(failed_install_with_wildcard_alias_preserves_sibling, |prj, cmd| {
+    cmd.git_init();
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();
+
+    cmd.forge_fuse()
+        .args(["install", "*=vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+
+    assert!(prj.root().join("lib/forge-std/.git").exists());
+    assert!(Git::new(prj.root()).is_gitlink(Path::new("lib/forge-std")).unwrap());
+});
+
+#[cfg(unix)]
+forgetest!(failed_install_commit_rolls_back_transaction, |prj, cmd| {
+    cmd.git_init();
+    fs::write(prj.root().join(FOUNDRY_LOCK), b"{}\n").unwrap();
+    cmd.git_add();
+    cmd.git_commit("baseline");
+    let head = Git::new(prj.root()).head().unwrap();
+    let status = Command::new("git")
+        .current_dir(prj.root())
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap()
+        .stdout;
+    let hook = prj.root().join(".git/hooks/pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    let mut permissions = fs::metadata(&hook).unwrap().permissions();
+    #[cfg(unix)]
+    {
+        permissions.set_mode(0o755);
+    }
+    fs::set_permissions(&hook, permissions).unwrap();
+
+    cmd.forge_fuse().args(["install", "--commit", "vectorized/solady"]).assert_failure();
+
+    let git = Git::new(prj.root());
+    assert_eq!(git.head().unwrap(), head);
+    assert_eq!(fs::read(prj.root().join(FOUNDRY_LOCK)).unwrap(), b"{}\n");
+    assert_eq!(
+        Command::new("git")
+            .current_dir(prj.root())
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap()
+            .stdout,
+        status
+    );
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(git.submodule_config(Path::new("lib/solady")).unwrap().is_empty());
+});
+
+#[cfg(unix)]
+forgetest!(failed_commit_preserves_hook_replacement, |prj, cmd| {
+    cmd.git_init();
+    let hook = prj.root().join(".git/hooks/pre-commit");
+    fs::write(
+        &hook,
+        "#!/bin/sh\nrm -rf lib/solady\nmkdir -p lib/solady\necho preserve > lib/solady/hook\nexit 1\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&hook).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook, permissions).unwrap();
+
+    cmd.forge_fuse().args(["install", "--commit", "vectorized/solady"]).assert_failure();
+
+    assert_eq!(read_string(prj.root().join("lib/solady/hook")), "preserve\n");
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!Git::new(prj.root()).is_gitlink(Path::new("lib/solady")).unwrap());
 });
 
 forgetest!(failed_install_preserves_gitmodules, |prj, cmd| {
@@ -502,6 +618,37 @@ forgetest!(can_explicitly_install_uninitialized_submodule, |prj, cmd| {
 
     cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();
     assert!(prj.root().join(dependency).join(".git").exists());
+});
+
+forgetest!(failed_explicit_install_restores_deinitialized_submodule, |prj, cmd| {
+    cmd.git_init();
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();
+    let dependency = Path::new("lib/forge-std");
+    let git = Git::new(prj.root());
+    git.submodule_deinit(true, dependency).unwrap();
+    let config = git.submodule_config(Path::new("lib/forge-std")).unwrap();
+    let status = Command::new("git")
+        .current_dir(prj.root())
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap()
+        .stdout;
+
+    cmd.forge_fuse()
+        .args(["install", "foundry-rs/forge-std@this-tag-does-not-exist"])
+        .assert_failure();
+
+    assert!(fs::read_dir(prj.root().join(dependency)).unwrap().next().is_none());
+    assert_eq!(git.submodule_config(Path::new("lib/forge-std")).unwrap(), config);
+    assert_eq!(
+        Command::new("git")
+            .current_dir(prj.root())
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap()
+            .stdout,
+        status
+    );
 });
 
 forgetest!(can_install_custom_named_submodule, |prj, cmd| {

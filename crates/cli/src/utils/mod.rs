@@ -449,6 +449,10 @@ impl<'a> Git<'a> {
         self.cmd().arg("add").args(paths).exec().map(drop)
     }
 
+    pub fn add_literal(self, path: &Path) -> Result<()> {
+        self.cmd().args(["--literal-pathspecs", "add", "--"]).arg(path).exec().map(drop)
+    }
+
     pub fn reset(self, hard: bool, tree: impl AsRef<OsStr>) -> Result<()> {
         self.cmd().arg("reset").args(hard.then_some("--hard")).arg(tree).exec().map(drop)
     }
@@ -472,6 +476,14 @@ impl<'a> Git<'a> {
         S: AsRef<OsStr>,
     {
         self.cmd().arg("rm").args(force.then_some("--force")).arg("--").args(paths).exec().map(drop)
+    }
+
+    pub fn remove_index_path(self, path: &Path) -> Result<()> {
+        self.cmd()
+            .args(["--literal-pathspecs", "rm", "--cached", "--force", "--"])
+            .arg(path)
+            .exec()
+            .map(drop)
     }
 
     pub fn commit(self, msg: &str) -> Result<()> {
@@ -511,7 +523,7 @@ impl<'a> Git<'a> {
 
     pub fn is_path_clean(self, path: &Path) -> Result<bool> {
         self.cmd()
-            .args(["status", "--porcelain", "--"])
+            .args(["--literal-pathspecs", "status", "--porcelain", "--"])
             .arg(path)
             .exec()
             .map(|out| out.stdout.is_empty())
@@ -749,12 +761,13 @@ ignore them in the `.gitignore` file."
     {
         self.cmd()
             .stderr(self.stderr())
-            .args(["submodule", "update", "--progress", "--init"])
+            .args(["--literal-pathspecs", "submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
             .args(remote.then_some("--remote"))
             .args(no_fetch.then_some("--no-fetch"))
             .args(recursive.then_some("--recursive"))
+            .arg("--")
             .args(paths)
             .exec()
             .map(drop)
@@ -787,7 +800,7 @@ ignore them in the `.gitignore` file."
     pub fn submodule_deinit(self, force: bool, path: &Path) -> Result<()> {
         self.cmd()
             .stderr(self.stderr())
-            .args(["submodule", "deinit"])
+            .args(["--literal-pathspecs", "submodule", "deinit"])
             .args(force.then_some("--force"))
             .arg("--")
             .arg(path)
@@ -884,6 +897,15 @@ ignore them in the `.gitignore` file."
         })
     }
 
+    /// Returns whether the index contains any entry at or below the given path.
+    pub fn has_index_entries(self, path: &Path) -> Result<bool> {
+        self.cmd()
+            .args(["--literal-pathspecs", "ls-files", "--stage", "-z", "--"])
+            .arg(path)
+            .exec()
+            .map(|output| !output.stdout.is_empty())
+    }
+
     /// Returns whether the index contains the exact path.
     pub fn is_tracked(self, path: &Path) -> Result<bool> {
         self.cmd().args(["ls-files", "-z", "--"]).arg(path).exec().map(|output| {
@@ -943,7 +965,11 @@ ignore them in the `.gitignore` file."
 
     /// Sets the branch for a submodule.
     pub fn set_submodule_branch(self, rel_path: &Path, branch: &str) -> Result<()> {
-        self.cmd().args(["submodule", "set-branch", "-b", branch]).arg(rel_path).exec().map(drop)
+        self.cmd()
+            .args(["--literal-pathspecs", "submodule", "set-branch", "-b", branch, "--"])
+            .arg(rel_path)
+            .exec()
+            .map(drop)
     }
 
     /// Returns remote branch names as a newline-separated string.
