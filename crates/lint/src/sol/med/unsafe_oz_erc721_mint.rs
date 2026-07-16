@@ -130,8 +130,9 @@ impl MintCallFinder<'_, '_, '_, '_> {
             });
         }
         // A delegating override: any call in its body dispatching to an unsafe `_mint`. An
-        // override that reverts when the recipient refuses the token is a safe wrapper like the
-        // canonical `_safeMint`, so it is not an unsafe target. See [`walk_guards`].
+        // override whose successful paths prove the recipient code-less or reject it after the
+        // delegation is a safe wrapper like canonical `_safeMint`, so it is not an unsafe target.
+        // See [`walk_guards`].
         if function.override_
             && let Some(body) = &function.body
         {
@@ -206,8 +207,9 @@ impl MintCallFinder<'_, '_, '_, '_> {
                         token = Some(minted);
                     }
                     // A token that is not a plain variable, a literal or an expression, cannot
-                    // be matched against what a guard was asked about; neither can one the
-                    // recipient may move under the guard's feet, see [`keeps_its_value`].
+                    // be matched against what a guard was asked about; neither can a mutable
+                    // state variable that an intervening or recursively delegated call may move
+                    // under the guard's feet, see [`keeps_its_value`].
                     None => token_consistent = false,
                 }
             }
@@ -232,7 +234,11 @@ impl MintCallFinder<'_, '_, '_, '_> {
                     recipient,
                     GuardCoverage::None,
                 );
-                let mut walk = GuardWalk { coverage, ..GuardWalk::default() };
+                let mut walk = GuardWalk {
+                    coverage: coverage.coverage,
+                    future_coverage: coverage.future_coverage,
+                    ..GuardWalk::default()
+                };
                 walk_guards(
                     self.gcx,
                     self.hir,
@@ -256,12 +262,10 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 && let Some(recipient) = recipient
                 && let Some(token) = token
             {
-                // A modifier guard runs at the call boundary, so it starts the body covered:
-                // it acknowledged the values passed in. But the body is still read in order,
-                // because it holds a copy of those values, and reassigning the recipient or the
-                // token before a delegation credits a value the modifier never saw. Seeding the
-                // walk covered lets the body's own reassignments retire it, the way a body guard
-                // is retired. See [`walk_guards`].
+                // Modifier expansion may supply a code-less proof before the body or a callback
+                // guard after it. The body is still read in order because reassigning the
+                // recipient or token can make either guard name a different value from the
+                // delegation. See [`walk_guards`].
                 let coverage = modifier_coverage_at_body(
                     self.gcx,
                     self.hir,
@@ -270,7 +274,11 @@ impl MintCallFinder<'_, '_, '_, '_> {
                     token,
                     GuardCoverage::None,
                 );
-                let mut walk = GuardWalk { coverage, ..GuardWalk::default() };
+                let mut walk = GuardWalk {
+                    coverage: coverage.coverage,
+                    future_coverage: coverage.future_coverage,
+                    ..GuardWalk::default()
+                };
                 walk_guards(
                     self.gcx,
                     self.hir,
@@ -335,7 +343,11 @@ impl MintCallFinder<'_, '_, '_, '_> {
                     recipient,
                     GuardCoverage::CodeLess,
                 );
-                let mut code_length_walk = GuardWalk { coverage, ..GuardWalk::default() };
+                let mut code_length_walk = GuardWalk {
+                    coverage: coverage.coverage,
+                    future_coverage: coverage.future_coverage,
+                    ..GuardWalk::default()
+                };
                 walk_guards(
                     self.gcx,
                     self.hir,
@@ -551,10 +563,10 @@ fn is_exactly_var<'hir>(expr: &'hir Expr<'hir>, variable: hir::VariableId) -> bo
     false
 }
 
-/// Whether nothing can reassign the variable between the guard and the delegation. The hook is
-/// an external call: the recipient answering it can reenter and move a mutable state variable
-/// before the mint credits it, so the value the guard asked about and the one minted may
-/// differ. A local, a parameter, a `constant` or an `immutable` cannot be moved that way.
+/// Whether the variable cannot change between the delegation and the callback guard. An
+/// intervening call, including one inside a recursively delegated override, can reenter and
+/// mutate a state variable after the mint reads it but before the guard does. A local, a
+/// parameter, a `constant` or an `immutable` cannot be moved that way.
 fn keeps_its_value(hir: &Hir<'_>, variable: hir::VariableId) -> bool {
     let variable = hir.variable(variable);
     !variable.is_state_variable() || variable.is_constant() || variable.is_immutable()
@@ -860,7 +872,7 @@ fn acceptance_coverage<'hir>(
             && is_hook_comparison(gcx, hir, check, recipient, token, hir::BinOpKind::Eq)
     };
     if accepts(lhs, rhs) || accepts(rhs, lhs) {
-        GuardCoverage::CodeLess
+        GuardCoverage::CallbackOrCodeLess
     } else {
         GuardCoverage::None
     }
@@ -916,20 +928,26 @@ fn bound_guard_parameters<'hir>(
     recipient_parameter.zip(token_parameter)
 }
 
-/// How a path established that the recipient can safely receive the mint. Callback coverage is
-/// stable across later calls, while a code-less proof must be retired once a call could deploy
-/// code at the recipient address.
+/// How a path established that the recipient can receive the mint. Callback evidence remains
+/// valid when summarizing a guard helper, while a code-less proof must be retired once a call
+/// could deploy code at the recipient address. Whether the evidence can cover a future mint is
+/// tracked separately by [`GuardWalk::future_coverage`].
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum GuardCoverage {
     #[default]
     None,
     Callback,
     CodeLess,
+    CallbackOrCodeLess,
 }
 
 impl GuardCoverage {
     fn is_covered(self) -> bool {
         self != Self::None
+    }
+
+    const fn relies_on_code_length(self) -> bool {
+        matches!(self, Self::CodeLess | Self::CallbackOrCodeLess)
     }
 
     /// The coverage guaranteed after either branch. If one path relies on a code-less proof,
@@ -938,15 +956,19 @@ impl GuardCoverage {
         match (self, other) {
             (Self::None, _) | (_, Self::None) => Self::None,
             (Self::Callback, Self::Callback) => Self::Callback,
-            _ => Self::CodeLess,
+            (Self::CodeLess, Self::CodeLess) => Self::CodeLess,
+            _ => Self::CallbackOrCodeLess,
         }
     }
 
-    /// Coverage from guards that all execute. A callback check is the stronger proof because it
-    /// remains sufficient even when a later call invalidates a separate code-length check.
+    /// Coverage from guards that all execute. A callback check remains valid when a later call
+    /// invalidates a separate code-length observation.
     const fn combine_guards(self, other: Self) -> Self {
         match (self, other) {
             (Self::Callback, _) | (_, Self::Callback) => Self::Callback,
+            (Self::CallbackOrCodeLess, _) | (_, Self::CallbackOrCodeLess) => {
+                Self::CallbackOrCodeLess
+            }
             (Self::CodeLess, _) | (_, Self::CodeLess) => Self::CodeLess,
             _ => Self::None,
         }
@@ -959,18 +981,23 @@ impl GuardCoverage {
 /// before any guard ran.
 #[derive(Clone, Default)]
 struct GuardWalk {
+    /// The guards that have run on every path. This is used when summarizing a guard helper.
     coverage: GuardCoverage,
+    /// Coverage that can satisfy a delegation encountered later. A code-less proof can precede
+    /// the mint; callback coverage can only appear here when a modifier tail guarantees that the
+    /// callback runs after the body.
+    future_coverage: GuardCoverage,
     pending: bool,
     failed: bool,
     escaped: bool,
 }
 
-/// Reads a body in statement order and judges the delegated mints against the guards. A guard
-/// executed before a delegation covers it, the recipient having accepted the token by the time
-/// it is credited; one executed after covers the delegations still pending, the revert undoing
-/// them, unless a statement in between may leave the function successfully, keeping the
-/// unacknowledged token: `super._mint(to, id); if (id == 0) return; require(hook...)` walks out
-/// with token zero standing.
+/// Reads a body in statement order and judges the delegated mints against the guards. A code-less
+/// proof may cover a later delegation, but a callback must run after ownership is established to
+/// match `_safeMint`: the receiver can inspect `ownerOf`, balances, or reenter during the hook.
+/// Such a callback covers delegations still pending, the revert undoing them, unless a statement
+/// in between may leave the function successfully, keeping the unacknowledged token:
+/// `super._mint(to, id); if (id == 0) return; require(hook...)` walks out with token zero standing.
 ///
 /// The recognized guard shapes are a closed set, because a hook call that merely appears inside
 /// a condition proves nothing about whether the revert depends on its answer. They are:
@@ -1031,7 +1058,7 @@ fn walk_guards<'hir>(
                 // builtin has a chance to revert.
                 let mutates = mutates_var(hir, stmt, recipient) || mutates_var(hir, stmt, token);
                 let escapes = may_return(gcx, hir, stmt);
-                let changes_code = guard_coverage == GuardCoverage::CodeLess
+                let changes_code = guard_coverage.relies_on_code_length()
                     && guard_extra_args_may_change_account_code(
                         gcx,
                         hir,
@@ -1044,6 +1071,7 @@ fn walk_guards<'hir>(
                         walk.failed = true;
                     }
                     walk.coverage = GuardCoverage::None;
+                    walk.future_coverage = GuardCoverage::None;
                 } else if escapes {
                     if walk.pending {
                         walk.failed = true;
@@ -1052,11 +1080,14 @@ fn walk_guards<'hir>(
                         walk.escaped = true;
                     }
                 } else if changes_code {
-                    if walk.coverage == GuardCoverage::CodeLess {
-                        walk.coverage = GuardCoverage::None;
+                    if walk.future_coverage.relies_on_code_length() {
+                        walk.future_coverage = GuardCoverage::None;
                     }
                 } else {
                     walk.coverage = walk.coverage.combine_guards(guard_coverage);
+                    if guard_coverage == GuardCoverage::CodeLess {
+                        walk.future_coverage = walk.future_coverage.combine_guards(guard_coverage);
+                    }
                     walk.pending = false;
                 }
             }
@@ -1073,8 +1104,10 @@ fn walk_guards<'hir>(
                         walk.failed = true;
                     }
                     walk.coverage = GuardCoverage::None;
+                    walk.future_coverage = GuardCoverage::None;
                 }
-                if walk.coverage == GuardCoverage::CodeLess
+                let future_relies_on_code = walk.future_coverage.relies_on_code_length();
+                if future_relies_on_code
                     && expr_may_change_account_code(
                         gcx,
                         hir,
@@ -1083,7 +1116,7 @@ fn walk_guards<'hir>(
                         unstable_code_delegations,
                     )
                 {
-                    walk.coverage = GuardCoverage::None;
+                    walk.future_coverage = GuardCoverage::None;
                 }
                 if condition_escapes {
                     if walk.pending {
@@ -1145,9 +1178,13 @@ fn walk_guards<'hir>(
                 let mut else_walk = walk.clone();
                 if is_code_length_test(cond, recipient, true) {
                     else_walk.coverage = else_walk.coverage.combine_guards(GuardCoverage::CodeLess);
+                    else_walk.future_coverage =
+                        else_walk.future_coverage.combine_guards(GuardCoverage::CodeLess);
                     else_walk.pending = false;
                 } else if is_code_length_test(cond, recipient, false) {
                     then_walk.coverage = then_walk.coverage.combine_guards(GuardCoverage::CodeLess);
+                    then_walk.future_coverage =
+                        then_walk.future_coverage.combine_guards(GuardCoverage::CodeLess);
                     then_walk.pending = false;
                 }
                 walk_one(
@@ -1179,6 +1216,8 @@ fn walk_guards<'hir>(
                 // A guard behind a condition only counts when every path passed one; anything
                 // pending or escaped on either path stands.
                 walk.coverage = then_walk.coverage.merge_paths(else_walk.coverage);
+                walk.future_coverage =
+                    then_walk.future_coverage.merge_paths(else_walk.future_coverage);
                 walk.pending = then_walk.pending || else_walk.pending;
                 walk.failed = then_walk.failed || else_walk.failed;
                 walk.escaped = then_walk.escaped || else_walk.escaped;
@@ -1195,11 +1234,14 @@ fn walk_guards<'hir>(
                         walk.failed = true;
                     }
                     walk.coverage = GuardCoverage::None;
+                    walk.future_coverage = GuardCoverage::None;
                 }
                 // Unlike a callback acknowledgement, a code-length observation is only a
                 // snapshot. A later state-changing call can deploy code at that address, so it
-                // retires the proof before a subsequent delegation.
-                if walk.coverage == GuardCoverage::CodeLess
+                // retires coverage for a subsequent delegation. A mint already discharged by
+                // the observation remains safe.
+                let future_relies_on_code = walk.future_coverage.relies_on_code_length();
+                if future_relies_on_code
                     && stmt_may_change_account_code(
                         gcx,
                         hir,
@@ -1208,14 +1250,16 @@ fn walk_guards<'hir>(
                         unstable_code_delegations,
                     )
                 {
-                    walk.coverage = GuardCoverage::None;
+                    walk.future_coverage = GuardCoverage::None;
                 }
                 // An opaque statement: a delegation anywhere inside it mints, unchecked unless
                 // already covered, and a possible successful exit walks out with whatever is
                 // pending. The placeholder counts as one when the wrapped body can leave
                 // through an assembly `return`, which skips everything after `_;`: a guard only
                 // the modifier's tail holds is then not guaranteed.
-                if !walk.coverage.is_covered() && contains_delegation(gcx, hir, stmt, delegations) {
+                if !walk.future_coverage.is_covered()
+                    && contains_delegation(gcx, hir, stmt, delegations)
+                {
                     walk.pending = true;
                 }
                 if may_return(gcx, hir, stmt) || (bypass && contains_placeholder(hir, stmt)) {
@@ -1741,7 +1785,18 @@ fn body_guards<'hir>(
         if parameters_unchanged {
             let mut walk = GuardWalk::default();
             walk_guards(gcx, hir, body.stmts, recipient, token, &[], &[], bypass, seen, &mut walk);
-            if walk.escaped { GuardCoverage::None } else { walk.coverage }
+            if walk.escaped {
+                GuardCoverage::None
+            } else if walk.future_coverage == GuardCoverage::CodeLess {
+                GuardCoverage::CodeLess
+            } else if walk.coverage == GuardCoverage::CodeLess {
+                // The code-less observation can discharge a mint that preceded the helper, but
+                // later work invalidated it for a mint after the helper. Use the mixed marker:
+                // callers treat it as discharge-only, like a callback.
+                GuardCoverage::CallbackOrCodeLess
+            } else {
+                walk.coverage
+            }
         } else {
             GuardCoverage::None
         }
@@ -1750,6 +1805,14 @@ fn body_guards<'hir>(
     };
     seen.pop();
     guarded
+}
+
+/// Guard state in effect while a function body runs after expanding its modifier prefixes and
+/// accounting for guaranteed modifier tails.
+#[derive(Clone, Copy)]
+struct ModifierCoverage {
+    coverage: GuardCoverage,
+    future_coverage: GuardCoverage,
 }
 
 /// Coverage in effect when a function body starts after expanding its modifiers in declaration
@@ -1764,7 +1827,8 @@ fn modifier_coverage_at_body<'hir>(
     recipient: hir::VariableId,
     token: hir::VariableId,
     mut coverage: GuardCoverage,
-) -> GuardCoverage {
+) -> ModifierCoverage {
+    let mut future_coverage = coverage;
     let body_bypass = function
         .body
         .as_ref()
@@ -1777,15 +1841,16 @@ fn modifier_coverage_at_body<'hir>(
             .any(|arg| expr_mutates_var(hir, arg, recipient) || expr_mutates_var(hir, arg, token))
         {
             coverage = GuardCoverage::None;
+            future_coverage = GuardCoverage::None;
             has_tail_guard = false;
         }
-        if coverage == GuardCoverage::CodeLess
-            && modifier
-                .args
-                .exprs()
-                .any(|arg| expr_may_change_account_code(gcx, hir, arg, &[], &[]))
-        {
+        let argument_may_change_code =
+            modifier.args.exprs().any(|arg| expr_may_change_account_code(gcx, hir, arg, &[], &[]));
+        if coverage.relies_on_code_length() && argument_may_change_code {
             coverage = GuardCoverage::None;
+        }
+        if future_coverage.relies_on_code_length() && argument_may_change_code {
+            future_coverage = GuardCoverage::None;
         }
         let hir::ItemId::Function(modifier_id) = modifier.id else { continue };
         let modifier_function = hir.function(modifier_id);
@@ -1794,23 +1859,37 @@ fn modifier_coverage_at_body<'hir>(
             // Without a single top-level placeholder, the precise prefix is unknown. Still
             // retire an inherited snapshot when any path through the modifier may change code;
             // keeping it would let a nested/multiple-placeholder deployment reach the body.
-            if coverage == GuardCoverage::CodeLess
+            let coverage_relies_on_code = coverage.relies_on_code_length();
+            let future_relies_on_code = future_coverage.relies_on_code_length();
+            if (coverage_relies_on_code || future_relies_on_code)
                 && body
                     .stmts
                     .iter()
                     .any(|stmt| stmt_may_change_account_code(gcx, hir, stmt, &[], &[]))
             {
-                coverage = GuardCoverage::None;
+                if coverage_relies_on_code {
+                    coverage = GuardCoverage::None;
+                }
+                if future_relies_on_code {
+                    future_coverage = GuardCoverage::None;
+                }
             }
             continue;
         };
         let Some((modifier_recipient, modifier_token)) =
             bound_guard_parameters(hir, modifier_id, &modifier.args, recipient, token)
         else {
-            if coverage == GuardCoverage::CodeLess
+            let coverage_relies_on_code = coverage.relies_on_code_length();
+            let future_relies_on_code = future_coverage.relies_on_code_length();
+            if (coverage_relies_on_code || future_relies_on_code)
                 && prefix.iter().any(|stmt| stmt_may_change_account_code(gcx, hir, stmt, &[], &[]))
             {
-                coverage = GuardCoverage::None;
+                if coverage_relies_on_code {
+                    coverage = GuardCoverage::None;
+                }
+                if future_relies_on_code {
+                    future_coverage = GuardCoverage::None;
+                }
             }
             continue;
         };
@@ -1818,7 +1897,7 @@ fn modifier_coverage_at_body<'hir>(
             mutates_var(hir, stmt, modifier_recipient) || mutates_var(hir, stmt, modifier_token)
         });
         if parameters_unchanged {
-            let mut prefix_walk = GuardWalk { coverage, ..GuardWalk::default() };
+            let mut prefix_walk = GuardWalk { coverage, future_coverage, ..GuardWalk::default() };
             walk_guards(
                 gcx,
                 hir,
@@ -1832,10 +1911,16 @@ fn modifier_coverage_at_body<'hir>(
                 &mut prefix_walk,
             );
             coverage = prefix_walk.coverage;
-        } else if coverage == GuardCoverage::CodeLess
-            && prefix.iter().any(|stmt| stmt_may_change_account_code(gcx, hir, stmt, &[], &[]))
-        {
-            coverage = GuardCoverage::None;
+            future_coverage = prefix_walk.future_coverage;
+        } else {
+            let prefix_may_change_code =
+                prefix.iter().any(|stmt| stmt_may_change_account_code(gcx, hir, stmt, &[], &[]));
+            if coverage.relies_on_code_length() && prefix_may_change_code {
+                coverage = GuardCoverage::None;
+            }
+            if future_coverage.relies_on_code_length() && prefix_may_change_code {
+                future_coverage = GuardCoverage::None;
+            }
         }
 
         let inner_modifier_bypass = function.modifiers[index + 1..].iter().any(|inner| {
@@ -1862,7 +1947,11 @@ fn modifier_coverage_at_body<'hir>(
             has_tail_guard |= !suffix_walk.failed && !suffix_walk.pending;
         }
     }
-    if has_tail_guard { coverage.combine_guards(GuardCoverage::Callback) } else { coverage }
+    if has_tail_guard {
+        coverage = coverage.combine_guards(GuardCoverage::Callback);
+        future_coverage = future_coverage.combine_guards(GuardCoverage::Callback);
+    }
+    ModifierCoverage { coverage, future_coverage }
 }
 
 /// The statements before and after a modifier's single top-level placeholder. More complicated

@@ -15,9 +15,10 @@ import {ERC721 as LocalERC721} from "./auxiliary/not-openzeppelin/Erc721Mocks.so
 // function named `_mint` declared in a contract named exactly `ERC721`, `ERC721Upgradeable`,
 // `ERC721Consecutive` or `ERC721ConsecutiveUpgradeable` (the v4 Consecutive extensions forward
 // to the base without the check) whose source comes from an OpenZeppelin package path, or to a
-// user `_mint` override that transitively delegates to one of those, unless the recipient's
-// refusal reverts the mint. Calls to `_safeMint`, calls made inside the canonical `_safeMint`
-// wrapper, `_mint` functions of other contracts and same-name local contracts stay clean.
+// user `_mint` override that transitively delegates to one of those, unless every successful path
+// proves the recipient code-less or rejects it after the delegation. Calls to `_safeMint`, calls
+// made inside the canonical `_safeMint` wrapper, `_mint` functions of other contracts and
+// same-name local contracts stay clean.
 
 // Same `_mint` shape on a fungible token: transfers need no receiver check, out of scope.
 contract ERC20 {
@@ -260,9 +261,8 @@ interface INotAReceiver {
     function onERC721Received(address operator) external returns (bytes4);
 }
 
-// An override whose delegated mint reverts when the recipient refuses is a safe wrapper, like
-// the canonical `_safeMint`: its direct callers are not reported. Skipping the hook for an
-// account is the one admissible reason not to run it.
+// Calling the hook before ownership is established is not equivalent to `_safeMint`: the
+// recipient may accept before the mint but reject after it based on `ownerOf` or its balance.
 contract CheckedOverrideNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         if (to.code.length > 0) {
@@ -276,7 +276,7 @@ contract CheckedOverrideNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id);
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 
@@ -296,7 +296,7 @@ contract CheckedAfterMintNft is ERC721 {
     }
 }
 
-// An `if` whose branch always exits is a guard too.
+// A reverting refusal branch still runs the callback too early when it precedes the mint.
 contract CheckedByRevertNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         if (
@@ -309,11 +309,12 @@ contract CheckedByRevertNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id);
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 
-// The account short circuit runs the hook for every recipient carrying code.
+// The account short circuit is safe for accounts, but contract recipients are called before
+// ownership is established and can make their decision based on the missing state.
 contract CheckedOrAccountNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         require(
@@ -326,11 +327,11 @@ contract CheckedOrAccountNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id);
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 
-// A modifier carries the guard as well as the body does.
+// A callback in a modifier prefix still precedes the wrapped mint and cannot replace `_safeMint`.
 contract CheckedByModifierNft is ERC721 {
     modifier checked(address to, uint256 tokenId) {
         require(
@@ -347,7 +348,7 @@ contract CheckedByModifierNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id);
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 
@@ -485,7 +486,7 @@ contract InvertedGuardNft is ERC721 {
     }
 }
 
-// `to.code.length >= 1` says the recipient carries code, as `> 0` does.
+// `to.code.length >= 1` selects contracts, but their callback still runs before ownership is set.
 contract CheckedAtLeastOneNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         if (to.code.length >= 1) {
@@ -499,7 +500,7 @@ contract CheckedAtLeastOneNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id);
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 
@@ -703,15 +704,15 @@ contract ImmutableAnswerNft is ERC721 {
     }
 }
 
-// Named arguments come in source order, not in parameter order: the token still goes to `to`.
+// Named mint arguments preserve the checked identities for a callback that follows the mint.
 contract NamedArgumentNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint({tokenId: tokenId, to: to});
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        super._mint({tokenId: tokenId, to: to});
     }
 
     function mint(address to, uint256 id) external {
@@ -719,14 +720,14 @@ contract NamedArgumentNft is ERC721 {
     }
 }
 
-// `assert` reverts on refusal as `require` does.
+// `assert` reverts on refusal as `require` does when it follows the mint.
 contract CheckedByAssertNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
         assert(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector
         );
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -734,16 +735,16 @@ contract CheckedByAssertNft is ERC721 {
     }
 }
 
-// The accepting answer may be held by a named constant, as the older OpenZeppelin releases do.
+// The accepting answer may be held by a named constant in a post-mint callback guard.
 contract NamedSelectorNft is ERC721 {
     bytes4 private constant RECEIVED = 0x150b7a02;
 
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "") == RECEIVED,
             "unsafe receiver"
         );
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -803,22 +804,23 @@ contract BoolHelperNft is ERC721 {
     }
 }
 
-// The guard may sit in a helper the recipient is handed to, the way OpenZeppelin factors
-// `_checkOnERC721Received` out of `_safeMint`.
+// A helper can discharge a mint that preceded it. Later state-changing work in the helper cannot
+// retroactively invalidate the completed code-less or callback check.
 contract CheckedViaHelperNft is ERC721 {
     function _requireReceiver(address to, uint256 tokenId) private {
         require(
-            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
-                == IERC721Receiver.onERC721Received.selector,
+            to.code.length == 0
+                || IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                    == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
+        (bool ok,) = to.call("");
+        ok;
     }
 
     function _mint(address to, uint256 tokenId) internal virtual override {
-        if (to.code.length > 0) {
-            _requireReceiver(to, tokenId);
-        }
         super._mint(to, tokenId);
+        _requireReceiver(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1092,8 +1094,8 @@ contract AccountOnlyThenViewCallNft is ERC721 {
     }
 }
 
-// A receiver callback is a stable proof: the recipient already had code and acknowledged the
-// token, so a later state-changing call does not invalidate it.
+// A receiver callback before the mint is not proof of post-mint acceptance, regardless of an
+// unrelated state-changing call between the callback and delegation.
 contract CallbackThenInternalCallNft is ERC721 {
     function _deployOther(uint256 salt) private {
         new Create2NonReceiver{salt: bytes32(salt)}();
@@ -1110,7 +1112,7 @@ contract CallbackThenInternalCallNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id);
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 
@@ -1340,8 +1342,8 @@ contract NamedHelperArgsNft is ERC721 {
     }
 
     function _mint(address to, uint256 tokenId) internal virtual override {
-        _check({other: to, checked: guardian, id: tokenId});
         super._mint(to, tokenId);
+        _check({other: to, checked: guardian, id: tokenId});
     }
 
     function mint(address to, uint256 id) external {
@@ -1361,8 +1363,8 @@ contract HelperWrongTokenNft is ERC721 {
     }
 
     function _mint(address to, uint256 tokenId) internal virtual override {
-        _check(to, tokenId);
         super._mint(to, tokenId);
+        _check(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1370,20 +1372,24 @@ contract HelperWrongTokenNft is ERC721 {
     }
 }
 
-// The token is a mutable state variable: the hook is an external call, so the recipient
-// answering it can reenter and move `nextId` before the mint credits it, and the token asked
-// about is then not the one minted.
+// A mutable state token is not a stable identity: an intervening call can reenter and change it
+// after the mint reads the old value but before the callback guard reads the new one.
 contract StateTokenNft is ERC721 {
     uint256 internal nextId;
 
     function _mint(address to, uint256 tokenId) internal virtual override {
         tokenId;
+        super._mint(to, nextId);
+        this.bumpNextId();
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), nextId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        super._mint(to, nextId);
+    }
+
+    function bumpNextId() external {
+        nextId++;
     }
 
     function mint(address to, uint256 id) external {
@@ -1395,12 +1401,12 @@ contract StateTokenNft is ERC721 {
 // accept the former and refuse the latter.
 contract WrongTokenHookNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId + 1, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1430,12 +1436,12 @@ contract ForeignSelectorNft is ERC721 {
 // usually not the one the guard asked, so the cast does not preserve the recipient.
 contract TruncatedRecipientNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(address(uint160(uint8(uint160(to)))), tokenId);
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        super._mint(address(uint160(uint8(uint160(to)))), tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1443,9 +1449,7 @@ contract TruncatedRecipientNft is ERC721 {
     }
 }
 
-// The guard lives in a modifier, which checked the values passed in, but the body reassigns
-// the token before delegating: the modifier saw a copy of the old value, the mint credits the
-// new one.
+// A callback modifier prefix is too early to cover the mint; the body also remaps its token.
 contract ModifierGuardRemapTokenNft is ERC721 {
     modifier checked(address to, uint256 tokenId) {
         require(
@@ -1466,7 +1470,8 @@ contract ModifierGuardRemapTokenNft is ERC721 {
     }
 }
 
-// The modifier checked the recipient, the body redirects it before delegating.
+// A callback modifier prefix is too early to cover the mint; the body also redirects its
+// recipient.
 contract ModifierGuardRedirectNft is ERC721 {
     address internal attacker;
 
@@ -1516,17 +1521,17 @@ contract ModifierTailRemapNft is ERC721 {
     }
 }
 
-// The guard reassigns the token inside one of the hook's own arguments: the comparison still
-// matches the token as the hook's third argument, but the delegated value has moved.
+// A post-mint guard reassigns the token inside another hook argument. Conservatively, mutation
+// during the guard retires correlation even though the third argument was evaluated first.
 contract GuardArgReassignNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
         require(
             IERC721Receiver(to).onERC721Received(
                 msg.sender, address(0), tokenId, abi.encodePacked(tokenId = tokenId + 1)
             ) == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1534,17 +1539,17 @@ contract GuardArgReassignNft is ERC721 {
     }
 }
 
-// The token is reassigned inside an `if` condition, which runs before either branch: the hook
-// acknowledged the old value, the mint credits the new one.
+// The token is reassigned inside an `if` condition between the mint and callback, so the hook
+// acknowledges a different value from the one already credited.
 contract CondAssignTokenNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+        if ((tokenId = tokenId + 1) > 0) {}
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        if ((tokenId = tokenId + 1) > 0) {}
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1552,19 +1557,19 @@ contract CondAssignTokenNft is ERC721 {
     }
 }
 
-// The recipient is redirected inside an `if` condition: the hook asked the original address,
-// the mint credits another.
+// The recipient is redirected inside an `if` condition after the mint, so the hook asks another
+// address to accept the already credited token.
 contract CondAssignRecipientNft is ERC721 {
     address internal attacker;
 
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+        if ((to = attacker) != address(0)) {}
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        if ((to = attacker) != address(0)) {}
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1572,16 +1577,16 @@ contract CondAssignRecipientNft is ERC721 {
     }
 }
 
-// A post-increment in an `if` condition returns the checked value and mints the next one.
+// A post-increment between the mint and callback makes the hook acknowledge the next token.
 contract CondIncrementTokenNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+        if (tokenId++ > 0) {}
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        if (tokenId++ > 0) {}
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1589,18 +1594,18 @@ contract CondIncrementTokenNft is ERC721 {
     }
 }
 
-// The guard checks a local, which is then reassigned before the delegation: identity is by
-// variable, so the same name now credits a token the recipient never acknowledged.
+// A local is reassigned after the mint, so the later callback checks another token despite using
+// the same variable name.
 contract LocalTokenReassignNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         uint256 id = tokenId;
+        super._mint(to, id);
+        id = tokenId + 1;
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), id, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        id = tokenId + 1;
-        super._mint(to, id);
     }
 
     function mint(address to, uint256 id) external {
@@ -1608,19 +1613,18 @@ contract LocalTokenReassignNft is ERC721 {
     }
 }
 
-// The recipient parameter is reassigned after the guard: the hook asked the original address,
-// the token goes to another.
+// The recipient parameter is reassigned after the mint, so the callback asks another address.
 contract RecipientReassignNft is ERC721 {
     address internal attacker;
 
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+        to = attacker;
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        to = attacker;
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1628,17 +1632,16 @@ contract RecipientReassignNft is ERC721 {
     }
 }
 
-// The token parameter is remapped after the guard, the collection-offset pattern: the hook
-// acknowledged `tokenId`, the mint credits `tokenId + 1`.
+// The token parameter is remapped after the mint, so the callback acknowledges the offset token.
 contract ParamTokenRemapNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
+        tokenId = tokenId + 1;
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        tokenId = tokenId + 1;
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1728,9 +1731,10 @@ contract ConditionalMintNft is ERC721 {
     }
 }
 
-// A guard behind a condition counts when every branch holds one: each path checked.
+// A post-mint callback behind a condition covers the mint when every branch performs one.
 contract EitherBranchGuardNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
         if (tokenId % 2 == 0) {
             require(
                 IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
@@ -1744,7 +1748,6 @@ contract EitherBranchGuardNft is ERC721 {
                 "unsafe receiver too"
             );
         }
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -1877,8 +1880,8 @@ contract UsesLocalErc721 is LocalERC721 {
     }
 }
 
-// Recursive unsafe targets preserve both identities when every intermediate override forwards
-// the values it received unchanged, so an outer guard covers the canonical mint.
+// Recursive unsafe targets preserve both identities, so an outer callback after the recursive
+// delegation covers the canonical mint.
 contract RecursiveIdentityBaseNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         super._mint(to, tokenId);
@@ -1887,12 +1890,12 @@ contract RecursiveIdentityBaseNft is ERC721 {
 
 contract RecursiveIdentityCheckedNft is RecursiveIdentityBaseNft {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -2052,7 +2055,7 @@ contract RecursiveCodeLessRecipientRemapNft is RecursiveRecipientRemapBaseNft {
     }
 }
 
-// A mint in the accepted branch is covered: the refusing branch always reverts.
+// Even in the accepted branch, the callback ran before ownership was established.
 contract AcceptedBranchMintNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         if (
@@ -2066,7 +2069,7 @@ contract AcceptedBranchMintNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id);
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 
@@ -2262,15 +2265,15 @@ contract RefusalPointerAssemblyEscapeNft is ERC721 {
     }
 }
 
-// Same-width selector conversions preserve the four-byte accepting answer.
+// A same-width selector conversion preserves the accepting answer for a post-mint callback.
 contract PreservingSelectorCastNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == bytes4(uint32(0x150b7a02)),
             "unsafe receiver"
         );
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -2281,12 +2284,12 @@ contract PreservingSelectorCastNft is ERC721 {
 // The `uint8` conversion truncates the selector to `0x02`; later widening cannot restore it.
 contract TruncatedSelectorCastNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
+        super._mint(to, tokenId);
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == bytes4(uint32(uint8(uint32(0x150b7a02)))),
             "unsafe receiver"
         );
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -2294,8 +2297,8 @@ contract TruncatedSelectorCastNft is ERC721 {
     }
 }
 
-// Helper recursion detection is path scoped. The first check is retired by the mutation, and an
-// independent second call to the same helper establishes fresh coverage for the remapped token.
+// Helper recursion detection is path scoped. After the first check and mutation, an independent
+// second call to the same helper follows the mint and covers the remapped token.
 contract RepeatedGuardHelperNft is ERC721 {
     function _check(address to, uint256 tokenId) private {
         require(
@@ -2308,8 +2311,8 @@ contract RepeatedGuardHelperNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         _check(to, tokenId);
         tokenId += 1;
-        _check(to, tokenId);
         super._mint(to, tokenId);
+        _check(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -2381,8 +2384,8 @@ contract RemappedGuardModifierNft is ERC721 {
     }
 }
 
-// A public helper called by bare name still dispatches internally in the same EVM frame, so the
-// receiver sees the minting contract as its caller and the helper can establish coverage.
+// A public helper called by bare name dispatches internally in the same frame and can cover a
+// mint that precedes it.
 contract PublicGuardHelperNft is ERC721 {
     function _check(address to, uint256 tokenId) public {
         require(
@@ -2393,8 +2396,8 @@ contract PublicGuardHelperNft is ERC721 {
     }
 
     function _mint(address to, uint256 tokenId) internal virtual override {
-        _check(to, tokenId);
         super._mint(to, tokenId);
+        _check(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
@@ -2474,19 +2477,18 @@ contract AssemblyTokenRemapNft is ERC721 {
     }
 }
 
-// A fresh guard after the opaque assembly block checks the remapped token, so the later mint is
-// covered even though no prior coverage can cross the block.
+// A fresh callback after the opaque assembly block and mint checks the remapped token.
 contract AssemblyTokenRemapThenGuardNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         assembly {
             tokenId := add(tokenId, 1)
         }
+        super._mint(to, tokenId);
         require(
             IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
-        super._mint(to, tokenId);
     }
 
     function mint(address to, uint256 id) external {
