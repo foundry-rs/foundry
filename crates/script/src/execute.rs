@@ -425,9 +425,13 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     pub async fn show_json(&self) -> Result<()> {
         let mut result = self.execution_result.clone();
+        let trace_depth = self.script_config.config.tracing.trace_depth;
 
         for (_, trace) in &mut result.traces {
             decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
+            if let Some(trace_depth) = trace_depth {
+                prune_trace_depth(trace, trace_depth);
+            }
         }
 
         let json_result = JsonResult {

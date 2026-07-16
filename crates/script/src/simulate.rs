@@ -181,7 +181,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             let (tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
-            if tx.is_none() || tracing.verbosity > 3 {
+            if !shell::is_json() && (tx.is_none() || tracing.verbosity > 3) {
                 for (_, trace) in &mut traces {
                     decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
                     if let Some(trace_depth) = tracing.trace_depth {
