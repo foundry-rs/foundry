@@ -125,6 +125,45 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         if (write) counter = success ? 1 : 0;
     }
 
+    function tupleAssignedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        bool success;
+        uint256 value;
+        (success, value) = (recipient.send(1 wei), 1);
+        if (!success) counter = value;
+    }
+
+    function tupleAssignedSuccessfulSendBranch(address payable recipient) external {
+        bool success;
+        uint256 value;
+        (success, value) = (recipient.send(1 wei), 1); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        if (success) counter = value;
+    }
+
+    function tupleAssignedSecondFailedSendBranchDoesNotCallback(address payable recipient)
+        external
+    {
+        bool write;
+        bool success;
+        (write, success) = (true, recipient.send(1 wei));
+        if (!success) counter = write ? 1 : 0;
+    }
+
+    function tupleAssignmentDoesNotCorrelateSibling(address payable recipient, bool writeValue)
+        external
+    {
+        bool success;
+        bool write;
+        (success, write) = (recipient.send(1 wei), writeValue); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        if (!write) counter = success ? 1 : 0;
+    }
+
+    function nestedTupleAssignmentOverwritesSendResult(address payable recipient) external {
+        bool success;
+        bool sibling;
+        ((success, sibling), success) = ((false, true), recipient.send(1 wei)); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        if (!success) counter = 1;
+    }
+
     function overwrittenStoredSendCanSucceed(address payable recipient, bool overwrite) external {
         bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
         if (overwrite) success = false;

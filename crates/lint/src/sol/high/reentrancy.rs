@@ -801,19 +801,16 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 completes &= self.analyze_expr(rhs, state);
                 completes &= self.analyze_lhs_indices(lhs, state);
                 if completes {
-                    let direct_variable = assigned_variable(lhs);
-                    let sources = if op.is_none() && direct_variable.is_some() {
-                        self.send_result_sources(rhs, state)
+                    let assignments = if op.is_none() {
+                        self.assignment_send_result_sources(lhs, rhs, state)
                     } else {
-                        Vec::new()
+                        assigned_variables(lhs)
+                            .into_iter()
+                            .map(|variable| (variable, Vec::new()))
+                            .collect()
                     };
-                    for variable in assigned_variables(lhs) {
-                        let sources = if direct_variable == Some(variable) {
-                            sources.as_slice()
-                        } else {
-                            &[]
-                        };
-                        state.set_stored_send_results(variable, sources);
+                    for (variable, sources) in assignments {
+                        state.set_stored_send_results(variable, &sources);
                     }
                     let written_vars = state_write_lhs_vars(self.hir, lhs);
                     if !written_vars.is_empty()
@@ -1336,6 +1333,65 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             _ => {}
         }
         sources
+    }
+
+    fn assignment_send_result_sources(
+        &self,
+        lhs: &'hir hir::Expr<'hir>,
+        rhs: &'hir hir::Expr<'hir>,
+        state: &FlowState,
+    ) -> Vec<(VariableId, Vec<SendResultSource>)> {
+        let mut assignments = Vec::new();
+        self.collect_assignment_send_result_sources(lhs, rhs, state, &mut assignments);
+        assignments
+    }
+
+    fn collect_assignment_send_result_sources(
+        &self,
+        lhs: &'hir hir::Expr<'hir>,
+        rhs: &'hir hir::Expr<'hir>,
+        state: &FlowState,
+        assignments: &mut Vec<(VariableId, Vec<SendResultSource>)>,
+    ) {
+        let ExprKind::Tuple(lhs_exprs) = &lhs.peel_parens().kind else {
+            for variable in assigned_variables(lhs) {
+                let sources = if assigned_variable(lhs) == Some(variable) {
+                    self.send_result_sources(rhs, state)
+                } else {
+                    Vec::new()
+                };
+                assignments.push((variable, sources));
+            }
+            return;
+        };
+
+        if let ExprKind::Tuple(rhs_exprs) = &rhs.peel_parens().kind {
+            for index in (0..lhs_exprs.len()).rev() {
+                if let Some(lhs) = lhs_exprs[index]
+                    && let Some(rhs) = rhs_exprs.get(index).copied().flatten()
+                {
+                    self.collect_assignment_send_result_sources(lhs, rhs, state, assignments);
+                } else if let Some(lhs) = lhs_exprs[index] {
+                    assignments.extend(
+                        assigned_variables(lhs).into_iter().map(|variable| (variable, Vec::new())),
+                    );
+                }
+            }
+            return;
+        }
+
+        let sources = self.send_result_sources_by_index(rhs, lhs_exprs.len(), state);
+        for (index, lhs) in lhs_exprs.iter().enumerate().rev() {
+            if let Some(lhs) = lhs {
+                if let Some(variable) = assigned_variable(lhs) {
+                    assignments.push((variable, sources[index].clone()));
+                } else {
+                    assignments.extend(
+                        assigned_variables(lhs).into_iter().map(|variable| (variable, Vec::new())),
+                    );
+                }
+            }
+        }
     }
 
     fn named_return_result_sources(
