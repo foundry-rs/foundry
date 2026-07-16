@@ -20,9 +20,10 @@ pub fn find_anchors(
         .filter(|&source| seen_sources.insert(source))
         .flat_map(|source| analysis.items_for_source_enumerated(source))
         .filter_map(|(item_id, item)| {
+            let anchor_loc = item.anchor_loc.as_ref().unwrap_or(&item.loc);
             match item.kind {
                 CoverageItemKind::Branch { path_id, is_first_opcode: false, .. } => {
-                    find_anchor_branch(bytecode, source_map, item_id, &item.loc).map(|anchors| {
+                    find_anchor_branch(bytecode, source_map, item_id, anchor_loc).map(|anchors| {
                         match path_id {
                             0 => anchors.0,
                             1 => anchors.1,
@@ -30,7 +31,7 @@ pub fn find_anchors(
                         }
                     })
                 }
-                _ => find_anchor_simple(source_map, ic_pc_map, item_id, &item.loc),
+                _ => find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc),
             }
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
