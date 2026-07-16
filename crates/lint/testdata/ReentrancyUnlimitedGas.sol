@@ -88,6 +88,49 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         }
     }
 
+    function storedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        bool success = recipient.send(1 wei);
+        if (!success) {
+            counter = 1;
+        }
+    }
+
+    function storedSuccessfulSendBranch(address payable recipient) external {
+        bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        if (success) {
+            counter = 1;
+        }
+    }
+
+    function overwrittenStoredSendCanSucceed(address payable recipient, bool overwrite) external {
+        bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        if (overwrite) success = false;
+        if (!success) counter = 1;
+    }
+
+    function tupleOverwrittenStoredSendCanSucceed(address payable recipient, address target)
+        external
+    {
+        bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        bytes memory data;
+        (success, data) = target.call("");
+        if (!success) counter = data.length;
+    }
+
+    function deletedStoredSendCanSucceed(address payable recipient) external {
+        bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        delete success;
+        if (!success) counter = 1;
+    }
+
+    function repeatedStoredSendCanSucceed(address payable recipient, uint256 count) external {
+        bool success;
+        for (uint256 i; i < count; i++) {
+            success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        }
+        if (!success) counter = 1;
+    }
+
     function failedSendContinuationDoesNotCallback(address payable recipient) external {
         require(!recipient.send(1 wei));
         counter = 1;
@@ -160,6 +203,14 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         consume(counter++, recipient.send(1 wei) ? 1 : 0); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
     }
 
+    function nonReturningSiblingDoesNotPersistEffects(address payable recipient) external {
+        consume(recipient.send(1 wei), writeThenRevert());
+    }
+
+    function successfulHaltSiblingPersistsEffects(address payable recipient) external {
+        consume(recipient.send(1 wei), writeThenStop()); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+    }
+
     function helperThenState(address payable recipient) external {
         transferInHelper(recipient);
         counter = 1;
@@ -188,6 +239,21 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
             }
             return;
         }
+    }
+
+    function doWhileContinueCanExit(address payable recipient, bool again) external {
+        do {
+            recipient.transfer(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+            continue;
+        } while (again);
+        counter = 1;
+    }
+
+    function doWhileContinueEvaluatesCondition(address payable recipient) external {
+        do {
+            recipient.transfer(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+            continue;
+        } while (++counter < 2);
     }
 
     function terminatingLoopDoesNotFallThrough(address payable recipient) external {
@@ -280,6 +346,31 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         recordValues.push().value++;
     }
 
+    function assemblyStorageWrite(address payable recipient) external {
+        recipient.transfer(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        assembly {
+            sstore(counter.slot, 1)
+        }
+    }
+
+    function assemblySwitchStorageWrite(address payable recipient, uint256 choice) external {
+        recipient.transfer(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        assembly {
+            switch choice
+            case 0 { sstore(counter.slot, 1) }
+        }
+    }
+
+    function yulForContinueRunsPost(address payable recipient) external {
+        recipient.transfer(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        assembly {
+            for { let i := 0 } lt(i, 1) { sstore(counter.slot, 1) } {
+                i := add(i, 1)
+                continue
+            }
+        }
+    }
+
     function storageReturnWrite(address payable recipient) external {
         recipient.transfer(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
         recordFor(recipient).value++;
@@ -331,6 +422,20 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
     }
 
     function consume(uint256, uint256) internal pure {}
+
+    function consume(bool, uint256) internal pure {}
+
+    function writeThenRevert() internal returns (uint256) {
+        counter++;
+        revert();
+    }
+
+    function writeThenStop() internal returns (uint256) {
+        counter++;
+        assembly {
+            stop()
+        }
+    }
 
     function writeRecord(Record storage record) internal {
         record.value++;

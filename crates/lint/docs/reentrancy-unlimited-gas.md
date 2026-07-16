@@ -12,14 +12,16 @@ make new callback behavior affordable within that stipend.
 The lint tracks Solidity's built-in `transfer` and `send` calls through public and external entry
 points, modifiers, inherited helpers, and other internal calls. It follows branches and loop
 backedges and warns when a later reachable operation writes contract state or emits an event.
-Writes through storage references and storage-array `push`/`pop` calls count as state changes.
-Both calls are tracked regardless of the transferred amount because even a zero-value call
-executes recipient code.
+Writes through storage references, storage-array `push`/`pop` calls, and Yul `sstore`/`tstore`
+operations count as state changes; Yul log operations count as event emissions. Both calls are
+tracked regardless of the transferred amount because even a zero-value call executes recipient
+code.
 
-For `send` used in a Boolean control-flow condition, only continuations on which the call may have
-succeeded are treated as reentrant because a failed call reverts its callee's effects. Sibling
-expression order is conservatively treated as unspecified, matching Solidity's evaluation-order
-rules.
+For `send` used directly in a Boolean control-flow condition or through a stored result, only
+continuations on which the call may have succeeded are treated as reentrant because a failed call
+reverts its callee's effects. Sibling expression order is conservatively treated as unspecified,
+matching Solidity's evaluation-order rules; effects on an always-reverting expression path are
+discarded.
 
 Contract methods that merely reuse the names `transfer` or `send` are excluded by checking the
 compiler-resolved call target. Low-level calls, including calls with an explicit 2,300 gas cap, are

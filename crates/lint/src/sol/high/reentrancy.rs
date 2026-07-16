@@ -85,6 +85,7 @@ fn is_entry_point(func: &hir::Function<'_>) -> bool {
 struct FlowState {
     state_reads: BTreeSet<VariableId>,
     pending_calls: Vec<PendingCall>,
+    stored_send_results: Vec<StoredSendResult>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -92,13 +93,32 @@ struct PendingCall {
     span: Span,
     kind: ReentrantCallKind,
     state_reads: BTreeSet<VariableId>,
+    result_correlatable: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SendResultSource {
+    call_span: Span,
+    succeeds_when_true: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct StoredSendResult {
+    variable: VariableId,
+    source: SendResultSource,
 }
 
 #[derive(Default)]
 struct LoopJumps<'hir> {
     breaks: Option<FlowState>,
     continues: Option<FlowState>,
-    continue_epilogue: Option<&'hir hir::Expr<'hir>>,
+    continue_epilogue: Option<ContinueEpilogue<'hir>>,
+}
+
+#[derive(Clone, Copy)]
+enum ContinueEpilogue<'hir> {
+    Expr(&'hir hir::Expr<'hir>),
+    Block(hir::Block<'hir>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -165,17 +185,37 @@ impl FlowState {
             self.pending_calls.iter_mut().find(|call| call.span == span && call.kind == kind)
         {
             existing.state_reads.extend(self.state_reads.iter().copied());
+            existing.result_correlatable = false;
+            self.stored_send_results.retain(|result| result.source.call_span != span);
         } else {
             self.pending_calls.push(PendingCall {
                 span,
                 kind,
                 state_reads: self.state_reads.clone(),
+                result_correlatable: true,
             });
         }
     }
 
     fn remove_call(&mut self, span: Span, kind: ReentrantCallKind) {
         self.pending_calls.retain(|call| call.span != span || call.kind != kind);
+        self.stored_send_results.retain(|result| result.source.call_span != span);
+    }
+
+    fn set_stored_send_results(&mut self, variable: VariableId, sources: &[SendResultSource]) {
+        self.stored_send_results.retain(|result| result.variable != variable);
+        for &source in sources {
+            if self.pending_calls.iter().any(|call| {
+                call.span == source.call_span
+                    && call.kind == ReentrantCallKind::Stipend
+                    && call.result_correlatable
+            }) {
+                let result = StoredSendResult { variable, source };
+                if !self.stored_send_results.contains(&result) {
+                    self.stored_send_results.push(result);
+                }
+            }
+        }
     }
 }
 
@@ -187,14 +227,14 @@ fn merge_optional_state(target: &mut Option<FlowState>, state: &FlowState) {
     }
 }
 
-/// Returns the update expression that Solar lowers after a `for` loop body.
+/// Returns the Solidity update expression or Yul post block lowered after a `for` loop body.
 ///
-/// A source-level `continue` skips this synthetic statement in HIR, even though Solidity executes
-/// the update before the next condition check.
+/// A source-level `continue` skips this synthetic statement in HIR, even though the source
+/// language executes it before the next condition check.
 fn for_loop_continue_epilogue<'hir>(
     block: hir::Block<'hir>,
     source: LoopSource,
-) -> Option<&'hir hir::Expr<'hir>> {
+) -> Option<ContinueEpilogue<'hir>> {
     if source != LoopSource::For || block.stmts.len() != 1 {
         return None;
     }
@@ -213,8 +253,28 @@ fn for_loop_continue_epilogue<'hir>(
         return None;
     }
 
-    let StmtKind::Expr(epilogue) = body.stmts.last()?.kind else { return None };
-    Some(epilogue)
+    match body.stmts.last()?.kind {
+        StmtKind::Expr(epilogue) => Some(ContinueEpilogue::Expr(epilogue)),
+        StmtKind::Block(epilogue) => Some(ContinueEpilogue::Block(epilogue)),
+        _ => None,
+    }
+}
+
+/// Returns the user statements and condition from Solar's lowered `do-while` loop.
+fn do_while_parts<'hir>(
+    block: hir::Block<'hir>,
+    source: LoopSource,
+) -> Option<(&'hir [hir::Stmt<'hir>], &'hir hir::Expr<'hir>)> {
+    if source != LoopSource::DoWhile {
+        return None;
+    }
+
+    let (check, body) = block.stmts.split_last()?;
+    let StmtKind::If(condition, then_stmt, Some(else_stmt)) = check.kind else { return None };
+    if !matches!(then_stmt.kind, StmtKind::Continue) || !matches!(else_stmt.kind, StmtKind::Break) {
+        return None;
+    }
+    Some((body, condition))
 }
 
 fn is_state_mutating_array_call(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
@@ -231,7 +291,43 @@ fn is_builtin_assertion(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
 fn is_non_returning_builtin_call(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
     matches!(
         gcx.builtin_callee(callee.peel_parens().id),
-        Some(Builtin::Revert | Builtin::RevertMsg | Builtin::Selfdestruct)
+        Some(
+            Builtin::Revert
+                | Builtin::RevertMsg
+                | Builtin::Selfdestruct
+                | Builtin::YulInvalid
+                | Builtin::YulReturn
+                | Builtin::YulRevert
+                | Builtin::YulSelfdestruct
+                | Builtin::YulStop
+        )
+    )
+}
+
+fn is_successful_halt_builtin_call(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
+    matches!(
+        gcx.builtin_callee(callee.peel_parens().id),
+        Some(
+            Builtin::Selfdestruct
+                | Builtin::YulReturn
+                | Builtin::YulSelfdestruct
+                | Builtin::YulStop
+        )
+    )
+}
+
+fn is_yul_state_effect(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
+    matches!(
+        gcx.builtin_callee(callee.peel_parens().id),
+        Some(
+            Builtin::YulSstore
+                | Builtin::YulTstore
+                | Builtin::YulLog0
+                | Builtin::YulLog1
+                | Builtin::YulLog2
+                | Builtin::YulLog3
+                | Builtin::YulLog4
+        )
     )
 }
 
@@ -247,6 +343,8 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     loop_jumps: Vec<LoopJumps<'hir>>,
     call_returns: Vec<Option<FlowState>>,
     state_effects: usize,
+    completion_probe_depth: usize,
+    completion_probe_successful_halt: bool,
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
     reentrancy_unlimited_gas_enabled: bool,
@@ -287,6 +385,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             loop_jumps: Vec::new(),
             call_returns: Vec::new(),
             state_effects: 0,
+            completion_probe_depth: 0,
+            completion_probe_successful_halt: false,
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
             reentrancy_unlimited_gas_enabled: ctx.is_lint_enabled(REENTRANCY_UNLIMITED_GAS.id),
@@ -351,7 +451,16 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         placeholder: Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>)>,
         state: &mut FlowState,
     ) -> bool {
-        for stmt in block.stmts {
+        self.analyze_stmts(block.stmts, placeholder, state)
+    }
+
+    fn analyze_stmts(
+        &mut self,
+        stmts: &'hir [hir::Stmt<'hir>],
+        placeholder: Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>)>,
+        state: &mut FlowState,
+    ) -> bool {
+        for stmt in stmts {
             if !self.analyze_stmt(stmt, placeholder, state) {
                 return false;
             }
@@ -368,7 +477,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
                 if let Some(init) = self.hir.variable(var_id).initializer {
-                    self.analyze_expr(init, state)
+                    let completes = self.analyze_expr(init, state);
+                    if completes {
+                        let sources = self.send_result_sources(init, state);
+                        state.set_stored_send_results(var_id, &sources);
+                    }
+                    completes
                 } else {
                     true
                 }
@@ -404,10 +518,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::Continue => {
                 let epilogue = self.loop_jumps.last().and_then(|jumps| jumps.continue_epilogue);
-                let completes = if let Some(epilogue) = epilogue {
-                    self.analyze_expr(epilogue, state)
-                } else {
-                    true
+                let completes = match epilogue {
+                    Some(ContinueEpilogue::Expr(epilogue)) => self.analyze_expr(epilogue, state),
+                    Some(ContinueEpilogue::Block(epilogue)) => {
+                        self.analyze_block(epilogue, placeholder, state)
+                    }
+                    None => true,
                 };
                 if completes && let Some(jumps) = self.loop_jumps.last_mut() {
                     merge_optional_state(&mut jumps.continues, state);
@@ -419,11 +535,16 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 let mut header_state = before_loop.clone();
                 let mut exit_state = None;
                 let continue_epilogue = for_loop_continue_epilogue(block, source);
+                let do_while_parts = do_while_parts(block, source);
 
                 loop {
                     self.loop_jumps.push(LoopJumps { continue_epilogue, ..Default::default() });
                     let mut body_state = header_state.clone();
-                    let falls_through = self.analyze_block(block, placeholder, &mut body_state);
+                    let falls_through = if let Some((body, _)) = do_while_parts {
+                        self.analyze_stmts(body, placeholder, &mut body_state)
+                    } else {
+                        self.analyze_block(block, placeholder, &mut body_state)
+                    };
                     let jumps = self.loop_jumps.pop().expect("loop jump state exists");
 
                     if let Some(breaks) = jumps.breaks {
@@ -431,11 +552,27 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     }
 
                     let mut next_header = before_loop.clone();
+                    let mut backedges = None;
                     if falls_through {
-                        next_header.merge(&body_state);
+                        merge_optional_state(&mut backedges, &body_state);
                     }
                     if let Some(continues) = jumps.continues {
-                        next_header.merge(&continues);
+                        merge_optional_state(&mut backedges, &continues);
+                    }
+
+                    if let Some((_, condition)) = do_while_parts {
+                        if let Some(mut condition_state) = backedges
+                            && self.analyze_expr(condition, &mut condition_state)
+                        {
+                            let mut continue_state = condition_state.clone();
+                            self.remove_failed_send_calls(condition, true, &mut continue_state);
+                            next_header.merge(&continue_state);
+
+                            self.remove_failed_send_calls(condition, false, &mut condition_state);
+                            merge_optional_state(&mut exit_state, &condition_state);
+                        }
+                    } else if let Some(backedges) = backedges {
+                        next_header.merge(&backedges);
                     }
 
                     if next_header == header_state {
@@ -519,7 +656,33 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     true
                 }
             }
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
+            StmtKind::AssemblyBlock(block) => self.analyze_block(block, placeholder, state),
+            StmtKind::Switch(switch) => {
+                if !self.analyze_expr(switch.selector, state) {
+                    return false;
+                }
+
+                let before_switch = state.clone();
+                let mut completions = None;
+                for case in switch.cases {
+                    let mut case_state = before_switch.clone();
+                    if self.analyze_block(case.body, placeholder, &mut case_state) {
+                        merge_optional_state(&mut completions, &case_state);
+                    }
+                }
+                if !switch.cases.iter().any(|case| case.constant.is_none()) {
+                    merge_optional_state(&mut completions, &before_switch);
+                }
+
+                if let Some(completions) = completions {
+                    *state = completions;
+                    true
+                } else {
+                    state.clear();
+                    false
+                }
+            }
+            StmtKind::Err(_) => true,
         }
     }
 
@@ -533,6 +696,20 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 completes &= self.analyze_expr(rhs, state);
                 completes &= self.analyze_lhs_indices(lhs, state);
                 if completes {
+                    let direct_variable = assigned_variable(lhs);
+                    let sources = if op.is_none() && direct_variable.is_some() {
+                        self.send_result_sources(rhs, state)
+                    } else {
+                        Vec::new()
+                    };
+                    for variable in assigned_variables(lhs) {
+                        let sources = if direct_variable == Some(variable) {
+                            sources.as_slice()
+                        } else {
+                            &[]
+                        };
+                        state.set_stored_send_results(variable, sources);
+                    }
                     let written_vars = state_write_lhs_vars(self.hir, lhs);
                     if !written_vars.is_empty()
                         || is_storage_write_lhs(self.gcx, self.hir, lhs, false)
@@ -546,6 +723,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Delete(inner) => {
                 let completes = self.analyze_lhs_indices(inner, state);
                 if completes {
+                    for variable in assigned_variables(inner) {
+                        state.set_stored_send_results(variable, &[]);
+                    }
                     let written_vars = state_write_lhs_vars(self.hir, inner);
                     if !written_vars.is_empty()
                         || is_storage_write_lhs(self.gcx, self.hir, inner, true)
@@ -612,7 +792,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 }
 
                 if completes {
-                    if is_state_mutating_array_call(self.gcx, callee) {
+                    if is_state_mutating_array_call(self.gcx, callee)
+                        || is_yul_state_effect(self.gcx, callee)
+                    {
                         self.emit_pending_stipend_calls(state);
                         self.record_state_effect();
                     }
@@ -626,6 +808,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                         self.remove_failed_send_calls(condition, true, state);
                     }
                     if is_non_returning_builtin_call(self.gcx, callee) {
+                        if self.completion_probe_depth > 0
+                            && is_successful_halt_builtin_call(self.gcx, callee)
+                        {
+                            self.completion_probe_successful_halt = true;
+                        }
                         state.clear();
                         completes = false;
                     }
@@ -733,6 +920,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             return all_complete;
         }
 
+        if self.completion_probe_depth == 0 && !self.unordered_exprs_can_persist(exprs, state) {
+            state.clear();
+            return false;
+        }
+
         let mut summaries = Vec::with_capacity(exprs.len());
         let mut all_complete = true;
         for &expr in exprs {
@@ -764,7 +956,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for &span in calls {
                     let call_can_succeed = assertion_condition.is_none_or(|condition| {
                         !condition.span.contains(span)
-                            || self.send_can_succeed_for_outcome(condition, span, true)
+                            || self.send_can_succeed_for_outcome(condition, span, true, state)
                     });
                     if call_can_succeed {
                         self.emit_stipend_call(span);
@@ -773,6 +965,34 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
         }
         all_complete
+    }
+
+    fn unordered_exprs_can_persist(
+        &mut self,
+        exprs: &[&'hir hir::Expr<'hir>],
+        state: &FlowState,
+    ) -> bool {
+        let inline_cache = std::mem::replace(
+            &mut self.inline_cache,
+            HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
+        );
+        let prior_effects = self.state_effects;
+        let prior_successful_halt = self.completion_probe_successful_halt;
+        self.completion_probe_depth += 1;
+        self.completion_probe_successful_halt = false;
+
+        let mut probe_state = state.clone();
+        let mut all_complete = true;
+        for &expr in exprs {
+            all_complete &= self.analyze_expr(expr, &mut probe_state);
+        }
+
+        let successful_halt = self.completion_probe_successful_halt;
+        self.completion_probe_successful_halt = prior_successful_halt;
+        self.completion_probe_depth -= 1;
+        self.state_effects = prior_effects;
+        self.inline_cache = inline_cache;
+        all_complete || successful_halt
     }
 
     const fn record_state_effect(&mut self) {
@@ -795,12 +1015,13 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             .pending_calls
             .iter()
             .filter(|call| {
-                call.kind == ReentrantCallKind::Stipend && condition.span.contains(call.span)
+                call.kind == ReentrantCallKind::Stipend
+                    && self.expr_contains_send_target(condition, call.span, state)
             })
             .map(|call| call.span)
             .collect::<Vec<_>>();
         for span in calls {
-            if !self.send_can_succeed_for_outcome(condition, span, outcome) {
+            if !self.send_can_succeed_for_outcome(condition, span, outcome, state) {
                 state.remove_call(span, ReentrantCallKind::Stipend);
             }
         }
@@ -811,8 +1032,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         condition: &'hir hir::Expr<'hir>,
         span: Span,
         outcome: bool,
+        state: &FlowState,
     ) -> bool {
-        self.boolean_outcomes_for_send(condition, span).iter().any(|candidate| {
+        self.boolean_outcomes_for_send(condition, span, state).iter().any(|candidate| {
             candidate.value == outcome && candidate.send == SendEvaluation::Succeeded
         })
     }
@@ -821,6 +1043,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         &self,
         expr: &'hir hir::Expr<'hir>,
         target: Span,
+        state: &FlowState,
     ) -> Vec<BooleanOutcome> {
         let expr = expr.peel_parens();
         match &expr.kind {
@@ -841,13 +1064,13 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 _ => unconstrained_boolean_outcomes(expr.span.contains(target)),
             },
             ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => self
-                .boolean_outcomes_for_send(inner, target)
+                .boolean_outcomes_for_send(inner, target, state)
                 .into_iter()
                 .map(|outcome| BooleanOutcome { value: !outcome.value, ..outcome })
                 .collect(),
             ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
-                let lhs_outcomes = self.boolean_outcomes_for_send(lhs, target);
-                let rhs_outcomes = self.boolean_outcomes_for_send(rhs, target);
+                let lhs_outcomes = self.boolean_outcomes_for_send(lhs, target, state);
+                let rhs_outcomes = self.boolean_outcomes_for_send(rhs, target, state);
                 let mut outcomes = Vec::new();
                 for lhs_outcome in lhs_outcomes {
                     let short_circuits = if op.kind == BinOpKind::And {
@@ -875,8 +1098,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 outcomes
             }
             ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) => {
-                let lhs_outcomes = self.boolean_outcomes_for_send(lhs, target);
-                let rhs_outcomes = self.boolean_outcomes_for_send(rhs, target);
+                let lhs_outcomes = self.boolean_outcomes_for_send(lhs, target, state);
+                let rhs_outcomes = self.boolean_outcomes_for_send(rhs, target, state);
                 let mut outcomes = Vec::new();
                 for lhs_outcome in lhs_outcomes {
                     for rhs_outcome in &rhs_outcomes {
@@ -893,9 +1116,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 outcomes
             }
             ExprKind::Ternary(cond, true_expr, false_expr) => {
-                let condition_outcomes = self.boolean_outcomes_for_send(cond, target);
-                let true_outcomes = self.boolean_outcomes_for_send(true_expr, target);
-                let false_outcomes = self.boolean_outcomes_for_send(false_expr, target);
+                let condition_outcomes = self.boolean_outcomes_for_send(cond, target, state);
+                let true_outcomes = self.boolean_outcomes_for_send(true_expr, target, state);
+                let false_outcomes = self.boolean_outcomes_for_send(false_expr, target, state);
                 let mut outcomes = Vec::new();
                 for condition_outcome in condition_outcomes {
                     let branch_outcomes =
@@ -915,8 +1138,102 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 }
                 outcomes
             }
-            _ => unconstrained_boolean_outcomes(expr.span.contains(target)),
+            ExprKind::Ident(reses) => {
+                let mut outcomes = Vec::new();
+                for variable in reses.iter().filter_map(|res| res.as_variable()) {
+                    for result in state.stored_send_results.iter().filter(|result| {
+                        result.variable == variable && result.source.call_span == target
+                    }) {
+                        let (true_send, false_send) = if result.source.succeeds_when_true {
+                            (SendEvaluation::Succeeded, SendEvaluation::Failed)
+                        } else {
+                            (SendEvaluation::Failed, SendEvaluation::Succeeded)
+                        };
+                        push_unique_boolean_outcome(
+                            &mut outcomes,
+                            BooleanOutcome { value: true, send: true_send },
+                        );
+                        push_unique_boolean_outcome(
+                            &mut outcomes,
+                            BooleanOutcome { value: false, send: false_send },
+                        );
+                    }
+                }
+                if outcomes.is_empty() { unconstrained_boolean_outcomes(false) } else { outcomes }
+            }
+            _ => {
+                unconstrained_boolean_outcomes(self.expr_contains_send_target(expr, target, state))
+            }
         }
+    }
+
+    fn send_result_sources(
+        &self,
+        expr: &'hir hir::Expr<'hir>,
+        state: &FlowState,
+    ) -> Vec<SendResultSource> {
+        let expr = expr.peel_parens();
+        match &expr.kind {
+            ExprKind::Call(callee, _, _)
+                if self.gcx.builtin_callee(callee.peel_parens().id)
+                    == Some(Builtin::AddressPayableSend) =>
+            {
+                vec![SendResultSource { call_span: expr.span, succeeds_when_true: true }]
+            }
+            ExprKind::Ident(reses) => {
+                let mut sources = Vec::new();
+                for variable in reses.iter().filter_map(|res| res.as_variable()) {
+                    for result in state
+                        .stored_send_results
+                        .iter()
+                        .filter(|result| result.variable == variable)
+                    {
+                        if !sources.contains(&result.source) {
+                            sources.push(result.source);
+                        }
+                    }
+                }
+                sources
+            }
+            ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => self
+                .send_result_sources(inner, state)
+                .into_iter()
+                .map(|source| SendResultSource {
+                    succeeds_when_true: !source.succeeds_when_true,
+                    ..source
+                })
+                .collect(),
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) => {
+                let (source_expr, literal) = if let Some(literal) = bool_literal(rhs) {
+                    (lhs, literal)
+                } else if let Some(literal) = bool_literal(lhs) {
+                    (rhs, literal)
+                } else {
+                    return Vec::new();
+                };
+                let invert = (op.kind == BinOpKind::Eq) != literal;
+                self.send_result_sources(source_expr, state)
+                    .into_iter()
+                    .map(|source| SendResultSource {
+                        succeeds_when_true: source.succeeds_when_true != invert,
+                        ..source
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn expr_contains_send_target(
+        &self,
+        expr: &'hir hir::Expr<'hir>,
+        target: Span,
+        state: &FlowState,
+    ) -> bool {
+        expr.span.contains(target)
+            || state.stored_send_results.iter().any(|result| {
+                result.source.call_span == target && expr_references_variable(expr, result.variable)
+            })
     }
 
     fn analyze_internal_call(&mut self, func_id: FunctionId, state: &mut FlowState) -> bool {
@@ -1068,7 +1385,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.collect_direct_internal_calls_expr(expr, calls);
                 }
             }
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+            StmtKind::Block(block)
+            | StmtKind::UncheckedBlock(block)
+            | StmtKind::AssemblyBlock(block)
+            | StmtKind::Loop(block, _) => {
                 self.collect_direct_internal_calls_block(block, calls);
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
@@ -1084,12 +1404,13 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.collect_direct_internal_calls_block(clause.block, calls);
                 }
             }
-            StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Placeholder
-            | StmtKind::AssemblyBlock(_)
-            | StmtKind::Switch(_)
-            | StmtKind::Err(_) => {}
+            StmtKind::Switch(switch) => {
+                self.collect_direct_internal_calls_expr(switch.selector, calls);
+                for case in switch.cases {
+                    self.collect_direct_internal_calls_block(case.body, calls);
+                }
+            }
+            StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {}
         }
     }
 
@@ -1198,6 +1519,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     fn emit_pending_calls(&mut self, state: &FlowState, written_vars: &[VariableId]) {
+        if self.completion_probe_depth > 0 {
+            return;
+        }
         self.emit_pending_stipend_calls(state);
 
         for call in &state.pending_calls {
@@ -1246,7 +1570,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     fn emit_stipend_call(&mut self, span: Span) {
-        if self.reentrancy_unlimited_gas_enabled && self.emitted.insert(span) {
+        if self.completion_probe_depth == 0
+            && self.reentrancy_unlimited_gas_enabled
+            && self.emitted.insert(span)
+        {
             self.ctx.emit(&REENTRANCY_UNLIMITED_GAS, span);
         }
     }
@@ -1272,6 +1599,85 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 }
 
+fn assigned_variable(expr: &hir::Expr<'_>) -> Option<VariableId> {
+    let ExprKind::Ident(reses) = &expr.peel_parens().kind else { return None };
+    unique(reses.iter().filter_map(|res| res.as_variable()))
+}
+
+fn assigned_variables(expr: &hir::Expr<'_>) -> Vec<VariableId> {
+    fn collect(expr: &hir::Expr<'_>, variables: &mut Vec<VariableId>) {
+        match &expr.peel_parens().kind {
+            ExprKind::Ident(reses) => {
+                if let Some(variable) = unique(reses.iter().filter_map(|res| res.as_variable()))
+                    && !variables.contains(&variable)
+                {
+                    variables.push(variable);
+                }
+            }
+            ExprKind::Tuple(exprs) => {
+                for expr in exprs.iter().flatten() {
+                    collect(expr, variables);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut variables = Vec::new();
+    collect(expr, &mut variables);
+    variables
+}
+
+fn bool_literal(expr: &hir::Expr<'_>) -> Option<bool> {
+    let ExprKind::Lit(lit) = &expr.peel_parens().kind else { return None };
+    let LitKind::Bool(value) = lit.kind else { return None };
+    Some(value)
+}
+
+fn expr_references_variable(expr: &hir::Expr<'_>, variable: VariableId) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
+            expr_references_variable(lhs, variable) || expr_references_variable(rhs, variable)
+        }
+        ExprKind::Unary(_, inner)
+        | ExprKind::Delete(inner)
+        | ExprKind::Member(inner, _)
+        | ExprKind::Payable(inner) => expr_references_variable(inner, variable),
+        ExprKind::Call(callee, args, opts) => {
+            expr_references_variable(callee, variable)
+                || opts.is_some_and(|opts| {
+                    opts.args.iter().any(|opt| expr_references_variable(&opt.value, variable))
+                })
+                || args.exprs().any(|arg| expr_references_variable(arg, variable))
+        }
+        ExprKind::Index(base, index) => {
+            expr_references_variable(base, variable)
+                || index.is_some_and(|index| expr_references_variable(index, variable))
+        }
+        ExprKind::Slice(base, start, end) => {
+            expr_references_variable(base, variable)
+                || start.is_some_and(|start| expr_references_variable(start, variable))
+                || end.is_some_and(|end| expr_references_variable(end, variable))
+        }
+        ExprKind::Ternary(condition, true_expr, false_expr) => {
+            expr_references_variable(condition, variable)
+                || expr_references_variable(true_expr, variable)
+                || expr_references_variable(false_expr, variable)
+        }
+        ExprKind::Array(exprs) => exprs.iter().any(|expr| expr_references_variable(expr, variable)),
+        ExprKind::Tuple(exprs) => {
+            exprs.iter().flatten().any(|expr| expr_references_variable(expr, variable))
+        }
+        ExprKind::Ident(reses) => reses.iter().any(|res| res.as_variable() == Some(variable)),
+        ExprKind::Lit(_)
+        | ExprKind::New(_)
+        | ExprKind::TypeCall(_)
+        | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
+        | ExprKind::Err(_) => false,
+    }
+}
+
 fn is_stipend_value_call<'hir>(gcx: Gcx<'hir>, callee: &'hir hir::Expr<'hir>) -> bool {
     matches!(
         gcx.builtin_callee(callee.peel_parens().id),
@@ -1283,10 +1689,33 @@ impl FlowState {
     fn clear(&mut self) {
         self.state_reads.clear();
         self.pending_calls.clear();
+        self.stored_send_results.clear();
     }
 
     fn merge(&mut self, other: &Self) {
         self.state_reads.extend(other.state_reads.iter().copied());
+        let self_stipend_calls = self
+            .pending_calls
+            .iter()
+            .filter(|call| call.kind == ReentrantCallKind::Stipend)
+            .map(|call| call.span)
+            .collect::<HashSet<_>>();
+        let other_stipend_calls = other
+            .pending_calls
+            .iter()
+            .filter(|call| call.kind == ReentrantCallKind::Stipend)
+            .map(|call| call.span)
+            .collect::<HashSet<_>>();
+        let mut stored_send_results = Vec::new();
+        for &result in self.stored_send_results.iter().chain(&other.stored_send_results) {
+            let valid_on_self = !self_stipend_calls.contains(&result.source.call_span)
+                || self.stored_send_results.contains(&result);
+            let valid_on_other = !other_stipend_calls.contains(&result.source.call_span)
+                || other.stored_send_results.contains(&result);
+            if valid_on_self && valid_on_other && !stored_send_results.contains(&result) {
+                stored_send_results.push(result);
+            }
+        }
         for call in &other.pending_calls {
             if let Some(existing) = self
                 .pending_calls
@@ -1294,10 +1723,12 @@ impl FlowState {
                 .find(|existing| existing.span == call.span && existing.kind == call.kind)
             {
                 existing.state_reads.extend(call.state_reads.iter().copied());
+                existing.result_correlatable &= call.result_correlatable;
             } else {
                 self.pending_calls.push(call.clone());
             }
         }
+        self.stored_send_results = stored_send_results;
     }
 }
 
