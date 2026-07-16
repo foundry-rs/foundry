@@ -350,7 +350,7 @@ impl TempoSponsor {
         } else if let Some(signer) = &self.signer {
             signer.sign_hash(&digest).await.context("failed to sign Tempo sponsor digest")?
         } else {
-            eyre::bail!("missing Tempo sponsor signature or signer")
+            eyre::bail!("missing Tempo sponsor signature or signer");
         };
 
         let recovered = signature
@@ -456,10 +456,12 @@ pub async fn resolve_tempo_sponsor_signer(spec: &str) -> Result<WalletSigner> {
         "browser" => {
             eyre::bail!(
                 "browser:// sponsor signing is not supported by the current browser wallet API; use --tempo.sponsor-sig or another sponsor signer"
-            )
+            );
         }
-        _ => eyre::bail!(
-            "unsupported Tempo sponsor signer `{spec}`; expected env://VAR, keystore://PATH, account://NAME, ledger://, trezor://, aws://, gcp://, turnkey://, or private-key://KEY"
-        ),
+        _ => {
+            eyre::bail!(
+                "unsupported Tempo sponsor signer `{spec}`; expected env://VAR, keystore://PATH, account://NAME, ledger://, trezor://, aws://, gcp://, turnkey://, or private-key://KEY"
+            );
+        }
     }
 }

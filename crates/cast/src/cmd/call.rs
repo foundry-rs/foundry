@@ -564,7 +564,7 @@ impl CallArgs {
         let to = self.to.as_ref().map(|n| match n {
             NameOrAddress::Address(addr) => Ok(*addr),
             NameOrAddress::Name(name) => {
-                eyre::bail!("ENS names are not supported with --curl. Please use a raw address instead of '{}'", name)
+                eyre::bail!("ENS names are not supported with --curl. Please use a raw address instead of '{}'", name);
             }
         }).transpose()?;
 
