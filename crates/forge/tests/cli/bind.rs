@@ -1,9 +1,9 @@
 use foundry_compilers::utils::read_json_file;
-use std::{path::Path, process::Command};
+use std::{fs, path::Path, process::Command};
 
 fn assert_bindings_compile(bindings_path: &Path) {
     let out = Command::new("cargo")
-        .arg("check")
+        .args(["check", "--tests"])
         .current_dir(bindings_path)
         .output()
         .expect("failed to run cargo check");
@@ -161,6 +161,84 @@ Bindings have been generated to [..]
 "#]]);
 
     let bindings_path = prj.root().join("out/bindings");
+    assert_bindings_compile(&bindings_path);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11538>
+forgetest!(bind_dedups_canonical_event_signatures, |prj, cmd| {
+    prj.add_source(
+        "DuplicateEvents.sol",
+        r#"
+interface IERC20Events {
+    event Transfer(address indexed from, address indexed to, uint256 value);
+}
+
+library EventsLib {
+    event Transfer(address indexed from, address indexed to, uint256 shares);
+}
+
+contract DuplicateEvents is IERC20Events {
+    function emitTransfer() external {
+        emit EventsLib.Transfer(msg.sender, address(0), 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["bind", "--select", "^DuplicateEvents$"]).assert_success();
+
+    let bindings_path = prj.root().join("out/bindings");
+    assert_bindings_compile(&bindings_path);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10353>
+forgetest!(bind_namespaced_custom_type_derives, |prj, cmd| {
+    prj.add_source(
+        "External.sol",
+        r#"
+library External {
+    struct Something {
+        AnotherThing value;
+    }
+
+    struct AnotherThing {
+        uint64 number;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "MyContract.sol",
+        r#"
+import {External} from "./External.sol";
+
+contract MyContract {
+    event EmittedLog(External.Something value);
+}
+"#,
+    );
+
+    cmd.args(["bind", "--select", "^MyContract$"]).assert_success();
+
+    let bindings_path = prj.root().join("out/bindings");
+    let tests_path = bindings_path.join("tests");
+    fs::create_dir_all(&tests_path).unwrap();
+    fs::write(
+        tests_path.join("derives.rs"),
+        r#"
+use foundry_contracts::my_contract::MyContract::EmittedLog;
+use std::{fmt::Debug, hash::Hash};
+
+fn assert_all_derives<T: Default + Debug + PartialEq + Eq + Hash>() {}
+
+#[test]
+fn event_has_all_derives() {
+    assert_all_derives::<EmittedLog>();
+}
+"#,
+    )
+    .unwrap();
+
     assert_bindings_compile(&bindings_path);
 });
 
