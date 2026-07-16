@@ -245,6 +245,171 @@ contract ReentrancyBalance {
         }
     }
 
+    function sequentialComplementaryPaths(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore;
+        if (takeBaseline) balanceBefore = address(this).balance;
+        if (!takeBaseline) callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function sequentialSamePath(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore;
+        if (takeBaseline) balanceBefore = address(this).balance;
+        if (takeBaseline) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function conditionalBaselineUnconditionalCall(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore;
+        if (takeBaseline) balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function reassignedPredicateStillWarns(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore;
+        if (takeBaseline) balanceBefore = address(this).balance;
+        takeBaseline = false;
+        if (!takeBaseline) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function compoundBaselineStillWarns(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        balanceBefore += amount;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore, "insufficient payment");
+    }
+
+    function loopMutationStillWarns(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        if (!takeBaseline) return;
+        uint256 balanceBefore = address(this).balance;
+        while (takeBaseline) {
+            takeBaseline = false;
+        }
+        if (!takeBaseline) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function secondLoopIterationMutationStillWarns(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline,
+        bool firstIteration
+    ) external {
+        if (!takeBaseline) return;
+        if (!firstIteration) return;
+        uint256 balanceBefore = address(this).balance;
+        for (uint256 i; i < 2; ++i) {
+            if (firstIteration) firstIteration = false;
+            else takeBaseline = false;
+        }
+        if (!takeBaseline) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function ternaryMutationStillWarns(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        if (!takeBaseline) return;
+        uint256 balanceBefore = address(this).balance;
+        takeBaseline ? (takeBaseline = false) : false;
+        if (!takeBaseline) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function tryClauseMutationStillWarns(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        if (!takeBaseline) return;
+        uint256 balanceBefore = address(this).balance;
+        try callback.observe() returns (uint256) {
+            takeBaseline = false;
+        } catch {
+            takeBaseline = false;
+        }
+        if (!takeBaseline) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function helperBaselineComplementaryPath(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore = conditionalBaseline(takeBaseline);
+        if (!takeBaseline) callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function helperBaselineSamePath(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore = conditionalBaseline(takeBaseline);
+        if (takeBaseline) callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function comparisonReturnedByHelper(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(
+            isPaid(address(this).balance, balanceBefore, amount), "insufficient payment"
+        );
+    }
+
+    function helperComparisonCompoundAssignment(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        bool paid = isPaid(address(this).balance, balanceBefore, amount);
+        paid &= amount > 0;
+        require(paid, "insufficient payment");
+    }
+
+    function nonComparisonReturnedByHelper(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay();
+        require(hasEnoughCombinedBalance(address(this).balance, balanceBefore, amount));
+    }
+
     function otherAddressBalance(
         IReentrancyBalanceCallback callback,
         address account,
@@ -305,6 +470,26 @@ contract ReentrancyBalance {
 
     function checkBalance(uint256 balanceBefore, uint256 amount) internal view {
         require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function isPaid(
+        uint256 current,
+        uint256 balanceBefore,
+        uint256 amount
+    ) internal pure returns (bool) {
+        return current >= balanceBefore + amount;
+    }
+
+    function hasEnoughCombinedBalance(
+        uint256 current,
+        uint256 balanceBefore,
+        uint256 amount
+    ) internal pure returns (bool) {
+        return current + balanceBefore >= amount;
+    }
+
+    function conditionalBaseline(bool takeBaseline) internal view returns (uint256 balanceBefore) {
+        if (takeBaseline) balanceBefore = address(this).balance;
     }
 
     function consume(uint256, uint256) internal pure {}
