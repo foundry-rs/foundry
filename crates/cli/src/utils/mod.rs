@@ -475,7 +475,7 @@ impl<'a> Git<'a> {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.cmd().arg("rm").args(force.then_some("--force")).arg("--").args(paths).exec().map(drop)
+        self.cmd().arg("rm").args(force.then_some("--force")).args(paths).exec().map(drop)
     }
 
     pub fn remove_index_path(self, path: &Path) -> Result<()> {
@@ -527,19 +527,6 @@ impl<'a> Git<'a> {
             .arg(path)
             .exec()
             .map(|out| out.stdout.is_empty())
-    }
-
-    /// Returns whether a path has no unstaged changes relative to the index.
-    pub fn is_path_worktree_clean(self, path: &Path) -> Result<bool> {
-        let output = self.cmd().args(["diff", "--quiet", "--"]).arg(path).output()?;
-        match output.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
-            _ => Err(eyre::eyre!(
-                "failed to inspect path: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )),
-        }
     }
 
     pub fn has_branch(self, branch: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
@@ -737,6 +724,7 @@ ignore them in the `.gitignore` file."
         path: impl AsRef<OsStr>,
     ) -> Result<()> {
         self.cmd()
+            .env("GIT_LITERAL_PATHSPECS", "1")
             .stderr(self.stderr())
             .args(["submodule", "add"])
             .args(self.shallow.then_some("--depth=1"))
@@ -761,13 +749,12 @@ ignore them in the `.gitignore` file."
     {
         self.cmd()
             .stderr(self.stderr())
-            .args(["--literal-pathspecs", "submodule", "update", "--progress", "--init"])
+            .args(["submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
             .args(force.then_some("--force"))
             .args(remote.then_some("--remote"))
             .args(no_fetch.then_some("--no-fetch"))
             .args(recursive.then_some("--recursive"))
-            .arg("--")
             .args(paths)
             .exec()
             .map(drop)
@@ -797,17 +784,6 @@ ignore them in the `.gitignore` file."
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
-    pub fn submodule_deinit(self, force: bool, path: &Path) -> Result<()> {
-        self.cmd()
-            .stderr(self.stderr())
-            .args(["--literal-pathspecs", "submodule", "deinit"])
-            .args(force.then_some("--force"))
-            .arg("--")
-            .arg(path)
-            .exec()
-            .map(drop)
-    }
-
     pub fn submodules(&self) -> Result<Submodules> {
         self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
     }
@@ -824,14 +800,11 @@ ignore them in the `.gitignore` file."
             .map(|url| Some(url.trim().to_string()))
     }
 
-    /// Returns whether the default section name conflicts and the mapping for an exact path.
-    pub fn submodule_mapping_for_path(
-        self,
-        path: &Path,
-    ) -> Result<(bool, Option<SubmoduleMapping>)> {
+    /// Returns whether `.gitmodules` contains the default section name or an exact path mapping.
+    pub fn has_submodule_mapping(self, path: &Path) -> Result<bool> {
         let gitmodules = self.root.join(".gitmodules");
         if !gitmodules.exists() {
-            return Ok((false, None));
+            return Ok(false);
         }
 
         let output = self
@@ -843,7 +816,6 @@ ignore them in the `.gitignore` file."
         match output.status.code() {
             Some(0) => {
                 let expected_path = path.to_slash_lossy();
-                let mut sections = HashMap::<String, (Option<String>, Option<String>)>::default();
                 for entry in
                     output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty())
                 {
@@ -854,27 +826,13 @@ ignore them in the `.gitignore` file."
                     let value = std::str::from_utf8(&entry[separator + 1..])?;
                     let Some(key) = key.strip_prefix("submodule.") else { continue };
                     let Some((name, field)) = key.rsplit_once('.') else { continue };
-                    let section = sections.entry(name.to_string()).or_default();
-                    match field {
-                        "path" if section.0.is_none() => section.0 = Some(value.to_string()),
-                        "url" if section.1.is_none() => section.1 = Some(value.to_string()),
-                        _ => {}
+                    if name == expected_path || field == "path" && value == expected_path {
+                        return Ok(true);
                     }
                 }
-
-                let default_name_exists = sections.contains_key(expected_path.as_ref());
-                let mut mappings = sections
-                    .into_iter()
-                    .filter(|(_, (mapped_path, _))| mapped_path.as_deref() == Some(&expected_path))
-                    .map(|(name, (_, url))| SubmoduleMapping { name, url });
-                let mapping = mappings.next();
-                let multiple_mappings = mappings.next().is_some();
-                let name_conflict = multiple_mappings
-                    || default_name_exists
-                        && mapping.as_ref().is_none_or(|mapping| mapping.name != expected_path);
-                Ok((name_conflict, (!multiple_mappings).then_some(mapping).flatten()))
+                Ok(false)
             }
-            Some(1) => Ok((false, None)),
+            Some(1) => Ok(false),
             _ => Err(eyre::eyre!(
                 "failed to inspect .gitmodules: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -906,34 +864,43 @@ ignore them in the `.gitignore` file."
             .map(|output| !output.stdout.is_empty())
     }
 
-    /// Returns whether the index contains the exact path.
-    pub fn is_tracked(self, path: &Path) -> Result<bool> {
-        self.cmd().args(["ls-files", "-z", "--"]).arg(path).exec().map(|output| {
-            let expected_path = path.to_slash_lossy();
-            output.stdout.split(|byte| *byte == 0).any(|entry| entry == expected_path.as_bytes())
-        })
+    /// Returns whether a regular stage-0 index entry has no flags and matches the worktree.
+    pub fn is_normal_tracked_file(self, path: &Path) -> Result<bool> {
+        let output = self
+            .cmd()
+            .args(["--literal-pathspecs", "ls-files", "--stage", "-v", "-z", "--"])
+            .arg(path)
+            .exec()?;
+        let mut entries = output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty());
+        let Some(entry) = entries.next() else { return Ok(false) };
+        if entries.next().is_some() {
+            return Ok(false);
+        }
+        let Some(separator) = entry.iter().position(|byte| *byte == b'\t') else {
+            return Err(eyre::eyre!("invalid index entry"));
+        };
+        if entry.get(separator + 1..) != Some(path.to_slash_lossy().as_bytes()) {
+            return Ok(false);
+        }
+        let mut fields = std::str::from_utf8(&entry[..separator])?.split_ascii_whitespace();
+        if fields.next() != Some("H") || !matches!(fields.next(), Some("100644" | "100755")) {
+            return Ok(false);
+        }
+        let Some(index_hash) = fields.next() else { return Ok(false) };
+        if fields.next() != Some("0") || fields.next().is_some() {
+            return Ok(false);
+        }
+        let worktree_hash = self.cmd().args(["hash-object", "--"]).arg(path).get_stdout_lossy()?;
+        Ok(worktree_hash.trim() == index_hash)
     }
 
-    /// Returns all local config values for the given submodule.
-    pub fn submodule_config(self, path: &Path) -> Result<Vec<(String, String)>> {
+    /// Returns whether local config contains values for the given submodule.
+    pub fn has_submodule_config(self, path: &Path) -> Result<bool> {
         let pattern = format!(r"^submodule\.{}\.", regex::escape(&path.to_slash_lossy()));
-        let output =
-            self.cmd().args(["config", "--local", "--null", "--get-regexp", &pattern]).output()?;
+        let output = self.cmd().args(["config", "--local", "--get-regexp", &pattern]).output()?;
         match output.status.code() {
-            Some(0) => output
-                .stdout
-                .split(|byte| *byte == 0)
-                .filter(|entry| !entry.is_empty())
-                .map(|entry| {
-                    let Some(separator) = entry.iter().position(|byte| *byte == b'\n') else {
-                        return Err(eyre::eyre!("invalid submodule config entry"));
-                    };
-                    let (key, value) = entry.split_at(separator);
-                    let value = &value[1..];
-                    Ok((String::from_utf8(key.to_vec())?, String::from_utf8(value.to_vec())?))
-                })
-                .collect(),
-            Some(1) => Ok(Vec::new()),
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
             _ => Err(eyre::eyre!(
                 "failed to inspect submodule config: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -941,14 +908,11 @@ ignore them in the `.gitignore` file."
         }
     }
 
-    /// Replaces all local config values for the given submodule.
-    pub fn restore_submodule_config(self, path: &Path, config: &[(String, String)]) -> Result<()> {
-        if !self.submodule_config(path)?.is_empty() {
+    /// Removes all local config values for the given submodule.
+    pub fn remove_submodule_config(self, path: &Path) -> Result<()> {
+        if self.has_submodule_config(path)? {
             let section = format!("submodule.{}", path.to_slash_lossy());
             self.cmd().args(["config", "--local", "--remove-section", &section]).exec()?;
-        }
-        for (key, value) in config {
-            self.cmd().args(["config", "--local", "--add", key, value]).exec()?;
         }
         Ok(())
     }
@@ -965,11 +929,7 @@ ignore them in the `.gitignore` file."
 
     /// Sets the branch for a submodule.
     pub fn set_submodule_branch(self, rel_path: &Path, branch: &str) -> Result<()> {
-        self.cmd()
-            .args(["--literal-pathspecs", "submodule", "set-branch", "-b", branch, "--"])
-            .arg(rel_path)
-            .exec()
-            .map(drop)
+        self.cmd().args(["submodule", "set-branch", "-b", branch]).arg(rel_path).exec().map(drop)
     }
 
     /// Returns remote branch names as a newline-separated string.
@@ -1019,15 +979,6 @@ ignore them in the `.gitignore` file."
     fn stderr(self) -> Stdio {
         if self.quiet { Stdio::piped() } else { Stdio::inherit() }
     }
-}
-
-/// A submodule section in `.gitmodules` resolved by its worktree path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubmoduleMapping {
-    /// Section name used for local config and the module Git directory.
-    pub name: String,
-    /// Registered submodule URL.
-    pub url: Option<String>,
 }
 
 /// Deserialized `git submodule status lib/dep` output.
