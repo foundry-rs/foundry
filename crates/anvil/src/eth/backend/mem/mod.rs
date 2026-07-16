@@ -168,7 +168,7 @@ impl<DB: Database, T> BackendInspector<DB> for T where
 }
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
-    DatabaseCommit, Inspector,
+    Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
@@ -5085,6 +5085,9 @@ impl Backend<FoundryNetwork> {
                 if let Some(state_overrides) = state_overrides {
                     apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
+                if !validation {
+                    block_env.basefee = 0;
+                }
                 if let Some(block_overrides) = block_overrides {
                     cache_db.apply_block_overrides(block_overrides, &mut block_env);
                 }
@@ -5120,6 +5123,15 @@ impl Backend<FoundryNetwork> {
                     }
                     request.gas = Some(requested_gas);
 
+                    let caller = request.from.unwrap_or_default();
+                    if request.nonce.is_none() {
+                        request.nonce = Some(
+                            RevmDatabase::basic(&mut cache_db, caller)?
+                                .map(|account| account.nonce)
+                                .unwrap_or_default(),
+                        );
+                    }
+
                     let fee_details = FeeDetails::new(
                         request.gas_price,
                         request.max_fee_per_gas,
@@ -5128,8 +5140,12 @@ impl Backend<FoundryNetwork> {
                     )?
                     .or_zero_fees();
 
+                    let mut execution_request = request.clone();
+                    if !validation {
+                        execution_request.nonce = None;
+                    }
                     let (mut evm_env, tx_env, op_deposit) = self.build_call_env(
-                        WithOtherFields::new(request.clone()),
+                        WithOtherFields::new(execution_request),
                         fee_details,
                         block_env.clone(),
                     );
@@ -5143,9 +5159,10 @@ impl Backend<FoundryNetwork> {
                     // Always disable EIP-3607
                     evm_env.cfg_env.disable_eip3607 = true;
 
-                    if !validation {
-                        evm_env.cfg_env.disable_base_fee = !validation;
-                        evm_env.block_env.basefee = 0;
+                    if validation {
+                        evm_env.cfg_env.disable_nonce_check = false;
+                        evm_env.cfg_env.disable_base_fee = false;
+                        evm_env.cfg_env.disable_block_gas_limit = false;
                     }
 
                     let mut inspector = self.build_inspector();
@@ -5155,13 +5172,19 @@ impl Backend<FoundryNetwork> {
                         inspector = inspector.with_transfers();
                     }
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
-                    let ResultAndState { result, state } = self.transact_with_inspector_ref(
+                    let execution_result = self.transact_with_inspector_ref(
                         &cache_db,
                         &evm_env,
                         &mut inspector,
                         tx_env,
                         op_deposit,
-                    )?;
+                    );
+                    let ResultAndState { result, state } = match execution_result {
+                        Err(BlockchainError::InvalidTransaction(error)) => {
+                            return Err(simulate_transaction_error(error));
+                        }
+                        result => result?,
+                    };
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
                     inspector.print_logs();
@@ -5179,7 +5202,7 @@ impl Backend<FoundryNetwork> {
                         .saturating_add(result.gas().block_state_gas_used());
 
                     // create the transaction from a request
-                    let from = request.from.unwrap_or_default();
+                    let from = caller;
 
                     let mut request =
                         Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
@@ -5947,6 +5970,25 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum();
     }
     false
+}
+
+fn simulate_transaction_error(error: InvalidTransactionError) -> BlockchainError {
+    let code = match &error {
+        InvalidTransactionError::NonceTooLow => -38010,
+        InvalidTransactionError::NonceTooHigh => -38011,
+        InvalidTransactionError::NonceMaxValue => -32603,
+        InvalidTransactionError::FeeCapTooLow => -38012,
+        InvalidTransactionError::GasTooLow | InvalidTransactionError::GasTooHigh(_) => -38013,
+        InvalidTransactionError::InsufficientFunds
+        | InvalidTransactionError::InsufficientFundsForTransfer => -38014,
+        _ => return BlockchainError::InvalidTransaction(error),
+    };
+
+    BlockchainError::RpcError(RpcError {
+        code: ErrorCode::from(code),
+        message: format!("err: {error}").into(),
+        data: None,
+    })
 }
 
 /// Unpacks an [`ExecutionResult`] into its exit reason, gas used, output, and logs.
