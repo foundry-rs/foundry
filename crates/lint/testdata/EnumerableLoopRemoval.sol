@@ -15,12 +15,12 @@ import {EnumerableSet as ES} from "./auxiliary/EnumerableSetLib.sol";
 // covered, and storage-reference aliases are followed to the set they name where the loop runs.
 //
 // Anything outside that shape is left clean rather than guessed at: a conditional or mixed
-// cadence, a composite index, a `break`/`continue`/`return`/`revert`, inline assembly, a nested
-// loop, or a `try`. Expression-level short-circuits and ternaries remain structural expressions
-// and are scanned, except for arms a literal boolean proves unreachable. Some clean cases are
-// genuine corruptions the detector deliberately does not report; they are grouped under
-// "Documented limitations" below. Distinguishing them would take the flow or value analysis this
-// detector does not run.
+// cadence, a composite index, a `break`/`continue`/`return`/`revert`, an unconditional failure
+// such as `require(false)`, inline assembly, a nested loop, or a `try`. Expression-level
+// short-circuits and ternaries remain structural expressions and are scanned, except for arms a
+// literal boolean proves unreachable. Some clean cases are genuine corruptions the detector
+// deliberately does not report; they are grouped under "Documented limitations" below.
+// Distinguishing them would take the flow or value analysis this detector does not run.
 
 // Minimal mirror of OpenZeppelin's EnumerableSet: swap-and-pop removal, index access via `at`.
 library EnumerableSet {
@@ -587,6 +587,43 @@ contract EnumerableLoopRemoval {
             holders.remove(holders.at(i));
             i++;
             revert Stop();
+        }
+    }
+
+    function removeThenRequireFalse() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            require(false, "stop");
+        }
+    }
+
+    function removeThenAssertFalse() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            assert(false);
+        }
+    }
+
+    // Non-terminal require/assert calls can reach another iteration and remain reported.
+    function removeThenRequireTrue() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i)); //~WARN: EnumerableSet
+            i++;
+            require(true);
+        }
+    }
+
+    function removeThenAssertTrue() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i)); //~WARN: EnumerableSet
+            i++;
+            assert(true);
         }
     }
 

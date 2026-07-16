@@ -1,7 +1,7 @@
 use super::EnumerableLoopRemoval;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::primitives::branch_always_exits},
 };
 use alloy_primitives::U256;
 use solar::{
@@ -9,7 +9,6 @@ use solar::{
     interface::{Span, Symbol},
     sema::{
         Gcx,
-        builtins::Builtin,
         hir::{
             self, CallArgs, CallArgsKind, Expr, ExprKind, FunctionId, Hir, ItemId, LoopSource, Res,
             Stmt, StmtKind, VarKind, VariableId, Visit,
@@ -261,34 +260,26 @@ const fn real_body<'hir>(source: LoopSource, body: &'hir [Stmt<'hir>]) -> &'hir 
 }
 
 /// Whether every statement of a loop body runs on one straight line: no branch (`if`/`try`), no
-/// jump (`break`/`continue`/`return`/`revert`), no inline assembly, and no nested loop. Bare blocks
-/// are transparent. Any of these would let control skip a removal, skip the cadence step, or leave
-/// the loop before a shifted slot is read, none of which this detector tracks, so their presence
-/// makes it silent.
+/// jump (`break`/`continue`), no terminal statement, no inline assembly, and no nested loop. Bare
+/// blocks are transparent. Any of these would let control skip a removal, skip the cadence step,
+/// or leave the loop before a shifted slot is read, none of which this detector tracks, so their
+/// presence makes it silent.
 fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
-    stmts.iter().all(|stmt| match &stmt.kind {
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            body_is_straight_line(block.stmts)
-        }
-        StmtKind::If(..)
-        | StmtKind::Try(..)
-        | StmtKind::Loop(..)
-        | StmtKind::AssemblyBlock(..)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Return(..)
-        | StmtKind::Revert(..) => false,
-        StmtKind::Expr(expr) if is_builtin_revert(expr) => false,
-        _ => true,
+    stmts.iter().all(|stmt| {
+        !branch_always_exits(stmt)
+            && match &stmt.kind {
+                StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                    body_is_straight_line(block.stmts)
+                }
+                StmtKind::If(..)
+                | StmtKind::Try(..)
+                | StmtKind::Loop(..)
+                | StmtKind::AssemblyBlock(..)
+                | StmtKind::Break
+                | StmtKind::Continue => false,
+                _ => true,
+            }
     })
-}
-
-/// Whether an expression statement is Solidity's builtin `revert()` or `revert(string)` call.
-/// Custom-error revert statements have their own `StmtKind::Revert` arm above.
-fn is_builtin_revert(expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
-    let ExprKind::Ident(resolutions) = &callee.peel_parens().kind else { return false };
-    resolutions.iter().any(|res| matches!(res, Res::Builtin(Builtin::Revert | Builtin::RevertMsg)))
 }
 
 /// The loop's own indices that step upward unconditionally: a bare identifier advanced by `i++`,
