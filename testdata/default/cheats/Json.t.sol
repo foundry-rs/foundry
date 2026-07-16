@@ -385,6 +385,27 @@ contract ParseJsonTest is Test {
         vm.parseJsonKeys(jsonString, ".*");
     }
 
+    function test_parseJsonArrayLength() public {
+        string memory jsonString = '{"array":[1,{"nested":true},"three"],"empty":[],"object":{"array":[1,2]}}';
+
+        assertEq(vm.parseJsonArrayLength('[1,2,3]', "$"), 3);
+        assertEq(vm.parseJsonArrayLength(jsonString, ".array"), 3);
+        assertEq(vm.parseJsonArrayLength(jsonString, ".empty"), 0);
+        assertEq(vm.parseJsonArrayLength(jsonString, ".object.array"), 2);
+
+        vm._expectCheatcodeRevert('JSON value at ".object" is not an array');
+        vm.parseJsonArrayLength(jsonString, ".object");
+
+        vm._expectCheatcodeRevert('JSON value at ".array[0]" is not an array');
+        vm.parseJsonArrayLength(jsonString, ".array[0]");
+
+        vm._expectCheatcodeRevert('key ".missing" must return exactly one JSON array');
+        vm.parseJsonArrayLength(jsonString, ".missing");
+
+        vm._expectCheatcodeRevert('key ".array[*]" must return exactly one JSON array');
+        vm.parseJsonArrayLength(jsonString, ".array[*]");
+    }
+
     // forge eip712 testdata/default/cheats/Json.t.sol -R 'cheats=testdata/cheats' -R 'ds-test=testdata/lib/ds-test/src' | grep ^FlatJson
     string constant schema_FlatJson =
         "FlatJson(uint256 a,int24[][] arr,string str,bytes b,address addr,bytes32 fixedBytes)";

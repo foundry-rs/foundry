@@ -374,6 +374,7 @@ interface Vm {
     function parseInt(string calldata stringifiedValue) external pure returns (int256 parsedValue);
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
     function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);
+    function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
     function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
     function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
