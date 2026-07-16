@@ -33,6 +33,11 @@ contract ReentrancyBalance {
         require(address(this).balance >= balanceBefore + amount, "insufficient payment");
     }
 
+    modifier checkSelfAfter(address payable self, uint256 balanceBefore, uint256 amount) {
+        _;
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
     function requireAfterCall(IReentrancyBalanceCallback callback, uint256 amount) external {
         uint256 balanceBefore = payable(address(this)).balance;
         callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
@@ -69,6 +74,95 @@ contract ReentrancyBalance {
         callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
         uint256 balanceAfter = uint256(address(this).balance);
         require(balanceAfter >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function selfAddressAlias(IReentrancyBalanceCallback callback, uint256 amount) external {
+        address payable self = payable(address(this));
+        uint256 balanceBefore = self.balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function reassignedSelfAddressAlias(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        address payable self = payable(address(this));
+        uint256 balanceBefore = self.balance;
+        self = payable(address(callback));
+        callback.pay();
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function conditionallyReassignedSelfAddressAlias(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool retarget
+    ) external {
+        address payable self = payable(address(this));
+        uint256 balanceBefore = self.balance;
+        if (retarget) {
+            self = payable(address(callback));
+            callback.pay();
+        }
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function conditionallyRetargetedAfterCall(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool retarget
+    ) external {
+        address payable self = payable(address(this));
+        uint256 balanceBefore = self.balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        if (retarget) self = payable(address(callback));
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function tupleSelfAddressAlias(IReentrancyBalanceCallback callback, uint256 amount) external {
+        (address payable self, uint256 expected) = (payable(address(this)), amount);
+        uint256 balanceBefore = self.balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(self.balance >= balanceBefore + expected, "insufficient payment");
+    }
+
+    function tupleReassignedSelfAddressAlias(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        address payable self = payable(address(this));
+        uint256 balanceBefore = self.balance;
+        (self, amount) = (payable(address(callback)), amount);
+        callback.pay();
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function assemblyReassignedSelfAddressAlias(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        address payable self = payable(address(this));
+        uint256 balanceBefore = self.balance;
+        assembly {
+            self := caller()
+        }
+        callback.pay();
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function helperSelfAddressAlias(IReentrancyBalanceCallback callback, uint256 amount) external {
+        address payable self = payable(address(this));
+        uint256 balanceBefore = self.balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        checkSelfBalance(self, balanceBefore, amount);
+    }
+
+    function modifierSelfAddressAlias(IReentrancyBalanceCallback callback, uint256 amount)
+        external
+        checkSelfAfter(payable(address(this)), address(this).balance, amount)
+    {
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
     }
 
     function tupleDeclaration(IReentrancyBalanceCallback callback, uint256 amount) external {
@@ -470,6 +564,13 @@ contract ReentrancyBalance {
 
     function checkBalance(uint256 balanceBefore, uint256 amount) internal view {
         require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function checkSelfBalance(address payable self, uint256 balanceBefore, uint256 amount)
+        internal
+        view
+    {
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
     }
 
     function isPaid(
