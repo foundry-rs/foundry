@@ -600,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn ensure_loaded_session_network_matches_rejects_monad_on_default_network() {
         let current = config_with_network(None);
         let loaded = config_with_network(Some("monad"));

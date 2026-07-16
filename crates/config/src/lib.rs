@@ -5403,6 +5403,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "monad")]
     fn monad_hardfork_infers_monad_network() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(

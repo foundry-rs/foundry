@@ -71,6 +71,7 @@ mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
 monad = [
     "foundry-common/monad",
+    "foundry-config/monad",
     "foundry-evm/monad",
     "foundry-cli/monad",
 ]
