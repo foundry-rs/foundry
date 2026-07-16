@@ -33,7 +33,7 @@ use dialoguer::{Select, console::Term};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
-    utils::{self, LoadConfig},
+    utils::{self, FoundryPathExt, LoadConfig},
 };
 use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
@@ -381,6 +381,11 @@ fn sources_to_compile_from_artifacts(
 ) -> BTreeSet<PathBuf> {
     let paths = config.project_paths::<MultiCompilerLanguage>();
     let empty_filter = EmptyTestFilter::default();
+    let filter_args = test_filter.args();
+    let has_contract_or_test_filter = filter_args.test_pattern.is_some()
+        || filter_args.test_pattern_inverse.is_some()
+        || filter_args.contract_pattern.is_some()
+        || filter_args.contract_pattern_inverse.is_some();
 
     // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
     // identifiers it constructs are project-relative. Match that here for the filter check
@@ -397,6 +402,16 @@ fn sources_to_compile_from_artifacts(
                 return false;
             }
             let stripped = id.clone().with_stripped_file_prefixes(&config.root);
+            // ABI-only compilation can omit test functions with invalid bodies, so preserve the
+            // existing filter behavior for conventional test files instead of treating them as
+            // fixtures.
+            if stripped.source.is_sol_test() {
+                return if has_contract_or_test_filter {
+                    test_matcher.matches_contract(test_filter, &stripped, abi)
+                } else {
+                    test_filter.matches_path(&stripped.source)
+                };
+            }
             !test_matcher.matches_contract(&empty_filter, &stripped, abi)
                 || test_matcher.matches_contract(test_filter, &stripped, abi)
         })
@@ -1502,7 +1517,12 @@ impl TestArgs {
 
         let mut project = config.create_project(true, true)?;
         let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-            .chain(source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS))
+            .chain(
+                source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    // Preserve path-filter behavior for conventional test files while still
+                    // scanning non-test fixtures under the test root.
+                    .filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
+            )
             .collect::<BTreeSet<_>>();
         let output = compile_abi_project(
             &mut project,
