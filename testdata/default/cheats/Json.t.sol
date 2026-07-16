@@ -388,7 +388,7 @@ contract ParseJsonTest is Test {
     function test_parseJsonArrayLength() public {
         string memory jsonString = '{"array":[1,{"nested":true},"three"],"empty":[],"object":{"array":[1,2]}}';
 
-        assertEq(vm.parseJsonArrayLength('[1,2,3]', "$"), 3);
+        assertEq(vm.parseJsonArrayLength("[1,2,3]", "$"), 3);
         assertEq(vm.parseJsonArrayLength(jsonString, ".array"), 3);
         assertEq(vm.parseJsonArrayLength(jsonString, ".empty"), 0);
         assertEq(vm.parseJsonArrayLength(jsonString, ".object.array"), 2);
