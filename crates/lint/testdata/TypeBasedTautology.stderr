@@ -193,6 +193,22 @@ LL │         return uint8(raw) > 0 || uint8(raw) == 0;
 warning[type-based-tautology]: condition is always true or false based on the variable's type
    ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
    │
+LL │         return x > 0 || x < 255;
+   │                ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return uint16(x) < 255 || uint16(x) == 255;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
 LL │         return x > -0 || x == -0;
    │                ━━━━━━━━━━━━━━━━━
    │

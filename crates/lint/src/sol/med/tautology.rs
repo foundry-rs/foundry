@@ -74,10 +74,16 @@ impl<'hir> LateLintPass<'hir> for TypeBasedTautology {
 #[derive(Clone, Copy)]
 struct Comparison {
     variable: VariableId,
-    ty: ElementaryType,
+    range: IntegerRange,
     op: BinOpKind,
     val_neg: bool,
     val_mag: U256,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct IntegerRange {
+    lower: (bool, U256),
+    upper: (bool, U256),
 }
 
 /// Extracts a comparison over one resolved integer variable, normalizing constants on the left.
@@ -98,16 +104,16 @@ fn comparison_of<'hir>(
         return None;
     }
 
-    if let (Some((variable, ty)), Some((val_neg, val_mag))) =
+    if let (Some((variable, range)), Some((val_neg, val_mag))) =
         (comparison_operand_of(hir, left), lit_value_of(right))
     {
-        return Some(Comparison { variable, ty, op: op.kind, val_neg, val_mag });
+        return Some(Comparison { variable, range, op: op.kind, val_neg, val_mag });
     }
 
-    if let (Some((val_neg, val_mag)), Some((variable, ty))) =
+    if let (Some((val_neg, val_mag)), Some((variable, range))) =
         (lit_value_of(left), comparison_operand_of(hir, right))
     {
-        return Some(Comparison { variable, ty, op: flip(op.kind), val_neg, val_mag });
+        return Some(Comparison { variable, range, op: flip(op.kind), val_neg, val_mag });
     }
 
     None
@@ -115,22 +121,24 @@ fn comparison_of<'hir>(
 
 /// Returns true for boundary comparisons whose union covers the complete integer type range.
 fn is_boundary_composition(left: Comparison, right: Comparison) -> bool {
-    if left.variable != right.variable || left.ty != right.ty {
+    if left.variable != right.variable || left.range != right.range {
         return false;
     }
 
-    let Some((lower, upper)) = integer_bounds(left.ty) else { return false };
+    let lower = left.range.lower;
+    let upper = left.range.upper;
 
     // Values greater than the minimum plus the minimum itself cover the whole range.
-    (matches_comparison(left, BinOpKind::Gt, lower)
-        && is_lower_point(right, lower))
-        || (matches_comparison(right, BinOpKind::Gt, lower)
-            && is_lower_point(left, lower))
+    (matches_comparison(left, BinOpKind::Gt, lower) && is_lower_point(right, lower))
+        || (matches_comparison(right, BinOpKind::Gt, lower) && is_lower_point(left, lower))
         // Values below the maximum plus the maximum itself cover the whole range.
-        || (matches_comparison(left, BinOpKind::Lt, upper)
-            && is_upper_point(right, upper))
-        || (matches_comparison(right, BinOpKind::Lt, upper)
-            && is_upper_point(left, upper))
+        || (matches_comparison(left, BinOpKind::Lt, upper) && is_upper_point(right, upper))
+        || (matches_comparison(right, BinOpKind::Lt, upper) && is_upper_point(left, upper))
+        // Strict comparisons against opposite boundaries cover the whole range.
+        || (matches_comparison(left, BinOpKind::Gt, lower)
+            && matches_comparison(right, BinOpKind::Lt, upper))
+        || (matches_comparison(right, BinOpKind::Gt, lower)
+            && matches_comparison(left, BinOpKind::Lt, upper))
 }
 
 fn matches_comparison(comparison: Comparison, op: BinOpKind, value: (bool, U256)) -> bool {
@@ -149,17 +157,17 @@ fn is_upper_point(comparison: Comparison, upper: (bool, U256)) -> bool {
         && comparison.val_mag == upper.1
 }
 
-fn integer_bounds(ty: ElementaryType) -> Option<((bool, U256), (bool, U256))> {
+fn integer_bounds(ty: ElementaryType) -> Option<IntegerRange> {
     match ty {
         ElementaryType::UInt(size) => {
             let bits = size.bits();
             let upper =
                 if bits == 256 { U256::MAX } else { (U256::from(1u8) << bits) - U256::from(1u8) };
-            Some(((false, U256::ZERO), (false, upper)))
+            Some(IntegerRange { lower: (false, U256::ZERO), upper: (false, upper) })
         }
         ElementaryType::Int(size) => {
             let half = U256::from(1u8) << (size.bits() - 1);
-            Some(((true, half), (false, half - U256::from(1u8))))
+            Some(IntegerRange { lower: (true, half), upper: (false, half - U256::from(1u8)) })
         }
         _ => None,
     }
@@ -248,21 +256,22 @@ fn elem_type_of<'hir>(
     }
 }
 
-/// Extracts a stable variable identity and the effective integer type of an operand.
+/// Extracts a stable variable identity and the reachable integer range of an operand.
 ///
-/// Explicit casts change the range used for the comparison, but not the underlying value
-/// being compared. Keeping both pieces lets boundary compositions recognize expressions such
-/// as `uint8(x) > 0 || uint8(x) == 0` without treating two different variables as identical.
+/// Explicit casts can change the range used for the comparison, but not necessarily the
+/// underlying value being compared. Keeping both pieces lets boundary compositions recognize
+/// expressions such as `uint8(x) > 0 || uint8(x) == 0` without treating two different variables as
+/// identical.
 fn comparison_operand_of<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
-) -> Option<(VariableId, ElementaryType)> {
+) -> Option<(VariableId, IntegerRange)> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(resolutions) => {
             if let Some(Res::Item(ItemId::Variable(variable))) = resolutions.first()
                 && let TypeKind::Elementary(ty) = hir.variable(*variable).ty.kind
             {
-                return Some((*variable, ty));
+                return integer_bounds(ty).map(|range| (*variable, range));
             }
         }
         ExprKind::Call(call_expr, args, _) => {
@@ -281,12 +290,34 @@ fn comparison_operand_of<'hir>(
             }
             // Reject nested casts: an inner value-changing cast can make this expression
             // differ from a comparison over the original variable.
-            let (variable, _) = plain_variable_type_of(hir, inner)?;
-            return Some((variable, *ty));
+            let (variable, source_type) = plain_variable_type_of(hir, inner)?;
+            let range = effective_range_for_cast(source_type, *ty)?;
+            return Some((variable, range));
         }
         _ => {}
     }
     None
+}
+
+fn effective_range_for_cast(
+    source_type: ElementaryType,
+    target_type: ElementaryType,
+) -> Option<IntegerRange> {
+    if is_value_preserving_widening(source_type, target_type) {
+        integer_bounds(source_type)
+    } else {
+        integer_bounds(target_type)
+    }
+}
+
+fn is_value_preserving_widening(source_type: ElementaryType, target_type: ElementaryType) -> bool {
+    match (source_type, target_type) {
+        (ElementaryType::UInt(source), ElementaryType::UInt(target))
+        | (ElementaryType::Int(source), ElementaryType::Int(target)) => {
+            source.bits() <= target.bits()
+        }
+        _ => false,
+    }
 }
 
 fn plain_variable_type_of<'hir>(
