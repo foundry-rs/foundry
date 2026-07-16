@@ -25,6 +25,21 @@ repl_test!(repl_help, |repl| {
     repl.expect_prompt();
 });
 
+repl_test!(save_renamed_session_removes_stale_cache, |repl| {
+    repl.sendln("!save rename-old");
+    repl.sendln("!save rename-new");
+    repl.sendln("!list");
+
+    // A renamed session must not leave the previous cache entry loadable.
+    repl.sendln_raw("!load rename-old");
+    repl.expect("failed to load session");
+    repl.expect_prompt();
+
+    repl.sendln_raw("!load latest");
+    repl.expect("Loaded Chisel session! (ID = rename-new)");
+    repl.expect_prompt();
+});
+
 // Test abi encode/decode.
 repl_test!(abi_encode_decode, |repl| {
     repl.sendln("bytes memory encoded = abi.encode(42, \"hello\")");

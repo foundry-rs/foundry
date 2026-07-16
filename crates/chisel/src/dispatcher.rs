@@ -282,13 +282,21 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     }
 
     pub(crate) fn save_session(&mut self, id: Option<String>) -> Result<()> {
+        let previous_id = self.session.id.clone();
+
         // If a new name was supplied, overwrite the ID of the current session.
         if let Some(id) = id {
-            // TODO: Should we delete the old cache file if the id of the session changes?
             self.session.id = Some(id);
         }
 
         self.session.write()?;
+
+        if let (Some(previous_id), Some(current_id)) = (previous_id, self.session.id.as_deref())
+            && previous_id != current_id
+        {
+            ChiselSession::<FEN>::remove_cached_session(&previous_id)?;
+        }
+
         sh_println!("Saved session to cache with ID = {}", self.session.id.as_ref().unwrap())
     }
 
