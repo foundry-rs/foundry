@@ -22,6 +22,19 @@ pub fn find_anchors(
         .filter_map(|(item_id, item)| {
             let anchor_loc = item.anchor_loc.as_ref().unwrap_or(&item.loc);
             match item.kind {
+                CoverageItemKind::Branch { path_id, is_first_opcode: true, .. }
+                    if item.anchor_loc.is_some() =>
+                {
+                    find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc).or_else(|_| {
+                        find_anchor_branch(bytecode, source_map, item_id, &item.loc).map(
+                            |anchors| match path_id {
+                                0 => anchors.0,
+                                1 => anchors.1,
+                                _ => panic!("too many path IDs for branch"),
+                            },
+                        )
+                    })
+                }
                 CoverageItemKind::Branch { path_id, is_first_opcode: false, .. } => {
                     find_anchor_branch(bytecode, source_map, item_id, anchor_loc).map(|anchors| {
                         match path_id {

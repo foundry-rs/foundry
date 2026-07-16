@@ -1694,6 +1694,55 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
+forgetest!(branch_with_code_free_else, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public value;
+
+    function execute(bool condition) external {
+        if (condition) {
+            value = 1;
+        } else {
+            uint256 unused;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.execute(true);
+        a.execute(false);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+--------------+--------------+---------------+---------------╮
+| File              | % Lines      | % Statements | % Branches    | % Funcs       |
++=================================================================================+
+| src/AContract.sol | 75.00% (3/4) | 50.00% (1/2) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+--------------+--------------+---------------+---------------|
+| Total             | 75.00% (3/4) | 50.00% (1/2) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+--------------+--------------+---------------+---------------╯
+
+"#]]);
+});
+
 forgetest!(identical_bytecodes, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
