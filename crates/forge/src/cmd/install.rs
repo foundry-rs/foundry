@@ -213,6 +213,8 @@ impl DependencyInstallOpts {
                     {
                         // always work with relative paths when directly modifying submodules
                         git.set_submodule_branch(rel_path, tag_or_branch)?;
+                        let root = Git::root_of(git.root)?;
+                        git.root(&root).add(Some(".gitmodules"))?;
 
                         let rev = git.get_rev(tag_or_branch, &path)?;
 
