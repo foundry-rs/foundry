@@ -5185,6 +5185,7 @@ impl Backend<FoundryNetwork> {
                         result => result?,
                     };
                     if !validation && caller_nonce == u64::MAX &&
+                        matches!(request.to.as_ref(), Some(TxKind::Call(_))) &&
                         let Some(account) = state.get_mut(&caller)
                     {
                         account.info.nonce = 0;

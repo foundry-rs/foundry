@@ -309,6 +309,28 @@ async fn test_simulate_resolves_nonces_from_state() {
     assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xfffffffffffffffe");
     assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xffffffffffffffff");
     assert_eq!(response["result"][0]["transactions"][2]["nonce"], "0x0");
+
+    let response = rpc_request(
+        &endpoint,
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {(sender): {"nonce": "0xffffffffffffffff"}},
+                "calls": [
+                    {"from": sender},
+                    {"from": sender, "to": receiver}
+                ]
+            }],
+            "returnFullTransactions": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["calls"][0]["status"], "0x0");
+    assert_eq!(response["result"][0]["calls"][1]["status"], "0x1");
+    assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xffffffffffffffff");
+    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0xffffffffffffffff");
 }
 
 #[tokio::test(flavor = "multi_thread")]
