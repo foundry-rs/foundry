@@ -69,7 +69,12 @@ pub struct MakeTxArgs {
     ethsign: bool,
 
     /// Generate a raw signed transaction using the provided 65-byte signature.
-    #[arg(long, value_name = "SIGNATURE", conflicts_with_all = ["raw_unsigned", "ethsign"])]
+    #[arg(
+        long,
+        value_name = "SIGNATURE",
+        requires = "from",
+        conflicts_with_all = ["raw_unsigned", "ethsign"]
+    )]
     signature: Option<Signature>,
 }
 
@@ -231,18 +236,8 @@ impl MakeTxArgs {
         }
 
         if let Some(signature) = signature {
-            if eth.wallet.from.is_none() && tx.nonce.is_none() {
-                eyre::bail!(
-                    "Missing required parameters for signed transaction. When --from is not provided, you must specify: --nonce"
-                );
-            }
-            if tempo_sponsor.is_some() && eth.wallet.from.is_none() {
-                eyre::bail!(
-                    "--tempo.sponsor requires --from for --signature because the sponsor digest commits to the sender"
-                );
-            }
-
-            let from = eth.wallet.from.unwrap_or(Address::ZERO);
+            let signature = signature.normalized_s();
+            let from = eth.wallet.from.expect("required by clap");
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
@@ -268,9 +263,7 @@ impl MakeTxArgs {
 
             let tx = tx.build_unsigned()?;
             let recovered = signature.recover_address_from_prehash(&tx.signature_hash())?;
-            if let Some(from) = eth.wallet.from
-                && recovered != from
-            {
+            if recovered != from {
                 eyre::bail!(
                     "The provided signature recovers to {recovered}, which does not match the specified sender {from}"
                 );
