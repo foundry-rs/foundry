@@ -724,7 +724,7 @@ ignore them in the `.gitignore` file."
         path: impl AsRef<OsStr>,
     ) -> Result<()> {
         self.cmd()
-            .env("GIT_LITERAL_PATHSPECS", "1")
+            .arg("--literal-pathspecs")
             .stderr(self.stderr())
             .args(["submodule", "add"])
             .args(self.shallow.then_some("--depth=1"))
