@@ -552,12 +552,16 @@ impl ScriptArgs {
             let matching_functions =
                 abi.functions().filter(|func| func.name == self.sig).collect::<Vec<_>>();
             match matching_functions.len() {
-                0 => eyre::bail!("Function `{}` not found in the ABI", self.sig),
+                0 => {
+                    eyre::bail!("Function `{}` not found in the ABI", self.sig);
+                }
                 1 => matching_functions[0],
-                2.. => eyre::bail!(
-                    "Multiple functions with the same name `{}` found in the ABI",
-                    self.sig
-                ),
+                2.. => {
+                    eyre::bail!(
+                        "Multiple functions with the same name `{}` found in the ABI",
+                        self.sig
+                    );
+                }
             }
         };
         let data = encode_function_args(func, &self.args)?;

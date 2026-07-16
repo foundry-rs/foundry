@@ -578,7 +578,9 @@ impl BenchmarkProject {
             "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
             "forge_isolate_test" => self.bench_forge_isolate_test(version, runs, verbose),
             "forge_symbolic_test" => self.bench_forge_symbolic_test(version, runs, verbose),
-            _ => eyre::bail!("Unknown benchmark: {}", benchmark),
+            _ => {
+                eyre::bail!("Unknown benchmark: {}", benchmark);
+            }
         }
     }
 }
@@ -631,7 +633,9 @@ pub fn parse_version_specs(specs: &[String]) -> Result<Vec<(String, Option<PathB
                 Some((name, path)) if !name.is_empty() && !path.is_empty() => {
                     (name, Some(PathBuf::from(path)))
                 }
-                Some(_) => eyre::bail!("invalid source version '{spec}'; expected name=path"),
+                Some(_) => {
+                    eyre::bail!("invalid source version '{spec}'; expected name=path");
+                }
                 None => (spec, None),
             };
             if name.is_empty()
