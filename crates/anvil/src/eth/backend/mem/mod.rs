@@ -5124,12 +5124,11 @@ impl Backend<FoundryNetwork> {
                     request.gas = Some(requested_gas);
 
                     let caller = request.from.unwrap_or_default();
+                    let caller_nonce = RevmDatabase::basic(&mut cache_db, caller)?
+                        .map(|account| account.nonce)
+                        .unwrap_or_default();
                     if request.nonce.is_none() {
-                        request.nonce = Some(
-                            RevmDatabase::basic(&mut cache_db, caller)?
-                                .map(|account| account.nonce)
-                                .unwrap_or_default(),
-                        );
+                        request.nonce = Some(caller_nonce);
                     }
 
                     let fee_details = FeeDetails::new(
@@ -5185,8 +5184,8 @@ impl Backend<FoundryNetwork> {
                         }
                         result => result?,
                     };
-                    if !validation && let Some(account) = state.get_mut(&caller) &&
-                        account.info.nonce == u64::MAX
+                    if !validation && caller_nonce == u64::MAX &&
+                        let Some(account) = state.get_mut(&caller)
                     {
                         account.info.nonce = 0;
                     }
