@@ -78,6 +78,27 @@ repl_test!(save_case_only_rename_preserves_destination, |repl| {
     repl.expect_prompt();
 });
 
+repl_test!(failed_save_restores_previous_session_id, |repl| {
+    let first_id = unique_cache_id("failed-save-first");
+    let second_id = unique_cache_id("failed-save-second");
+    let _cleanup = CacheCleanup(vec![first_id.clone(), second_id.clone()]);
+
+    repl.sendln(&format!("!save {first_id}"));
+    // The nested path makes the write fail without touching the existing cache file.
+    repl.sendln_raw("!save invalid/id");
+    repl.expect_prompt();
+
+    // A failed rename must not lose the ID of the last successfully saved file.
+    repl.sendln(&format!("!save {second_id}"));
+    repl.sendln_raw("!list");
+    repl.expect(&format!("chisel-{second_id}.json"));
+    repl.expect_prompt();
+
+    repl.sendln_raw(&format!("!load {first_id}"));
+    repl.expect("failed to load session");
+    repl.expect_prompt();
+});
+
 // Test abi encode/decode.
 repl_test!(abi_encode_decode, |repl| {
     repl.sendln("bytes memory encoded = abi.encode(42, \"hello\")");

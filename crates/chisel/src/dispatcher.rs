@@ -289,7 +289,13 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             self.session.id = Some(id);
         }
 
-        let new_cache_file = self.session.write()?;
+        let new_cache_file = match self.session.write() {
+            Ok(path) => path,
+            Err(error) => {
+                self.session.id = previous_id.clone();
+                return Err(error);
+            }
+        };
 
         if let (Some(previous_id), Some(current_id)) = (previous_id, self.session.id.as_deref())
             && previous_id != current_id
