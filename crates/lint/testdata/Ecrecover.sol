@@ -15,6 +15,7 @@ contract Ecrecover {
     uint256 private constant TOP_BIT_MASK =
         0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
     bytes32 private storedS;
+    address private storedSigner;
 
     function mutateStoredS(bytes32 replacement) internal {
         storedS = replacement;
@@ -26,6 +27,8 @@ contract Ecrecover {
     }
 
     function observe(bytes32) internal pure {}
+
+    function observeSigner(address) internal pure {}
 
     function bare(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
@@ -78,7 +81,95 @@ contract Ecrecover {
     }
 
     function guardAfterCall(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        address signer = ecrecover(hash, v, r, s);
+        require(uint256(s) <= HALF_ORDER);
+        return signer;
+    }
+
+    function guardAfterAssignment(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        address signer;
+        signer = ecrecover(hash, v, r, s);
+        require(uint256(s) <= HALF_ORDER);
+        return signer;
+    }
+
+    function guardAfterAlias(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        address signer = ecrecover(hash, v, r, s);
+        address aliasSigner = signer;
+        require(uint256(s) <= HALF_ORDER);
+        return aliasSigner;
+    }
+
+    function guardedBranchUse(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bool useSigner
+    ) external pure returns (address) {
+        address signer = ecrecover(hash, v, r, s);
+        if (useSigner) {
+            require(uint256(s) <= HALF_ORDER);
+            return signer;
+        }
+        return address(0);
+    }
+
+    function guardAfterNamedReturn(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (address signer) {
+        signer = ecrecover(hash, v, r, s);
+        require(uint256(s) <= HALF_ORDER);
+    }
+
+    function usedBeforeGuard(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        observeSigner(signer);
+        require(uint256(s) <= HALF_ORDER);
+        return signer;
+    }
+
+    function storedBeforeGuard(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external {
+        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        storedSigner = signer;
+        require(uint256(s) <= HALF_ORDER);
+    }
+
+    function nonDominatingGuard(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bool check
+    ) external pure returns (address) {
+        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        if (check) require(uint256(s) <= HALF_ORDER);
+        return signer;
+    }
+
+    function nonDominatingNamedReturn(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bool check
+    ) external pure returns (address signer) {
+        signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        if (check) require(uint256(s) <= HALF_ORDER);
+    }
+
+    function guardReassignedS(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement
+    ) external pure returns (address) {
+        address signer = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        s = replacement;
         require(uint256(s) <= HALF_ORDER);
         return signer;
     }

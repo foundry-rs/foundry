@@ -45,12 +45,17 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
         func: &'hir hir::Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
-        let mut analyzer = Analyzer::new(gcx, hir);
+        let mut analyzer = Analyzer::new(gcx, hir, func.returns);
+        let mut falls_through = true;
         for stmt in body.stmts {
             let _ = analyzer.visit_stmt(stmt);
             if branch_always_exits(stmt) {
+                falls_through = false;
                 break;
             }
+        }
+        if falls_through {
+            analyzer.use_return_values();
         }
         for span in analyzer.hits {
             ctx.emit(&ECRECOVER, span);
@@ -70,10 +75,17 @@ struct AssignedValue {
     low_s: bool,
 }
 
+#[derive(Clone, Copy)]
+struct PendingRecovery {
+    signature: Option<ValueId>,
+    span: Span,
+}
+
 #[derive(Clone, Default)]
 struct FlowState {
     values: HashMap<hir::VariableId, ValueId>,
     low_s: HashSet<ValueId>,
+    pending: HashMap<ValueId, Vec<PendingRecovery>>,
 }
 
 #[derive(Clone, Default)]
@@ -100,14 +112,28 @@ impl FlowState {
 struct Analyzer<'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
+    returns: &'hir [hir::VariableId],
     state: FlowState,
     next_value: u32,
     hits: Vec<Span>,
+    ignored_reads: HashSet<ValueId>,
+    deferred_calls: HashSet<hir::ExprId>,
+    stored_results: HashSet<hir::ExprId>,
 }
 
 impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>) -> Self {
-        Self { gcx, hir, state: FlowState::default(), next_value: 0, hits: Vec::new() }
+    fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>, returns: &'hir [hir::VariableId]) -> Self {
+        Self {
+            gcx,
+            hir,
+            returns,
+            state: FlowState::default(),
+            next_value: 0,
+            hits: Vec::new(),
+            ignored_reads: HashSet::new(),
+            deferred_calls: HashSet::new(),
+            stored_results: HashSet::new(),
+        }
     }
 
     const fn fresh_value(&mut self) -> ValueId {
@@ -132,7 +158,8 @@ impl<'hir> Analyzer<'hir> {
         let vars: HashSet<_> = left.values.keys().chain(right.values.keys()).copied().collect();
         let mut joined_values = HashMap::new();
 
-        for var in vars {
+        for var in &vars {
+            let var = *var;
             let left_value = left.value(var);
             let right_value = right.value(var);
             if left_value == right_value {
@@ -148,7 +175,69 @@ impl<'hir> Analyzer<'hir> {
             }
             joined.values.insert(var, value);
         }
+        for var in vars {
+            let value = joined.value(var);
+            for recovery in left
+                .pending
+                .get(&left.value(var))
+                .into_iter()
+                .flatten()
+                .chain(right.pending.get(&right.value(var)).into_iter().flatten())
+                .copied()
+            {
+                let recoveries = joined.pending.entry(value).or_default();
+                if !recoveries.iter().any(|existing| {
+                    existing.span == recovery.span && existing.signature == recovery.signature
+                }) {
+                    recoveries.push(recovery);
+                }
+            }
+        }
         joined
+    }
+
+    fn emit_hit(&mut self, span: Span) {
+        if !self.hits.contains(&span) {
+            self.hits.push(span);
+        }
+    }
+
+    fn record_pending(&mut self, var: hir::VariableId, recovery: PendingRecovery) {
+        let value = self.state.value(var);
+        let recoveries = self.state.pending.entry(value).or_default();
+        if !recoveries.iter().any(|existing| {
+            existing.span == recovery.span && existing.signature == recovery.signature
+        }) {
+            recoveries.push(recovery);
+        }
+    }
+
+    fn use_value(&mut self, value: ValueId) {
+        if self.ignored_reads.contains(&value) {
+            return;
+        }
+        if let Some(recoveries) = self.state.pending.remove(&value) {
+            for recovery in recoveries {
+                self.emit_hit(recovery.span);
+            }
+        }
+    }
+
+    fn use_return_values(&mut self) {
+        let values: Vec<_> = self.returns.iter().map(|var| self.state.value(*var)).collect();
+        for value in values {
+            self.use_value(value);
+        }
+    }
+
+    fn validate_pending(&mut self) {
+        let low_s = &self.state.low_s;
+        self.state.pending.retain(|_, recoveries| {
+            recoveries.retain(|recovery| {
+                !recovery.signature.is_some_and(|signature| low_s.contains(&signature))
+            });
+            !recoveries.is_empty()
+        });
     }
 
     fn current_value(&self, expr: &'hir hir::Expr<'hir>) -> Option<ValueId> {
@@ -165,6 +254,59 @@ impl<'hir> Analyzer<'hir> {
             ExprKind::Assign(_, None, rhs) => self.current_value(rhs),
             _ => None,
         }
+    }
+
+    fn deferable_target(&self, expr: &'hir hir::Expr<'hir>) -> Option<hir::VariableId> {
+        underlying_var(expr).filter(|var| self.hir.variable(*var).is_local_variable())
+    }
+
+    fn ecrecover_call_id(&self, expr: &'hir hir::Expr<'hir>) -> Option<hir::ExprId> {
+        let expr = expr.peel_parens();
+        let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
+        (is_ecrecover_builtin(self.gcx, callee) && args.len() == 4).then_some(expr.id)
+    }
+
+    fn visit_stored_expr(&mut self, expr: &'hir hir::Expr<'hir>, store_locally: bool) {
+        let ignored_reads = self.ignored_reads.clone();
+        let deferred_calls = self.deferred_calls.clone();
+        let stored_results = self.stored_results.clone();
+        if store_locally {
+            // Local copies are not observable, and `ecrecover` itself is pure. Keep the
+            // recovered value pending until it is validated or actually read.
+            if let Some(value) = self.current_value(expr) {
+                self.ignored_reads.insert(value);
+            }
+            if let Some(call) = self.ecrecover_call_id(expr) {
+                self.deferred_calls.insert(call);
+            }
+            if matches!(expr.peel_parens().kind, ExprKind::Assign(..)) {
+                self.stored_results.insert(expr.peel_parens().id);
+            }
+        }
+        let _ = self.visit_expr(expr);
+        self.ignored_reads = ignored_reads;
+        self.deferred_calls = deferred_calls;
+        self.stored_results = stored_results;
+    }
+
+    fn visit_discarded_expr(&mut self, expr: &'hir hir::Expr<'hir>) {
+        let stored_results = self.stored_results.clone();
+        if matches!(expr.peel_parens().kind, ExprKind::Assign(..)) {
+            self.stored_results.insert(expr.peel_parens().id);
+        }
+        let _ = self.visit_expr(expr);
+        self.stored_results = stored_results;
+    }
+
+    fn visit_assignment_lhs(&mut self, lhs: &'hir hir::Expr<'hir>) {
+        let ignored_reads = self.ignored_reads.clone();
+        let mut vars = HashSet::new();
+        collect_lhs_vars(lhs, &mut vars);
+        for var in vars {
+            self.ignored_reads.insert(self.state.value(var));
+        }
+        let _ = self.visit_expr(lhs);
+        self.ignored_reads = ignored_reads;
     }
 
     fn const_value(&self, expr: &'hir hir::Expr<'hir>) -> Option<U256> {
@@ -583,6 +725,11 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
+    fn assume(&mut self, predicate: &'hir hir::Expr<'hir>, negate: bool) {
+        self.add_facts(predicate, negate);
+        self.validate_pending();
+    }
+
     fn add_disjunctive_facts(
         &mut self,
         lhs: &'hir hir::Expr<'hir>,
@@ -622,12 +769,15 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn is_unsafe_ecrecover(&self, expr: &'hir hir::Expr<'hir>) -> bool {
-        let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+    fn pending_recovery(&self, expr: &'hir hir::Expr<'hir>) -> Option<PendingRecovery> {
+        let expr = expr.peel_parens();
+        let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
         if !is_ecrecover_builtin(self.gcx, callee) || args.len() != 4 {
-            return false;
+            return None;
         }
-        args.exprs().nth(3).is_some_and(|s| !self.is_proven_low_s(s))
+        let signature = args.exprs().nth(3)?;
+        (!self.is_proven_low_s(signature))
+            .then(|| PendingRecovery { signature: self.current_value(signature), span: expr.span })
     }
 
     fn join_all(&mut self, states: Vec<FlowState>) -> Option<FlowState> {
@@ -662,11 +812,11 @@ impl<'hir> Analyzer<'hir> {
                 let _ = self.visit_expr(condition);
                 let baseline = self.snapshot();
 
-                self.add_facts(condition, false);
+                self.assume(condition, false);
                 let after_then = self.visit_loop_stmt(then_stmt, exits);
 
                 self.restore(baseline);
-                self.add_facts(condition, true);
+                self.assume(condition, true);
                 let after_else = if let Some(else_stmt) = else_stmt {
                     self.visit_loop_stmt(else_stmt, exits)
                 } else {
@@ -728,13 +878,13 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 let _ = self.visit_expr(condition);
                 let baseline = self.snapshot();
 
-                self.add_facts(condition, false);
+                self.assume(condition, false);
                 let _ = self.visit_stmt(then_stmt);
                 let then_exits = branch_always_exits(then_stmt);
                 let after_then = self.snapshot();
 
                 self.restore(baseline);
-                self.add_facts(condition, true);
+                self.assume(condition, true);
                 let else_exits = if let Some(else_stmt) = else_stmt {
                     let _ = self.visit_stmt(else_stmt);
                     branch_always_exits(else_stmt)
@@ -788,9 +938,12 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             StmtKind::DeclSingle(var) => {
                 let init = self.hir.variable(*var).initializer;
                 if let Some(init) = init {
-                    let _ = self.visit_expr(init);
+                    self.visit_stored_expr(init, true);
                 }
                 self.assign_var(*var, init);
+                if let Some(recovery) = init.and_then(|init| self.pending_recovery(init)) {
+                    self.record_pending(*var, recovery);
+                }
                 return ControlFlow::Continue(());
             }
             StmtKind::DeclMulti(vars, init) => {
@@ -808,8 +961,15 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 }
                 return ControlFlow::Continue(());
             }
+            StmtKind::Expr(expr) => {
+                self.visit_discarded_expr(expr);
+                return ControlFlow::Continue(());
+            }
             StmtKind::Err(_) | StmtKind::AssemblyBlock(_) => {
                 self.state = FlowState::default();
+            }
+            StmtKind::Return(None) => {
+                self.use_return_values();
             }
             _ => {}
         }
@@ -817,12 +977,17 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if matches!(expr.kind, ExprKind::Ident(_))
+            && let Some(value) = self.current_value(expr)
+        {
+            self.use_value(value);
+        }
         if let ExprKind::Binary(lhs, op, rhs) = &expr.kind
             && matches!(op.kind, BinOpKind::And | BinOpKind::Or)
         {
             let _ = self.visit_expr(lhs);
             let skipped_rhs = self.snapshot();
-            self.add_facts(lhs, op.kind == BinOpKind::Or);
+            self.assume(lhs, op.kind == BinOpKind::Or);
             let _ = self.visit_expr(rhs);
             let ran_rhs = self.snapshot();
             let joined = self.join(skipped_rhs, ran_rhs);
@@ -832,11 +997,11 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         if let ExprKind::Ternary(condition, then_expr, else_expr) = &expr.kind {
             let _ = self.visit_expr(condition);
             let baseline = self.snapshot();
-            self.add_facts(condition, false);
+            self.assume(condition, false);
             let _ = self.visit_expr(then_expr);
             let after_then = self.snapshot();
             self.restore(baseline);
-            self.add_facts(condition, true);
+            self.assume(condition, true);
             let _ = self.visit_expr(else_expr);
             let after_else = self.snapshot();
             let joined = self.join(after_then, after_else);
@@ -848,19 +1013,36 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
                 let result = self.walk_expr(expr);
                 if let Some(condition) = args.exprs().next() {
-                    self.add_facts(condition, false);
+                    self.assume(condition, false);
                 }
                 return result;
             }
             ExprKind::Assign(lhs, op, rhs) => {
+                if op.is_none() {
+                    let target = self.deferable_target(lhs);
+                    let result_is_stored = self.stored_results.contains(&expr.peel_parens().id);
+                    self.visit_assignment_lhs(lhs);
+                    self.visit_stored_expr(rhs, target.is_some());
+                    let recovery = target.and_then(|_| self.pending_recovery(rhs));
+                    self.assign_lhs(lhs, Some(rhs));
+                    if let Some((target, recovery)) = target.zip(recovery) {
+                        self.record_pending(target, recovery);
+                    }
+                    if let Some(target) = target
+                        && !result_is_stored
+                    {
+                        self.use_value(self.state.value(target));
+                    }
+                    return ControlFlow::Continue(());
+                }
                 let result = self.walk_expr(expr);
-                self.assign_lhs(lhs, op.is_none().then_some(*rhs));
+                self.assign_lhs(lhs, None);
                 return result;
             }
             ExprKind::Delete(target) => {
-                let result = self.walk_expr(expr);
+                self.visit_assignment_lhs(target);
                 self.mark_deleted(target);
-                return result;
+                return ControlFlow::Continue(());
             }
             ExprKind::Unary(op, target)
                 if matches!(
@@ -881,8 +1063,10 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         {
             self.invalidate_mutable_state();
         }
-        if self.is_unsafe_ecrecover(expr) {
-            self.hits.push(expr.span);
+        if let Some(recovery) = self.pending_recovery(expr)
+            && !self.deferred_calls.contains(&expr.peel_parens().id)
+        {
+            self.emit_hit(recovery.span);
         }
         result
     }
