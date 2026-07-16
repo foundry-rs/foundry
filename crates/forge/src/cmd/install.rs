@@ -211,6 +211,8 @@ impl DependencyInstallOpts {
                     {
                         // always work with relative paths when directly modifying submodules
                         git.set_submodule_branch(rel_path, tag_or_branch)?;
+                        let root = Git::root_of(git.root)?;
+                        git.root(&root).add_literal(Path::new(".gitmodules"))?;
 
                         let rev = git.get_rev(tag_or_branch, &path)?;
 
@@ -485,7 +487,6 @@ impl Installer<'_> {
         } else {
             let module_dir = git.absolute_git_dir()?.join("modules").join(relative_path);
             let gitmodules_safe = !gitmodules.is_symlink()
-                && git.is_path_clean(Path::new(".gitmodules"))?
                 && if gitmodules.exists() {
                     git.is_normal_tracked_file(Path::new(".gitmodules"))?
                 } else {

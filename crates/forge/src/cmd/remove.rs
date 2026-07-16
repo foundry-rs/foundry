@@ -52,6 +52,7 @@ impl RemoveArgs {
             )?;
             let _ = lockfile.remove(path);
             std::fs::remove_dir_all(git_modules.join(path))?;
+            git.remove_submodule_config(path)?;
         }
 
         lockfile.write()?;

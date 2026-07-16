@@ -228,13 +228,21 @@ forgetest!(failed_install_with_wildcard_alias_preserves_sibling, |prj, cmd| {
             .status
             .success()
     );
-    let index = fs::read(prj.root().join(".git/index")).unwrap();
+    let index = || {
+        Command::new("git")
+            .current_dir(prj.root())
+            .args(["ls-files", "--stage", "-v", "-z"])
+            .output()
+            .unwrap()
+            .stdout
+    };
+    let index_before = index();
 
     cmd.forge_fuse()
         .args(["install", "*=vectorized/solady@this-tag-does-not-exist"])
         .assert_failure();
 
-    assert_eq!(fs::read(prj.root().join(".git/index")).unwrap(), index);
+    assert_eq!(index(), index_before);
     assert!(sibling.join(".git").exists());
     assert!(Git::new(prj.root()).is_gitlink(Path::new("lib/forge-std")).unwrap());
 });
@@ -517,6 +525,13 @@ forgetest!(can_install_repeatedly, |_prj, cmd| {
     for _ in 0..3 {
         cmd.assert_success();
     }
+});
+
+forgetest!(can_install_multiple_submodules, |_prj, cmd| {
+    cmd.git_init();
+    cmd.forge_fuse()
+        .args(["install", "foundry-rs/forge-std", "vectorized/solady"])
+        .assert_success();
 });
 
 // test that by default we install the latest semver release tag
