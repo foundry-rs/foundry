@@ -162,7 +162,12 @@ contract TypeBasedTautology {
 
     function castedAndUncastedDifferentRangeOr(uint256 raw) public pure returns (bool) {
         // forge-lint: disable-next-line(unsafe-typecast)
-        return uint8(raw) > 0 || raw == 0; // ok – the effective ranges differ
+        return uint8(raw) > 0 || raw == 0; // ok -- the effective ranges differ
+    }
+
+    function nestedCastedDifferentRangeOr(uint256 raw) public pure returns (bool) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint256(uint8(raw)) > 0 || raw == 0; // ok -- the inner cast can change the value
     }
 
     function uintNegativeZeroLowerBoundaryOr(uint256 x) public pure returns (bool) {

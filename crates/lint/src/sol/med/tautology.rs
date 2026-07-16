@@ -279,10 +279,25 @@ fn comparison_operand_of<'hir>(
             if exprs.next().is_some() {
                 return None;
             }
-            let (variable, _) = comparison_operand_of(hir, inner)?;
+            // Reject nested casts: an inner value-changing cast can make this expression
+            // differ from a comparison over the original variable.
+            let (variable, _) = plain_variable_type_of(hir, inner)?;
             return Some((variable, *ty));
         }
         _ => {}
+    }
+    None
+}
+
+fn plain_variable_type_of<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+) -> Option<(VariableId, ElementaryType)> {
+    if let ExprKind::Ident(resolutions) = &expr.peel_parens().kind
+        && let Some(Res::Item(ItemId::Variable(variable))) = resolutions.first()
+        && let TypeKind::Elementary(ty) = hir.variable(*variable).ty.kind
+    {
+        return Some((*variable, ty));
     }
     None
 }
