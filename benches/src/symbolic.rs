@@ -76,7 +76,7 @@ impl Overlay {
         }
         let path = root.join(FARCASTER_PATH);
         if path.exists() {
-            eyre::bail!("refusing to overwrite existing {}", path.display())
+            eyre::bail!("refusing to overwrite existing {}", path.display());
         }
         if let Err(write_err) = fs::write(&path, FARCASTER_TEST) {
             if let Err(cleanup_err) = fs::remove_file(&path)
@@ -85,7 +85,7 @@ impl Overlay {
                 eyre::bail!(
                     "failed to install Farcaster symbolic fixture: {write_err}; failed to remove partially written {}: {cleanup_err}",
                     path.display()
-                )
+                );
             }
             return Err(write_err).wrap_err("failed to install Farcaster symbolic fixture");
         }
@@ -239,7 +239,7 @@ pub fn parse(stdout: &[u8]) -> Result<ParsedRun> {
             let (stats, status) = if stable {
                 let Some(symbolic) = result.get("symbolic") else { continue };
                 if symbolic.get("schema_version").and_then(Value::as_u64) != Some(1) {
-                    eyre::bail!("unknown or missing symbolic schema_version")
+                    eyre::bail!("unknown or missing symbolic schema_version");
                 }
                 let status = symbolic
                     .get("status")
@@ -249,7 +249,9 @@ pub fn parse(stdout: &[u8]) -> Result<ParsedRun> {
                     "pass" => OutcomeStatus::Passed,
                     "fail_counterexample" => OutcomeStatus::Failed,
                     "incomplete" => OutcomeStatus::Incomplete,
-                    _ => eyre::bail!("unknown symbolic.status {status}"),
+                    _ => {
+                        eyre::bail!("unknown symbolic.status {status}");
+                    }
                 };
                 let stats = symbolic
                     .pointer("/solver/stats")
@@ -278,7 +280,7 @@ pub fn parse(stdout: &[u8]) -> Result<ParsedRun> {
         }
     }
     if run.outcomes.is_empty() {
-        eyre::bail!("forge symbolic benchmark produced no symbolic test results")
+        eyre::bail!("forge symbolic benchmark produced no symbolic test results");
     }
     run.outcomes.sort_by_key(TestOutcome::identity);
     run.passed =

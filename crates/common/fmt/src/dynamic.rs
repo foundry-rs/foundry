@@ -241,7 +241,7 @@ fn _serialize_value_as_json(
                 .collect::<Result<_>>()?,
         )),
         DynSolValue::Function(_) => {
-            eyre::bail!("cannot serialize function pointer")
+            eyre::bail!("cannot serialize function pointer");
         }
     }
 }
@@ -296,7 +296,7 @@ impl StructDefinitions {
             _ => {
                 eyre::bail!(
                     "there are several structs with the same name. Use `<contract_name>.{key}` instead."
-                )
+                );
             }
         }
     }

@@ -297,16 +297,18 @@ impl TUIContext<'_> {
                 }
             }),
             // Scroll down the active data pane
-            KeyCode::Char('j') | KeyCode::Down if control => self.repeat(|this| {
-                let max_line = this.active_data_len().saturating_sub(1);
-                if this.active_storage.is_some() {
-                    if this.draw_memory.current_storage_startline < max_line {
-                        this.draw_memory.current_storage_startline += 1;
+            KeyCode::Char('j') | KeyCode::Down if control => {
+                let max_line = self.active_data_len().saturating_sub(1);
+                self.repeat(|this| {
+                    if this.active_storage.is_some() {
+                        if this.draw_memory.current_storage_startline < max_line {
+                            this.draw_memory.current_storage_startline += 1;
+                        }
+                    } else if this.draw_memory.current_buf_startline < max_line {
+                        this.draw_memory.current_buf_startline += 1;
                     }
-                } else if this.draw_memory.current_buf_startline < max_line {
-                    this.draw_memory.current_buf_startline += 1;
-                }
-            }),
+                });
+            }
 
             // Move up
             KeyCode::Char('k') | KeyCode::Up => self.repeat(Self::step_back),
@@ -2691,6 +2693,30 @@ mod tests {
         assert_eq!(tui.draw_memory.current_buf_startline, 2);
         let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('j')));
         assert_eq!(tui.draw_memory.current_buf_startline, 2);
+    }
+
+    #[test]
+    fn storage_scroll_repeats_without_exceeding_last_slot() {
+        let steps =
+            (0..3).map(|slot| step_with_stack(slot, OpCode::TSTORE, &[slot, slot])).collect();
+        let mut context = context_with_arena(vec![DebugNode::new(
+            Address::ZERO,
+            CallKind::Call,
+            steps,
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 2;
+        tui.run_command_from_input("transient");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('2')));
+        let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('j')));
+        assert_eq!(tui.draw_memory.current_storage_startline, 2);
+
+        let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('j')));
+        assert_eq!(tui.draw_memory.current_storage_startline, 2);
     }
 
     #[test]
