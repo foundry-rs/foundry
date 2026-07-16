@@ -1,5 +1,23 @@
 mod session;
+use chisel::session::ChiselSession as CachedChiselSession;
+use foundry_evm::core::evm::EthEvmNetwork;
 use session::ChiselSession;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+struct CacheCleanup(Vec<String>);
+
+impl Drop for CacheCleanup {
+    fn drop(&mut self) {
+        for id in &self.0 {
+            let _ = CachedChiselSession::<EthEvmNetwork>::remove_cached_session(id);
+        }
+    }
+}
+
+fn unique_cache_id(prefix: &str) -> String {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    format!("{prefix}-{}-{timestamp}", std::process::id())
+}
 
 macro_rules! repl_test {
     ($name:ident, | $cmd:ident | $test:expr) => {
@@ -26,17 +44,37 @@ repl_test!(repl_help, |repl| {
 });
 
 repl_test!(save_renamed_session_removes_stale_cache, |repl| {
-    repl.sendln("!save rename-old");
-    repl.sendln("!save rename-new");
-    repl.sendln("!list");
+    let old_id = unique_cache_id("rename-old");
+    let new_id = unique_cache_id("rename-new");
+    let _cleanup = CacheCleanup(vec![old_id.clone(), new_id.clone()]);
+
+    repl.sendln(&format!("!save {old_id}"));
+    repl.sendln(&format!("!save {new_id}"));
+    repl.sendln_raw("!list");
+    repl.expect(&format!("chisel-{new_id}.json"));
+    repl.expect_prompt();
 
     // A renamed session must not leave the previous cache entry loadable.
-    repl.sendln_raw("!load rename-old");
+    repl.sendln_raw(&format!("!load {old_id}"));
     repl.expect("failed to load session");
     repl.expect_prompt();
 
-    repl.sendln_raw("!load latest");
-    repl.expect("Loaded Chisel session! (ID = rename-new)");
+    repl.sendln_raw(&format!("!load {new_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {new_id})"));
+    repl.expect_prompt();
+});
+
+repl_test!(save_case_only_rename_preserves_destination, |repl| {
+    let old_id = unique_cache_id("rename-case").to_ascii_lowercase();
+    let new_id = old_id.to_ascii_uppercase();
+    let _cleanup = CacheCleanup(vec![old_id.clone(), new_id.clone()]);
+
+    repl.sendln(&format!("!save {old_id}"));
+    repl.sendln(&format!("!save {new_id}"));
+
+    // On case-insensitive filesystems, both IDs resolve to the same cache path.
+    repl.sendln_raw(&format!("!load {new_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {new_id})"));
     repl.expect_prompt();
 });
 

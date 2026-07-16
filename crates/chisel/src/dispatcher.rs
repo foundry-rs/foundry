@@ -289,12 +289,18 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             self.session.id = Some(id);
         }
 
-        self.session.write()?;
+        let new_cache_file = self.session.write()?;
 
         if let (Some(previous_id), Some(current_id)) = (previous_id, self.session.id.as_deref())
             && previous_id != current_id
         {
-            ChiselSession::<FEN>::remove_cached_session(&previous_id)?;
+            let old_cache_file =
+                format!("{}chisel-{previous_id}.json", ChiselSession::<FEN>::cache_dir()?);
+            let same_cache_file = std::fs::canonicalize(&old_cache_file).ok()
+                == std::fs::canonicalize(&new_cache_file).ok();
+            if !same_cache_file {
+                ChiselSession::<FEN>::remove_cached_session(&previous_id)?;
+            }
         }
 
         sh_println!("Saved session to cache with ID = {}", self.session.id.as_ref().unwrap())
