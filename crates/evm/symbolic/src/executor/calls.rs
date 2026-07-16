@@ -777,6 +777,25 @@ impl SymbolicExecutor {
             }
 
             if to == CHEATCODE_ADDRESS
+                && let Some(cheatcode) = foundry_cheatcodes_spec::cheatcode_by_selector(selector)
+            {
+                match cheatcode.status.action() {
+                    foundry_cheatcodes_spec::StatusAction::Continue => {}
+                    foundry_cheatcodes_spec::StatusAction::RecordInternal => {
+                        if let Some(cheatcodes) = &executor.inspector().cheatcodes {
+                            cheatcodes.record_internal_cheatcode(cheatcode.func.signature);
+                        }
+                    }
+                    foundry_cheatcodes_spec::StatusAction::RejectRemoved => {
+                        state.return_data = SymReturnData::empty(&mut self.cx);
+                        state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
+                        state.stack.push(SymExpr::zero(&mut self.cx))?;
+                        return Ok(StepOutcome::Continue);
+                    }
+                }
+            }
+
+            if to == CHEATCODE_ADDRESS
                 && let Some(outcome) = self.branch_accesses_cheatcode_if_needed(
                     state,
                     worklist,

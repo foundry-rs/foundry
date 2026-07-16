@@ -49,6 +49,7 @@ use foundry_evm_traces::{
 };
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
+use parking_lot::Mutex;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
@@ -80,6 +81,23 @@ mod utils;
 
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
+
+/// Internal cheatcodes observed by all inspectors cloned from the same suite executor.
+#[derive(Clone, Debug, Default)]
+struct InternalCheatcodeUsage(Arc<Mutex<HashSet<&'static str>>>);
+
+impl InternalCheatcodeUsage {
+    #[inline]
+    fn record(&self, signature: &'static str) {
+        self.0.lock().insert(signature);
+    }
+
+    fn signatures(&self) -> Vec<&'static str> {
+        let mut signatures = self.0.lock().iter().copied().collect::<Vec<_>>();
+        signatures.sort_unstable();
+        signatures
+    }
+}
 
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
 pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
@@ -675,6 +693,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
+    /// Internal cheatcodes observed across the current test suite.
+    internal_cheatcodes: InternalCheatcodeUsage,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
     /// Parsed secp256k1 private-key signers for repeated `vm.addr` / `vm.sign` calls.
@@ -772,6 +792,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
+            internal_cheatcodes: Default::default(),
             wallets: Default::default(),
             private_key_signers: Default::default(),
             signatures_identifier: Default::default(),
@@ -781,6 +802,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             env_overrides_snapshots: Default::default(),
             in_isolation_context: false,
         }
+    }
+
+    /// Returns the sorted internal cheatcode signatures observed by this suite.
+    pub fn internal_cheatcodes(&self) -> Vec<&'static str> {
+        self.internal_cheatcodes.signatures()
+    }
+
+    /// Records use of an internal cheatcode in this suite.
+    pub fn record_internal_cheatcode(&self, signature: &'static str) {
+        self.internal_cheatcodes.record(signature);
     }
 
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
@@ -3140,9 +3171,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     let _guard = debug_span!(target: "cheatcodes", "apply", id = %cheatcode_id(cheat)).entered();
     trace!(target: "cheatcodes", cheat = %cheatcode_signature(cheat), "applying");
 
-    if let spec::Status::Deprecated(replacement) = cheat.status {
-        ccx.state.deprecated.insert(cheatcode_signature(cheat), replacement);
-    }
+    let status_result = record_cheatcode_status(cheat, ccx.state);
 
     // Monomorphized dispatch: calls apply_full directly, no trait objects.
     macro_rules! dispatch {
@@ -3152,7 +3181,29 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
             }
         };
     }
-    let mut result = vm_calls!(dispatch);
+    let result = dispatch_with_status(cheat, status_result, || vm_calls!(dispatch));
+
+    trace!(
+        target: "cheatcodes",
+        return = %match &result {
+            Ok(b) => hex::encode(b),
+            Err(e) => e.to_string(),
+        }
+    );
+
+    result
+}
+
+#[inline]
+fn dispatch_with_status(
+    cheat: &spec::Cheatcode<'static>,
+    status_result: Result<()>,
+    dispatch: impl FnOnce() -> Result,
+) -> Result {
+    let mut result = match status_result {
+        Ok(()) => dispatch(),
+        Err(err) => Err(err),
+    };
 
     // Format the error message to include the cheatcode name.
     if let Err(e) = &mut result
@@ -3167,15 +3218,23 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
         }
     }
 
-    trace!(
-        target: "cheatcodes",
-        return = %match &result {
-            Ok(b) => hex::encode(b),
-            Err(e) => e.to_string(),
-        }
-    );
-
     result
+}
+
+fn record_cheatcode_status<FEN: FoundryEvmNetwork>(
+    cheat: &spec::Cheatcode<'static>,
+    state: &mut Cheatcodes<FEN>,
+) -> Result<()> {
+    let signature = cheatcode_signature(cheat);
+    if let spec::Status::Deprecated(replacement) = cheat.status {
+        state.deprecated.insert(signature, replacement);
+    }
+    match cheat.status.action() {
+        spec::StatusAction::Continue => {}
+        spec::StatusAction::RecordInternal => state.record_internal_cheatcode(signature),
+        spec::StatusAction::RejectRemoved => return Err(fmt_err!("cheatcode has been removed")),
+    }
+    Ok(())
 }
 
 /// Helper function to check if frame execution will exit.
@@ -3191,6 +3250,43 @@ const fn will_exit(action: &InterpreterAction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn internal_cheatcode_usage_is_shared_and_deduplicated() {
+        let usage = InternalCheatcodeUsage::default();
+        let workers = ["first()", "second()", "first()"].map(|signature| {
+            let usage = usage.clone();
+            std::thread::spawn(move || usage.record(signature))
+        });
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        assert_eq!(usage.signatures(), ["first()", "second()"]);
+    }
+
+    #[test]
+    fn records_internal_and_rejects_removed_cheatcodes() {
+        let internal_cheatcode =
+            <crate::Vm::_expectCheatcodeRevert_0Call as spec::CheatcodeDef>::CHEATCODE;
+        let mut state = cheats(false, None);
+
+        record_cheatcode_status(internal_cheatcode, &mut state).unwrap();
+        assert_eq!(state.internal_cheatcodes(), ["_expectCheatcodeRevert()"]);
+
+        let mut removed_cheatcode = internal_cheatcode.clone();
+        removed_cheatcode.status = spec::Status::Removed;
+        let status_result = record_cheatcode_status(&removed_cheatcode, &mut state);
+        let mut dispatched = false;
+        let err = dispatch_with_status(&removed_cheatcode, status_result, || {
+            dispatched = true;
+            Ok(Default::default())
+        })
+        .unwrap_err();
+
+        assert!(!dispatched);
+        assert_eq!(err.to_string(), "vm._expectCheatcodeRevert: cheatcode has been removed");
+    }
 
     fn cheats(flag: bool, broadcast: Option<Broadcast>) -> Cheatcodes {
         let config = CheatsConfig { batch_rewrite_creates: flag, ..Default::default() };

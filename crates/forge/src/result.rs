@@ -807,6 +807,8 @@ impl SuiteResult {
             let mut warning =
                 "the following cheatcode(s) are deprecated and will be removed in future versions:"
                     .to_string();
+            let mut deprecated_cheatcodes = deprecated_cheatcodes.into_iter().collect::<Vec<_>>();
+            deprecated_cheatcodes.sort_unstable_by_key(|(cheatcode, _)| *cheatcode);
             for (cheatcode, reason) in deprecated_cheatcodes {
                 write!(warning, "\n  {cheatcode}").unwrap();
                 if let Some(reason) = reason {
@@ -885,6 +887,20 @@ impl SuiteResult {
             self.total_time(),
         )
     }
+}
+
+pub(crate) fn internal_cheatcodes_warning(signatures: &[&str]) -> Option<String> {
+    if signatures.is_empty() {
+        return None;
+    }
+
+    let mut warning = "the following cheatcode(s) are intended for internal use and may change or \
+                       be removed:"
+        .to_string();
+    for signature in signatures {
+        write!(warning, "\n  {signature}").unwrap();
+    }
+    Some(warning)
 }
 
 /// The result of a single test in a test suite.

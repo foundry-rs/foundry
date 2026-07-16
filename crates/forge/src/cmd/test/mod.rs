@@ -3670,6 +3670,8 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
                 let base_suite = e.get_mut();
                 base_suite.test_results.extend(other_suite.test_results);
                 base_suite.warnings.extend(other_suite.warnings);
+                base_suite.warnings.sort_unstable();
+                base_suite.warnings.dedup();
                 base_suite.duration = base_suite.duration.max(other_suite.duration);
             }
         }

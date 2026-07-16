@@ -59,6 +59,30 @@ pub enum Status<'a> {
     Internal,
 }
 
+/// Dispatch action required by the statuses handled by the runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusAction {
+    /// Continue with normal cheatcode dispatch.
+    Continue,
+    /// Record use of an internal cheatcode before dispatching it.
+    RecordInternal,
+    /// Reject the cheatcode before dispatching it.
+    RejectRemoved,
+}
+
+impl Status<'_> {
+    /// Returns the runtime action for this status.
+    ///
+    /// Experimental cheatcodes remain under discussion and currently dispatch normally.
+    pub const fn action(&self) -> StatusAction {
+        match self {
+            Self::Internal => StatusAction::RecordInternal,
+            Self::Removed => StatusAction::RejectRemoved,
+            _ => StatusAction::Continue,
+        }
+    }
+}
+
 /// Cheatcode groups.
 /// Initially derived and modified from inline comments in [`forge-std`'s `Vm.sol`][vmsol].
 ///
