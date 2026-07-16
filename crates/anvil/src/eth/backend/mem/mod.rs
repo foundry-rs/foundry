@@ -5179,12 +5179,17 @@ impl Backend<FoundryNetwork> {
                         tx_env,
                         op_deposit,
                     );
-                    let ResultAndState { result, state } = match execution_result {
+                    let ResultAndState { result, mut state } = match execution_result {
                         Err(BlockchainError::InvalidTransaction(error)) => {
                             return Err(simulate_transaction_error(error));
                         }
                         result => result?,
                     };
+                    if !validation && let Some(account) = state.get_mut(&caller) &&
+                        account.info.nonce == u64::MAX
+                    {
+                        account.info.nonce = 0;
+                    }
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
                     inspector.print_logs();

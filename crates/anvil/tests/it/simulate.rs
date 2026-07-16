@@ -305,13 +305,8 @@ async fn test_simulate_resolves_nonces_from_state() {
             .iter()
             .all(|call| call["status"] == "0x1")
     );
-    assert!(
-        response["result"][0]["transactions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|transaction| transaction["nonce"] == "0xffffffffffffffff")
-    );
+    assert_eq!(response["result"][0]["transactions"][0]["nonce"], "0xffffffffffffffff");
+    assert_eq!(response["result"][0]["transactions"][1]["nonce"], "0x0");
 }
 
 #[tokio::test(flavor = "multi_thread")]
