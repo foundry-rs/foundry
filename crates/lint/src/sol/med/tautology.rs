@@ -99,13 +99,13 @@ fn comparison_of<'hir>(
     }
 
     if let (Some((variable, ty)), Some((val_neg, val_mag))) =
-        (variable_type_of(hir, left), lit_value_of(right))
+        (comparison_operand_of(hir, left), lit_value_of(right))
     {
         return Some(Comparison { variable, ty, op: op.kind, val_neg, val_mag });
     }
 
     if let (Some((val_neg, val_mag)), Some((variable, ty))) =
-        (lit_value_of(left), variable_type_of(hir, right))
+        (lit_value_of(left), comparison_operand_of(hir, right))
     {
         return Some(Comparison { variable, ty, op: flip(op.kind), val_neg, val_mag });
     }
@@ -115,7 +115,7 @@ fn comparison_of<'hir>(
 
 /// Returns true for boundary comparisons whose union covers the complete integer type range.
 fn is_boundary_composition(left: Comparison, right: Comparison) -> bool {
-    if left.variable != right.variable {
+    if left.variable != right.variable || left.ty != right.ty {
         return false;
     }
 
@@ -248,15 +248,41 @@ fn elem_type_of<'hir>(
     }
 }
 
-fn variable_type_of<'hir>(
+/// Extracts a stable variable identity and the effective integer type of an operand.
+///
+/// Explicit casts change the range used for the comparison, but not the underlying value
+/// being compared. Keeping both pieces lets boundary compositions recognize expressions such
+/// as `uint8(x) > 0 || uint8(x) == 0` without treating two different variables as identical.
+fn comparison_operand_of<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
 ) -> Option<(VariableId, ElementaryType)> {
-    if let ExprKind::Ident(resolutions) = &expr.peel_parens().kind
-        && let Some(Res::Item(ItemId::Variable(variable))) = resolutions.first()
-        && let TypeKind::Elementary(ty) = hir.variable(*variable).ty.kind
-    {
-        return Some((*variable, ty));
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(resolutions) => {
+            if let Some(Res::Item(ItemId::Variable(variable))) = resolutions.first()
+                && let TypeKind::Elementary(ty) = hir.variable(*variable).ty.kind
+            {
+                return Some((*variable, ty));
+            }
+        }
+        ExprKind::Call(call_expr, args, _) => {
+            let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) = &call_expr.kind
+            else {
+                return None;
+            };
+            if !matches!(ty, ElementaryType::Int(_) | ElementaryType::UInt(_)) {
+                return None;
+            }
+
+            let mut exprs = args.exprs();
+            let inner = exprs.next()?;
+            if exprs.next().is_some() {
+                return None;
+            }
+            let (variable, _) = comparison_operand_of(hir, inner)?;
+            return Some((variable, *ty));
+        }
+        _ => {}
     }
     None
 }
@@ -267,7 +293,7 @@ fn lit_value_of(expr: &hir::Expr<'_>) -> Option<(bool, U256)> {
     match &expr.peel_parens().kind {
         ExprKind::Lit(lit) => {
             if let LitKind::Number(n) = lit.kind {
-                return Some((false, n));
+                return Some(normalize_zero(false, n));
             }
             None
         }
@@ -275,10 +301,14 @@ fn lit_value_of(expr: &hir::Expr<'_>) -> Option<(bool, U256)> {
             if let ExprKind::Lit(lit) = &inner.peel_parens().kind
                 && let LitKind::Number(n) = lit.kind
             {
-                return Some((true, n));
+                return Some(normalize_zero(true, n));
             }
             None
         }
         _ => None,
     }
+}
+
+fn normalize_zero(is_negative: bool, magnitude: U256) -> (bool, U256) {
+    if magnitude.is_zero() { (false, U256::ZERO) } else { (is_negative, magnitude) }
 }
