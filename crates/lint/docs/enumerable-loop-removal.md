@@ -11,9 +11,9 @@ Reports a call to `EnumerableSet.remove` inside a loop that reads the same set w
 
 The report requires a shape that can be judged without a flow analysis:
 
-- an **unconditional ascending cadence**: a bare loop index stepped upward on the straight line of the body, written `i++`, `i += 1`, or `i = i + 1` (a step of more than one and an `unchecked` step count too). A `for`'s next-step, a `while`'s in-body counter, and a `do-while`'s all qualify. Every write to that index must be one of these ascending forms; a decrement, reset, or unrecognized write leaves the loop unreported;
+- an **unconditional ascending cadence**: a bare loop index stepped upward on the straight line of the body, written `i++`, `i += 1`, `i = i + 1`, or `i = 1 + i` (a step of more than one and an `unchecked` step count too). A `for`'s next-step, a `while`'s in-body counter, and a `do-while`'s all qualify. Every write to that index must be one of these ascending forms; a decrement, reset, or unrecognized write leaves the loop unreported;
 - an **`at` read at that cadence**: `set.at(i)` for the cadence variable `i`;
-- a **`remove` on the same set**. Calls inside short-circuit and ternary expressions count even when their arm may not execute;
+- a **`remove` on the same set**. Calls inside short-circuit and ternary expressions count when their arm may execute; an arm that a literal boolean condition proves unreachable is skipped;
 - a **straight-line statement body**: no `if`, `try`, `break`, `continue`, `return`, `revert`, inline assembly, or nested loop.
 
 Two set operands name the same set when they name the same storage path: a base variable followed by struct fields and literal mapping keys. A local `storage` reference is another name for what its last straight-line binding gave it, resolved where the loop runs, so `set = holders` iterates `holders`, and a reference rebound only after the loop still names what it did inside it. An operand the analysis cannot read (a varying mapping key, a call result, a reference rebound under a condition) is matched against every set, reporting a possibly-safe removal rather than missing an unsafe one.
@@ -31,7 +31,7 @@ These stay clean:
 
 The detector omits statement shapes that need control-flow or value reasoning to decide whether removal corrupts iteration. This leaves some genuine corruptions unreported rather than guessing about their safe lookalikes:
 
-- a removal under statement-level control (`if (cond) set.remove(set.at(i))` under an unconditional `i++`). A call inside a short-circuit or ternary expression is still scanned and can report regardless of whether that expression arm executes;
+- a removal under statement-level control (`if (cond) set.remove(set.at(i))` under an unconditional `i++`). A call inside a short-circuit or ternary expression is still scanned and can report unless a literal boolean proves that expression arm unreachable;
 - a removal followed by `continue`, which comes round on the shrunk set;
 - a removal in a nested loop, or in a `try` clause that falls through;
 - a removal inside a statement-level exit condition whose short-circuit operand can steer past that exit;

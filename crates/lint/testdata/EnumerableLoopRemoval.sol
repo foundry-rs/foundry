@@ -9,17 +9,18 @@ import {EnumerableSet as ES} from "./auxiliary/EnumerableSetLib.sol";
 // upward skips elements or reads out-of-bounds indices.
 //
 // The detector reports only the shape it can judge without a flow analysis: an unconditional
-// ascending cadence (`i++`, `i += 1`, `i = i + 1` on the straight line of the body), an `at` read
-// at that cadence, a `remove` on the same set, and a straight-line body. Calls resolve through the
-// type checker, so the method-call and library-qualified forms are both covered, and storage-
-// reference aliases are followed to the set they name where the loop runs.
+// ascending cadence (`i++`, `i += 1`, `i = i + 1`, or `i = 1 + i` on the straight line of the
+// body), an `at` read at that cadence, a `remove` on the same set, and a straight-line body. Calls
+// resolve through the type checker, so the method-call and library-qualified forms are both
+// covered, and storage-reference aliases are followed to the set they name where the loop runs.
 //
 // Anything outside that shape is left clean rather than guessed at: a conditional or mixed
 // cadence, a composite index, a `break`/`continue`/`return`/`revert`, inline assembly, a nested
 // loop, or a `try`. Expression-level short-circuits and ternaries remain structural expressions
-// and are scanned. Some clean cases are genuine corruptions the detector deliberately does not
-// report; they are grouped under "Documented limitations" below. Distinguishing them would take
-// the flow or value analysis this detector does not run.
+// and are scanned, except for arms a literal boolean proves unreachable. Some clean cases are
+// genuine corruptions the detector deliberately does not report; they are grouped under
+// "Documented limitations" below. Distinguishing them would take the flow or value analysis this
+// detector does not run.
 
 // Minimal mirror of OpenZeppelin's EnumerableSet: swap-and-pop removal, index access via `at`.
 library EnumerableSet {
@@ -281,8 +282,8 @@ contract EnumerableLoopRemoval {
         }
     }
 
-    // The three ascending step forms all pace the loop: `i += 1` and `i = i + 1` read the same as
-    // `i++`, whether in the `for`'s next-step or on the body's straight line.
+    // The simple ascending step forms all pace the loop: `i += 1`, `i = i + 1`, and `i = 1 + i`
+    // read the same as `i++`, whether in the `for`'s next-step or on the body's straight line.
     function removeWithCompoundStep() public {
         for (uint256 i = 0; i < holders.length(); i += 1) {
             holders.remove(holders.at(i)); //~WARN: EnumerableSet
@@ -291,6 +292,12 @@ contract EnumerableLoopRemoval {
 
     function removeWithPlainAssignStep() public {
         for (uint256 i = 0; i < holders.length(); i = i + 1) {
+            holders.remove(holders.at(i)); //~WARN: EnumerableSet
+        }
+    }
+
+    function removeWithCommutedPlainAssignStep() public {
+        for (uint256 i = 0; i < holders.length(); i = 1 + i) {
             holders.remove(holders.at(i)); //~WARN: EnumerableSet
         }
     }
@@ -333,6 +340,40 @@ contract EnumerableLoopRemoval {
         for (uint256 i = 0; i < holders.length(); i++) {
             pending = holders.at(i);
             bool removed = enabled ? holders.remove(target) : false; //~WARN: EnumerableSet
+            removed;
+        }
+    }
+
+    // Literal expression conditions are enough to prove these removal arms unreachable.
+    function unreachableRemoveInShortCircuitExpression(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            bool removed = false && holders.remove(target);
+            removed;
+        }
+    }
+
+    function unreachableRemoveInTernaryExpression(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            bool removed = false ? holders.remove(target) : false;
+            removed;
+        }
+    }
+
+    function unreachableAtInShortCircuitExpression(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            bool visited = false && holders.at(i) == target;
+            holders.remove(target);
+            visited;
+        }
+    }
+
+    // Conversely, a literal-selected removal is still reachable and reported.
+    function reachableRemoveInTernaryExpression(address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            bool removed = true ? holders.remove(target) : false; //~WARN: EnumerableSet
             removed;
         }
     }

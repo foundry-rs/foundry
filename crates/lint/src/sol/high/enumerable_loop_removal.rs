@@ -208,9 +208,9 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
         if ats.iterated.is_empty() {
             return;
         }
-        // Every syntactic removal in the body, including calls nested in short-circuit or ternary
-        // expressions. Statement-level control flow was rejected above, but this structural pass
-        // does not determine whether an expression arm executes or what value `remove` receives.
+        // Every reachable removal in the body, including calls nested in short-circuit or ternary
+        // expressions. Statement-level control flow was rejected above, and expression-level
+        // reachability is folded only when a literal condition proves an arm cannot execute.
         let mut removes = Vec::new();
         let mut scan = RemoveScanner {
             gcx: self.gcx,
@@ -292,10 +292,11 @@ fn is_builtin_revert(expr: &Expr<'_>) -> bool {
 }
 
 /// The loop's own indices that step upward unconditionally: a bare identifier advanced by `i++`,
-/// `i += <positive literal>`, or `i = i + <positive literal>` as a straight-line statement of the
-/// body (a `for`'s desugared post-step lands here, a `while`'s in-body counter too). A step under
-/// a branch, a reset (`i = 0`), a no-op (`i += 0`), a decrement, or composite arithmetic
-/// (`i = (i + 2) - 1`) does not qualify: the walk is only known to ascend for the simple forms.
+/// `i += <positive literal>`, or `i = i + <positive literal>` (with either addition order) as a
+/// straight-line statement of the body (a `for`'s desugared post-step lands here, a `while`'s
+/// in-body counter too). A step under a branch, a reset (`i = 0`), a no-op (`i += 0`), a decrement,
+/// or composite arithmetic (`i = (i + 2) - 1`) does not qualify: the walk is only known to ascend
+/// for the simple forms.
 fn ascending_cadence<'hir>(hir: &'hir Hir<'hir>, body: &'hir [Stmt<'hir>]) -> Vec<VariableId> {
     let mut cadence = Vec::new();
     let mut other_writes = HashSet::new();
@@ -359,13 +360,13 @@ fn ascending_step<'hir>(expr: &'hir Expr<'hir>) -> Option<VariableId> {
         {
             bare_identifier(lhs)
         }
-        // `i = i + <positive literal>`.
+        // `i = i + <positive literal>` / `i = <positive literal> + i`.
         ExprKind::Assign(lhs, None, rhs) => {
             let target = bare_identifier(lhs)?;
             let ExprKind::Binary(left, op, right) = &rhs.peel_parens().kind else { return None };
             (op.kind == hir::BinOpKind::Add
-                && bare_identifier(left) == Some(target)
-                && is_positive_literal(right))
+                && ((bare_identifier(left) == Some(target) && is_positive_literal(right))
+                    || (is_positive_literal(left) && bare_identifier(right) == Some(target))))
             .then_some(target)
         }
         _ => None,
@@ -413,7 +414,7 @@ impl<'hir> Visit<'hir> for AtCollector<'_, 'hir> {
         {
             self.iterated.push(call.set);
         }
-        self.walk_expr(expr)
+        walk_literal_reachable_expr(self, expr)
     }
 }
 
@@ -438,8 +439,53 @@ impl<'hir> Visit<'hir> for RemoveScanner<'_, 'hir> {
         {
             self.out.push((call.set, expr.span));
         }
-        self.walk_expr(expr)
+        walk_literal_reachable_expr(self, expr)
     }
+}
+
+/// Walks the children of an expression while skipping short-circuit and ternary arms that a
+/// literal boolean condition proves unreachable. Unknown conditions keep both possible arms.
+fn walk_literal_reachable_expr<'hir, V>(
+    visitor: &mut V,
+    expr: &'hir Expr<'hir>,
+) -> ControlFlow<Infallible>
+where
+    V: Visit<'hir, BreakValue = Infallible>,
+{
+    match &expr.kind {
+        ExprKind::Binary(left, op, right)
+            if matches!(op.kind, hir::BinOpKind::And | hir::BinOpKind::Or) =>
+        {
+            visitor.visit_expr(left)?;
+            let short_circuits = matches!(
+                (op.kind, literal_bool(left)),
+                (hir::BinOpKind::And, Some(false)) | (hir::BinOpKind::Or, Some(true))
+            );
+            if !short_circuits {
+                visitor.visit_expr(right)?;
+            }
+            ControlFlow::Continue(())
+        }
+        ExprKind::Ternary(condition, true_expr, false_expr) => {
+            visitor.visit_expr(condition)?;
+            match literal_bool(condition) {
+                Some(true) => visitor.visit_expr(true_expr),
+                Some(false) => visitor.visit_expr(false_expr),
+                None => {
+                    visitor.visit_expr(true_expr)?;
+                    visitor.visit_expr(false_expr)
+                }
+            }
+        }
+        _ => visitor.walk_expr(expr),
+    }
+}
+
+/// The value of a bare boolean literal expression.
+fn literal_bool(expr: &Expr<'_>) -> Option<bool> {
+    let ExprKind::Lit(lit) = &expr.peel_parens().kind else { return None };
+    let LitKind::Bool(value) = lit.kind else { return None };
+    Some(value)
 }
 
 /// The variables a statement list writes through expressions, through the loops under it as well:
