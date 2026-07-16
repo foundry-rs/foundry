@@ -1,7 +1,12 @@
 use crate::{RepoConfig, symbolic::Sidecar};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, process::Command, thread};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+    process::Command,
+    thread,
+};
 
 /// Hyperfine benchmark result
 #[derive(Debug, Deserialize, Serialize)]
@@ -65,6 +70,55 @@ pub struct BenchmarkResults {
     pub version_details: HashMap<String, String>,
 }
 
+/// Common benchmark result format.
+#[derive(Debug, Serialize)]
+pub struct CommonBenchmarkResult {
+    pub schema_version: u8,
+    pub repo: String,
+    pub commit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr: Option<u64>,
+    pub runner: RunnerMetadata,
+    pub benchmarks: Vec<CommonBenchmark>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunnerMetadata {
+    pub os: &'static str,
+    pub arch: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    pub logical_cpus: usize,
+}
+
+impl Default for RunnerMetadata {
+    fn default() -> Self {
+        Self {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+            image: std::env::var("ImageOS").ok(),
+            logical_cpus: thread::available_parallelism().map_or(1, |n| n.get()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CommonBenchmark {
+    pub name: String,
+    pub wall_time: Metric,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub counters: BTreeMap<String, Metric>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub solver: BTreeMap<String, Metric>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Metric {
+    pub value: f64,
+    pub unit: &'static str,
+    pub statistic: &'static str,
+}
+
 impl BenchmarkResults {
     pub fn new() -> Self {
         Self::default()
@@ -111,6 +165,105 @@ impl BenchmarkResults {
             }
         }
         summary
+    }
+
+    /// Generate one version's results in the common benchmark schema.
+    pub fn generate_common_result(
+        &self,
+        version: &str,
+        repo: String,
+        commit: String,
+        pr: Option<u64>,
+    ) -> CommonBenchmarkResult {
+        let mut benchmarks = Vec::new();
+        for (benchmark_name, version_data) in &self.data {
+            if let Some(repo_data) = version_data.get(version) {
+                for (repo_name, result) in repo_data {
+                    let mut counters = BTreeMap::new();
+                    let mut solver = BTreeMap::new();
+                    if let Some(symbolic) = &result.symbolic {
+                        for (name, value) in [
+                            ("tests", symbolic.tests as f64),
+                            ("passed", symbolic.passed as f64),
+                            ("failed", symbolic.failed as f64),
+                            ("incomplete", symbolic.incomplete as f64),
+                            ("symbolic_paths", symbolic.paths as f64),
+                        ] {
+                            counters.insert(name.to_string(), Metric::total(value, "count"));
+                        }
+                        for (name, value, unit) in [
+                            ("queries", symbolic.solver_queries as f64, "count"),
+                            ("smt_queries", symbolic.smt_queries as f64, "count"),
+                            ("sat_queries", symbolic.sat_queries as f64, "count"),
+                            ("model_queries", symbolic.model_queries as f64, "count"),
+                            ("sat_cache_hits", symbolic.sat_cache_hits as f64, "count"),
+                            ("model_cache_hits", symbolic.model_cache_hits as f64, "count"),
+                            ("heuristic_witnesses", symbolic.heuristic_witnesses as f64, "count"),
+                            ("time", symbolic.solver_time_ms as f64 / 1000.0, "second"),
+                        ] {
+                            if value != 0.0 {
+                                solver.insert(name.to_string(), Metric::total(value, unit));
+                            }
+                        }
+                        if let Some(metrics) = result
+                            .symbolic_sidecar
+                            .as_ref()
+                            .and_then(|sidecar| {
+                                sidecar
+                                    .samples
+                                    .iter()
+                                    .find(|sample| sample.wall_time_seconds == result.median)
+                            })
+                            .map(|sample| &sample.run.metrics)
+                        {
+                            for (name, value, unit, divisor) in [
+                                ("smt_input_size", metrics.smt_input_bytes, "byte", 1.0),
+                                ("smt_build_time", metrics.smt_build_time_ms, "second", 1000.0),
+                            ] {
+                                if let Some(value) = value {
+                                    solver.insert(
+                                        name.to_string(),
+                                        Metric::total(value as f64 / divisor, unit),
+                                    );
+                                }
+                            }
+                            for (name, value, unit, divisor) in [
+                                ("smt_max_query_size", metrics.smt_max_query_bytes, "byte", 1.0),
+                                (
+                                    "smt_max_query_time",
+                                    metrics.smt_max_query_time_ms,
+                                    "second",
+                                    1000.0,
+                                ),
+                            ] {
+                                if let Some(value) = value {
+                                    solver.insert(
+                                        name.to_string(),
+                                        Metric::max(value as f64 / divisor, unit),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    benchmarks.push(CommonBenchmark {
+                        name: format!("{benchmark_name}/{repo_name}"),
+                        wall_time: Metric::mean(result.mean, "second"),
+                        counters,
+                        solver,
+                    });
+                }
+            }
+        }
+        benchmarks.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+
+        CommonBenchmarkResult {
+            schema_version: 1,
+            repo,
+            commit,
+            pr,
+            runner: RunnerMetadata::default(),
+            benchmarks,
+        }
     }
 
     pub fn generate_markdown(&self, versions: &[String], repos: &[RepoConfig]) -> String {
@@ -227,6 +380,20 @@ impl BenchmarkResults {
     }
 }
 
+impl Metric {
+    const fn mean(value: f64, unit: &'static str) -> Self {
+        Self { value, unit, statistic: "mean" }
+    }
+
+    const fn total(value: f64, unit: &'static str) -> Self {
+        Self { value, unit, statistic: "total" }
+    }
+
+    const fn max(value: f64, unit: &'static str) -> Self {
+        Self { value, unit, statistic: "max" }
+    }
+}
+
 /// Generate table rows for benchmark results
 ///
 /// This function creates the markdown table rows for each repository,
@@ -297,6 +464,18 @@ fn get_benchmark_cell_content(
     }
 
     "N/A".to_string()
+}
+
+/// Insert `version` before the extension of the `--json-output` filename, e.g.
+/// `summary.json` + `local` -> `summary-local.json`.
+pub fn versioned_summary_filename(json_output: &Path, version: &str) -> String {
+    let stem =
+        json_output.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = if stem.is_empty() { "summary" } else { &stem };
+    match json_output.extension() {
+        Some(ext) => format!("{stem}-{version}.{}", ext.to_string_lossy()),
+        None => format!("{stem}-{version}"),
+    }
 }
 
 pub fn format_benchmark_name(name: &str) -> String {
@@ -383,6 +562,43 @@ mod tests {
     }
 
     #[test]
+    fn versioned_summary_filename_inserts_version() {
+        assert_eq!(
+            versioned_summary_filename(Path::new("forge_test_bench.json"), "local"),
+            "forge_test_bench-local.json"
+        );
+        assert_eq!(
+            versioned_summary_filename(Path::new("summary.json"), "stable"),
+            "summary-stable.json"
+        );
+        assert_eq!(versioned_summary_filename(Path::new("summary"), "nightly"), "summary-nightly");
+    }
+
+    #[test]
+    fn json_summaries_are_isolated_by_version() {
+        let mut results = BenchmarkResults::new();
+        results.add_result("forge_test", "master", "solady", hyperfine_result("forge test", 1.0));
+        results.add_result("forge_test", "local", "solady", hyperfine_result("forge test", 2.0));
+
+        let dir = tempfile::tempdir().unwrap();
+        let output = Path::new("summary.json");
+        for version in ["master", "local"] {
+            let summary = results.generate_json_summary(&[version.to_string()]);
+            let path = dir.path().join(versioned_summary_filename(output, version));
+            std::fs::write(path, serde_json::to_vec(&summary).unwrap()).unwrap();
+        }
+
+        let master: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("summary-master.json")).unwrap())
+                .unwrap();
+        let local: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("summary-local.json")).unwrap())
+                .unwrap();
+        assert_eq!(master["forge_test/solady"]["mean"], 1.0);
+        assert_eq!(local["forge_test/solady"]["mean"], 2.0);
+    }
+
+    #[test]
     fn json_summary_includes_symbolic_counters() {
         let mut results = BenchmarkResults::new();
 
@@ -431,5 +647,19 @@ mod tests {
         let plain = &summary["forge_test/solady"];
         assert_eq!(plain.mean, 2.5);
         assert!(plain.symbolic.is_none());
+
+        let common = results.generate_common_result(
+            "local",
+            "foundry-rs/foundry".to_string(),
+            "0123456789abcdef".to_string(),
+            None,
+        );
+        let common = serde_json::to_value(common).unwrap();
+        assert_eq!(common["schema_version"], 1);
+        assert_eq!(common["repo"], "foundry-rs/foundry");
+        assert_eq!(common["benchmarks"][0]["name"], "forge_symbolic_test/solady");
+        assert_eq!(common["benchmarks"][0]["wall_time"]["unit"], "second");
+        assert_eq!(common["benchmarks"][0]["solver"]["queries"]["value"], 100.0);
+        assert!(common.get("pr").is_none());
     }
 }

@@ -11,8 +11,9 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
-    mem::{self, in_memory_db::MemDb},
+    mem::{self, in_memory_db::StateRootDb},
 };
+use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
@@ -38,6 +39,7 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
+    hardforks::latest_active_tempo_hardfork,
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -616,7 +618,7 @@ impl NodeConfig {
             return foundry_evm::hardforks::OpHardfork::default().into();
         }
         if self.networks.is_tempo() {
-            return TempoHardfork::default().into();
+            return latest_active_tempo_hardfork().into();
         }
         EthereumHardfork::default().into()
     }
@@ -1194,8 +1196,8 @@ impl NodeConfig {
 
         self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
-        let base_fee_params: BaseFeeParams =
-            self.networks.base_fee_params(self.get_genesis_timestamp());
+        let genesis_timestamp = self.get_genesis_timestamp();
+        let base_fee_params: BaseFeeParams = self.networks.base_fee_params(genesis_timestamp);
 
         // On Tempo, the base fee follows the chain's hardfork rules instead of EIP-1559.
         let tempo_hardfork =
@@ -1216,7 +1218,8 @@ impl NodeConfig {
             if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
                 self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
-                (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
+                let track_history = self.prune_history.is_state_history_supported();
+                (Arc::new(TokioRwLock::new(Box::new(StateRootDb::new(track_history)))), None)
             };
 
         // if provided use all settings of `genesis.json`
@@ -1236,17 +1239,30 @@ impl NodeConfig {
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
+        // Fork setup initializes its own timestamp. For a local BSC chain, keep the initial EVM
+        // and genesis block on the same resolved timestamp so chain precompiles are available
+        // immediately. Preserve the default timestamp behavior for all other local chains.
+        let is_bsc = matches!(
+            NamedChain::try_from(evm_env.cfg_env.chain_id),
+            Ok(NamedChain::BinanceSmartChain | NamedChain::BinanceSmartChainTestnet)
+        );
+        if fork.is_none() && (self.genesis_timestamp.is_some() || is_bsc) {
+            evm_env.block_env.timestamp = U256::from(genesis_timestamp);
+        }
+
         self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
         let genesis = GenesisConfig {
             number: self.get_genesis_number(),
-            timestamp: self.get_genesis_timestamp(),
+            timestamp: genesis_timestamp,
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
             genesis_init: self.genesis.clone(),
         };
 
-        let mut decoder_builder = CallTraceDecoderBuilder::new();
+        let mut decoder_builder = CallTraceDecoderBuilder::new().with_tempo_hardfork(
+            self.networks.is_tempo().then(|| TempoHardfork::from(self.get_hardfork())),
+        );
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
@@ -1389,11 +1405,15 @@ latest block number: {latest_block}"
                 }
                 eyre::bail!("{message}");
             }
-            eyre::bail!("failed to get block for block number: {fork_block_number}")
+            eyre::bail!("failed to get block for block number: {fork_block_number}");
         };
 
         let gas_limit = self.fork_gas_limit(&block);
         self.gas_limit = Some(gas_limit);
+
+        // Cache identity must describe the remote fork block, not local execution overrides that
+        // can change after mining (for example, the locally advanced base fee).
+        let cache_block_env: BlockEnv = block_env_from_header(&block.header);
 
         evm_env.block_env = BlockEnv {
             gas_limit,
@@ -1491,7 +1511,7 @@ latest block number: {latest_block}"
             self.networks,
         );
 
-        let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
@@ -1860,5 +1880,12 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert!(matches!(config.get_hardfork(), FoundryHardfork::Tempo(_)));
+    }
+
+    #[test]
+    fn get_hardfork_on_local_tempo_defaults_to_latest_active() {
+        let config = NodeConfig::test_tempo();
+
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Tempo(latest_active_tempo_hardfork()));
     }
 }

@@ -175,8 +175,14 @@ impl TomlFileProvider {
                 )));
             }
 
-            // Load base configuration as a Figment provider
-            let base_provider = Toml::file(base_path).nested();
+            // Normalize the standalone symbolic section before merging so equivalent
+            // profile-qualified values have the same shape across inherited files.
+            let base_provider = NormalizeSymbolicProvider::new(
+                Toml::file(base_path).nested(),
+                selected_profile.clone(),
+            );
+            let local_provider =
+                NormalizeSymbolicProvider::new(local_provider, selected_profile.clone());
 
             // Apply the selected merge strategy
             match extends_strategy {
@@ -237,6 +243,72 @@ impl TomlFileProvider {
     }
 }
 
+struct NormalizeSymbolicProvider<P> {
+    provider: P,
+    selected_profile: Profile,
+}
+
+impl<P> NormalizeSymbolicProvider<P> {
+    const fn new(provider: P, selected_profile: Profile) -> Self {
+        Self { provider, selected_profile }
+    }
+}
+
+impl<P: Provider> Provider for NormalizeSymbolicProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut data = self.provider.data()?;
+        normalize_symbolic_section(&mut data, &self.selected_profile);
+        Ok(data)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.provider.profile()
+    }
+}
+
+/// Moves the standalone symbolic section into the selected profile before inherited configs are
+/// merged.
+///
+/// This gives equivalent standalone and profile-qualified keys the same shape, so source
+/// precedence and collision detection apply consistently across inherited files.
+fn normalize_symbolic_section(data: &mut Map<Profile, Dict>, selected_profile: &Profile) {
+    let Some(symbolic) = data.remove(&Profile::new("symbolic")) else { return };
+
+    let profiles = data.entry(Profile::new(Config::PROFILE_SECTION)).or_default();
+    let profile =
+        profiles.entry(selected_profile.to_string()).or_insert_with(|| Value::from(Dict::new()));
+    let Value::Dict(_, profile) = profile else { return };
+
+    match (profile.get_mut("symbolic"), symbolic) {
+        (Some(Value::Dict(_, profile_symbolic)), symbolic) => {
+            merge_missing(profile_symbolic, symbolic);
+        }
+        (None, symbolic) => {
+            profile.insert("symbolic".to_string(), Value::from(symbolic));
+        }
+        _ => {}
+    }
+}
+
+/// Recursively fills missing values while preserving values from the higher-precedence source.
+fn merge_missing(target: &mut Dict, fallback: Dict) {
+    for (key, value) in fallback {
+        match (target.get_mut(&key), value) {
+            (Some(Value::Dict(_, target)), Value::Dict(_, fallback)) => {
+                merge_missing(target, fallback);
+            }
+            (None, value) => {
+                target.insert(key, value);
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Provider for TomlFileProvider {
     fn metadata(&self) -> Metadata {
         if self.is_missing() {
@@ -251,11 +323,11 @@ impl Provider for TomlFileProvider {
     }
 }
 
-/// A Provider that ensures all keys are snake case if they're not standalone sections, See
+/// A Provider that ensures all keys are snake case if they're not standalone sections. See
 /// `Config::STANDALONE_SECTIONS`
 ///
 /// For the `[profile]` section, profile names (like `ci-venom`) are preserved as-is,
-/// but the config keys within each profile are still converted to snake_case.
+/// but the top-level config keys within each profile are still converted to snake_case.
 pub(crate) struct ForcedSnakeCaseData<P>(pub(crate) P);
 
 impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
@@ -273,13 +345,13 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
 
             if profile.as_str().as_str() == Config::PROFILE_SECTION {
                 // For the `[profile]` section, we need to preserve profile names (the keys)
-                // but snake_case the config keys within each profile's dict.
+                // but snake_case the top-level config keys within each profile's dict.
                 let dict2 = std::mem::take(dict);
                 *dict = dict2
                     .into_iter()
                     .map(|(profile_name, v)| {
                         // Keep the profile name exactly as-is (e.g., "ci-venom" stays "ci-venom")
-                        let v = snake_case_value_keys(v);
+                        let v = snake_case_profile_keys(v);
                         (profile_name, v)
                     })
                     .collect();
@@ -297,19 +369,12 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
     }
 }
 
-/// Recursively converts all keys in a Value (if it's a Dict) to snake_case.
-fn snake_case_value_keys(value: Value) -> Value {
+/// Converts the top-level config keys in a profile value to snake_case.
+fn snake_case_profile_keys(value: Value) -> Value {
     match value {
         Value::Dict(tag, dict) => {
-            let new_dict = dict
-                .into_iter()
-                .map(|(k, v)| (k.to_snake_case(), snake_case_value_keys(v)))
-                .collect();
+            let new_dict = dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect();
             Value::Dict(tag, new_dict)
-        }
-        Value::Array(tag, arr) => {
-            let new_arr = arr.into_iter().map(snake_case_value_keys).collect();
-            Value::Array(tag, new_arr)
         }
         other => other,
     }

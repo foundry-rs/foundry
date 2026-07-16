@@ -620,7 +620,9 @@ async fn run_revoke_with_policy(
             .await?
         {
             KeychainTxOutcome::Submitted => {}
-            KeychainTxOutcome::PrintedSponsorHash => eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR),
+            KeychainTxOutcome::PrintedSponsorHash => {
+                eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+            }
         }
         Ok(())
     }
@@ -651,7 +653,7 @@ fn handle_unprovisioned_revoke(
                 "session key is not provisioned on-chain yet; pending transactions from the \
                  wrapped command may still provision it. Wait for pending transactions to settle, \
                  then run `cast wallet session revoke {session_id}`."
-            )
+            );
         }
     }
 }

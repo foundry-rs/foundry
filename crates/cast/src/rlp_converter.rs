@@ -50,7 +50,7 @@ impl Item {
         match value {
             Value::Null => Ok(Self::Data(vec![])),
             Value::Bool(_) => {
-                eyre::bail!("RLP input can not contain booleans")
+                eyre::bail!("RLP input can not contain booleans");
             }
             Value::Number(n) => {
                 Ok(Self::Data(n.to_string().parse::<U256>()?.to_be_bytes_trimmed_vec()))
@@ -58,7 +58,7 @@ impl Item {
             Value::String(s) => Ok(Self::Data(hex::decode(s).wrap_err("Could not decode hex")?)),
             Value::Array(values) => values.iter().map(Self::value_to_item).collect(),
             Value::Object(_) => {
-                eyre::bail!("RLP input can not contain objects")
+                eyre::bail!("RLP input can not contain objects");
             }
         }
     }

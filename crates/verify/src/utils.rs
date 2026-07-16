@@ -220,7 +220,9 @@ pub fn maybe_predeploy_contract(
             maybe_predeploy = true;
             Ok((None, maybe_predeploy))
         }
-        Err(e) => eyre::bail!("Error fetching creation data from verifier-url: {:?}", e),
+        Err(e) => {
+            eyre::bail!("Error fetching creation data from verifier-url: {:?}", e);
+        }
     }
 }
 

@@ -399,6 +399,8 @@ pub struct CoverageItem {
     pub kind: CoverageItemKind,
     /// The location of the item in the source code.
     pub loc: SourceLocation,
+    /// An alternative source location used only to find the item's bytecode anchor.
+    pub anchor_loc: Option<SourceLocation>,
     /// The number of times this item was hit.
     pub hits: u32,
 }

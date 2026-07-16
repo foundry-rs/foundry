@@ -41,10 +41,11 @@ pub(crate) async fn handle_traces(
         (None, ContractSources::default())
     };
 
+    let is_tempo = tempo_hardfork.is_some() || chain.is_tempo();
     let mut builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(tracing)
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
-        .with_chain_id(Some(chain.id()))
+        .with_chain_id((!is_tempo).then(|| chain.id()))
         .with_tempo_hardfork(
             tempo_hardfork
                 .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),

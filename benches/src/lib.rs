@@ -10,6 +10,7 @@ use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
 use once_cell::sync::Lazy;
 use std::{
+    collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -577,7 +578,9 @@ impl BenchmarkProject {
             "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
             "forge_isolate_test" => self.bench_forge_isolate_test(version, runs, verbose),
             "forge_symbolic_test" => self.bench_forge_symbolic_test(version, runs, verbose),
-            _ => eyre::bail!("Unknown benchmark: {}", benchmark),
+            _ => {
+                eyre::bail!("Unknown benchmark: {}", benchmark);
+            }
         }
     }
 }
@@ -618,13 +621,47 @@ const LOCAL_BUILD_BINS_ENV: &str = "FOUNDRY_BENCH_LOCAL_BUILD_BINS";
 const DEFAULT_LOCAL_BUILD_PROFILE: &str = "dist";
 const FOUNDRY_BINS: [&str; 4] = ["forge", "cast", "anvil", "chisel"];
 
+/// Parse `--versions` entries into unique display names and optional source
+/// workspaces. `name=path` builds Foundry from `path` and labels it `name`.
+pub fn parse_version_specs(specs: &[String]) -> Result<Vec<(String, Option<PathBuf>)>> {
+    let mut labels = HashSet::new();
+    specs
+        .iter()
+        .map(|spec| {
+            let spec = spec.trim();
+            let (name, source) = match spec.split_once('=') {
+                Some((name, path)) if !name.is_empty() && !path.is_empty() => {
+                    (name, Some(PathBuf::from(path)))
+                }
+                Some(_) => {
+                    eyre::bail!("invalid source version '{spec}'; expected name=path");
+                }
+                None => (spec, None),
+            };
+            if name.is_empty()
+                || name == "."
+                || name == ".."
+                || !name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+            {
+                eyre::bail!(
+                    "invalid version label '{name}'; use letters, numbers, '.', '_', or '-'"
+                );
+            }
+            if !labels.insert(name.to_string()) {
+                eyre::bail!("duplicate version label '{name}'");
+            }
+            Ok((name.to_string(), source))
+        })
+        .collect()
+}
+
 /// Switch to a specific foundry version.
 ///
 /// The special keyword `local` builds and activates the current workspace.
 #[allow(unused_must_use)]
 pub fn switch_foundry_version(version: &str) -> Result<()> {
     if version == "local" {
-        return install_local_version();
+        return install_local_workspace(&workspace_root()?);
     }
 
     let output = Command::new("foundryup")
@@ -649,11 +686,11 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build and activate the local workspace.
-/// Builds only the shipped Foundry binaries without linking unused workspace binaries.
+/// Build and activate the shipped Foundry binaries from an explicit workspace,
+/// without linking unused workspace binaries. Used to benchmark a baseline ref
+/// checked out into a separate worktree.
 #[allow(unused_must_use)]
-pub fn install_local_version() -> Result<()> {
-    let workspace = workspace_root()?;
+pub fn install_local_workspace(workspace: &Path) -> Result<()> {
     let profile = local_build_profile();
     let bins = local_build_bins()?;
     sh_println!(
@@ -664,7 +701,7 @@ pub fn install_local_version() -> Result<()> {
     );
 
     let mut cmd = Command::new("cargo");
-    cmd.current_dir(&workspace).args(["build", "--locked", "--profile"]).arg(&profile);
+    cmd.current_dir(workspace).args(["build", "--locked", "--profile"]).arg(&profile);
     for bin in &bins {
         cmd.args(["--bin", bin]);
     }
@@ -675,7 +712,7 @@ pub fn install_local_version() -> Result<()> {
         eyre::bail!("local Foundry build failed");
     }
 
-    activate_local_binaries(&workspace, &profile, &bins)?;
+    activate_local_binaries(workspace, &profile, &bins)?;
     sh_println!("  Successfully activated local {} build", profile.to_string_lossy());
     Ok(())
 }
@@ -777,6 +814,39 @@ pub fn get_forge_version() -> Result<String> {
     Ok(version.lines().next().unwrap_or("unknown").to_string())
 }
 
+/// Get the commit of the active Forge binary.
+pub fn get_forge_commit() -> Result<String> {
+    let output = Command::new("forge")
+        .args(["--version"])
+        .output()
+        .wrap_err("Failed to get forge version")?;
+    if !output.status.success() {
+        eyre::bail!("forge --version failed");
+    }
+    let output =
+        String::from_utf8(output.stdout).wrap_err("Invalid UTF-8 in forge version output")?;
+    parse_forge_commit(&output)
+        .map(str::to_owned)
+        .ok_or_else(|| eyre::eyre!("forge --version did not report a commit"))
+}
+
+fn parse_forge_commit(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Commit SHA: "))
+        .filter(|commit| !commit.is_empty())
+        .or_else(|| {
+            output
+                .lines()
+                .next()?
+                .split_once('(')?
+                .1
+                .split_whitespace()
+                .next()
+                .filter(|commit| !commit.is_empty())
+        })
+}
+
 /// Get the full forge version details including commit hash and date
 pub fn get_forge_version_details() -> Result<String> {
     let output = Command::new("forge")
@@ -807,5 +877,40 @@ pub fn get_forge_version_details() -> Result<String> {
     } else {
         // Fallback to just the first line if format is unexpected
         Ok(lines.first().unwrap_or(&"unknown").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_and_validates_version_specs() {
+        let specs = vec!["stable".to_string(), "master=../foundry-baseline".to_string()];
+        assert_eq!(
+            parse_version_specs(&specs).unwrap(),
+            vec![
+                ("stable".to_string(), None),
+                ("master".to_string(), Some(PathBuf::from("../foundry-baseline")))
+            ]
+        );
+
+        assert!(
+            parse_version_specs(&["local".to_string(), "local=/tmp/foundry".to_string()]).is_err()
+        );
+        assert!(parse_version_specs(&["../master=/tmp/foundry".to_string()]).is_err());
+        assert!(parse_version_specs(&["master=".to_string()]).is_err());
+    }
+
+    #[test]
+    fn parses_modern_and_legacy_forge_commits() {
+        assert_eq!(
+            parse_forge_commit("forge Version: 1.3.1\nCommit SHA: abcdef123456\n"),
+            Some("abcdef123456")
+        );
+        assert_eq!(
+            parse_forge_commit("forge 0.2.0 (123456abcdef 2023-01-01T00:00:00Z)"),
+            Some("123456abcdef")
+        );
     }
 }

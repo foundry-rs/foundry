@@ -5,10 +5,22 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, bytes, hex};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_sol_types::SolCall;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::hardfork::EthereumHardfork;
+use foundry_evm::{core::precompiles::P256_VERIFY, hardfork::EthereumHardfork};
+
+const BSC_MAINNET_CHAIN_ID: u64 = 56;
+const BSC_MAINNET_HABER_TIMESTAMP: u64 = 1_718_863_500;
+const P256_INPUT: [u8; 160] = hex!(
+    "4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4d\
+     a73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac\
+     36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604\
+     aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff376\
+     18b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e"
+);
+// Copies calldata into memory, calls P256, and stores its returned word in slot zero.
+const P256_CALLER_CODE: [u8; 26] = hex!("366000600037602060003660006101005afa5060005160005500");
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dropping_handle_releases_http_listener() {
@@ -94,6 +106,92 @@ async fn test_can_set_genesis_timestamp() {
     assert_eq!(
         genesis_timestamp,
         provider.get_block(0.into()).await.unwrap().unwrap().header.timestamp
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bsc_haber_p256_is_available_for_calls_and_mining() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(BSC_MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_genesis_timestamp(Some(BSC_MAINNET_HABER_TIMESTAMP)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    let tx = TransactionRequest::default().with_to(P256_VERIFY).with_input(P256_INPUT);
+    assert_eq!(
+        api.config().unwrap().current.precompiles.values().find(|&&address| address == P256_VERIFY),
+        Some(&P256_VERIFY)
+    );
+    for block in [
+        BlockId::Number(BlockNumberOrTag::Latest),
+        BlockId::Number(0_u64.into()),
+        BlockId::pending(),
+    ] {
+        let output = provider.call(tx.clone().into()).block(block).await.unwrap();
+        assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
+    }
+
+    let caller = Address::random();
+    api.anvil_set_code(caller, P256_CALLER_CODE.to_vec().into()).await.unwrap();
+    let from = handle.dev_accounts().next().unwrap();
+    let receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(caller)
+                .with_input(P256_INPUT)
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::from(1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bsc_default_timestamp_enables_p256_immediately() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(BSC_MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Cancun.into())),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    assert!(
+        api.config().unwrap().current.precompiles.values().any(|&address| address == P256_VERIFY)
+    );
+    let output = provider
+        .call(TransactionRequest::default().with_to(P256_VERIFY).with_input(P256_INPUT).into())
+        .await
+        .unwrap();
+    assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bsc_pre_haber_eth_config_omits_p256() {
+    let (api, _handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(BSC_MAINNET_CHAIN_ID))
+            .with_hardfork(Some(EthereumHardfork::Osaka.into()))
+            .with_genesis_timestamp(Some(BSC_MAINNET_HABER_TIMESTAMP - 1)),
+    )
+    .await;
+
+    assert!(
+        !api.config()
+            .unwrap()
+            .current
+            .precompiles
+            .values()
+            .any(|&address| { address == P256_VERIFY })
     );
 }
 

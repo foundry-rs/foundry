@@ -1223,6 +1223,65 @@ forgetest_async!(test_custom_sender_balance, |prj, cmd| {
         .simulate(ScriptOutcome::OkSimulation);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/3887>
+forgetest_async!(broadcast_log_includes_full_function_abi, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj.add_script(
+        "FullSignature.s.sol",
+        r#"
+interface Vm {
+    function startBroadcast() external;
+    function stopBroadcast() external;
+}
+
+contract Target {
+    uint256 configuredAmount;
+    address configuredRecipient;
+
+    function configure(uint256 amount, address recipient)
+        external
+        returns (bool accepted)
+    {
+        configuredAmount = amount;
+        configuredRecipient = recipient;
+        return amount > 0 && recipient != address(0);
+    }
+}
+
+contract SignatureScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        vm.startBroadcast();
+        Target target = new Target();
+        target.configure(1, address(1));
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(script)
+        .args(["--tc", "SignatureScript", "--rpc-url", &handle.http_endpoint()])
+        .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let sequence: ScriptSequence<Ethereum> =
+        foundry_common::fs::read_json_file(&run_latest).unwrap();
+
+    assert_eq!(sequence.transactions.len(), 2);
+    assert_eq!(sequence.transactions[1].function.as_deref(), Some("configure(uint256,address)"));
+    assert_eq!(
+        sequence.transactions[1].function_abi.as_deref(),
+        Some("function configure(uint256 amount, address recipient) returns (bool accepted)")
+    );
+});
+
 #[derive(serde::Deserialize)]
 struct Transactions {
     transactions: Vec<Transaction>,
@@ -2596,6 +2655,82 @@ forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
   sender nonce 1124703[..]"#]]);
 });
 
+forgetest_async!(should_override_sender_nonce_via_cli, |prj, cmd| {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "MyScript.s.sol",
+        r#"
+        import {Script} from "forge-std/Script.sol";
+
+        library Lib {
+            function value() public pure returns (uint256) {
+                return 42;
+            }
+        }
+
+        contract UsesLib {
+            uint256 public immutable value;
+
+            constructor() {
+                value = Lib.value();
+            }
+        }
+
+        contract MyScript is Script {
+            function run() public {
+                vm.startBroadcast();
+                new UsesLib();
+                vm.stopBroadcast();
+            }
+        }
+        "#,
+    );
+
+    cmd.args([
+        "script",
+        "MyScript",
+        "--sender",
+        "0x1000000000000000000000000000000000000000",
+        "--sender-nonce",
+        "7",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+});
+
 forgetest_async!(dryrun_without_broadcast, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
@@ -2609,10 +2744,11 @@ contract Called {
     event log_string(string);
     uint256 public x;
     uint256 public y;
-    function run(uint256 _x, uint256 _y) external {
+    function run(uint256 _x, uint256 _y) external returns (uint256 result) {
         x = _x;
         y = _y;
         emit log_string("script ran");
+        return _x + _y;
     }
 }
 
@@ -2645,10 +2781,10 @@ Traces:
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
     ├─ [..] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
-    │   └─ ← [Return] 567 bytes of code
+    │   └─ ← [Return] 700 bytes of code
     ├─ [..] Called::run(123, 456)
     │   ├─ emit log_string(val: "script ran")
-    │   └─ ← [Stop]
+    │   └─ ← [Return] 579
     └─ ← [Stop]
 
 
@@ -2661,12 +2797,12 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [113557] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
-    └─ ← [Return] 567 bytes of code
+  [140181] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    └─ ← [Return] 700 bytes of code
 
-  [46595] Called::run(123, 456)
+  [46966] Called::run(123, 456)
     ├─ emit log_string(val: "script ran")
-    └─ ← [Stop]
+    └─ ← [Return] 579
 
 
 ==========================
@@ -2707,7 +2843,7 @@ value                0
 
 accessList           []
 chainId              31337
-gasLimit             93856
+gasLimit             99920
 gasPrice             
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
 maxFeePerBlobGas     
@@ -2718,7 +2854,7 @@ to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 EIP-1559
 value                0
 contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
-data (decoded): run(uint256,uint256)(
+data (decoded): run(
   123,
   456
 )

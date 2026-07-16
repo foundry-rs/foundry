@@ -23,6 +23,7 @@ use anvil_core::{
 };
 use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm::hardfork::EthereumHardfork;
+use tempo_hardfork::TempoHardfork;
 
 use std::{
     str::FromStr,
@@ -1303,7 +1304,8 @@ async fn test_anvil_reset_fork_to_non_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info_tempo_t0() {
-    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
+    let (api, handle) = spawn(config).await;
 
     let node_info = api.anvil_node_info().await.unwrap();
 
@@ -1337,8 +1339,6 @@ async fn can_get_node_info_tempo_t0() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info_tempo_t5_from_chain_timestamp() {
-    use tempo_hardfork::TempoHardfork;
-
     let timestamp = TempoHardfork::T5.mainnet_activation_timestamp().unwrap();
     let config = NodeConfig::test_tempo()
         .with_chain_id(Some(4217u64))
@@ -1352,8 +1352,6 @@ async fn can_get_node_info_tempo_t5_from_chain_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info_tempo_t1() {
-    use tempo_hardfork::TempoHardfork;
-
     let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()));
     let (api, handle) = spawn(config).await;
 
@@ -1388,8 +1386,9 @@ async fn can_get_node_info_tempo_t1() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_get_default_base_fee_tempo() {
-    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+async fn can_get_default_base_fee_tempo_t0() {
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T0.into()));
+    let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
     api.mine_one().await;

@@ -6,8 +6,7 @@ use alloy_op_evm::OpTx;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_serde::OtherFields;
 use op_alloy_consensus::{
-    OpDepositReceipt, OpDepositReceiptWithBloom, OpTransaction as OpTransactionTrait, OpTxEnvelope,
-    TxDeposit, TxPostExec,
+    OpDepositReceipt, OpTransaction as OpTransactionTrait, OpTxEnvelope, TxDeposit, TxPostExec,
 };
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
@@ -220,14 +219,6 @@ impl<T> FoundryReceiptEnvelope<T> {
     /// Return the receipt's deposit version if it is a deposit receipt.
     pub fn deposit_receipt_version(&self) -> Option<u64> {
         self.as_deposit_receipt().and_then(|r| r.deposit_receipt_version)
-    }
-
-    /// Returns the deposit receipt if it is a deposit receipt.
-    pub const fn as_deposit_receipt_with_bloom(&self) -> Option<&OpDepositReceiptWithBloom<T>> {
-        match self {
-            Self::Deposit(t) => Some(t),
-            _ => None,
-        }
     }
 
     /// Returns the deposit receipt if it is a deposit receipt.

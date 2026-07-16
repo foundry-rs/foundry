@@ -69,13 +69,14 @@ use alloy_rpc_types::{
     txpool::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
 };
 use alloy_rpc_types_eth::{AccountInfo, Bundle, EthCallResponse, FillTransaction, StateContext};
+use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
         EthRequest,
-        block::BlockInfo,
+        block::{BlockInfo, canonical_block, canonical_block_transaction},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
     types::{ReorgOptions, TransactionData},
@@ -83,12 +84,13 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::{
     provider::ProviderBuilder,
+    tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, FoundryTxType, FoundryTypedTx, PaymentLaneClassification, PaymentLaneReason,
+    FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -1820,6 +1822,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthCallMany(bundles, state_context, state_override) => {
                 self.call_many(bundles, state_context, state_override).await.to_rpc_result()
             }
+            EthRequest::EthCallBundle(bundle) => self.call_bundle(bundle).await.to_rpc_result(),
             EthRequest::EthSimulateV1(simulation, block) => {
                 self.simulate_v1(simulation, block).await.to_rpc_result()
             }
@@ -2706,7 +2709,7 @@ impl EthApi<FoundryNetwork> {
         self.ensure_typed_transaction_supported(&transaction)?;
 
         if self.backend.is_tempo() && TempoHardfork::from(self.backend.hardfork()).is_t5() {
-            let classification = transaction.classify_t5_payment_lane();
+            let classification = classify_payment_lane(tx.as_ref());
             trace!(target: "node", tx = ?transaction.hash(), ?classification, "classified transaction lane");
         }
 
@@ -2757,16 +2760,13 @@ impl EthApi<FoundryNetwork> {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
 
-        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+        FoundryTxEnvelope::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
-        Ok(self.classify_transaction_envelope(&transaction))
+        Ok(self.classify_transaction_lane(tx.as_ref()))
     }
 
-    fn classify_transaction_envelope(
-        &self,
-        transaction: &FoundryTxEnvelope,
-    ) -> PaymentLaneClassification {
+    fn classify_transaction_lane(&self, raw: &[u8]) -> PaymentLaneClassification {
         if !self.backend.is_tempo() {
             return PaymentLaneClassification::general(PaymentLaneReason::NotTempo);
         }
@@ -2775,7 +2775,7 @@ impl EthApi<FoundryNetwork> {
             return PaymentLaneClassification::general(PaymentLaneReason::T5NotActive);
         }
 
-        transaction.classify_t5_payment_lane()
+        classify_payment_lane(raw)
     }
 
     /// Sends signed transaction, returning its receipt.
@@ -2867,6 +2867,51 @@ impl EthApi<FoundryNetwork> {
 
         self.on_blocking_task(|this| async move {
             this.backend.call_many(bundles, Some(block_request), state_override).await
+        })
+        .await
+    }
+
+    /// Simulates a bundle of signed transactions against the requested state.
+    ///
+    /// Handler for ETH RPC call: `eth_callBundle`.
+    pub async fn call_bundle(&self, bundle: EthCallBundle) -> Result<EthCallBundleResponse> {
+        node_info!("eth_callBundle");
+        if bundle.txs.is_empty() {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundle missing txs".to_string(),
+            )));
+        }
+        if bundle.block_number == 0 {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                "bundle missing blockNumber".to_string(),
+            )));
+        }
+
+        let block_request = self.block_request(Some(bundle.state_block_number.into())).await?;
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.call_bundle(bundle).await?);
+        }
+
+        let transactions = bundle
+            .txs
+            .iter()
+            .map(|raw| {
+                let mut data = raw.as_ref();
+                if data.is_empty() {
+                    return Err(BlockchainError::EmptyRawTransactionData);
+                }
+                let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+                    .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+                self.ensure_typed_transaction_supported(&transaction)?;
+                PendingTransaction::new(transaction).map_err(Into::into)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.on_blocking_task(|this| async move {
+            this.backend.call_bundle(bundle, transactions, Some(block_request)).await
         })
         .await
     }
@@ -3306,7 +3351,12 @@ impl EthApi<FoundryNetwork> {
         let Some(block) = self.backend.get_block(block) else {
             return Ok(Vec::new());
         };
-        Ok(block.body.transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect())
+        Ok(block
+            .body
+            .transactions
+            .into_iter()
+            .map(|tx| canonical_block_transaction(tx.into_inner()).encoded_2718().into())
+            .collect())
     }
 
     /// Returns RLP encoded raw block header.
@@ -3324,7 +3374,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn raw_block(&self, block: BlockId) -> Result<Bytes> {
         node_info!("debug_getRawBlock");
         let block = self.backend.get_block(block).ok_or(BlockchainError::BlockNotFound)?;
-        Ok(alloy_rlp::encode(&block).into())
+        Ok(alloy_rlp::encode(canonical_block(block)).into())
     }
 
     /// Returns EIP-2718 encoded raw transaction by block hash and index

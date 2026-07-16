@@ -1067,6 +1067,10 @@ contract SessionForgeScript is Script {{
     assert_eq!(tx["transactionType"], "CALL", "unexpected forge broadcast tx: {tx}");
     assert_eq!(tx["function"], "transfer(address,uint256)", "unexpected forge broadcast tx: {tx}");
     assert_eq!(
+        tx["functionAbi"], "function transfer(address to, uint256 amount) returns (bool)",
+        "unexpected forge broadcast tx: {tx}"
+    );
+    assert_eq!(
         tx["contractAddress"].as_str().map(str::to_ascii_lowercase),
         Some(path_usd.to_ascii_lowercase()),
         "unexpected forge broadcast tx: {tx}"

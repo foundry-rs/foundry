@@ -750,6 +750,7 @@ impl Config {
         "doc",
         "fuzz",
         "invariant",
+        "symbolic",
         "coverage",
         "mutation",
         "tracing",
@@ -2521,11 +2522,10 @@ impl Config {
         if profile != Self::DEFAULT_PROFILE {
             profiles.push(profile.clone());
         }
-        let provider = toml_provider.strict_select(profiles);
-
-        // apply any key fixes
-        let provider =
-            &TracingCompatProvider(BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider)));
+        // Apply key fixes before selecting profiles, while standalone sections and profile names
+        // are still distinguishable.
+        let provider = ForcedSnakeCaseData(toml_provider).strict_select(profiles);
+        let provider = &TracingCompatProvider(BackwardsCompatTomlProvider(provider));
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
@@ -4665,29 +4665,46 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [fuzz]
                 runs = 100
 
                 [invariant]
                 runs = 120
 
+                [symbolic]
+                enabled = true
+                max_paths = 12
+                storage_layout = "generic"
+
                 [profile.ci.fuzz]
                 runs = 420
 
                 [profile.ci.invariant]
                 runs = 500
-            ",
+
+                [profile.ci.symbolic]
+                max_paths = 34
+                dump_smt = true
+            "#,
             )?;
 
             let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 100);
             assert_eq!(config.invariant.runs, 120);
+            assert!(config.symbolic.enabled);
+            assert_eq!(config.symbolic.max_paths, 12);
+            assert_eq!(config.symbolic.storage_layout, SymbolicStorageLayout::Generic);
+            assert!(!config.symbolic.dump_smt);
 
             jail.set_env("FOUNDRY_PROFILE", "ci");
             let config = Config::load().unwrap();
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.runs, 500);
+            assert!(config.symbolic.enabled);
+            assert_eq!(config.symbolic.max_paths, 34);
+            assert_eq!(config.symbolic.storage_layout, SymbolicStorageLayout::Generic);
+            assert!(config.symbolic.dump_smt);
 
             Ok(())
         });
@@ -5268,6 +5285,8 @@ mod tests {
             jail.set_env("FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", "30");
             jail.set_env("FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", "12");
             jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
+            jail.set_env("FOUNDRY_SYMBOLIC_MAX_PATHS", "64");
+            jail.set_env("FOUNDRY_SYMBOLIC_DUMP_SMT", "true");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
@@ -5284,6 +5303,8 @@ mod tests {
             assert!(config.invariant.corpus_random_sequence_weight_configured);
             assert_eq!(config.invariant.corpus.payable_value_weight, 12);
             assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+            assert_eq!(config.symbolic.max_paths, 64);
+            assert!(config.symbolic.dump_smt);
 
             Ok(())
         });
@@ -6264,6 +6285,119 @@ mod tests {
                 endpoints.get("mainnet").unwrap().url().unwrap().contains("https://test.xyz/rpc")
             );
             assert!(endpoints.get("optimism").unwrap().url().unwrap().contains("example-2.com"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_symbolic_sections_preserve_source_precedence() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.symbolic]
+                    max_paths = 10
+                    depth = 100
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [symbolic]
+                    max_paths = 20
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.symbolic.max_paths, 20);
+            assert_eq!(config.symbolic.depth, Some(100));
+
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [symbolic]
+                    max_paths = 30
+                    depth = 200
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [profile.default.symbolic]
+                    max_paths = 40
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.symbolic.max_paths, 40);
+            assert_eq!(config.symbolic.depth, Some(200));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_symbolic_sections_detect_effective_collisions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default.symbolic]
+                    max_paths = 10
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+
+                    [symbolic]
+                    max_paths = 20
+                "#,
+            )?;
+
+            let err = Config::load().unwrap_err().to_string();
+            assert!(err.contains("Key collision detected"), "unexpected error: {err}");
+            assert!(err.contains("symbolic"), "unexpected error: {err}");
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn inherited_fuzz_section_remains_invariant_fallback() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [fuzz]
+                    include_storage = false
+                    dictionary_weight = 99
+                "#,
+            )?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [invariant]
+                    runs = 420
+                "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.invariant.runs, 420);
+            assert!(!config.invariant.dictionary.include_storage);
+            assert_eq!(config.invariant.dictionary.dictionary_weight, 99);
 
             Ok(())
         });
@@ -7515,6 +7649,11 @@ mod tests {
                 runs = 256
                 unknown_invariant_key = "should_warn"
 
+                [symbolic]
+                enabled = true
+                depth = 128
+                unknown_symbolic_key = "should_warn"
+
                 [mutation]
                 unknown_mutation_key = "should_warn"
 
@@ -7545,6 +7684,10 @@ mod tests {
                 [profile.default.invariant]
                 runs = 512
                 unknown_nested_invariant_key = "should_warn"
+
+                [profile.default.symbolic]
+                max_paths = 512
+                unknown_nested_symbolic_key = "should_warn"
 
                 [profile.default.mutation]
                 unknown_nested_mutation_key = "should_warn"
@@ -7587,6 +7730,7 @@ mod tests {
                 ("unknown_doc_key", "doc"),
                 ("unknown_fuzz_key", "fuzz"),
                 ("unknown_invariant_key", "invariant"),
+                ("unknown_symbolic_key", "symbolic"),
                 ("unknown_mutation_key", "mutation"),
                 ("unknown_vyper_key", "vyper"),
                 ("unknown_bind_json_key", "bind_json"),
@@ -7613,6 +7757,7 @@ mod tests {
                 ("unknown_nested_doc_key", "doc"),
                 ("unknown_nested_fuzz_key", "fuzz"),
                 ("unknown_nested_invariant_key", "invariant"),
+                ("unknown_nested_symbolic_key", "symbolic"),
                 ("unknown_nested_mutation_key", "mutation"),
                 ("unknown_nested_vyper_key", "vyper"),
                 ("unknown_nested_bind_json_key", "bind_json"),
@@ -7662,11 +7807,11 @@ mod tests {
                 })
                 .collect();
 
-            // 1 profile key + 8 standalone + 8 nested + 2 array = 19 total
+            // 1 profile key + 9 standalone + 9 nested + 2 array = 21 total
             assert_eq!(
                 unknown_key_warnings.len(),
-                19,
-                "Expected 19 unknown key warnings (1 profile + 8 standalone + 8 nested + 2 array), got {}: {:?}",
+                21,
+                "Expected 21 unknown key warnings (1 profile + 9 standalone + 9 nested + 2 array), got {}: {:?}",
                 unknown_key_warnings.len(),
                 unknown_key_warnings
             );
@@ -8102,6 +8247,26 @@ mod tests {
                 "profiles should contain 'default-venom', got: {:?}",
                 config.profiles
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn standalone_section_name_can_be_used_as_profile_name() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.symbolic]
+                eth-rpc-url = "https://example.com/"
+                "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "symbolic");
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.profile.as_str(), "symbolic");
+            assert_eq!(config.eth_rpc_url.as_deref(), Some("https://example.com/"));
 
             Ok(())
         });

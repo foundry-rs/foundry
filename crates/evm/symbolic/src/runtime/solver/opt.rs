@@ -621,7 +621,7 @@ fn normalize_cmp_for_solver(
 
 /// Simple facts learned from the normalized conjunction currently being queried.
 #[derive(Default)]
-struct ConstraintContext {
+pub(super) struct ConstraintContext {
     upper_bounds: HashMap<SymExpr, U256>,
     lower_bounds: HashMap<SymExpr, U256>,
 }
@@ -650,11 +650,23 @@ impl WordInterval {
 }
 
 impl ConstraintContext {
-    fn new(constraints: &[SymBoolExpr]) -> Self {
+    pub(super) fn new(constraints: &[SymBoolExpr]) -> Self {
         let mut context = Self::default();
         for constraint in constraints {
             context.record_upper_bound_constraint(constraint);
             context.record_lower_bound_constraint(constraint);
+        }
+        // A bounded number of rounds closes ordinary order chains. Relational propagation keeps
+        // strict comparisons weak (`a < b` propagates only `a <= upper(b)`), so inconsistent
+        // cycles cannot tighten a bound one integer at a time across the uint256 domain.
+        for _ in 0..constraints.len() {
+            let mut changed = false;
+            for constraint in constraints {
+                changed |= context.propagate_order_bounds(constraint);
+            }
+            if !changed {
+                break;
+            }
         }
         context
     }
@@ -733,11 +745,18 @@ impl ConstraintContext {
         }
     }
 
-    fn record_upper_bound(&mut self, expr: SymExpr, bound: U256) {
-        self.upper_bounds
-            .entry(expr)
-            .and_modify(|existing| *existing = (*existing).min(bound))
-            .or_insert(bound);
+    fn record_upper_bound(&mut self, expr: SymExpr, bound: U256) -> bool {
+        match self.upper_bounds.entry(expr) {
+            alloy_primitives::map::Entry::Occupied(mut entry) if bound < *entry.get() => {
+                entry.insert(bound);
+                true
+            }
+            alloy_primitives::map::Entry::Vacant(entry) => {
+                entry.insert(bound);
+                true
+            }
+            alloy_primitives::map::Entry::Occupied(_) => false,
+        }
     }
 
     fn record_lower_bound_constraint(&mut self, constraint: &SymBoolExpr) {
@@ -746,11 +765,55 @@ impl ConstraintContext {
         }
     }
 
-    fn record_lower_bound(&mut self, expr: SymExpr, bound: U256) {
-        self.lower_bounds
-            .entry(expr)
-            .and_modify(|existing| *existing = (*existing).max(bound))
-            .or_insert(bound);
+    fn record_lower_bound(&mut self, expr: SymExpr, bound: U256) -> bool {
+        match self.lower_bounds.entry(expr) {
+            alloy_primitives::map::Entry::Occupied(mut entry) if bound > *entry.get() => {
+                entry.insert(bound);
+                true
+            }
+            alloy_primitives::map::Entry::Vacant(entry) => {
+                entry.insert(bound);
+                true
+            }
+            alloy_primitives::map::Entry::Occupied(_) => false,
+        }
+    }
+
+    fn propagate_order_bounds(&mut self, constraint: &SymBoolExpr) -> bool {
+        match constraint.kind() {
+            SymBoolExprKind::Cmp(op, left, right) => match op {
+                SymCmpOp::Ult | SymCmpOp::Ule => self.propagate_less_or_equal_bounds(left, right),
+                SymCmpOp::Ugt | SymCmpOp::Uge => self.propagate_less_or_equal_bounds(right, left),
+                SymCmpOp::Eq => {
+                    let changed = self.propagate_less_or_equal_bounds(left, right);
+                    self.propagate_less_or_equal_bounds(right, left) || changed
+                }
+                SymCmpOp::Slt | SymCmpOp::Sgt => false,
+            },
+            SymBoolExprKind::Not(value) => match value.kind() {
+                SymBoolExprKind::Cmp(op, left, right) => match op {
+                    SymCmpOp::Ult | SymCmpOp::Ule => {
+                        self.propagate_less_or_equal_bounds(right, left)
+                    }
+                    SymCmpOp::Ugt | SymCmpOp::Uge => {
+                        self.propagate_less_or_equal_bounds(left, right)
+                    }
+                    SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => false,
+                },
+                _ => false,
+            },
+            SymBoolExprKind::Const(_) | SymBoolExprKind::And(_) => false,
+        }
+    }
+
+    /// Propagates interval bounds through the known unsigned relation `left <= right`.
+    fn propagate_less_or_equal_bounds(&mut self, left: &SymExpr, right: &SymExpr) -> bool {
+        let upper = self.upper_bound(right);
+        let lower = self.lower_bound(left);
+        let upper_changed = upper.is_some_and(|bound| self.record_upper_bound(left.clone(), bound));
+        let lower_changed =
+            lower.is_some_and(|bound| self.record_lower_bound(right.clone(), bound));
+        upper_changed || lower_changed
     }
 
     fn upper_bound_constraint<'a>(
@@ -962,10 +1025,6 @@ impl SymExpr {
 
     fn word_bool_always_true(&self, cx: &mut SymCx) -> bool {
         ConstraintContext::default().word_bool_always_true(cx, self)
-    }
-
-    pub(crate) fn mul_cannot_overflow_256(&self, right: &Self) -> bool {
-        self.unsigned_bits().saturating_add(right.unsigned_bits()) <= 256
     }
 }
 
@@ -1295,11 +1354,11 @@ impl ConstraintContext {
         other == expected && self.mul_cannot_overflow_256(zero_operand, other)
     }
 
-    fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
+    pub(super) fn mul_cannot_overflow_256(&self, left: &SymExpr, right: &SymExpr) -> bool {
         self.unsigned_bits(left).saturating_add(self.unsigned_bits(right)) <= 256
     }
 
-    fn unsigned_bits(&self, expr: &SymExpr) -> usize {
+    pub(super) fn unsigned_bits(&self, expr: &SymExpr) -> usize {
         let bits = match expr.kind() {
             SymExprKind::Const(_)
             | SymExprKind::Var(_)

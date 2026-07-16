@@ -84,7 +84,7 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
         if stderr.contains("Contract successfully verified") {
             return Ok(());
         }
-        eyre::bail!("Failed to get verification, stdout: {stdout}, stderr: {stderr}")
+        eyre::bail!("Failed to get verification, stdout: {stdout}, stderr: {stderr}");
     })
 }
 
