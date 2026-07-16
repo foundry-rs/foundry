@@ -98,6 +98,13 @@ where
     let is_aa = tx.is_tempo_aa();
     let tx_from = tx.from();
 
+    // A stored fee-token preference would classify a contract creation as Tempo AA, but AA
+    // transactions require a non-empty call list. Leave CREATE requests as Ethereum transactions;
+    // the protocol still applies the account's stored fee-token preference when charging fees.
+    if !has_call_list && calls.iter().any(|(to, _)| matches!(to, TxKind::Create)) {
+        return Ok(None);
+    }
+
     let immediate_user_token =
         infer_fee_token_from_set_user_token_call(&calls, is_aa, tx_from, fee_payer);
     let stored_fee_token = if immediate_user_token.is_none()
