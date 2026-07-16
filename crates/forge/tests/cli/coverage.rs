@@ -1611,6 +1611,138 @@ contract AContractTest is DSTest {
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/10792
+forgetest!(branch_with_storage_bytes_reads, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    bytes public optA = bytes("optA");
+    bytes public optB = bytes("optB");
+
+    function execute(uint16 value) external view {
+        bytes memory element;
+        if (value == 4) {
+            element = optA;
+        } else {
+            element = optB;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testTrueCoverage() external view {
+        a.execute(4);
+    }
+
+    function testFalseCoverage() external view {
+        a.execute(5);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").args(["--mt", "testTrueCoverage"]).assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+--------------+--------------+--------------+---------------╮
+| File              | % Lines      | % Statements | % Branches   | % Funcs       |
++================================================================================+
+| src/AContract.sol | 80.00% (4/5) | 75.00% (3/4) | 50.00% (1/2) | 100.00% (1/1) |
+|-------------------+--------------+--------------+--------------+---------------|
+| Total             | 80.00% (4/5) | 75.00% (3/4) | 50.00% (1/2) | 100.00% (1/1) |
+╰-------------------+--------------+--------------+--------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--mt", "testFalseCoverage"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+╭-------------------+--------------+--------------+--------------+---------------╮
+| File              | % Lines      | % Statements | % Branches   | % Funcs       |
++================================================================================+
+| src/AContract.sol | 80.00% (4/5) | 75.00% (3/4) | 50.00% (1/2) | 100.00% (1/1) |
+|-------------------+--------------+--------------+--------------+---------------|
+| Total             | 80.00% (4/5) | 75.00% (3/4) | 50.00% (1/2) | 100.00% (1/1) |
+╰-------------------+--------------+--------------+--------------+---------------╯
+
+"#]]);
+
+    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/AContract.sol | 100.00% (5/5) | 100.00% (4/4) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (5/5) | 100.00% (4/4) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
+forgetest!(branch_with_code_free_else, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public value;
+
+    function execute(bool condition) external {
+        if (condition) {
+            value = 1;
+        } else {
+            uint256 unused;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a = new AContract();
+
+    function testCoverage() external {
+        a.execute(true);
+        a.execute(false);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+--------------+--------------+---------------+---------------╮
+| File              | % Lines      | % Statements | % Branches    | % Funcs       |
++=================================================================================+
+| src/AContract.sol | 75.00% (3/4) | 50.00% (1/2) | 100.00% (2/2) | 100.00% (1/1) |
+|-------------------+--------------+--------------+---------------+---------------|
+| Total             | 75.00% (3/4) | 50.00% (1/2) | 100.00% (2/2) | 100.00% (1/1) |
+╰-------------------+--------------+--------------+---------------+---------------╯
+
+"#]]);
+});
+
 forgetest!(identical_bytecodes, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
