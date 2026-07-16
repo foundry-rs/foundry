@@ -17,7 +17,10 @@ use solar::{
         ty::{ResolvedMember, Ty, TyKind},
     },
 };
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 const MAX_LOOP_PATH_STATES: usize = 128;
 
@@ -47,14 +50,20 @@ impl<'hir> LateLintPass<'hir> for FunctionSelectorCollision {
         let mut collector = DelegateTargetCollector {
             gcx,
             hir,
-            fallback_input: fallback.parameters.first().copied(),
+            current_inputs: Vec::new(),
             paths: vec![PathState::initial()],
+            placeholder: None,
+            return_controls: vec![Vec::new()],
+            continuation_cache: HashMap::new(),
             loop_controls: Vec::new(),
             targets: Vec::new(),
         };
-        for stmt in body.stmts {
-            let _ = collector.visit_stmt(stmt);
-        }
+        collector.visit_modifier_chain(
+            fallback.modifiers,
+            0,
+            body,
+            fallback.parameters.first().copied().map(CalldataInput::Fallback),
+        );
 
         let proxy_functions = gcx.interface_functions(proxy_id);
         for target in collector.targets {
@@ -139,15 +148,45 @@ impl DelegateTarget {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum CalldataInput {
+    Fallback(hir::VariableId),
+    Modifier { index: usize, param: hir::VariableId },
+}
+
+impl CalldataInput {
+    const fn variable(self) -> hir::VariableId {
+        match self {
+            Self::Fallback(variable) => variable,
+            Self::Modifier { param, .. } => param,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct PathState {
     selector_filter: SelectorFilter,
-    fallback_input_unmodified: bool,
+    modified_inputs: Vec<CalldataInput>,
 }
 
 impl PathState {
     fn initial() -> Self {
-        Self { selector_filter: SelectorFilter::default(), fallback_input_unmodified: true }
+        Self { selector_filter: SelectorFilter::default(), modified_inputs: Vec::new() }
+    }
+
+    fn input_unmodified(&self, input: CalldataInput) -> bool {
+        !self.modified_inputs.contains(&input)
+    }
+
+    fn mark_input_modified(&mut self, input: CalldataInput) {
+        if !self.modified_inputs.contains(&input) {
+            self.modified_inputs.push(input);
+            self.modified_inputs.sort_unstable();
+        }
+    }
+
+    fn clear_inputs(&mut self, inputs: &[CalldataInput]) {
+        self.modified_inputs.retain(|input| !inputs.contains(input));
     }
 }
 
@@ -172,17 +211,141 @@ fn lvalue_contains_var(expr: &Expr<'_>, target: hir::VariableId) -> bool {
 struct DelegateTargetCollector<'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
-    fallback_input: Option<hir::VariableId>,
+    current_inputs: Vec<CalldataInput>,
     paths: Vec<PathState>,
+    placeholder:
+        Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>, Option<CalldataInput>)>,
+    return_controls: Vec<Vec<PathState>>,
+    continuation_cache: HashMap<(usize, PathState), Vec<PathState>>,
     loop_controls: Vec<LoopControl>,
     targets: Vec<DelegateTarget>,
 }
 
 impl<'hir> DelegateTargetCollector<'hir> {
-    fn record_target(&mut self, contract: ContractId, requires_unmodified_input: bool) {
+    fn visit_modifier_chain(
+        &mut self,
+        modifiers: &'hir [hir::Modifier<'hir>],
+        index: usize,
+        body: hir::Block<'hir>,
+        body_input: Option<CalldataInput>,
+    ) {
+        let previous_inputs =
+            std::mem::replace(&mut self.current_inputs, body_input.into_iter().collect());
+        let Some(invocation) = modifiers.get(index) else {
+            self.visit_block(body, None, self.current_inputs.clone());
+            self.current_inputs = previous_inputs;
+            return;
+        };
+
+        for arg in invocation.args.exprs() {
+            let _ = self.visit_expr(arg);
+        }
+
+        if let Some(modifier_id) = invocation.id.as_function() {
+            let modifier = self.hir.function(modifier_id);
+            if let Some(modifier_body) = modifier.body {
+                let bindings = modifier_input_bindings(
+                    self.hir,
+                    modifier,
+                    &invocation.args,
+                    &self.current_inputs,
+                    index,
+                );
+                let params = modifier
+                    .parameters
+                    .iter()
+                    .copied()
+                    .map(|param| CalldataInput::Modifier { index, param })
+                    .collect::<Vec<_>>();
+                for path in &mut self.paths {
+                    path.clear_inputs(&params);
+                    for &(param, source) in &bindings {
+                        if source.is_some_and(|source| !path.input_unmodified(source)) {
+                            path.mark_input_modified(param);
+                        }
+                    }
+                }
+
+                let modifier_inputs = bindings.iter().map(|&(input, _)| input).collect();
+                self.visit_block(
+                    modifier_body,
+                    Some((modifiers, index + 1, body, body_input)),
+                    modifier_inputs,
+                );
+                self.clear_local_inputs(&params);
+                self.current_inputs = previous_inputs;
+                return;
+            }
+        }
+
+        self.visit_modifier_chain(modifiers, index + 1, body, body_input);
+        self.current_inputs = previous_inputs;
+    }
+
+    fn visit_block(
+        &mut self,
+        block: hir::Block<'hir>,
+        placeholder: Option<(
+            &'hir [hir::Modifier<'hir>],
+            usize,
+            hir::Block<'hir>,
+            Option<CalldataInput>,
+        )>,
+        inputs: Vec<CalldataInput>,
+    ) {
+        let previous = self.placeholder;
+        let previous_inputs = std::mem::replace(&mut self.current_inputs, inputs);
+        self.placeholder = placeholder;
+        for stmt in block.stmts {
+            let _ = self.visit_stmt(stmt);
+        }
+        self.placeholder = previous;
+        self.current_inputs = previous_inputs;
+    }
+
+    fn visit_continuation(
+        &mut self,
+        modifiers: &'hir [hir::Modifier<'hir>],
+        index: usize,
+        body: hir::Block<'hir>,
+        body_input: Option<CalldataInput>,
+    ) {
+        let input_paths = std::mem::take(&mut self.paths);
+        let mut output_paths = Vec::new();
+        for input in input_paths {
+            let key = (index, input.clone());
+            if let Some(cached) = self.continuation_cache.get(&key) {
+                Self::extend_unique(&mut output_paths, cached.iter().cloned());
+                continue;
+            }
+
+            self.paths.push(input);
+            self.return_controls.push(Vec::new());
+            self.visit_modifier_chain(modifiers, index, body, body_input);
+            let mut result = std::mem::take(&mut self.paths);
+            let returns = self.return_controls.pop().expect("return control stack is not empty");
+            Self::extend_unique(&mut result, returns);
+            self.continuation_cache.insert(key, result.clone());
+            Self::extend_unique(&mut output_paths, result);
+        }
+        self.paths = output_paths;
+    }
+
+    fn clear_local_inputs(&mut self, inputs: &[CalldataInput]) {
+        for path in &mut self.paths {
+            path.clear_inputs(inputs);
+        }
+        if let Some(returns) = self.return_controls.last_mut() {
+            for path in returns {
+                path.clear_inputs(inputs);
+            }
+        }
+    }
+
+    fn record_target(&mut self, contract: ContractId, required_input: Option<CalldataInput>) {
         let mut filters = Vec::new();
         for path in &self.paths {
-            if (!requires_unmodified_input || path.fallback_input_unmodified)
+            if required_input.is_none_or(|input| path.input_unmodified(input))
                 && !filters.contains(&path.selector_filter)
             {
                 filters.push(path.selector_filter.clone());
@@ -305,18 +468,12 @@ impl<'hir> DelegateTargetCollector<'hir> {
     }
 
     fn widen_loop_paths(paths: &mut Vec<PathState>) {
-        let has_unmodified = paths.iter().any(|path| path.fallback_input_unmodified);
-        let has_modified = paths.iter().any(|path| !path.fallback_input_unmodified);
+        let Some(first) = paths.first() else { return };
+        let mut modified_inputs = first.modified_inputs.clone();
+        modified_inputs
+            .retain(|input| paths.iter().skip(1).all(|path| path.modified_inputs.contains(input)));
         paths.clear();
-        if has_unmodified {
-            paths.push(PathState::initial());
-        }
-        if has_modified {
-            paths.push(PathState {
-                selector_filter: SelectorFilter::default(),
-                fallback_input_unmodified: false,
-            });
-        }
+        paths.push(PathState { selector_filter: SelectorFilter::default(), modified_inputs });
     }
 
     fn visit_for_iteration(
@@ -459,24 +616,29 @@ impl<'hir> Visit<'hir> for DelegateTargetCollector<'hir> {
             for arg in args.exprs() {
                 let _ = self.visit_expr(arg);
             }
-            if let Some((target, requires_unmodified_input)) =
-                delegated_contract(self.gcx, self.fallback_input, expr)
+            if let Some((target, required_input)) =
+                delegated_contract(self.gcx, &self.current_inputs, expr)
             {
-                self.record_target(target, requires_unmodified_input);
+                self.record_target(target, required_input);
             }
             return ControlFlow::Continue(());
         }
 
-        let mutates_input = self.fallback_input.is_some_and(|input| {
-            matches!(
-                &expr.peel_parens().kind,
-                ExprKind::Assign(lhs, _, _) if lvalue_contains_var(lhs, input)
-            )
-        });
+        let mutated_inputs = match &expr.peel_parens().kind {
+            ExprKind::Assign(lhs, _, _) => self
+                .current_inputs
+                .iter()
+                .copied()
+                .filter(|&input| lvalue_contains_var(lhs, input.variable()))
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
         let flow = self.walk_expr(expr);
-        if mutates_input {
+        if !mutated_inputs.is_empty() {
             for path in &mut self.paths {
-                path.fallback_input_unmodified = false;
+                for &input in &mutated_inputs {
+                    path.mark_input_modified(input);
+                }
             }
         }
         flow
@@ -541,9 +703,29 @@ impl<'hir> Visit<'hir> for DelegateTargetCollector<'hir> {
             return ControlFlow::Continue(());
         }
 
+        if matches!(stmt.kind, StmtKind::Placeholder) {
+            if let Some((modifiers, index, body, body_input)) = self.placeholder {
+                self.visit_continuation(modifiers, index, body, body_input);
+            }
+            return ControlFlow::Continue(());
+        }
+
+        if let StmtKind::Return(expr) = stmt.kind {
+            if let Some(expr) = expr {
+                let _ = self.visit_expr(expr);
+            }
+            let paths = std::mem::take(&mut self.paths);
+            let returns =
+                self.return_controls.last_mut().expect("return control stack is not empty");
+            Self::extend_unique(returns, paths);
+            return ControlFlow::Continue(());
+        }
+
         if matches!(stmt.kind, StmtKind::AssemblyBlock(_)) {
             for path in &mut self.paths {
-                path.fallback_input_unmodified = false;
+                for &input in &self.current_inputs {
+                    path.mark_input_modified(input);
+                }
             }
             return ControlFlow::Continue(());
         }
@@ -598,20 +780,19 @@ fn selected_function_selector(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<Selector>
 /// Returns the statically typed implementation contract for a proxy-style delegatecall.
 fn delegated_contract<'hir>(
     gcx: Gcx<'hir>,
-    fallback_input: Option<hir::VariableId>,
+    full_calldata_inputs: &[CalldataInput],
     expr: &'hir Expr<'hir>,
-) -> Option<(ContractId, bool)> {
+) -> Option<(ContractId, Option<CalldataInput>)> {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return None };
     let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return None };
-    let requires_unmodified_input = forwards_full_calldata(args, fallback_input)?;
+    let required_input = forwards_full_calldata(args, full_calldata_inputs)?;
     if member.name != kw::Delegatecall
         || gcx.builtin_callee(callee.id) != Some(Builtin::AddressDelegatecall)
         || !gcx.type_of_expr(receiver.peel_parens().id).is_some_and(ty_is_address)
     {
         return None;
     }
-    typed_contract_behind_address_cast(gcx, receiver)
-        .map(|contract| (contract, requires_unmodified_input))
+    typed_contract_behind_address_cast(gcx, receiver).map(|contract| (contract, required_input))
 }
 
 fn typed_contract_behind_address_cast<'hir>(
@@ -635,25 +816,63 @@ fn typed_contract_behind_address_cast<'hir>(
 
 fn forwards_full_calldata(
     args: &CallArgs<'_>,
-    fallback_input: Option<hir::VariableId>,
-) -> Option<bool> {
+    full_calldata_inputs: &[CalldataInput],
+) -> Option<Option<CalldataInput>> {
     let arg = args.exprs().next()?;
+    full_calldata_source(arg, full_calldata_inputs)
+}
+
+fn full_calldata_source(
+    expr: &Expr<'_>,
+    full_calldata_inputs: &[CalldataInput],
+) -> Option<Option<CalldataInput>> {
     if matches!(
-        &arg.peel_parens().kind,
+        &expr.peel_parens().kind,
         ExprKind::Member(base, member)
             if member.name == sym::data && is_builtin_named(base, sym::msg)
     ) {
-        return Some(false);
+        return Some(None);
     }
-    let fallback_input = fallback_input?;
-    matches!(
-        &arg.peel_parens().kind,
-        ExprKind::Ident(reses)
-            if reses.iter().any(
-                |res| matches!(res, hir::Res::Item(ItemId::Variable(id)) if *id == fallback_input),
-            )
-    )
-    .then_some(true)
+    let ExprKind::Ident(reses) = &expr.peel_parens().kind else { return None };
+    reses.iter().find_map(|res| {
+        let hir::Res::Item(ItemId::Variable(id)) = res else { return None };
+        full_calldata_inputs.iter().copied().find(|input| input.variable() == *id).map(Some)
+    })
+}
+
+fn modifier_input_bindings<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    modifier: &'hir hir::Function<'hir>,
+    args: &'hir CallArgs<'hir>,
+    full_calldata_inputs: &[CalldataInput],
+    modifier_index: usize,
+) -> Vec<(CalldataInput, Option<CalldataInput>)> {
+    modifier
+        .parameters
+        .iter()
+        .copied()
+        .filter_map(|param| {
+            let arg = arg_for_param(hir, modifier, param, args)?;
+            let input = CalldataInput::Modifier { index: modifier_index, param };
+            Some((input, full_calldata_source(arg, full_calldata_inputs)?))
+        })
+        .collect()
+}
+
+fn arg_for_param<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    function: &'hir hir::Function<'hir>,
+    param: hir::VariableId,
+    args: &'hir CallArgs<'hir>,
+) -> Option<&'hir Expr<'hir>> {
+    let param_idx = function.parameters.iter().position(|candidate| *candidate == param)?;
+    match args.kind {
+        hir::CallArgsKind::Unnamed(exprs) => exprs.get(param_idx),
+        hir::CallArgsKind::Named(named) => {
+            let param_name = hir.variable(param).name?;
+            named.iter().find(|arg| arg.name.name == param_name.name).map(|arg| &arg.value)
+        }
+    }
 }
 
 fn is_builtin_named(expr: &Expr<'_>, name: solar::interface::Symbol) -> bool {

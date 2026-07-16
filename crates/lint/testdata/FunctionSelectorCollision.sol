@@ -645,6 +645,130 @@ contract CollisionSelectorGatedProxy { //~WARN: proxy function `CollisionSelecto
     }
 }
 
+// A selector guard in an applied modifier limits the fallback's implementation API.
+contract ModifierSelectorGatedProxy {
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    modifier onlyForwarded() {
+        if (msg.sig == IImplementation.forwarded.selector) _;
+    }
+
+    function tgeo() external {}
+
+    fallback() external payable onlyForwarded {
+        (bool success,) = address(implementation).delegatecall(msg.data);
+        if (!success) revert();
+    }
+}
+
+// A typed delegatecall in an applied modifier still designates the implementation API.
+contract ModifierDelegatecallProxy { //~WARN: proxy function `ModifierDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    modifier forwardsFallback() {
+        (bool success,) = address(implementation).delegatecall(msg.data);
+        if (!success) revert();
+        _;
+    }
+
+    function tgeo() external {}
+
+    fallback() external payable forwardsFallback {}
+}
+
+// A return from the fallback resumes after the placeholder in the outer modifier.
+contract ModifierPostReturnDelegatecallProxy { //~WARN: proxy function `ModifierPostReturnDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    modifier forwardsAfterFallback() {
+        _;
+        (bool success,) = address(implementation).delegatecall(msg.data);
+        if (!success) revert();
+    }
+
+    function tgeo() external {}
+
+    fallback() external payable forwardsAfterFallback {
+        return;
+    }
+}
+
+// Full-calldata provenance follows an argument into its modifier parameter.
+contract ModifierParameterizedDelegatecallProxy { //~WARN: proxy function `ModifierParameterizedDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    modifier forwardsInput(bytes calldata data) {
+        (bool success,) = address(implementation).delegatecall(data);
+        if (!success) revert();
+        _;
+    }
+
+    function tgeo() external {}
+
+    fallback(bytes calldata input) external forwardsInput(input) returns (bytes memory) {
+        return "";
+    }
+}
+
+// Assembly in a modifier cannot implicitly reassign the fallback's calldata parameter.
+contract ModifierAssemblyScopeProxy { //~WARN: proxy function `ModifierAssemblyScopeProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    modifier harmlessAssembly() {
+        assembly {}
+        _;
+    }
+
+    function tgeo() external {}
+
+    fallback(bytes calldata input) external harmlessAssembly returns (bytes memory) {
+        (bool success, bytes memory returndata) = address(implementation).delegatecall(input);
+        if (!success) revert();
+        return returndata;
+    }
+}
+
+// Repeated placeholders are expanded once per distinct incoming path state.
+contract RepeatedModifierPlaceholderProxy { //~WARN: proxy function `RepeatedModifierPlaceholderProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    modifier twice() {
+        _;
+        _;
+    }
+
+    function tgeo() external {}
+
+    fallback() external payable twice twice twice twice twice twice twice twice {
+        (bool success,) = address(implementation).delegatecall(msg.data);
+        if (!success) revert();
+    }
+}
+
 library DelegatecallExtension {
     function delegatecall(address, bytes calldata) internal pure returns (bool, bytes memory) {
         return (true, "");

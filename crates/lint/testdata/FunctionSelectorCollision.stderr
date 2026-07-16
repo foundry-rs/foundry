@@ -142,3 +142,43 @@ LL │ contract CollisionSelectorGatedProxy {
    │
    ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
 
+warning[function-selector-collision]: proxy function `ModifierDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ModifierDelegatecallProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ModifierPostReturnDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ModifierPostReturnDelegatecallProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ModifierParameterizedDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ModifierParameterizedDelegatecallProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ModifierAssemblyScopeProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ModifierAssemblyScopeProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `RepeatedModifierPlaceholderProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract RepeatedModifierPlaceholderProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
