@@ -166,6 +166,10 @@ pub struct ScriptArgs {
     #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
 
+    /// Override the sender's initial nonce for script execution and transaction generation.
+    #[arg(long, value_name = "NONCE")]
+    pub sender_nonce: Option<u64>,
+
     /// Send via `eth_sendTransaction` using the `--sender` argument as sender.
     #[arg(
         long,
@@ -321,7 +325,8 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
 
-        let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
+        let script_config =
+            ScriptConfig::new(config, evm_opts, args.batch, tempo, args.sender_nonce).await?;
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
     }
 
@@ -778,6 +783,7 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: u64,
+    sender_nonce_override: Option<u64>,
     /// Maps a rpc url to a backend
     pub backends: HashMap<String, Backend<FEN>>,
     /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
@@ -792,19 +798,32 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         evm_opts: EvmOpts,
         batch: bool,
         tempo: TempoOpts,
+        sender_nonce_override: Option<u64>,
     ) -> Result<Self> {
-        let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
+        let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
+            sender_nonce
+        } else if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
         } else {
             // dapptools compatibility
             1
         };
 
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch, tempo })
+        Ok(Self {
+            config,
+            evm_opts,
+            sender_nonce,
+            sender_nonce_override,
+            backends: HashMap::default(),
+            batch,
+            tempo,
+        })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
-        self.sender_nonce = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
+        self.sender_nonce = if let Some(sender_nonce) = self.sender_nonce_override {
+            sender_nonce
+        } else if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             next_nonce(sender, fork_url, None).await?
         } else {
             // dapptools compatibility
@@ -905,8 +924,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
-            .with_debug_bytecodes(debug))
+        let mut runner =
+            ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
+                .with_debug_bytecodes(debug);
+
+        if self.sender_nonce_override.is_some() {
+            runner.executor.set_nonce(self.evm_opts.sender, self.sender_nonce)?;
+        }
+
+        Ok(runner)
     }
 }
 
