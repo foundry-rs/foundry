@@ -1,7 +1,10 @@
 use super::FunctionSelectorCollision;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::primitives::branch_always_exits},
+    sol::{
+        Severity, SolLint,
+        analysis::primitives::{branch_always_exits, is_require_or_assert},
+    },
 };
 use alloy_primitives::Selector;
 use solar::{
@@ -603,6 +606,37 @@ impl<'hir> Visit<'hir> for DelegateTargetCollector<'hir> {
             Self::extend_unique(&mut true_paths, false_paths);
             self.paths = true_paths;
             self.dedup_paths();
+            return ControlFlow::Continue(());
+        }
+
+        if let ExprKind::Call(callee, args, opts) = &expr.kind
+            && is_require_or_assert(callee)
+        {
+            let _ = self.visit_expr(callee);
+            if let Some(opts) = opts {
+                for arg in opts.args {
+                    let _ = self.visit_expr(&arg.value);
+                }
+            }
+
+            let mut args = args.exprs();
+            let Some(condition) = args.next() else { return ControlFlow::Continue(()) };
+            let args = args.collect::<Vec<_>>();
+            let (true_paths, false_paths) = self.visit_condition(condition);
+
+            self.paths = true_paths;
+            for &arg in &args {
+                let _ = self.visit_expr(arg);
+            }
+            let continuing_paths = std::mem::take(&mut self.paths);
+
+            // Remaining arguments are evaluated before `require`/`assert` decides whether to
+            // revert, so preserve their targets and side effects on the failing paths too.
+            self.paths = false_paths;
+            for arg in args {
+                let _ = self.visit_expr(arg);
+            }
+            self.paths = continuing_paths;
             return ControlFlow::Continue(());
         }
 

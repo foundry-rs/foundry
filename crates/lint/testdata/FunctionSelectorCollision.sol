@@ -645,6 +645,57 @@ contract CollisionSelectorGatedProxy { //~WARN: proxy function `CollisionSelecto
     }
 }
 
+// A successful require continuation inherits its selector constraint.
+contract RequireSelectorGatedProxy {
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback() external payable {
+        require(msg.sig == IImplementation.forwarded.selector);
+        (bool success,) = address(implementation).delegatecall(msg.data);
+        if (!success) revert();
+    }
+}
+
+// Assert guards constrain their successful continuation in the same way.
+contract AssertSelectorGatedProxy {
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback() external payable {
+        assert(msg.sig != IImplementation.gsf.selector);
+        (bool success,) = address(implementation).delegatecall(msg.data);
+        if (!success) revert();
+    }
+}
+
+// A reachable collision remains reported through a require guard.
+contract RequireCollisionSelectorGatedProxy { //~WARN: proxy function `RequireCollisionSelectorGatedProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback() external payable {
+        require(IImplementation.gsf.selector == msg.sig, "unsupported selector");
+        (bool success,) = address(implementation).delegatecall(msg.data);
+        if (!success) revert();
+    }
+}
+
 // A selector guard in an applied modifier limits the fallback's implementation API.
 contract ModifierSelectorGatedProxy {
     IImplementation internal immutable implementation;
