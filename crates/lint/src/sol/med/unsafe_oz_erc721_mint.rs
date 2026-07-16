@@ -123,7 +123,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
         if is_canonical_erc721(contract.name.as_str())
             && is_openzeppelin_source(self.hir, function.source)
         {
-            return Some(UnsafeMintTarget { preserves_identity: true });
+            return Some(UnsafeMintTarget { preserves_recipient: true, preserves_token: true });
         }
         // A delegating override: any call in its body dispatching to an unsafe `_mint`. An
         // override that reverts when the recipient refuses the token is a safe wrapper like the
@@ -147,7 +147,8 @@ impl MintCallFinder<'_, '_, '_, '_> {
             // recorded the first.
             let mut unsafe_targets: Vec<FunctionId> = Vec::new();
             let mut judged: Vec<FunctionId> = Vec::new();
-            let mut targets_preserve_identity = true;
+            let mut targets_preserve_recipient = true;
+            let mut targets_preserve_token = true;
             for (callee, _) in &scan.calls {
                 if judged.contains(callee) {
                     continue;
@@ -158,7 +159,8 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 let mut branch = seen.clone();
                 if let Some(target) = self.unsafe_mint_target(*callee, &mut branch) {
                     unsafe_targets.push(*callee);
-                    targets_preserve_identity &= target.preserves_identity;
+                    targets_preserve_recipient &= target.preserves_recipient;
+                    targets_preserve_token &= target.preserves_token;
                 }
             }
             let mut delegates = false;
@@ -205,8 +207,37 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 return None;
             }
             if only_to_recipient
+                && targets_preserve_recipient
+                && let Some(recipient) = recipient
+            {
+                // A proof that the recipient has no code is independent of the token being
+                // minted. Reuse the guard walk with the recipient in both identity slots: a
+                // callback guard cannot type-check with an address as its token, so the only
+                // coverage this pass can establish is a code-length proof. This also lets an
+                // address-only helper or modifier establish coverage without inventing a token
+                // parameter, and permits computed or remapped token arguments.
+                let covered =
+                    modifiers_revert_on_refusal(self.gcx, self.hir, function, recipient, recipient);
+                let mut walk = GuardWalk { covered, ..GuardWalk::default() };
+                walk_guards(
+                    self.gcx,
+                    self.hir,
+                    body.stmts,
+                    recipient,
+                    recipient,
+                    &unsafe_targets,
+                    false,
+                    &mut Vec::new(),
+                    &mut walk,
+                );
+                if !walk.failed && !walk.pending {
+                    return None;
+                }
+            }
+            if only_to_recipient
                 && token_consistent
-                && targets_preserve_identity
+                && targets_preserve_recipient
+                && targets_preserve_token
                 && let Some(recipient) = recipient
                 && let Some(token) = token
             {
@@ -234,33 +265,40 @@ impl MintCallFinder<'_, '_, '_, '_> {
                     return None;
                 }
             }
-            // A guard in an outer override can cover this target only when every intermediate
-            // override forwards the two values it was handed unchanged. The current override's
-            // own guard above may legitimately check a remapped local value, so this summary is
-            // only propagated to its callers; it does not gate its own guard correlation.
+            // A guard in an outer override needs every intermediate override to preserve the
+            // identities it relies on: the recipient for a code-less proof, and both recipient
+            // and token for a callback. The current override's own guard above may legitimately
+            // check a remapped local value, so this summary is propagated only to its callers;
+            // it does not gate its own guard correlation.
             let recipient_parameter = function.parameters.first().copied();
             let token_parameter = function.parameters.get(1).copied();
-            let parameters_unchanged = recipient_parameter.is_some_and(|recipient| {
+            let recipient_unchanged = recipient_parameter.is_some_and(|recipient| {
                 !body.stmts.iter().any(|stmt| mutates_var(self.hir, stmt, recipient))
-            }) && token_parameter.is_some_and(|token| {
+            });
+            let token_unchanged = token_parameter.is_some_and(|token| {
                 !body.stmts.iter().any(|stmt| mutates_var(self.hir, stmt, token))
             });
-            let forwards_parameters = recipient_parameter.is_some_and(|recipient| {
-                token_parameter.is_some_and(|token| {
-                    scan.calls.iter().filter(|(callee, _)| unsafe_targets.contains(callee)).all(
-                        |(callee, args)| {
-                            argument_bound_to_parameter(self.hir, *callee, args, 0)
-                                .is_some_and(|argument| is_exactly_var(argument, recipient))
-                                && argument_bound_to_parameter(self.hir, *callee, args, 1)
-                                    .is_some_and(|argument| is_exactly_var(argument, token))
-                        },
-                    )
-                })
+            let forwards_recipient = recipient_parameter.is_some_and(|recipient| {
+                scan.calls.iter().filter(|(callee, _)| unsafe_targets.contains(callee)).all(
+                    |(callee, args)| {
+                        argument_bound_to_parameter(self.hir, *callee, args, 0)
+                            .is_some_and(|argument| is_exactly_var(argument, recipient))
+                    },
+                )
+            });
+            let forwards_token = token_parameter.is_some_and(|token| {
+                scan.calls.iter().filter(|(callee, _)| unsafe_targets.contains(callee)).all(
+                    |(callee, args)| {
+                        argument_bound_to_parameter(self.hir, *callee, args, 1)
+                            .is_some_and(|argument| is_exactly_var(argument, token))
+                    },
+                )
             });
             return Some(UnsafeMintTarget {
-                preserves_identity: targets_preserve_identity
-                    && parameters_unchanged
-                    && forwards_parameters,
+                preserves_recipient: targets_preserve_recipient
+                    && recipient_unchanged
+                    && forwards_recipient,
+                preserves_token: targets_preserve_token && token_unchanged && forwards_token,
             });
         }
         None
@@ -268,10 +306,12 @@ impl MintCallFinder<'_, '_, '_, '_> {
 }
 
 /// An unsafe mint target and whether every recursive hop preserves the recipient and token it
-/// receives. A caller's own guard can only cover a target with that identity guarantee.
+/// receives. A callback guard needs both guarantees, while a code-less-recipient proof needs
+/// only the first.
 #[derive(Clone, Copy)]
 struct UnsafeMintTarget {
-    preserves_identity: bool,
+    preserves_recipient: bool,
+    preserves_token: bool,
 }
 
 /// The package-root directory names of the OpenZeppelin distributions: the npm scope and the
@@ -736,9 +776,9 @@ fn is_code_length_test<'hir>(
     }
 }
 
-/// The condition of a `require`/`assert` that passes only if the recipient accepted the token:
-/// the hook comparison itself, or the account short circuit `to.code.length == 0 || hook == sel`,
-/// whose skipped branch is the one an account takes, and an account always accepts.
+/// The condition of a `require`/`assert` that passes only if the recipient can receive the token:
+/// the recipient is proven code-less, the hook comparison succeeds, or the account short circuit
+/// `to.code.length == 0 || hook == sel` accepts either case.
 fn is_acceptance_condition<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
@@ -747,7 +787,9 @@ fn is_acceptance_condition<'hir>(
     token: hir::VariableId,
 ) -> bool {
     let cond = cond.peel_parens();
-    if is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq) {
+    if is_code_length_test(cond, recipient, false)
+        || is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq)
+    {
         return true;
     }
     let ExprKind::Binary(lhs, op, rhs) = &cond.kind else { return false };
@@ -761,11 +803,11 @@ fn is_acceptance_condition<'hir>(
     accepts(lhs, rhs) || accepts(rhs, lhs)
 }
 
-/// A call handing both the recipient and the token to a same-frame function or a modifier whose
-/// body reverts on refusal for the parameters they land on. The arguments are matched by
-/// [`is_exactly_var`] against the callee's parameters, by name for named arguments: bound by
-/// source position, `_check({actual: to, checked: other})` would analyze `to` as the parameter
-/// the runtime hands `other`. A helper never asked about the token cannot answer for it.
+/// A call handing the checked identities to a same-frame function or modifier whose body proves
+/// acceptance for the parameters they land on. Callback guards receive distinct recipient and
+/// token identities; the recipient-only pass supplies the same identity in both slots, allowing
+/// an address-only helper to prove that it has no code. Arguments are matched by [`is_exactly_var`]
+/// against the callee's parameters and by parameter name for named arguments.
 #[expect(clippy::too_many_arguments)]
 fn callee_guards_recipient<'hir>(
     gcx: Gcx<'hir>,
@@ -821,9 +863,9 @@ struct GuardWalk {
 /// The recognized guard shapes are a closed set, because a hook call that merely appears inside
 /// a condition proves nothing about whether the revert depends on its answer. They are:
 /// `require`/`assert` on an acceptance condition, `if (hook != selector) <exits>`,
-/// `if (hook == selector) {} else <exits>`, and any of those reached through a function or a
-/// modifier the recipient and the token are handed to, the way OpenZeppelin factors
-/// `_checkOnERC721Received` out of `_safeMint`.
+/// `if (hook == selector) {} else <exits>`, and any of those reached through a function or
+/// modifier. A callback helper receives both identities, the way OpenZeppelin factors
+/// `_checkOnERC721Received` out of `_safeMint`; a code-less proof needs only the recipient.
 ///
 /// Branches are read separately and merged: coverage holds only when every path checked, while
 /// a pending or escaping path taints the whole. The branch a `to.code.length` test dedicates to

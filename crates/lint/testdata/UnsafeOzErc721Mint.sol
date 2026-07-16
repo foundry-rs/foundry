@@ -930,8 +930,7 @@ contract CodeGuardedOverrideNft is ERC721 {
     }
 }
 
-// Admitting only code-less recipients is not a receiver check either: a contract minting to
-// itself from its constructor passes it, and never acknowledged the token.
+// A code-less recipient cannot need the ERC721 receiver callback, so this is safe.
 contract AccountOnlyNft is ERC721 {
     function _mint(address to, uint256 tokenId) internal virtual override {
         require(to.code.length == 0, "accounts only");
@@ -939,7 +938,63 @@ contract AccountOnlyNft is ERC721 {
     }
 
     function mint(address to, uint256 id) external {
-        _mint(to, id); //~WARN: `ERC721._mint` does not check
+        _mint(to, id);
+    }
+}
+
+// A code-less proof is about the recipient, not the token. Remapping the token after the proof
+// does not make the recipient require a callback.
+contract AccountOnlyRemappedTokenNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        tokenId += 1;
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+contract AccountOnlyComputedTokenNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        super._mint(to, tokenId + 1);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+contract AccountOnlyHelperNft is ERC721 {
+    function _requireAccount(address to) private view {
+        require(to.code.length == 0, "accounts only");
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        _requireAccount(to);
+        super._mint(to, tokenId + 1);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+contract AccountOnlyModifierNft is ERC721 {
+    modifier accountOnly(address to) {
+        require(to.code.length == 0, "accounts only");
+        _;
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override accountOnly(to) {
+        tokenId += 1;
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
     }
 }
 
@@ -1604,6 +1659,32 @@ contract RecursiveRecipientRemapCheckedNft is RecursiveRecipientRemapBaseNft {
                 == IERC721Receiver.onERC721Received.selector,
             "unsafe receiver"
         );
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A code-less proof survives the recursive token remap above because only the recipient's
+// identity matters.
+contract RecursiveCodeLessTokenRemapNft is RecursiveTokenRemapBaseNft {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// It does not survive a recursive recipient remap: the canonical mint credits an address whose
+// code length the outer override never checked.
+contract RecursiveCodeLessRecipientRemapNft is RecursiveRecipientRemapBaseNft {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
         super._mint(to, tokenId);
     }
 
