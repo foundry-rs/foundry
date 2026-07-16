@@ -22,7 +22,7 @@ use alloy_primitives::{
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
@@ -167,7 +167,11 @@ pub struct ScriptArgs {
     pub gas_estimate_multiplier: u64,
 
     /// Override the sender's initial nonce for script execution and transaction generation.
-    #[arg(long, value_name = "NONCE")]
+    #[arg(
+        long,
+        value_name = "NONCE",
+        value_parser = RangedU64ValueParser::<u64>::new().range(..u64::MAX),
+    )]
     pub sender_nonce: Option<u64>,
 
     /// Send via `eth_sendTransaction` using the `--sender` argument as sender.
@@ -1017,6 +1021,29 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn rejects_max_sender_nonce() {
+        let max_valid_nonce = (u64::MAX - 1).to_string();
+        let args = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender-nonce",
+            &max_valid_nonce,
+        ])
+        .unwrap();
+        assert_eq!(args.sender_nonce, Some(u64::MAX - 1));
+
+        let max_nonce = u64::MAX.to_string();
+        let err = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sender-nonce",
+            &max_nonce,
+        ])
+        .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     #[test]
