@@ -218,8 +218,15 @@ def build_rows(artifact_dir, trusted=None):
         raise ValueError("artifact came from an unexpected workflow")
     if run.get("event") != "workflow_dispatch":
         raise ValueError("artifact came from an unexpected event")
-    if run.get("run_id") != trusted["run_id"] or run.get("run_attempt") != trusted["run_attempt"]:
+    if run.get("run_id") != trusted["run_id"]:
         raise ValueError("artifact run identity does not match triggering workflow")
+    artifact_attempt = run.get("run_attempt")
+    if (
+        isinstance(artifact_attempt, bool)
+        or not isinstance(artifact_attempt, int)
+        or not 1 <= artifact_attempt <= trusted["run_attempt"]
+    ):
+        raise ValueError("artifact run attempt does not match triggering workflow")
 
     baseline_commit = _require_sha(comparison.get("baseline_commit"), "baseline commit")
     candidate_commit = _require_sha(comparison.get("candidate_commit"), "candidate commit")
@@ -323,7 +330,7 @@ def build_rows(artifact_dir, trusted=None):
                 "repository": trusted["repository"],
                 "workflow_file": run["workflow_file"],
                 "run_id": trusted["run_id"],
-                "run_attempt": trusted["run_attempt"],
+                "run_attempt": artifact_attempt,
                 "side_role": side_role,
                 "benchmark_case_id": case_id,
                 "workload_repository": case.get("workload_repository"),
@@ -334,7 +341,7 @@ def build_rows(artifact_dir, trusted=None):
                 "github_repository": trusted["repository"],
                 "workflow_file": run["workflow_file"],
                 "workflow_run_id": trusted["run_id"],
-                "workflow_run_attempt": trusted["run_attempt"],
+                "workflow_run_attempt": artifact_attempt,
                 "workflow_run_url": trusted["run_url"],
                 "run_started_at": trusted["started_at"],
                 "branch": trusted.get("branch"),

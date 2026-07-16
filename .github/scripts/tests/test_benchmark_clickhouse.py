@@ -156,12 +156,18 @@ class BenchmarkClickHouseTest(unittest.TestCase):
         first = MODULE.build_rows(root, TRUSTED)
         self.assertEqual(first, MODULE.build_rows(root, TRUSTED))
 
+        failed_jobs_rerun = MODULE.build_rows(root, {**TRUSTED, "run_attempt": 2})
+        self.assertEqual(first, failed_jobs_rerun)
+
         rerun_manifest = manifest()
         rerun_manifest["run"]["run_attempt"] = 2
         (root / "benchmark-manifest.json").write_text(json.dumps(rerun_manifest), encoding="utf-8")
         rerun_trusted = {**TRUSTED, "run_attempt": 2}
         rerun = MODULE.build_rows(root, rerun_trusted)
         self.assertNotEqual(first[0]["result_id"], rerun[0]["result_id"])
+
+        with self.assertRaisesRegex(ValueError, "artifact run attempt"):
+            MODULE.build_rows(root, TRUSTED)
 
     def test_rejects_incomplete_comparison(self):
         temp, root = self.artifact_dir(candidate={"unexpected": result(1.1)})
