@@ -328,6 +328,7 @@ interface Vm {
     function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
     function getRecordedLogs() external view returns (Log[] memory logs);
     function getRecordedLogsJson() external view returns (string memory logsJson);
+    function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
