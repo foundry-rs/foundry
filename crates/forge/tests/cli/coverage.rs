@@ -1,3 +1,5 @@
+use clap::CommandFactory;
+use forge::cmd::coverage::CoverageArgs;
 use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
     TestCommand, TestProject,
@@ -2864,3 +2866,56 @@ contract Broken {
         "mutation/coverage conflict should be reported before compile errors:\n{stderr}"
     );
 });
+
+forgetest_init!(coverage_rejects_test_only_modes_before_compile, |prj, cmd| {
+    prj.add_source(
+        "Broken.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Broken {
+    function broken() public pure returns (uint256) {
+        return;
+    }
+}
+"#,
+    );
+
+    for args in [
+        &["--json"][..],
+        &["--junit"],
+        &["--list"],
+        &["--debug"],
+        &["--flamegraph"],
+        &["--flamechart"],
+        &["--evm-profile"],
+        &["--showmap-out", "showmap"],
+        &["--brutalize"],
+        &["--replay-symbolic-artifact", "counterexample.json"],
+        &["--watch", "--json"],
+    ] {
+        let output = cmd.forge_fuse().arg("coverage").args(args).assert_failure();
+        let stderr = output.get_output().stderr_lossy();
+
+        assert!(
+            stderr.contains("`forge coverage` cannot be combined with:"),
+            "unexpected stderr for {args:?}:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("Compiler run failed"),
+            "coverage conflict should be reported before compile errors for {args:?}:\n{stderr}"
+        );
+    }
+});
+
+#[test]
+fn coverage_help_renders_compatibility_note() {
+    let help = CoverageArgs::command().render_long_help().to_string();
+
+    assert!(help.contains(concat!(
+        "Compatibility:\n",
+        "  `forge coverage` supports test filters and `--watch`, but not test-only output"
+    )));
+    assert!(!help.contains("\\n"));
+}
