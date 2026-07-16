@@ -557,12 +557,12 @@ impl Installer<'_> {
             && std::fs::read_dir(path)?.next().is_none();
         let worktree_existed = path.exists();
         let module_dir_existed = module_dir.exists();
-        let original_head = (existing_submodule && worktree_existed && !uninitialized_worktree)
-            .then(|| self.git.root(path).head())
-            .transpose()?;
         if existing_submodule && (path.is_symlink() || path.exists()) && !uninitialized_worktree {
             self.ensure_submodule_worktree(path, &module_dir, relative_path)?;
         }
+        let original_head = (existing_submodule && worktree_existed && !uninitialized_worktree)
+            .then(|| self.git.root(path).head())
+            .transpose()?;
 
         let lockfile_path = project_root.join(FOUNDRY_LOCK);
         let lockfile_contents =
