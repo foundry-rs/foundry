@@ -214,6 +214,15 @@ contract ReachabilitySemantics {
         owner = newOwner;
     }
 
+    function guardOnEveryTryClause(address newOwner) external {
+        try this.externalCall() {
+            checkOwner();
+        } catch {
+            checkOwner();
+        }
+        owner = newOwner;
+    }
+
     function guardOnOneReturnPath(bool skip, address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
         maybeGuard(skip);
         owner = newOwner;
@@ -243,6 +252,8 @@ contract ReachabilitySemantics {
         checkOwner();
         return true;
     }
+
+    function externalCall() external pure {}
 }
 
 contract BaseProtection {
@@ -373,6 +384,16 @@ contract YulStoragePointerRetargeting {
         uint256[] storage pointer = ordinaryValues;
         assembly {
             pointer.slot := protectedValues.slot
+        }
+        pointer.push(1);
+    }
+
+    function retargetAwayOnExhaustiveSwitch(uint256 selector) external {
+        uint256[] storage pointer = protectedValues;
+        assembly {
+            switch selector
+            case 0 { pointer.slot := ordinaryValues.slot }
+            default { pointer.slot := ordinaryValues.slot }
         }
         pointer.push(1);
     }

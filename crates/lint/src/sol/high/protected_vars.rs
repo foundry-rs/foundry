@@ -676,26 +676,37 @@ impl<'hir> EntryAnalyzer<'hir> {
             StmtKind::Try(try_statement) => {
                 self.analyze_expr(&try_statement.expr);
                 let before = self.flow_state();
-                let mut merged = before.clone();
+                let mut merged = None;
                 for clause in try_statement.clauses {
                     self.set_flow_state(before.clone());
-                    let _ = self.analyze_block(clause.block);
-                    merged = merge_flow_states(&merged, &self.flow_state());
+                    if self.analyze_block(clause.block) {
+                        merge_flow_state_into(&mut merged, &self.flow_state());
+                    }
                 }
-                self.set_flow_state(merged);
-                true
+                if let Some(merged) = merged {
+                    self.set_flow_state(merged);
+                    true
+                } else {
+                    false
+                }
             }
             StmtKind::Switch(switch) => {
                 self.analyze_expr(switch.selector);
                 let before = self.flow_state();
-                let mut merged = before.clone();
+                let has_default = switch.cases.last().is_some_and(|case| case.constant.is_none());
+                let mut merged = (!has_default).then_some(before.clone());
                 for case in switch.cases {
                     self.set_flow_state(before.clone());
-                    let _ = self.analyze_block(case.body);
-                    merged = merge_flow_states(&merged, &self.flow_state());
+                    if self.analyze_block(case.body) {
+                        merge_flow_state_into(&mut merged, &self.flow_state());
+                    }
                 }
-                self.set_flow_state(merged);
-                true
+                if let Some(merged) = merged {
+                    self.set_flow_state(merged);
+                    true
+                } else {
+                    false
+                }
             }
             StmtKind::Break => {
                 let state = self.flow_state();
