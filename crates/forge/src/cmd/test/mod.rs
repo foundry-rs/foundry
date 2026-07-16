@@ -1174,6 +1174,52 @@ impl TestArgs {
         Ok(())
     }
 
+    pub(crate) fn ensure_coverage_mode_compatible(&self) -> Result<()> {
+        self.ensure_mutation_mode_compatible(true)?;
+
+        let mut conflicts = Vec::new();
+        if shell::is_json() {
+            conflicts.push("--json");
+        }
+        if self.junit {
+            conflicts.push("--junit");
+        }
+        if self.list {
+            conflicts.push("--list");
+        }
+        if self.debug {
+            conflicts.push("--debug");
+        }
+        if self.flamegraph {
+            conflicts.push("--flamegraph");
+        }
+        if self.flamechart {
+            conflicts.push("--flamechart");
+        }
+        if self.evm_profile.is_some() {
+            conflicts.push("--evm-profile");
+        }
+        if self.showmap_out.is_some() {
+            conflicts.push("--showmap-out");
+        }
+        if self.brutalize {
+            conflicts.push("--brutalize");
+        }
+        if self.replay_symbolic_artifact.is_some() {
+            conflicts.push("--replay-symbolic-artifact");
+        }
+        if !conflicts.is_empty() {
+            bail!(
+                "`forge coverage` cannot be combined with: {}. Use `--report lcov` for an \
+                 interoperable coverage report or `--report attribution` for per-test JSON \
+                 attribution.",
+                conflicts.join(", ")
+            )
+        }
+
+        Ok(())
+    }
+
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
     fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
         if let Some(showmap) = self.showmap_override.clone() {
