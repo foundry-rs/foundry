@@ -34,6 +34,30 @@ contract Ecrecover {
         return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
     }
 
+    function unreachableConstantBranch(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        if (false) return ecrecover(hash, v, r, s);
+        return address(0);
+    }
+
+    function unreachableAfterConstantExit(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        if (true) return address(0);
+        return ecrecover(hash, v, r, s);
+    }
+
+    function unreachableConstantLoopBranch(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bool run
+    ) external pure returns (address) {
+        while (run) {
+            if (false) return ecrecover(hash, v, r, s);
+            break;
+        }
+        return address(0);
+    }
+
     function vOnly(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         require(v == 27 || v == 28);
         return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures

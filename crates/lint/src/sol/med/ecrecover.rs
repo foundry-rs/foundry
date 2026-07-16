@@ -49,7 +49,7 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
         let mut falls_through = true;
         for stmt in body.stmts {
             let _ = analyzer.visit_stmt(stmt);
-            if branch_always_exits(stmt) {
+            if analyzer.stmt_always_exits(stmt) {
                 falls_through = false;
                 break;
             }
@@ -349,6 +349,23 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
+    fn stmt_always_exits(&self, stmt: &'hir hir::Stmt<'hir>) -> bool {
+        match &stmt.kind {
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                block.stmts.iter().any(|stmt| self.stmt_always_exits(stmt))
+            }
+            StmtKind::If(condition, then_stmt, else_stmt) => match self.const_bool(condition) {
+                Some(true) => self.stmt_always_exits(then_stmt),
+                Some(false) => else_stmt.is_some_and(|else_stmt| self.stmt_always_exits(else_stmt)),
+                None => {
+                    self.stmt_always_exits(then_stmt)
+                        && else_stmt.is_some_and(|else_stmt| self.stmt_always_exits(else_stmt))
+                }
+            },
+            _ => branch_always_exits(stmt),
+        }
+    }
+
     fn is_proven_low_s(&self, expr: &'hir hir::Expr<'hir>) -> bool {
         self.const_value(expr).is_some_and(|value| value <= SECP256K1_HALF_ORDER)
             || self.current_value(expr).is_some_and(|value| self.state.low_s.contains(&value))
@@ -574,7 +591,7 @@ impl<'hir> Analyzer<'hir> {
             }
             _ => {
                 self.add_stmt_effects(stmt, &mut effects);
-                (!branch_always_exits(stmt)).then_some(effects)
+                (!self.stmt_always_exits(stmt)).then_some(effects)
             }
         }
     }
@@ -809,7 +826,18 @@ impl<'hir> Analyzer<'hir> {
                 self.visit_loop_stmts(block.stmts, exits)
             }
             StmtKind::If(condition, then_stmt, else_stmt) => {
+                let constant = self.const_bool(condition);
                 let _ = self.visit_expr(condition);
+                if let Some(value) = constant {
+                    self.assume(condition, !value);
+                    return if value {
+                        self.visit_loop_stmt(then_stmt, exits)
+                    } else if let Some(else_stmt) = else_stmt {
+                        self.visit_loop_stmt(else_stmt, exits)
+                    } else {
+                        Some(self.snapshot())
+                    };
+                }
                 let baseline = self.snapshot();
 
                 self.assume(condition, false);
@@ -850,7 +878,7 @@ impl<'hir> Analyzer<'hir> {
             }
             _ => {
                 let _ = self.visit_stmt(stmt);
-                (!branch_always_exits(stmt)).then(|| self.snapshot())
+                (!self.stmt_always_exits(stmt)).then(|| self.snapshot())
             }
         }
     }
@@ -868,26 +896,36 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
                 for stmt in block.stmts {
                     let _ = self.visit_stmt(stmt);
-                    if branch_always_exits(stmt) {
+                    if self.stmt_always_exits(stmt) {
                         break;
                     }
                 }
                 return ControlFlow::Continue(());
             }
             StmtKind::If(condition, then_stmt, else_stmt) => {
+                let constant = self.const_bool(condition);
                 let _ = self.visit_expr(condition);
+                if let Some(value) = constant {
+                    self.assume(condition, !value);
+                    if value {
+                        let _ = self.visit_stmt(then_stmt);
+                    } else if let Some(else_stmt) = else_stmt {
+                        let _ = self.visit_stmt(else_stmt);
+                    }
+                    return ControlFlow::Continue(());
+                }
                 let baseline = self.snapshot();
 
                 self.assume(condition, false);
                 let _ = self.visit_stmt(then_stmt);
-                let then_exits = branch_always_exits(then_stmt);
+                let then_exits = self.stmt_always_exits(then_stmt);
                 let after_then = self.snapshot();
 
                 self.restore(baseline);
                 self.assume(condition, true);
                 let else_exits = if let Some(else_stmt) = else_stmt {
                     let _ = self.visit_stmt(else_stmt);
-                    branch_always_exits(else_stmt)
+                    self.stmt_always_exits(else_stmt)
                 } else {
                     false
                 };
@@ -920,11 +958,11 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                     self.restore(after_call.clone());
                     for stmt in clause.block.stmts {
                         let _ = self.visit_stmt(stmt);
-                        if branch_always_exits(stmt) {
+                        if self.stmt_always_exits(stmt) {
                             break;
                         }
                     }
-                    if !clause.block.stmts.iter().any(branch_always_exits) {
+                    if !clause.block.stmts.iter().any(|stmt| self.stmt_always_exits(stmt)) {
                         fallthrough.push(self.snapshot());
                     }
                 }

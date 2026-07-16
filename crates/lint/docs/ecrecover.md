@@ -18,10 +18,10 @@ retained only when they hold on every path reaching the call.
 Checks on `v`, the recovered address, nonces, domain separators, or the top bit of an EIP-2098
 signature do not prove that `s` is canonical and do not suppress the warning.
 
-The analysis is intentionally local and requires the low-`s` guard to be established before the
-call. It does not summarize internal helpers or modifiers, prove post-call guards, recognize bound
-signature schemes that fix one recovery ID, or inspect Yul and low-level calls to precompile
-address `0x01`.
+The analysis is intentionally local. A low-`s` guard may be established before the call or after
+assigning the recovered address to a local, provided it dominates the address's first observable
+use. The analysis does not summarize internal helpers or modifiers, recognize bound signature
+schemes that fix one recovery ID, or inspect Yul and low-level calls to precompile address `0x01`.
 
 ## Why is this bad?
 
