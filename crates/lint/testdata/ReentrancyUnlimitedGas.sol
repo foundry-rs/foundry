@@ -62,6 +62,14 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         counter += 1;
     }
 
+    modifier passthroughOne() {
+        _;
+    }
+
+    modifier passthroughTwo() {
+        _;
+    }
+
     function stateWriteAfterTransfer(address payable recipient) external {
         recipient.transfer(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
         counter = 1;
@@ -100,6 +108,21 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         if (success) {
             counter = 1;
         }
+    }
+
+    function tupleDeclaredFailedSendBranchDoesNotCallback(address payable recipient) external {
+        (bool success, uint256 value) = (recipient.send(1 wei), 1);
+        if (!success) counter = value;
+    }
+
+    function tupleDeclaredSuccessfulSendBranch(address payable recipient) external {
+        (bool success, uint256 value) = (recipient.send(1 wei), 1); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        if (success) counter = value;
+    }
+
+    function tupleDeclarationDoesNotCorrelateSibling(address payable recipient) external {
+        (bool success, bool write) = (recipient.send(1 wei), true); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        if (write) counter = success ? 1 : 0;
     }
 
     function overwrittenStoredSendCanSucceed(address payable recipient, bool overwrite) external {
@@ -214,6 +237,47 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
     function helperThenState(address payable recipient) external {
         transferInHelper(recipient);
         counter = 1;
+    }
+
+    function returnedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        bool success = sendInHelper(recipient);
+        if (!success) counter = 1;
+    }
+
+    function directReturnedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        if (!sendInHelper(recipient)) counter = 1;
+    }
+
+    function modifiedReturnedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        if (!modifiedSendInHelper(recipient)) counter = 1;
+    }
+
+    function tupleReturnedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        (bool write, bool success) = tupleSendInHelper(recipient);
+        if (!success) counter = write ? 1 : 0;
+    }
+
+    function tupleReturnedSiblingCanFollowSuccessfulSend(address payable recipient) external {
+        (bool write, bool success) = tupleSendInHelper(recipient);
+        if (write) counter = success ? 1 : 0;
+    }
+
+    function namedReturnedFailedSendBranchDoesNotCallback(address payable recipient) external {
+        bool success = namedSendInHelper(recipient);
+        if (!success) counter = 1;
+    }
+
+    function returnedSuccessfulSendBranch(address payable recipient) external {
+        bool success = successfulSendInHelper(recipient);
+        if (success) counter = 1;
+    }
+
+    function overriddenHelperResultCanFollowSuccessfulSend(
+        address payable recipient,
+        bool overrideResult
+    ) external {
+        bool success = overriddenSendInHelper(recipient, overrideResult);
+        if (!success) counter = 1;
     }
 
     function modifierWritesAfter(address payable recipient) external writeAfter {
@@ -419,6 +483,43 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
 
     function transferInHelper(address payable recipient) internal {
         recipient.transfer(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+    }
+
+    function sendInHelper(address payable recipient) internal returns (bool) {
+        return recipient.send(1 wei);
+    }
+
+    function modifiedSendInHelper(address payable recipient)
+        internal
+        passthroughOne
+        passthroughTwo
+        returns (bool)
+    {
+        return recipient.send(1 wei);
+    }
+
+    function tupleSendInHelper(address payable recipient)
+        internal
+        returns (bool write, bool success)
+    {
+        return (true, recipient.send(1 wei)); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+    }
+
+    function namedSendInHelper(address payable recipient) internal returns (bool success) {
+        success = recipient.send(1 wei);
+    }
+
+    function successfulSendInHelper(address payable recipient) internal returns (bool) {
+        return recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+    }
+
+    function overriddenSendInHelper(address payable recipient, bool overrideResult)
+        internal
+        returns (bool)
+    {
+        bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+        if (overrideResult) return false;
+        return success;
     }
 
     function consume(uint256, uint256) internal pure {}

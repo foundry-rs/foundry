@@ -86,6 +86,8 @@ struct FlowState {
     state_reads: BTreeSet<VariableId>,
     pending_calls: Vec<PendingCall>,
     stored_send_results: Vec<StoredSendResult>,
+    stored_call_results: Vec<StoredCallResult>,
+    stored_return_results: Vec<StoredReturnResult>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -106,6 +108,26 @@ struct SendResultSource {
 struct StoredSendResult {
     variable: VariableId,
     source: SendResultSource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct StoredCallResult {
+    expression_span: Span,
+    index: usize,
+    source: SendResultSource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct StoredReturnResult {
+    function: FunctionId,
+    index: usize,
+    source: SendResultSource,
+}
+
+#[derive(Default)]
+struct CallReturns {
+    function: Option<FunctionId>,
+    state: Option<FlowState>,
 }
 
 #[derive(Default)]
@@ -187,6 +209,8 @@ impl FlowState {
             existing.state_reads.extend(self.state_reads.iter().copied());
             existing.result_correlatable = false;
             self.stored_send_results.retain(|result| result.source.call_span != span);
+            self.stored_call_results.retain(|result| result.source.call_span != span);
+            self.stored_return_results.retain(|result| result.source.call_span != span);
         } else {
             self.pending_calls.push(PendingCall {
                 span,
@@ -200,22 +224,72 @@ impl FlowState {
     fn remove_call(&mut self, span: Span, kind: ReentrantCallKind) {
         self.pending_calls.retain(|call| call.span != span || call.kind != kind);
         self.stored_send_results.retain(|result| result.source.call_span != span);
+        self.stored_call_results.retain(|result| result.source.call_span != span);
+        self.stored_return_results.retain(|result| result.source.call_span != span);
     }
 
     fn set_stored_send_results(&mut self, variable: VariableId, sources: &[SendResultSource]) {
         self.stored_send_results.retain(|result| result.variable != variable);
         for &source in sources {
-            if self.pending_calls.iter().any(|call| {
-                call.span == source.call_span
-                    && call.kind == ReentrantCallKind::Stipend
-                    && call.result_correlatable
-            }) {
+            if self.is_correlatable_source(source) {
                 let result = StoredSendResult { variable, source };
                 if !self.stored_send_results.contains(&result) {
                     self.stored_send_results.push(result);
                 }
             }
         }
+    }
+
+    fn clear_stored_call_results(&mut self, expression_span: Span) {
+        self.stored_call_results.retain(|result| result.expression_span != expression_span);
+    }
+
+    fn set_stored_call_results(
+        &mut self,
+        expression_span: Span,
+        sources: &[Vec<SendResultSource>],
+    ) {
+        self.clear_stored_call_results(expression_span);
+        for (index, sources) in sources.iter().enumerate() {
+            for &source in sources {
+                if self.is_correlatable_source(source) {
+                    let result = StoredCallResult { expression_span, index, source };
+                    if !self.stored_call_results.contains(&result) {
+                        self.stored_call_results.push(result);
+                    }
+                }
+            }
+        }
+    }
+
+    fn clear_stored_return_results(&mut self, function: FunctionId) {
+        self.stored_return_results.retain(|result| result.function != function);
+    }
+
+    fn set_stored_return_results(
+        &mut self,
+        function: FunctionId,
+        sources: &[Vec<SendResultSource>],
+    ) {
+        self.clear_stored_return_results(function);
+        for (index, sources) in sources.iter().enumerate() {
+            for &source in sources {
+                if self.is_correlatable_source(source) {
+                    let result = StoredReturnResult { function, index, source };
+                    if !self.stored_return_results.contains(&result) {
+                        self.stored_return_results.push(result);
+                    }
+                }
+            }
+        }
+    }
+
+    fn is_correlatable_source(&self, source: SendResultSource) -> bool {
+        self.pending_calls.iter().any(|call| {
+            call.span == source.call_span
+                && call.kind == ReentrantCallKind::Stipend
+                && call.result_correlatable
+        })
     }
 }
 
@@ -341,7 +415,7 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     recursive_cut_frontiers: HashMap<RecursiveFrontierKey, Vec<FunctionId>>,
     direct_internal_calls: HashMap<FunctionId, Vec<FunctionId>>,
     loop_jumps: Vec<LoopJumps<'hir>>,
-    call_returns: Vec<Option<FlowState>>,
+    call_returns: Vec<CallReturns>,
     state_effects: usize,
     completion_probe_depth: usize,
     completion_probe_successful_halt: bool,
@@ -363,6 +437,7 @@ struct InlineCallResult {
     state: FlowState,
     may_return: bool,
     has_state_effect: bool,
+    return_sources: Vec<Vec<SendResultSource>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -487,7 +562,19 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     true
                 }
             }
-            StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => self.analyze_expr(expr, state),
+            StmtKind::DeclMulti(variables, expr) => {
+                let completes = self.analyze_expr(expr, state);
+                if completes {
+                    let sources = self.send_result_sources_by_index(expr, variables.len(), state);
+                    for (index, variable) in variables.iter().enumerate() {
+                        if let Some(variable) = variable {
+                            state.set_stored_send_results(*variable, &sources[index]);
+                        }
+                    }
+                }
+                completes
+            }
+            StmtKind::Expr(expr) => self.analyze_expr(expr, state),
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
                 self.analyze_block(block, placeholder, state)
             }
@@ -505,8 +592,16 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::Return(expr) => {
                 let completes = expr.is_none_or(|expr| self.analyze_expr(expr, state));
-                if completes && let Some(returns) = self.call_returns.last_mut() {
-                    merge_optional_state(returns, state);
+                if completes {
+                    if let Some(function) =
+                        self.call_returns.last().and_then(|returns| returns.function)
+                    {
+                        let sources = self.return_result_sources(function, expr, state);
+                        state.set_stored_return_results(function, &sources);
+                    }
+                    if let Some(returns) = self.call_returns.last_mut() {
+                        merge_optional_state(&mut returns.state, state);
+                    }
                 }
                 false
             }
@@ -638,14 +733,24 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::Placeholder => {
                 if let Some((modifiers, index, body)) = placeholder {
-                    self.call_returns.push(None);
+                    let function = self.call_returns.last().and_then(|returns| returns.function);
+                    self.call_returns.push(CallReturns { function, state: None });
                     let falls_through = self.analyze_modifier_chain(modifiers, index, body, state);
                     let mut completions =
                         self.call_returns.pop().expect("modifier return state exists");
                     if falls_through {
-                        merge_optional_state(&mut completions, state);
+                        if let Some(function) = function
+                            && !state
+                                .stored_return_results
+                                .iter()
+                                .any(|result| result.function == function)
+                        {
+                            let sources = self.named_return_result_sources(function, state);
+                            state.set_stored_return_results(function, &sources);
+                        }
+                        merge_optional_state(&mut completions.state, state);
                     }
-                    if let Some(completions) = completions {
+                    if let Some(completions) = completions.state {
                         *state = completions;
                         true
                     } else {
@@ -756,6 +861,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             ExprKind::Unary(_, inner) => self.analyze_expr(inner, state),
             ExprKind::Call(callee, args, opts) => {
+                state.clear_stored_call_results(expr.span);
                 let mut children =
                     Vec::with_capacity(1 + opts.map_or(0, |opts| opts.args.len()) + args.len());
                 children.push(*callee);
@@ -781,7 +887,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                         let mut any_returns = false;
                         for func_id in func_ids {
                             let mut candidate_state = before_call.clone();
-                            if self.analyze_internal_call(func_id, &mut candidate_state) {
+                            if let Some(return_sources) =
+                                self.analyze_internal_call(func_id, &mut candidate_state)
+                            {
+                                candidate_state.set_stored_call_results(expr.span, &return_sources);
                                 returned_state.merge(&candidate_state);
                                 any_returns = true;
                             }
@@ -1057,6 +1166,35 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     BooleanOutcome { value: false, send: SendEvaluation::Failed },
                 ]
             }
+            ExprKind::Call(..) => {
+                let mut outcomes = Vec::new();
+                for result in state.stored_call_results.iter().filter(|result| {
+                    result.expression_span == expr.span
+                        && result.index == 0
+                        && result.source.call_span == target
+                }) {
+                    let (true_send, false_send) = if result.source.succeeds_when_true {
+                        (SendEvaluation::Succeeded, SendEvaluation::Failed)
+                    } else {
+                        (SendEvaluation::Failed, SendEvaluation::Succeeded)
+                    };
+                    push_unique_boolean_outcome(
+                        &mut outcomes,
+                        BooleanOutcome { value: true, send: true_send },
+                    );
+                    push_unique_boolean_outcome(
+                        &mut outcomes,
+                        BooleanOutcome { value: false, send: false_send },
+                    );
+                }
+                if outcomes.is_empty() {
+                    unconstrained_boolean_outcomes(
+                        self.expr_contains_send_target(expr, target, state),
+                    )
+                } else {
+                    outcomes
+                }
+            }
             ExprKind::Lit(lit) => match lit.kind {
                 LitKind::Bool(value) => {
                     vec![BooleanOutcome { value, send: SendEvaluation::NotEvaluated }]
@@ -1167,6 +1305,76 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
     }
 
+    fn send_result_sources_by_index(
+        &self,
+        expr: &'hir hir::Expr<'hir>,
+        result_count: usize,
+        state: &FlowState,
+    ) -> Vec<Vec<SendResultSource>> {
+        if result_count == 1 {
+            return vec![self.send_result_sources(expr, state)];
+        }
+
+        let mut sources = vec![Vec::new(); result_count];
+        match &expr.peel_parens().kind {
+            ExprKind::Tuple(exprs) => {
+                for (index, expr) in exprs.iter().take(result_count).enumerate() {
+                    if let Some(expr) = expr {
+                        sources[index] = self.send_result_sources(expr, state);
+                    }
+                }
+            }
+            ExprKind::Call(..) => {
+                for result in state.stored_call_results.iter().filter(|result| {
+                    result.expression_span == expr.span && result.index < result_count
+                }) {
+                    if !sources[result.index].contains(&result.source) {
+                        sources[result.index].push(result.source);
+                    }
+                }
+            }
+            _ => {}
+        }
+        sources
+    }
+
+    fn named_return_result_sources(
+        &self,
+        function: FunctionId,
+        state: &FlowState,
+    ) -> Vec<Vec<SendResultSource>> {
+        self.hir
+            .function(function)
+            .returns
+            .iter()
+            .map(|variable| {
+                state
+                    .stored_send_results
+                    .iter()
+                    .filter(|result| result.variable == *variable)
+                    .map(|result| result.source)
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn return_result_sources(
+        &self,
+        function: FunctionId,
+        expr: Option<&'hir hir::Expr<'hir>>,
+        state: &FlowState,
+    ) -> Vec<Vec<SendResultSource>> {
+        if let Some(expr) = expr {
+            self.send_result_sources_by_index(
+                expr,
+                self.hir.function(function).returns.len(),
+                state,
+            )
+        } else {
+            self.named_return_result_sources(function, state)
+        }
+    }
+
     fn send_result_sources(
         &self,
         expr: &'hir hir::Expr<'hir>,
@@ -1180,6 +1388,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             {
                 vec![SendResultSource { call_span: expr.span, succeeds_when_true: true }]
             }
+            ExprKind::Call(..) => state
+                .stored_call_results
+                .iter()
+                .filter(|result| result.expression_span == expr.span && result.index == 0)
+                .map(|result| result.source)
+                .collect(),
             ExprKind::Ident(reses) => {
                 let mut sources = Vec::new();
                 for variable in reses.iter().filter_map(|res| res.as_variable()) {
@@ -1234,15 +1448,22 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             || state.stored_send_results.iter().any(|result| {
                 result.source.call_span == target && expr_references_variable(expr, result.variable)
             })
+            || state.stored_call_results.iter().any(|result| {
+                result.source.call_span == target && expr.span.contains(result.expression_span)
+            })
     }
 
-    fn analyze_internal_call(&mut self, func_id: FunctionId, state: &mut FlowState) -> bool {
+    fn analyze_internal_call(
+        &mut self,
+        func_id: FunctionId,
+        state: &mut FlowState,
+    ) -> Option<Vec<Vec<SendResultSource>>> {
         if self.call_stack.contains(&func_id) {
-            return true;
+            return Some(vec![Vec::new(); self.hir.function(func_id).returns.len()]);
         }
 
         let func = self.hir.function(func_id);
-        let Some(body) = func.body else { return true };
+        let Some(body) = func.body else { return Some(vec![Vec::new(); func.returns.len()]) };
 
         let key = InlineCallKey {
             func_id,
@@ -1250,31 +1471,48 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             state: state.clone(),
         };
         if self.inline_cache.is_in_progress(&key) {
-            return true;
+            return Some(vec![Vec::new(); func.returns.len()]);
         }
         if let Some(cached) = self.inline_cache.get(&key) {
             *state = cached.state.clone();
             let may_return = cached.may_return;
+            let return_sources = cached.return_sources.clone();
             if cached.has_state_effect {
                 self.record_state_effect();
             }
-            return may_return;
+            return may_return.then_some(return_sources);
         }
 
         let mut after = state.clone();
+        after.clear_stored_return_results(func_id);
         let prior_effects = self.state_effects;
         self.inline_cache.start(key.clone());
         self.call_stack.push(func_id);
-        self.call_returns.push(None);
+        self.call_returns.push(CallReturns { function: Some(func_id), state: None });
         let falls_through = self.analyze_callable(func, body, &mut after);
-        let mut returned_state = self.call_returns.pop().expect("call return state exists");
+        let mut returned_state = self.call_returns.pop().expect("call return state exists").state;
         self.call_stack.pop();
 
         if falls_through {
+            if !after.stored_return_results.iter().any(|result| result.function == func_id) {
+                let sources = self.named_return_result_sources(func_id, &after);
+                after.set_stored_return_results(func_id, &sources);
+            }
             merge_optional_state(&mut returned_state, &after);
         }
         let may_return = returned_state.is_some();
         after = returned_state.unwrap_or_default();
+        let return_sources = (0..func.returns.len())
+            .map(|index| {
+                after
+                    .stored_return_results
+                    .iter()
+                    .filter(|result| result.function == func_id && result.index == index)
+                    .map(|result| result.source)
+                    .collect()
+            })
+            .collect::<Vec<_>>();
+        after.clear_stored_return_results(func_id);
 
         self.inline_cache.finish(
             key,
@@ -1282,10 +1520,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 state: after.clone(),
                 may_return,
                 has_state_effect: self.state_effects != prior_effects,
+                return_sources: return_sources.clone(),
             },
         );
         *state = after;
-        may_return
+        may_return.then_some(return_sources)
     }
 
     fn first_recursive_cut(&mut self, func_id: FunctionId) -> Option<FunctionId> {
@@ -1690,6 +1929,8 @@ impl FlowState {
         self.state_reads.clear();
         self.pending_calls.clear();
         self.stored_send_results.clear();
+        self.stored_call_results.clear();
+        self.stored_return_results.clear();
     }
 
     fn merge(&mut self, other: &Self) {
@@ -1706,16 +1947,27 @@ impl FlowState {
             .filter(|call| call.kind == ReentrantCallKind::Stipend)
             .map(|call| call.span)
             .collect::<HashSet<_>>();
-        let mut stored_send_results = Vec::new();
-        for &result in self.stored_send_results.iter().chain(&other.stored_send_results) {
-            let valid_on_self = !self_stipend_calls.contains(&result.source.call_span)
-                || self.stored_send_results.contains(&result);
-            let valid_on_other = !other_stipend_calls.contains(&result.source.call_span)
-                || other.stored_send_results.contains(&result);
-            if valid_on_self && valid_on_other && !stored_send_results.contains(&result) {
-                stored_send_results.push(result);
-            }
-        }
+        let stored_send_results = merge_send_correlations(
+            &self.stored_send_results,
+            &other.stored_send_results,
+            &self_stipend_calls,
+            &other_stipend_calls,
+            |result| result.source,
+        );
+        let stored_call_results = merge_send_correlations(
+            &self.stored_call_results,
+            &other.stored_call_results,
+            &self_stipend_calls,
+            &other_stipend_calls,
+            |result| result.source,
+        );
+        let stored_return_results = merge_send_correlations(
+            &self.stored_return_results,
+            &other.stored_return_results,
+            &self_stipend_calls,
+            &other_stipend_calls,
+            |result| result.source,
+        );
         for call in &other.pending_calls {
             if let Some(existing) = self
                 .pending_calls
@@ -1729,7 +1981,28 @@ impl FlowState {
             }
         }
         self.stored_send_results = stored_send_results;
+        self.stored_call_results = stored_call_results;
+        self.stored_return_results = stored_return_results;
     }
+}
+
+fn merge_send_correlations<T: Copy + PartialEq>(
+    lhs: &[T],
+    rhs: &[T],
+    lhs_calls: &HashSet<Span>,
+    rhs_calls: &HashSet<Span>,
+    source: impl Fn(&T) -> SendResultSource,
+) -> Vec<T> {
+    let mut merged = Vec::new();
+    for &result in lhs.iter().chain(rhs) {
+        let source = source(&result);
+        let valid_on_lhs = !lhs_calls.contains(&source.call_span) || lhs.contains(&result);
+        let valid_on_rhs = !rhs_calls.contains(&source.call_span) || rhs.contains(&result);
+        if valid_on_lhs && valid_on_rhs && !merged.contains(&result) {
+            merged.push(result);
+        }
+    }
+    merged
 }
 
 fn is_uncapped_value_call(

@@ -41,6 +41,22 @@ LL │ …     bool success = recipient.send(1 wei);
 note[reentrancy-unlimited-gas]: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
    ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
    │
+LL │ …     (bool success, uint256 value) = (recipient.send(1 wei), 1);
+   │                                        ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+note[reentrancy-unlimited-gas]: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │ …     (bool success, bool write) = (recipient.send(1 wei), true);
+   │                                     ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+note[reentrancy-unlimited-gas]: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
 LL │ …     bool success = recipient.send(1 wei);
    │                      ━━━━━━━━━━━━━━━━━━━━━
    │
@@ -131,6 +147,30 @@ note[reentrancy-unlimited-gas]: state change or event emission follows `transfer
    │
 LL │ …     recipient.transfer(1 wei);
    │       ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+note[reentrancy-unlimited-gas]: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │ …     return (true, recipient.send(1 wei));
+   │                     ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+note[reentrancy-unlimited-gas]: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │ …     return recipient.send(1 wei);
+   │              ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+note[reentrancy-unlimited-gas]: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │ …     bool success = recipient.send(1 wei);
+   │                      ━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
 
