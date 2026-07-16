@@ -177,3 +177,27 @@ LL │             holders.remove(holders.at(i));
    │
    ╰ help: https://getfoundry.sh/forge/linting/enumerable-loop-removal
 
+warning[enumerable-loop-removal]: `remove` on an EnumerableSet inside a loop that iterates it with `at` corrupts the iteration
+   ╭▸ ROOT/testdata/EnumerableLoopRemoval.sol:LL:CC
+   │
+LL │             bool removed = enabled && holders.remove(target);
+   │                                       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/enumerable-loop-removal
+
+warning[enumerable-loop-removal]: `remove` on an EnumerableSet inside a loop that iterates it with `at` corrupts the iteration
+   ╭▸ ROOT/testdata/EnumerableLoopRemoval.sol:LL:CC
+   │
+LL │             bool removed = enabled ? holders.remove(target) : false;
+   │                                      ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/enumerable-loop-removal
+
+warning[enumerable-loop-removal]: `remove` on an EnumerableSet inside a loop that iterates it with `at` corrupts the iteration
+   ╭▸ ROOT/testdata/EnumerableLoopRemoval.sol:LL:CC
+   │
+LL │             holders.remove(holders.at(holders.length() - 1));
+   │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/enumerable-loop-removal
+

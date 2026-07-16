@@ -15,10 +15,11 @@ import {EnumerableSet as ES} from "./auxiliary/EnumerableSetLib.sol";
 // reference aliases are followed to the set they name where the loop runs.
 //
 // Anything outside that shape is left clean rather than guessed at: a conditional or mixed
-// cadence, a composite index, a `break`/`continue`/`return`/`revert`, a nested loop, or a `try`.
-// Some of those clean cases are genuine corruptions the detector deliberately does not report;
-// they are grouped under "Documented limitations" below. Distinguishing them would take the flow
-// or value analysis this detector does not run.
+// cadence, a composite index, a `break`/`continue`/`return`/`revert`, inline assembly, a nested
+// loop, or a `try`. Expression-level short-circuits and ternaries remain structural expressions
+// and are scanned. Some clean cases are genuine corruptions the detector deliberately does not
+// report; they are grouped under "Documented limitations" below. Distinguishing them would take
+// the flow or value analysis this detector does not run.
 
 // Minimal mirror of OpenZeppelin's EnumerableSet: swap-and-pop removal, index access via `at`.
 library EnumerableSet {
@@ -318,6 +319,33 @@ contract EnumerableLoopRemoval {
         }
     }
 
+    // Expression-level conditions do not make the body structurally branch. The detector scans
+    // both arms and may report a `remove` even when runtime values skip it.
+    function removeInShortCircuitExpression(bool enabled, address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            bool removed = enabled && holders.remove(target); //~WARN: EnumerableSet
+            removed;
+        }
+    }
+
+    function removeInTernaryExpression(bool enabled, address target) public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            bool removed = enabled ? holders.remove(target) : false; //~WARN: EnumerableSet
+            removed;
+        }
+    }
+
+    // The remove argument is not correlated with the `at` result. Removing the current tail does
+    // not shift another value, but this still matches the structural same-set pattern.
+    function removeTailWhileReadingAscending() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            pending = holders.at(i);
+            holders.remove(holders.at(holders.length() - 1)); //~WARN: EnumerableSet
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────────
     // Clean: no ascending cadence, no `at` on the removed set, or a different set.
     // ─────────────────────────────────────────────────────────────────────────────
@@ -518,6 +546,56 @@ contract EnumerableLoopRemoval {
             holders.remove(holders.at(i));
             i++;
             revert Stop();
+        }
+    }
+
+    // Inline assembly is outside the straight-line analysis. In particular, a Yul revert rolls
+    // back the removal and never reaches another iteration.
+    function removeThenAssemblyRevert() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            assembly {
+                revert(0, 0)
+            }
+        }
+    }
+
+    // A local declared in the body is initialized again on every turn. Its later increment does
+    // not make it an ascending cadence across iterations.
+    function removeWithRepeatedDeclarationReset() public {
+        while (holders.length() > 0) {
+            uint256 i = 0;
+            holders.remove(holders.at(i));
+            i++;
+        }
+    }
+
+    function removeWithRepeatedTupleDeclarationReset() public {
+        while (holders.length() > 0) {
+            (uint256 i, uint256 other) = (0, 0);
+            holders.remove(holders.at(i));
+            i++;
+            other;
+        }
+    }
+
+    function removeWithDeleteReset() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            delete i;
+        }
+    }
+
+    function removeWithTupleReset() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            (i, position) = (0, position);
         }
     }
 

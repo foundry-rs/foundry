@@ -208,9 +208,9 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
         if ats.iterated.is_empty() {
             return;
         }
-        // Every removal in the body, conditional or not: a straight-line body has no exit that
-        // could make a conditional removal safe, so the mutation always shifts a slot the
-        // ascending walk still reads.
+        // Every syntactic removal in the body, including calls nested in short-circuit or ternary
+        // expressions. Statement-level control flow was rejected above, but this structural pass
+        // does not determine whether an expression arm executes or what value `remove` receives.
         let mut removes = Vec::new();
         let mut scan = RemoveScanner {
             gcx: self.gcx,
@@ -261,9 +261,10 @@ const fn real_body<'hir>(source: LoopSource, body: &'hir [Stmt<'hir>]) -> &'hir 
 }
 
 /// Whether every statement of a loop body runs on one straight line: no branch (`if`/`try`), no
-/// jump (`break`/`continue`/`return`/`revert`), and no nested loop. Bare blocks are transparent.
-/// Any of these would let control skip a removal, skip the cadence step, or leave the loop before
-/// a shifted slot is read, none of which this detector tracks, so their presence makes it silent.
+/// jump (`break`/`continue`/`return`/`revert`), no inline assembly, and no nested loop. Bare blocks
+/// are transparent. Any of these would let control skip a removal, skip the cadence step, or leave
+/// the loop before a shifted slot is read, none of which this detector tracks, so their presence
+/// makes it silent.
 fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
     stmts.iter().all(|stmt| match &stmt.kind {
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
@@ -272,6 +273,7 @@ fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
         StmtKind::If(..)
         | StmtKind::Try(..)
         | StmtKind::Loop(..)
+        | StmtKind::AssemblyBlock(..)
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Return(..)
@@ -303,8 +305,8 @@ fn ascending_cadence<'hir>(hir: &'hir Hir<'hir>, body: &'hir [Stmt<'hir>]) -> Ve
 }
 
 /// Walks the straight-line statements of a body, bare blocks included, and records variables
-/// written by a supported ascending step separately from every other write. A cadence is valid
-/// only when all of its writes are supported ascending steps.
+/// written by a supported ascending step separately from every other write or declaration. A
+/// cadence is valid only when all of its writes are supported ascending steps.
 fn collect_cadence_writes<'hir>(
     hir: &'hir Hir<'hir>,
     stmts: &'hir [Stmt<'hir>],
@@ -322,6 +324,13 @@ fn collect_cadence_writes<'hir>(
                     _ => None,
                 };
                 let mut written = Vec::new();
+                match &stmt.kind {
+                    StmtKind::DeclSingle(variable_id) => written.push(*variable_id),
+                    StmtKind::DeclMulti(variable_ids, _) => {
+                        written.extend(variable_ids.iter().flatten().copied());
+                    }
+                    _ => {}
+                }
                 collect_variables(hir, std::slice::from_ref(stmt), &mut written);
                 for variable_id in written {
                     if ascending == Some(variable_id) {
@@ -433,8 +442,8 @@ impl<'hir> Visit<'hir> for RemoveScanner<'_, 'hir> {
     }
 }
 
-/// The variables a statement list writes to, through the loops under it as well: assignments,
-/// compound assignments, increments and decrements, wherever they sit.
+/// The variables a statement list writes through expressions, through the loops under it as well:
+/// assignments (tuple targets included), increments, decrements, and deletes, wherever they sit.
 fn collect_variables<'hir>(
     hir: &'hir Hir<'hir>,
     stmts: &'hir [Stmt<'hir>],
@@ -452,6 +461,7 @@ fn collect_variables<'hir>(
         fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
             let written = match &expr.kind {
                 ExprKind::Assign(lhs, ..) => Some(*lhs),
+                ExprKind::Delete(operand) => Some(*operand),
                 ExprKind::Unary(op, operand)
                     if matches!(
                         op.kind,
@@ -462,14 +472,8 @@ fn collect_variables<'hir>(
                 }
                 _ => None,
             };
-            if let Some(written) = written
-                && let ExprKind::Ident(resolutions) = &written.peel_parens().kind
-            {
-                for res in *resolutions {
-                    if let Res::Item(ItemId::Variable(variable_id)) = res {
-                        self.out.push(*variable_id);
-                    }
-                }
+            if let Some(written) = written {
+                collect_lvalue_variables(written, self.out);
             }
             self.walk_expr(expr)
         }
@@ -477,6 +481,25 @@ fn collect_variables<'hir>(
     let mut collector = Collector { hir, out };
     for stmt in stmts {
         let _ = collector.visit_stmt(stmt);
+    }
+}
+
+/// Collects the variables written through an assignment target. Tuple assignment targets can
+/// contain several identifiers; member and indexed targets do not write the base variable itself.
+fn collect_lvalue_variables(expr: &Expr<'_>, out: &mut Vec<VariableId>) {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(resolutions) => {
+            out.extend(resolutions.iter().filter_map(|res| match res {
+                Res::Item(ItemId::Variable(variable_id)) => Some(*variable_id),
+                _ => None,
+            }));
+        }
+        ExprKind::Tuple(exprs) => {
+            for expr in exprs.iter().flatten() {
+                collect_lvalue_variables(expr, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -501,8 +524,8 @@ struct SetCall<'hir> {
 }
 
 /// The EnumerableSet `at` or `remove` a call dispatches to. Resolving through the type checker
-/// covers the `using for` method form, the library-qualified form and import aliases, and keeps
-/// same-name functions from other libraries out.
+/// covers the `using for` method form, the library-qualified form and import aliases. The library
+/// is identified only by its kind and exact `EnumerableSet` name, not its source or behavior.
 fn enumerable_set_call<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
