@@ -189,7 +189,7 @@ The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
-            )
+            );
     }
     Ok(())
 }
@@ -343,7 +343,7 @@ where
                     // if the async flag is provided, immediately exit if no tx is found, otherwise
                     // try to poll for it
                     if cast_async {
-                        eyre::bail!("tx not found: {:?}", tx_hash)
+                        eyre::bail!("tx not found: {:?}", tx_hash);
                     }
                     PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
                         .with_required_confirmations(confs)
@@ -752,10 +752,10 @@ where
                         && let Some(data) = &payload.data
                         && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
                     {
-                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
+                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error);
                     }
                 }
-                eyre::bail!("Failed to estimate gas: {}", err)
+                eyre::bail!("Failed to estimate gas: {}", err);
             }
         }
     }

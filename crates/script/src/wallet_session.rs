@@ -213,8 +213,12 @@ impl ScriptArgs {
             Ok(())
         } else {
             match status.code() {
-                Some(code) => eyre::bail!("forge script wallet session exited with code {code}"),
-                None => eyre::bail!("forge script wallet session terminated by a signal"),
+                Some(code) => {
+                    eyre::bail!("forge script wallet session exited with code {code}");
+                }
+                None => {
+                    eyre::bail!("forge script wallet session terminated by a signal");
+                }
             }
         }
     }

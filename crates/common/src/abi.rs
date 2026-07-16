@@ -16,7 +16,7 @@ where
     let args: Vec<S> = args.into_iter().collect();
 
     if inputs.len() != args.len() {
-        eyre::bail!("encode length mismatch: expected {} types, got {}", inputs.len(), args.len())
+        eyre::bail!("encode length mismatch: expected {} types, got {}", inputs.len(), args.len());
     }
 
     std::iter::zip(inputs, args)
@@ -92,7 +92,7 @@ pub fn abi_decode_calldata(
 
     // in case the decoding worked but nothing was decoded
     if res.is_empty() {
-        eyre::bail!("no data was decoded")
+        eyre::bail!("no data was decoded");
     }
 
     Ok(res)
