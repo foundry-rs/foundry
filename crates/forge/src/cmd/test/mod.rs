@@ -33,7 +33,7 @@ use dialoguer::{Select, console::Term};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
-    utils::{self, LoadConfig},
+    utils::{self, FoundryPathExt, LoadConfig},
 };
 use foundry_common::{
     EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
@@ -379,6 +379,14 @@ fn sources_to_compile_from_artifacts(
     artifacts: &ProjectCompileOutput,
     test_matcher: &TestFunctionMatcher<'_>,
 ) -> BTreeSet<PathBuf> {
+    let paths = config.project_paths::<MultiCompilerLanguage>();
+    let empty_filter = EmptyTestFilter::default();
+    let filter_args = test_filter.args();
+    let has_contract_or_test_filter = filter_args.test_pattern.is_some()
+        || filter_args.test_pattern_inverse.is_some()
+        || filter_args.contract_pattern.is_some()
+        || filter_args.contract_pattern_inverse.is_some();
+
     // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
     // identifiers it constructs are project-relative. Match that here for the filter check
     // (notably for the `--rerun` failure list, which is persisted relative) but return the
@@ -387,11 +395,25 @@ fn sources_to_compile_from_artifacts(
         .artifact_ids()
         .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
         .filter(|(id, abi)| {
-            if id.source.starts_with(&config.src) {
+            if id.source.starts_with(&paths.sources) {
                 return true;
             }
+            if paths.is_script(&id.source) && !paths.is_test(&id.source) {
+                return false;
+            }
             let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-            test_matcher.matches_contract(test_filter, &stripped, abi)
+            // ABI-only compilation can omit test functions with invalid bodies, so preserve the
+            // existing filter behavior for conventional test files instead of treating them as
+            // fixtures.
+            if stripped.source.is_sol_test() {
+                return if has_contract_or_test_filter {
+                    test_matcher.matches_contract(test_filter, &stripped, abi)
+                } else {
+                    test_filter.matches_path(&stripped.source)
+                };
+            }
+            !test_matcher.matches_contract(&empty_filter, &stripped, abi)
+                || test_matcher.matches_contract(test_filter, &stripped, abi)
         })
         .map(|(id, _)| id.source)
         .collect()
@@ -1174,6 +1196,52 @@ impl TestArgs {
         Ok(())
     }
 
+    pub(crate) fn ensure_coverage_mode_compatible(&self) -> Result<()> {
+        self.ensure_mutation_mode_compatible(true)?;
+
+        let mut conflicts = Vec::new();
+        if shell::is_json() {
+            conflicts.push("--json");
+        }
+        if self.junit {
+            conflicts.push("--junit");
+        }
+        if self.list {
+            conflicts.push("--list");
+        }
+        if self.debug {
+            conflicts.push("--debug");
+        }
+        if self.flamegraph {
+            conflicts.push("--flamegraph");
+        }
+        if self.flamechart {
+            conflicts.push("--flamechart");
+        }
+        if self.evm_profile.is_some() {
+            conflicts.push("--evm-profile");
+        }
+        if self.showmap_out.is_some() {
+            conflicts.push("--showmap-out");
+        }
+        if self.brutalize {
+            conflicts.push("--brutalize");
+        }
+        if self.replay_symbolic_artifact.is_some() {
+            conflicts.push("--replay-symbolic-artifact");
+        }
+        if !conflicts.is_empty() {
+            bail!(
+                "`forge coverage` cannot be combined with: {}. Use `--report lcov` for an \
+                 interoperable coverage report or `--report attribution` for per-test JSON \
+                attribution.",
+                conflicts.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
     fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
         if let Some(showmap) = self.showmap_override.clone() {
@@ -1471,9 +1539,9 @@ impl TestArgs {
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
-    /// This means that it will return all sources that are not test contracts or that match the
-    /// filter. We want to compile all non-test sources always because tests might depend on them
-    /// dynamically through cheatcodes.
+    /// For filtered runs, this includes all configured source files, non-test artifacts outside
+    /// script-only paths, and runnable tests that match the filter. Non-test artifacts remain
+    /// available because tests may resolve them dynamically through cheatcodes.
     #[instrument(target = "forge::test", skip_all)]
     fn get_sources_to_compile(
         &self,
@@ -1493,27 +1561,21 @@ impl TestArgs {
             ));
         }
 
-        let filter_args = test_filter.args();
-        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
-            || filter_args.test_pattern_inverse.is_some()
-            || filter_args.contract_pattern.is_some()
-            || filter_args.contract_pattern_inverse.is_some();
-        if !has_contract_or_test_filter {
-            return Ok((
-                source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                    .chain(
-                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
-                            .filter(|path| test_filter.matches_path(path)),
-                    )
-                    .collect(),
-                None,
-            ));
-        }
-
         let mut project = config.create_project(true, true)?;
+        let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+            .chain(
+                source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    // Preserve path-filter behavior for conventional test files while still
+                    // scanning non-test fixtures under the test root.
+                    .filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
+            )
+            .collect::<BTreeSet<_>>();
         let output = compile_abi_project(
             &mut project,
-            ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true),
+            ProjectCompiler::new()
+                .files(sources)
+                .dynamic_test_linking(config.dynamic_test_linking)
+                .quiet(true),
         )?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
