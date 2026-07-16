@@ -104,7 +104,7 @@ impl<N: Network> ScriptSequence<N> {
         )
         .wrap_err(format!("Deployment's sensitive details not found for chain `{chain_id}`."))?;
 
-        script_sequence.fill_sensitive(&sensitive_script_sequence);
+        script_sequence.fill_sensitive(&sensitive_script_sequence)?;
 
         script_sequence.paths = Some((path, sensitive_path));
 
@@ -233,11 +233,21 @@ impl<N: Network> ScriptSequence<N> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 
-    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {
+    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) -> Result<()> {
+        if self.transactions.len() != sensitive.transactions.len() {
+            eyre::bail!(
+                "Transaction count mismatch between deployment sequence ({}) and sensitive cache ({})",
+                self.transactions.len(),
+                sensitive.transactions.len()
+            );
+        }
+
         self.transactions
             .iter_mut()
-            .enumerate()
-            .for_each(|(i, tx)| tx.rpc.clone_from(&sensitive.transactions[i].rpc));
+            .zip(&sensitive.transactions)
+            .for_each(|(tx, sensitive_tx)| tx.rpc.clone_from(&sensitive_tx.rpc));
+
+        Ok(())
     }
 }
 
@@ -269,6 +279,11 @@ pub fn now() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_network::Ethereum;
+
+    fn transaction() -> TransactionWithMetadata<Ethereum> {
+        TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(Default::default()))
+    }
 
     #[test]
     fn can_convert_sig() {
@@ -295,5 +310,21 @@ mod tests {
         assert_eq!(sig_to_file_name("0xnotahex").as_str(), "0xnotahex");
         // non-hex non-signature: should return input as-is
         assert_eq!(sig_to_file_name("not_a_sig_or_hex").as_str(), "not_a_sig_or_hex");
+    }
+
+    #[test]
+    fn rejects_mismatched_sensitive_transactions() {
+        let mut sequence = ScriptSequence::<Ethereum> {
+            transactions: VecDeque::from([transaction()]),
+            ..Default::default()
+        };
+        let sensitive = SensitiveScriptSequence::default();
+
+        let err = sequence.fill_sensitive(&sensitive).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Transaction count mismatch between deployment sequence (1) and sensitive cache (0)"
+        );
     }
 }

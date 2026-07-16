@@ -104,14 +104,26 @@ impl<N: Network> MultiChainSequence<N> {
             foundry_compilers::utils::read_json_file(&sensitive_path)
                 .wrap_err("Multi-chain deployment sensitive details not found.")?;
 
-        sequence.deployments.iter_mut().enumerate().for_each(|(i, sequence)| {
-            sequence.fill_sensitive(&sensitive_sequence.deployments[i]);
-        });
+        sequence.fill_sensitive(&sensitive_sequence)?;
 
         sequence.path = path;
         sequence.sensitive_path = sensitive_path;
 
         Ok(sequence)
+    }
+
+    fn fill_sensitive(&mut self, sensitive: &SensitiveMultiChainSequence) -> Result<()> {
+        if self.deployments.len() != sensitive.deployments.len() {
+            eyre::bail!(
+                "Deployment count mismatch between multi-chain sequence ({}) and sensitive cache ({})",
+                self.deployments.len(),
+                sensitive.deployments.len()
+            );
+        }
+
+        self.deployments.iter_mut().zip(&sensitive.deployments).try_for_each(
+            |(sequence, sensitive_sequence)| sequence.fill_sensitive(sensitive_sequence),
+        )
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
@@ -166,5 +178,27 @@ impl<N: Network> MultiChainSequence<N> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+
+    #[test]
+    fn rejects_mismatched_sensitive_deployments() {
+        let mut sequence = MultiChainSequence::<Ethereum> {
+            deployments: vec![ScriptSequence::default()],
+            ..Default::default()
+        };
+        let sensitive = SensitiveMultiChainSequence::default();
+
+        let err = sequence.fill_sensitive(&sensitive).unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Deployment count mismatch between multi-chain sequence (1) and sensitive cache (0)"
+        );
     }
 }
