@@ -517,6 +517,19 @@ impl<'a> Git<'a> {
             .map(|out| out.stdout.is_empty())
     }
 
+    /// Returns whether a path has no unstaged changes relative to the index.
+    pub fn is_path_worktree_clean(self, path: &Path) -> Result<bool> {
+        let output = self.cmd().args(["diff", "--quiet", "--"]).arg(path).output()?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(eyre::eyre!(
+                "failed to inspect path: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+
     pub fn has_branch(self, branch: impl AsRef<OsStr>, at: &Path) -> Result<bool> {
         self.cmd_at(at)
             .args(["branch", "--list", "--no-color"])
@@ -796,6 +809,102 @@ ignore them in the `.gitignore` file."
             .args(["config", "--get", &format!("submodule.{}.url", path.to_slash_lossy())])
             .get_stdout_lossy()
             .map(|url| Some(url.trim().to_string()))
+    }
+
+    /// Returns the URL registered for a submodule in `.gitmodules`.
+    pub fn submodule_file_url(self, path: &Path) -> Result<Option<String>> {
+        let gitmodules = self.root.join(".gitmodules");
+        if !gitmodules.exists() {
+            return Ok(None);
+        }
+
+        let output = self
+            .cmd()
+            .args(["config", "--file"])
+            .arg(gitmodules)
+            .args(["--get", &format!("submodule.{}.url", path.to_slash_lossy())])
+            .output()?;
+        match output.status.code() {
+            Some(0) => Ok(Some(String::from_utf8(output.stdout)?.trim().to_string())),
+            Some(1) => Ok(None),
+            _ => Err(eyre::eyre!(
+                "failed to inspect .gitmodules: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+
+    /// Returns name conflicts, an exact default-name mapping, and any exact path mapping.
+    pub fn submodule_mapping(self, path: &Path) -> Result<(bool, bool, bool)> {
+        let gitmodules = self.root.join(".gitmodules");
+        if !gitmodules.exists() {
+            return Ok((false, false, false));
+        }
+
+        let output = self
+            .cmd()
+            .args(["config", "--null", "--file"])
+            .arg(gitmodules)
+            .args(["--get-regexp", r"^submodule\..*"])
+            .output()?;
+        match output.status.code() {
+            Some(0) => {
+                let expected_path = path.to_slash_lossy();
+                let expected_prefix = format!("submodule.{expected_path}.");
+                let mut exact_name = false;
+                let mut exact_name_path = false;
+                let mut name_path_mismatch = false;
+                let mut exact_path = false;
+                for entry in
+                    output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty())
+                {
+                    let separator = entry.iter().position(|byte| *byte == b'\n');
+                    let key = separator.map_or(entry, |separator| &entry[..separator]);
+                    let value = separator.and_then(|separator| entry.get(separator + 1..));
+                    if key.starts_with(expected_prefix.as_bytes()) {
+                        exact_name = true;
+                        if key.ends_with(b".path") {
+                            let matches = value == Some(expected_path.as_bytes());
+                            exact_name_path |= matches;
+                            name_path_mismatch |= !matches;
+                        }
+                    }
+                    if key.ends_with(b".path") && value == Some(expected_path.as_bytes()) {
+                        exact_path = true;
+                    }
+                }
+                let exact_name_mapping = exact_name_path && !name_path_mismatch;
+                Ok((exact_name && !exact_name_mapping, exact_name_mapping, exact_path))
+            }
+            Some(1) => Ok((false, false, false)),
+            _ => Err(eyre::eyre!(
+                "failed to inspect .gitmodules: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+        }
+    }
+
+    /// Returns whether the index contains a submodule at the given path.
+    pub fn is_gitlink(self, path: &Path) -> Result<bool> {
+        self.cmd().args(["ls-files", "--stage", "-z", "--"]).arg(path).exec().map(|output| {
+            let expected_path = path.to_slash_lossy();
+            output.stdout.split(|byte| *byte == 0).any(|entry| {
+                entry.starts_with(b"160000 ")
+                    && entry
+                        .iter()
+                        .position(|byte| *byte == b'\t')
+                        .and_then(|separator| entry.get(separator + 1..))
+                        == Some(expected_path.as_bytes())
+            })
+        })
+    }
+
+    /// Returns whether the index contains the exact path.
+    pub fn is_tracked(self, path: &Path) -> Result<bool> {
+        self.cmd().args(["ls-files", "-z", "--"]).arg(path).exec().map(|output| {
+            let expected_path = path.to_slash_lossy();
+            output.stdout.split(|byte| *byte == 0).any(|entry| entry == expected_path.as_bytes())
+        })
     }
 
     /// Returns all local config values for the given submodule.

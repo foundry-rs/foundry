@@ -128,10 +128,19 @@ impl DependencyInstallOpts {
         if !no_git {
             lockfile = lockfile.with_git(&git);
 
-            // Check if submodules are uninitialized, if so, we need to fetch all submodules
-            // This is to ensure that foundry.lock syncs successfully and doesn't error out, when
-            // looking for commits/tags in submodules
-            if git.submodules_uninitialized()? {
+            for dep in &dependencies {
+                let path = libs.join(dep.name());
+                if path.is_symlink() || (path.exists() && !path.join(".git").exists()) {
+                    eyre::bail!(
+                        "cannot safely install dependency at {} because the target is not its registered submodule worktree",
+                        path.display()
+                    );
+                }
+            }
+
+            // Initialize all existing submodules when no explicit dependencies were requested so
+            // that foundry.lock synchronization can inspect their commits and tags.
+            if dependencies.is_empty() && git.submodules_uninitialized()? {
                 trace!(lib = %libs.display(), "submodules uninitialized");
                 git.submodule_update(false, false, false, true, Some(&libs))?;
             }
@@ -412,19 +421,63 @@ impl Installer<'_> {
         let git = self.git.root(&root);
         let gitmodules = root.join(".gitmodules");
         let gitmodules_existed = gitmodules.exists();
+        let gitmodules_contents = gitmodules_existed.then(|| fs::read(&gitmodules)).transpose()?;
         let module_dir = git.absolute_git_dir()?.join("modules").join(relative_path);
         let submodule_config = git.submodule_config(relative_path)?;
-        let can_rollback = !path.exists()
-            && !module_dir.exists()
-            && git.is_path_clean(relative_path)?
-            && git.is_path_clean(Path::new(".gitmodules"))?;
+        let (submodule_name_collision, has_default_mapping, has_submodule_path) =
+            git.submodule_mapping(relative_path)?;
+        if gitmodules_existed && !git.is_tracked(Path::new(".gitmodules"))? {
+            eyre::bail!(
+                "cannot safely install dependency at {} because the target or .gitmodules has existing changes",
+                relative_path.display()
+            );
+        }
+        let registered_url =
+            if has_default_mapping { git.submodule_file_url(relative_path)? } else { None };
+        let existing_submodule =
+            registered_url.is_some() && has_submodule_path && git.is_gitlink(relative_path)?;
+        if !existing_submodule {
+            if submodule_name_collision || has_default_mapping || has_submodule_path {
+                eyre::bail!(
+                    "cannot safely install dependency at {} because .gitmodules already contains a matching submodule",
+                    relative_path.display()
+                );
+            }
+            let can_rollback = !path.exists()
+                && !module_dir.exists()
+                && git.is_path_clean(relative_path)?
+                && git.is_path_worktree_clean(Path::new(".gitmodules"))?;
+            if !can_rollback {
+                eyre::bail!(
+                    "cannot safely install dependency at {} because the target or .gitmodules has existing changes",
+                    relative_path.display()
+                );
+            }
+        } else if registered_url.as_deref() != Some(dep.require_url()?) {
+            eyre::bail!(
+                "cannot install dependency at {} because its registered URL does not match {}",
+                relative_path.display(),
+                dep.require_url()?
+            );
+        }
+        if existing_submodule && path.exists() {
+            self.ensure_submodule_worktree(path, &module_dir, relative_path)?;
+        }
 
-        // install the dep
-        self.git_submodule(dep, path)?;
-        let actual_module_dir =
-            self.git.root(path).absolute_git_dir().unwrap_or_else(|_| module_dir.clone());
+        let setup = if existing_submodule {
+            if path.exists() {
+                Ok(())
+            } else {
+                git.submodule_update(false, false, false, false, Some(relative_path))
+            }
+        } else {
+            self.git_submodule(dep, path)
+        };
+        let result = setup.and_then(|()| {
+            if existing_submodule {
+                self.ensure_submodule_worktree(path, &module_dir, relative_path)?;
+            }
 
-        let result = (|| {
             let mut dep = dep.clone();
             if dep.tag.is_none() {
                 // try to find latest semver release tag
@@ -451,14 +504,20 @@ impl Installer<'_> {
             }
 
             Ok(dep.tag)
-        })();
+        });
 
-        if result.is_err() && can_rollback && actual_module_dir == module_dir {
+        let actual_module_dir = if path.exists() {
+            self.git.root(path).absolute_git_dir().unwrap_or_else(|_| module_dir.clone())
+        } else {
+            module_dir.clone()
+        };
+
+        if result.is_err() && !existing_submodule && actual_module_dir == module_dir {
             self.rollback_submodule(
                 &root,
                 relative_path,
                 path,
-                gitmodules_existed,
+                gitmodules_contents.as_deref(),
                 &actual_module_dir,
                 &submodule_config,
             );
@@ -467,12 +526,32 @@ impl Installer<'_> {
         result
     }
 
+    fn ensure_submodule_worktree(
+        self,
+        path: &Path,
+        module_dir: &Path,
+        relative_path: &Path,
+    ) -> Result<()> {
+        let actual_module_dir = if path.is_symlink() || !path.join(".git").exists() {
+            None
+        } else {
+            self.git.root(path).absolute_git_dir().ok()
+        };
+        if actual_module_dir.as_deref() != Some(module_dir) {
+            eyre::bail!(
+                "cannot safely install dependency at {} because the target is not its registered submodule worktree",
+                relative_path.display()
+            );
+        }
+        Ok(())
+    }
+
     fn rollback_submodule(
         self,
         root: &Path,
         relative_path: &Path,
         path: &Path,
-        gitmodules_existed: bool,
+        gitmodules_contents: Option<&[u8]>,
         module_dir: &Path,
         submodule_config: &[(String, String)],
     ) {
@@ -489,12 +568,22 @@ impl Installer<'_> {
         {
             warn!(%err, "failed to remove submodule Git directory after installation failure");
         }
-        if !gitmodules_existed && gitmodules.exists() {
-            if let Err(err) = fs::remove_file(&gitmodules) {
-                warn!(%err, "failed to remove .gitmodules after installation failure");
-            } else if let Err(err) = git.add(Some(".gitmodules")) {
-                warn!(%err, "failed to unstage .gitmodules after installation failure");
+        match gitmodules_contents {
+            Some(contents) => {
+                if let Err(err) = fs::write(&gitmodules, contents) {
+                    warn!(%err, "failed to restore .gitmodules after installation failure");
+                } else if let Err(err) = git.add(Some(".gitmodules")) {
+                    warn!(%err, "failed to restore staged .gitmodules after installation failure");
+                }
             }
+            None if gitmodules.exists() => {
+                if let Err(err) = fs::remove_file(&gitmodules) {
+                    warn!(%err, "failed to remove .gitmodules after installation failure");
+                } else if let Err(err) = git.add(Some(".gitmodules")) {
+                    warn!(%err, "failed to unstage .gitmodules after installation failure");
+                }
+            }
+            None => {}
         }
         if path.exists()
             && let Err(err) = fs::remove_dir_all(path)
