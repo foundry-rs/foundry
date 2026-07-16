@@ -924,8 +924,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
-            .with_debug_bytecodes(debug))
+        let mut runner =
+            ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
+                .with_debug_bytecodes(debug);
+
+        if self.sender_nonce_override.is_some() {
+            runner.executor.set_nonce(self.evm_opts.sender, self.sender_nonce)?;
+        }
+
+        Ok(runner)
     }
 }
 
