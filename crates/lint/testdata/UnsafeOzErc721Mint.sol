@@ -998,6 +998,286 @@ contract AccountOnlyModifierNft is ERC721 {
     }
 }
 
+contract Create2NonReceiver {}
+
+// A code-length check is only a snapshot. An internal call can deploy a contract at a
+// precomputed `to` address before the delegation, so the override still needs `_safeMint` at
+// its call site.
+contract AccountOnlyThenInternalCallNft is ERC721 {
+    function _deployRecipient(uint256 salt) private {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        _deployRecipient(tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// The same invalidation applies to an external call, whose callee may run CREATE2 before the
+// delegated mint.
+contract AccountOnlyThenExternalCallNft is ERC721 {
+    function deployRecipient(uint256 salt) external {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        this.deployRecipient(tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A call hidden in another `require` argument can run after the code-length expression, so the
+// recognized condition does not make the whole guard statement stable.
+contract AccountOnlyGuardArgumentCallNft is ERC721 {
+    function _deployAndReturnMessage(uint256 salt) private returns (string memory) {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+        return "accounts only";
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, _deployAndReturnMessage(tokenId));
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A statically known internal helper that only writes storage cannot deploy code and leaves the
+// snapshot valid.
+contract AccountOnlyThenStorageCallNft is ERC721 {
+    uint256 private calls;
+
+    function _incrementCalls() private {
+        calls++;
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        _incrementCalls();
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// Pure and view calls cannot deploy code, so they do not retire an account-only proof.
+contract AccountOnlyThenViewCallNft is ERC721 {
+    function _observe() private view returns (bool) {
+        return address(this).code.length > 0;
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        require(_observe(), "not deployed");
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// A receiver callback is a stable proof: the recipient already had code and acknowledged the
+// token, so a later state-changing call does not invalidate it.
+contract CallbackThenInternalCallNft is ERC721 {
+    function _deployOther(uint256 salt) private {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(
+            IERC721Receiver(to).onERC721Received(msg.sender, address(0), tokenId, "")
+                == IERC721Receiver.onERC721Received.selector,
+            "unsafe receiver"
+        );
+        _deployOther(tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// Modifier prefixes execute from outer to inner. The inner deployment invalidates the outer
+// account-only snapshot before the body delegates.
+contract AccountOnlyOuterDeployInnerNft is ERC721 {
+    modifier accountOnly(address to) {
+        require(to.code.length == 0, "accounts only");
+        _;
+    }
+
+    modifier deployBefore(uint256 salt) {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+        _;
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        accountOnly(to)
+        deployBefore(tokenId)
+    {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A modifier with a nested placeholder is not expanded precisely, but its deployment still
+// retires an outer snapshot on the path that reaches the body.
+contract AccountOnlyOuterNestedDeployInnerNft is ERC721 {
+    bool private enabled;
+
+    modifier accountOnly(address to) {
+        require(to.code.length == 0, "accounts only");
+        _;
+    }
+
+    modifier deployBefore(uint256 salt) {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+        if (enabled) {
+            _;
+        }
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        accountOnly(to)
+        deployBefore(tokenId)
+    {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// Modifier arguments are evaluated as their modifier is entered. An inner argument can therefore
+// replace the function recipient after an outer modifier checked the original value.
+contract AccountOnlyOuterMutatingModifierArgNft is ERC721 {
+    modifier accountOnly(address to) {
+        require(to.code.length == 0, "accounts only");
+        _;
+    }
+
+    modifier passthrough(address) {
+        _;
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        accountOnly(to)
+        passthrough(to = address(1))
+    {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// An outer tail guard also captures the original argument. A later modifier-argument assignment
+// must retire that deferred proof before the body mints the replacement recipient.
+contract AccountOnlyTailOuterMutatingModifierArgNft is ERC721 {
+    modifier accountOnlyAfter(address checked) {
+        _;
+        require(checked.code.length == 0, "accounts only");
+    }
+
+    modifier passthrough(address) {
+        _;
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        accountOnlyAfter(to)
+        passthrough(to = address(1))
+    {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A call after the placeholder cannot retroactively invalidate the snapshot that covered the
+// delegated mint in the body.
+contract AccountOnlyThenModifierTailCallNft is ERC721 {
+    modifier accountOnly(address to, uint256 salt) {
+        require(to.code.length == 0, "accounts only");
+        _;
+        new Create2NonReceiver{salt: bytes32(salt)}();
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        accountOnly(to, tokenId)
+    {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
+// Conversely, a tail code-length guard runs after a state-changing body call and reverts if that
+// call deployed the recipient, so every successful mint remains covered.
+contract AccountOnlyModifierTailGuardNft is ERC721 {
+    modifier accountOnlyAfter(address to) {
+        _;
+        require(to.code.length == 0, "accounts only");
+    }
+
+    function _deployRecipient(uint256 salt) private {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        accountOnlyAfter(to)
+    {
+        _deployRecipient(tokenId);
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+}
+
 // A bare read of the recipient's `.code` guards nothing at all: the value is never used to
 // gate the delegated mint, so direct callers report.
 contract BareCodeReadNft is ERC721 {
@@ -1677,6 +1957,85 @@ contract RecursiveCodeLessTokenRemapNft is RecursiveTokenRemapBaseNft {
 
     function mint(address to, uint256 id) external {
         _mint(to, id);
+    }
+}
+
+// An intermediate override can invalidate an outer code-length proof before it reaches the
+// canonical mint, so the stability summary follows the recursive delegation chain too.
+contract RecursiveCodeDeployBaseNft is ERC721 {
+    function _deployRecipient(uint256 salt) private {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        _deployRecipient(tokenId);
+        super._mint(to, tokenId);
+    }
+}
+
+contract RecursiveCodeLessThenDeployNft is RecursiveCodeDeployBaseNft {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+contract RecursiveModifierDeployBaseNft is ERC721 {
+    modifier deployBefore(uint256 salt) {
+        new Create2NonReceiver{salt: bytes32(salt)}();
+        _;
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        deployBefore(tokenId)
+    {
+        super._mint(to, tokenId);
+    }
+}
+
+// Modifier prefixes are included in recursive code-stability summaries too.
+contract RecursiveCodeLessThenModifierDeployNft is RecursiveModifierDeployBaseNft {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+contract RecursiveModifierArgRedirectBaseNft is ERC721 {
+    modifier passthrough(address) {
+        _;
+    }
+
+    function _mint(address to, uint256 tokenId)
+        internal
+        virtual
+        override
+        passthrough(to = address(1))
+    {
+        super._mint(to, tokenId);
+    }
+}
+
+// Recursive identity and code-stability summaries include modifier-argument assignments.
+contract RecursiveCodeLessThenModifierArgRedirectNft is RecursiveModifierArgRedirectBaseNft {
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        require(to.code.length == 0, "accounts only");
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 

@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_primitives::U256;
 use solar::{
-    ast::{ElementaryType, LitKind, Visibility},
+    ast::{ElementaryType, LitKind, StateMutability, Visibility},
     interface::{kw, source_map::FileName},
     sema::{
         Gcx,
@@ -123,7 +123,11 @@ impl MintCallFinder<'_, '_, '_, '_> {
         if is_canonical_erc721(contract.name.as_str())
             && is_openzeppelin_source(self.hir, function.source)
         {
-            return Some(UnsafeMintTarget { preserves_recipient: true, preserves_token: true });
+            return Some(UnsafeMintTarget {
+                preserves_recipient: true,
+                preserves_token: true,
+                preserves_code_length: true,
+            });
         }
         // A delegating override: any call in its body dispatching to an unsafe `_mint`. An
         // override that reverts when the recipient refuses the token is a safe wrapper like the
@@ -146,6 +150,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
             // stop. Judging it per call site would answer `false` for every repeat, `seen` having
             // recorded the first.
             let mut unsafe_targets: Vec<FunctionId> = Vec::new();
+            let mut unstable_code_targets: Vec<FunctionId> = Vec::new();
             let mut judged: Vec<FunctionId> = Vec::new();
             let mut targets_preserve_recipient = true;
             let mut targets_preserve_token = true;
@@ -159,6 +164,9 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 let mut branch = seen.clone();
                 if let Some(target) = self.unsafe_mint_target(*callee, &mut branch) {
                     unsafe_targets.push(*callee);
+                    if !target.preserves_code_length {
+                        unstable_code_targets.push(*callee);
+                    }
                     targets_preserve_recipient &= target.preserves_recipient;
                     targets_preserve_token &= target.preserves_token;
                 }
@@ -216,9 +224,15 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 // coverage this pass can establish is a code-length proof. This also lets an
                 // address-only helper or modifier establish coverage without inventing a token
                 // parameter, and permits computed or remapped token arguments.
-                let covered =
-                    modifiers_revert_on_refusal(self.gcx, self.hir, function, recipient, recipient);
-                let mut walk = GuardWalk { covered, ..GuardWalk::default() };
+                let coverage = modifier_coverage_at_body(
+                    self.gcx,
+                    self.hir,
+                    function,
+                    recipient,
+                    recipient,
+                    GuardCoverage::None,
+                );
+                let mut walk = GuardWalk { coverage, ..GuardWalk::default() };
                 walk_guards(
                     self.gcx,
                     self.hir,
@@ -226,6 +240,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
                     recipient,
                     recipient,
                     &unsafe_targets,
+                    &unstable_code_targets,
                     false,
                     &mut Vec::new(),
                     &mut walk,
@@ -247,9 +262,15 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 // token before a delegation credits a value the modifier never saw. Seeding the
                 // walk covered lets the body's own reassignments retire it, the way a body guard
                 // is retired. See [`walk_guards`].
-                let covered =
-                    modifiers_revert_on_refusal(self.gcx, self.hir, function, recipient, token);
-                let mut walk = GuardWalk { covered, ..GuardWalk::default() };
+                let coverage = modifier_coverage_at_body(
+                    self.gcx,
+                    self.hir,
+                    function,
+                    recipient,
+                    token,
+                    GuardCoverage::None,
+                );
+                let mut walk = GuardWalk { coverage, ..GuardWalk::default() };
                 walk_guards(
                     self.gcx,
                     self.hir,
@@ -257,6 +278,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
                     recipient,
                     token,
                     &unsafe_targets,
+                    &unstable_code_targets,
                     false,
                     &mut Vec::new(),
                     &mut walk,
@@ -274,9 +296,15 @@ impl MintCallFinder<'_, '_, '_, '_> {
             let token_parameter = function.parameters.get(1).copied();
             let recipient_unchanged = recipient_parameter.is_some_and(|recipient| {
                 !body.stmts.iter().any(|stmt| mutates_var(self.hir, stmt, recipient))
+                    && !function.modifiers.iter().any(|modifier| {
+                        modifier.args.exprs().any(|arg| expr_mutates_var(self.hir, arg, recipient))
+                    })
             });
             let token_unchanged = token_parameter.is_some_and(|token| {
                 !body.stmts.iter().any(|stmt| mutates_var(self.hir, stmt, token))
+                    && !function.modifiers.iter().any(|modifier| {
+                        modifier.args.exprs().any(|arg| expr_mutates_var(self.hir, arg, token))
+                    })
             });
             let forwards_recipient = recipient_parameter.is_some_and(|recipient| {
                 scan.calls.iter().filter(|(callee, _)| unsafe_targets.contains(callee)).all(
@@ -294,11 +322,40 @@ impl MintCallFinder<'_, '_, '_, '_> {
                     },
                 )
             });
+            // A caller's code-less proof remains valid through this override only when no path
+            // can change account code before reaching a delegated mint. Seed the same ordered
+            // walk with that entry proof; recursively unstable delegation targets retire it at
+            // their call boundary.
+            let preserves_code_length = recipient.is_some_and(|recipient| {
+                let coverage = modifier_coverage_at_body(
+                    self.gcx,
+                    self.hir,
+                    function,
+                    recipient,
+                    recipient,
+                    GuardCoverage::CodeLess,
+                );
+                let mut code_length_walk = GuardWalk { coverage, ..GuardWalk::default() };
+                walk_guards(
+                    self.gcx,
+                    self.hir,
+                    body.stmts,
+                    recipient,
+                    recipient,
+                    &unsafe_targets,
+                    &unstable_code_targets,
+                    false,
+                    &mut Vec::new(),
+                    &mut code_length_walk,
+                );
+                !code_length_walk.failed && !code_length_walk.pending
+            });
             return Some(UnsafeMintTarget {
                 preserves_recipient: targets_preserve_recipient
                     && recipient_unchanged
                     && forwards_recipient,
                 preserves_token: targets_preserve_token && token_unchanged && forwards_token,
+                preserves_code_length,
             });
         }
         None
@@ -312,6 +369,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
 struct UnsafeMintTarget {
     preserves_recipient: bool,
     preserves_token: bool,
+    preserves_code_length: bool,
 }
 
 /// The package-root directory names of the OpenZeppelin distributions: the npm scope and the
@@ -779,28 +837,33 @@ fn is_code_length_test<'hir>(
 /// The condition of a `require`/`assert` that passes only if the recipient can receive the token:
 /// the recipient is proven code-less, the hook comparison succeeds, or the account short circuit
 /// `to.code.length == 0 || hook == sel` accepts either case.
-fn is_acceptance_condition<'hir>(
+fn acceptance_coverage<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     cond: &'hir Expr<'hir>,
     recipient: hir::VariableId,
     token: hir::VariableId,
-) -> bool {
+) -> GuardCoverage {
     let cond = cond.peel_parens();
-    if is_code_length_test(cond, recipient, false)
-        || is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq)
-    {
-        return true;
+    if is_code_length_test(cond, recipient, false) {
+        return GuardCoverage::CodeLess;
     }
-    let ExprKind::Binary(lhs, op, rhs) = &cond.kind else { return false };
+    if is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq) {
+        return GuardCoverage::Callback;
+    }
+    let ExprKind::Binary(lhs, op, rhs) = &cond.kind else { return GuardCoverage::None };
     if op.kind != hir::BinOpKind::Or {
-        return false;
+        return GuardCoverage::None;
     }
     let accepts = |skip: &'hir Expr<'hir>, check: &'hir Expr<'hir>| {
         is_code_length_test(skip, recipient, false)
             && is_hook_comparison(gcx, hir, check, recipient, token, hir::BinOpKind::Eq)
     };
-    accepts(lhs, rhs) || accepts(rhs, lhs)
+    if accepts(lhs, rhs) || accepts(rhs, lhs) {
+        GuardCoverage::CodeLess
+    } else {
+        GuardCoverage::None
+    }
 }
 
 /// A call handing the checked identities to a same-frame function or modifier whose body proves
@@ -818,7 +881,22 @@ fn callee_guards_recipient<'hir>(
     token: hir::VariableId,
     bypass: bool,
     seen: &mut Vec<FunctionId>,
-) -> bool {
+) -> GuardCoverage {
+    let Some((recipient, token)) = bound_guard_parameters(hir, function_id, args, recipient, token)
+    else {
+        return GuardCoverage::None;
+    };
+    body_guards(gcx, hir, function_id, recipient, token, bypass, seen)
+}
+
+/// The callee parameters that receive the caller's recipient and token identities.
+fn bound_guard_parameters<'hir>(
+    hir: &'hir Hir<'hir>,
+    function_id: FunctionId,
+    args: &'hir hir::CallArgs<'hir>,
+    recipient: hir::VariableId,
+    token: hir::VariableId,
+) -> Option<(hir::VariableId, hir::VariableId)> {
     let parameters = hir.function(function_id).parameters;
     let mut recipient_parameter = None;
     let mut token_parameter = None;
@@ -835,19 +913,53 @@ fn callee_guards_recipient<'hir>(
             token_parameter = Some(parameter);
         }
     }
-    if let (Some(recipient), Some(token)) = (recipient_parameter, token_parameter) {
-        return body_guards(gcx, hir, function_id, recipient, token, bypass, seen);
-    }
-    false
+    recipient_parameter.zip(token_parameter)
 }
 
-/// The straight-line reading of a body: `covered` once a guard has run on the path, `pending`
+/// How a path established that the recipient can safely receive the mint. Callback coverage is
+/// stable across later calls, while a code-less proof must be retired once a call could deploy
+/// code at the recipient address.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum GuardCoverage {
+    #[default]
+    None,
+    Callback,
+    CodeLess,
+}
+
+impl GuardCoverage {
+    fn is_covered(self) -> bool {
+        self != Self::None
+    }
+
+    /// The coverage guaranteed after either branch. If one path relies on a code-less proof,
+    /// the merged proof does too and remains invalidatable by a later call.
+    const fn merge_paths(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::None, _) | (_, Self::None) => Self::None,
+            (Self::Callback, Self::Callback) => Self::Callback,
+            _ => Self::CodeLess,
+        }
+    }
+
+    /// Coverage from guards that all execute. A callback check is the stronger proof because it
+    /// remains sufficient even when a later call invalidates a separate code-length check.
+    const fn combine_guards(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Callback, _) | (_, Self::Callback) => Self::Callback,
+            (Self::CodeLess, _) | (_, Self::CodeLess) => Self::CodeLess,
+            _ => Self::None,
+        }
+    }
+}
+
+/// The straight-line reading of a body: `coverage` once a guard has run on the path, `pending`
 /// while a delegated mint has run with no guard before or after it yet, `failed` once a path
 /// may leave the function successfully with such a mint standing, `escaped` once one may leave
 /// before any guard ran.
 #[derive(Clone, Default)]
 struct GuardWalk {
-    covered: bool,
+    coverage: GuardCoverage,
     pending: bool,
     failed: bool,
     escaped: bool,
@@ -884,6 +996,7 @@ fn walk_guards<'hir>(
     recipient: hir::VariableId,
     token: hir::VariableId,
     delegations: &[FunctionId],
+    unstable_code_delegations: &[FunctionId],
     bypass: bool,
     seen: &mut Vec<FunctionId>,
     walk: &mut GuardWalk,
@@ -900,12 +1013,16 @@ fn walk_guards<'hir>(
                     recipient,
                     token,
                     delegations,
+                    unstable_code_delegations,
                     bypass,
                     seen,
                     walk,
                 );
             }
-            hir::StmtKind::Expr(expr) if is_guard_expr(gcx, hir, expr, recipient, token, seen) => {
+            hir::StmtKind::Expr(expr)
+                if guard_expr_coverage(gcx, hir, expr, recipient, token, seen).is_covered() =>
+            {
+                let guard_coverage = guard_expr_coverage(gcx, hir, expr, recipient, token, seen);
                 // A guard that also reassigns the recipient or the token cannot be trusted:
                 // evaluation order decides whether the hook read the value the mint credits, so
                 // an assignment tucked in the guard's other arguments retires coverage instead
@@ -914,20 +1031,32 @@ fn walk_guards<'hir>(
                 // builtin has a chance to revert.
                 let mutates = mutates_var(hir, stmt, recipient) || mutates_var(hir, stmt, token);
                 let escapes = may_return(gcx, hir, stmt);
+                let changes_code = guard_coverage == GuardCoverage::CodeLess
+                    && guard_extra_args_may_change_account_code(
+                        gcx,
+                        hir,
+                        expr,
+                        delegations,
+                        unstable_code_delegations,
+                    );
                 if mutates {
                     if walk.pending {
                         walk.failed = true;
                     }
-                    walk.covered = false;
+                    walk.coverage = GuardCoverage::None;
                 } else if escapes {
                     if walk.pending {
                         walk.failed = true;
                     }
-                    if !walk.covered {
+                    if !walk.coverage.is_covered() {
                         walk.escaped = true;
                     }
+                } else if changes_code {
+                    if walk.coverage == GuardCoverage::CodeLess {
+                        walk.coverage = GuardCoverage::None;
+                    }
                 } else {
-                    walk.covered = true;
+                    walk.coverage = walk.coverage.combine_guards(guard_coverage);
                     walk.pending = false;
                 }
             }
@@ -943,13 +1072,24 @@ fn walk_guards<'hir>(
                     if walk.pending {
                         walk.failed = true;
                     }
-                    walk.covered = false;
+                    walk.coverage = GuardCoverage::None;
+                }
+                if walk.coverage == GuardCoverage::CodeLess
+                    && expr_may_change_account_code(
+                        gcx,
+                        hir,
+                        cond,
+                        delegations,
+                        unstable_code_delegations,
+                    )
+                {
+                    walk.coverage = GuardCoverage::None;
                 }
                 if condition_escapes {
                     if walk.pending {
                         walk.failed = true;
                     }
-                    if !walk.covered {
+                    if !walk.coverage.is_covered() {
                         walk.escaped = true;
                     }
                 }
@@ -964,7 +1104,7 @@ fn walk_guards<'hir>(
                     && is_hook_comparison(gcx, hir, cond, recipient, token, hir::BinOpKind::Eq)
                     && else_.is_some_and(|else_| branch_always_reverts(gcx, hir, else_));
                 if refusal_then || refusal_else {
-                    walk.covered = true;
+                    walk.coverage = walk.coverage.combine_guards(GuardCoverage::Callback);
                     walk.pending = false;
                     if refusal_then {
                         if let Some(accepted) = else_ {
@@ -975,13 +1115,25 @@ fn walk_guards<'hir>(
                                 recipient,
                                 token,
                                 delegations,
+                                unstable_code_delegations,
                                 bypass,
                                 seen,
                                 walk,
                             );
                         }
                     } else {
-                        walk_one(gcx, hir, then, recipient, token, delegations, bypass, seen, walk);
+                        walk_one(
+                            gcx,
+                            hir,
+                            then,
+                            recipient,
+                            token,
+                            delegations,
+                            unstable_code_delegations,
+                            bypass,
+                            seen,
+                            walk,
+                        );
                     }
                     continue;
                 }
@@ -992,10 +1144,10 @@ fn walk_guards<'hir>(
                 let mut then_walk = walk.clone();
                 let mut else_walk = walk.clone();
                 if is_code_length_test(cond, recipient, true) {
-                    else_walk.covered = true;
+                    else_walk.coverage = else_walk.coverage.combine_guards(GuardCoverage::CodeLess);
                     else_walk.pending = false;
                 } else if is_code_length_test(cond, recipient, false) {
-                    then_walk.covered = true;
+                    then_walk.coverage = then_walk.coverage.combine_guards(GuardCoverage::CodeLess);
                     then_walk.pending = false;
                 }
                 walk_one(
@@ -1005,6 +1157,7 @@ fn walk_guards<'hir>(
                     recipient,
                     token,
                     delegations,
+                    unstable_code_delegations,
                     bypass,
                     seen,
                     &mut then_walk,
@@ -1017,6 +1170,7 @@ fn walk_guards<'hir>(
                         recipient,
                         token,
                         delegations,
+                        unstable_code_delegations,
                         bypass,
                         seen,
                         &mut else_walk,
@@ -1024,7 +1178,7 @@ fn walk_guards<'hir>(
                 }
                 // A guard behind a condition only counts when every path passed one; anything
                 // pending or escaped on either path stands.
-                walk.covered = then_walk.covered && else_walk.covered;
+                walk.coverage = then_walk.coverage.merge_paths(else_walk.coverage);
                 walk.pending = then_walk.pending || else_walk.pending;
                 walk.failed = then_walk.failed || else_walk.failed;
                 walk.escaped = then_walk.escaped || else_walk.escaped;
@@ -1040,21 +1194,35 @@ fn walk_guards<'hir>(
                     if walk.pending {
                         walk.failed = true;
                     }
-                    walk.covered = false;
+                    walk.coverage = GuardCoverage::None;
+                }
+                // Unlike a callback acknowledgement, a code-length observation is only a
+                // snapshot. A later state-changing call can deploy code at that address, so it
+                // retires the proof before a subsequent delegation.
+                if walk.coverage == GuardCoverage::CodeLess
+                    && stmt_may_change_account_code(
+                        gcx,
+                        hir,
+                        stmt,
+                        delegations,
+                        unstable_code_delegations,
+                    )
+                {
+                    walk.coverage = GuardCoverage::None;
                 }
                 // An opaque statement: a delegation anywhere inside it mints, unchecked unless
                 // already covered, and a possible successful exit walks out with whatever is
                 // pending. The placeholder counts as one when the wrapped body can leave
                 // through an assembly `return`, which skips everything after `_;`: a guard only
                 // the modifier's tail holds is then not guaranteed.
-                if !walk.covered && contains_delegation(gcx, hir, stmt, delegations) {
+                if !walk.coverage.is_covered() && contains_delegation(gcx, hir, stmt, delegations) {
                     walk.pending = true;
                 }
                 if may_return(gcx, hir, stmt) || (bypass && contains_placeholder(hir, stmt)) {
                     if walk.pending {
                         walk.failed = true;
                     }
-                    if !walk.covered {
+                    if !walk.coverage.is_covered() {
                         walk.escaped = true;
                     }
                 }
@@ -1072,6 +1240,7 @@ fn walk_one<'hir>(
     recipient: hir::VariableId,
     token: hir::VariableId,
     delegations: &[FunctionId],
+    unstable_code_delegations: &[FunctionId],
     bypass: bool,
     seen: &mut Vec<FunctionId>,
     walk: &mut GuardWalk,
@@ -1083,6 +1252,7 @@ fn walk_one<'hir>(
         recipient,
         token,
         delegations,
+        unstable_code_delegations,
         bypass,
         seen,
         walk,
@@ -1231,23 +1401,44 @@ fn callable_contains_frame_ending_assembly<'hir>(
 /// condition is read: a hook call sitting in the revert message decides nothing, and neither
 /// does one in any other argument. An external helper would ask from a different contract and
 /// cannot establish that the recipient accepts the minting contract's callback.
-fn is_guard_expr<'hir>(
+fn guard_expr_coverage<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     expr: &'hir Expr<'hir>,
     recipient: hir::VariableId,
     token: hir::VariableId,
     seen: &mut Vec<FunctionId>,
+) -> GuardCoverage {
+    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else {
+        return GuardCoverage::None;
+    };
+    if is_require_or_assert(callee) {
+        return args.exprs().next().map_or(GuardCoverage::None, |cond| {
+            acceptance_coverage(gcx, hir, cond, recipient, token)
+        });
+    }
+    resolved_internal_callee(gcx, expr.peel_parens()).map_or(GuardCoverage::None, |function_id| {
+        callee_guards_recipient(gcx, hir, function_id, args, recipient, token, false, seen)
+    })
+}
+
+/// Whether a recognized `require`/`assert` has another argument that may change account code.
+/// The first argument is the closed-form acceptance condition itself; its receiver callback is
+/// part of the proof. Message and other arguments are not, and Solidity does not guarantee they
+/// run before the condition's code-length snapshot.
+fn guard_extra_args_may_change_account_code<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    expr: &'hir Expr<'hir>,
+    delegations: &[FunctionId],
+    unstable_code_delegations: &[FunctionId],
 ) -> bool {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
-    if is_require_or_assert(callee) {
-        return args
-            .exprs()
-            .next()
-            .is_some_and(|cond| is_acceptance_condition(gcx, hir, cond, recipient, token));
+    if !is_require_or_assert(callee) {
+        return false;
     }
-    resolved_internal_callee(gcx, expr.peel_parens()).is_some_and(|function_id| {
-        callee_guards_recipient(gcx, hir, function_id, args, recipient, token, false, seen)
+    args.exprs().skip(1).any(|arg| {
+        expr_may_change_account_code(gcx, hir, arg, delegations, unstable_code_delegations)
     })
 }
 
@@ -1340,6 +1531,149 @@ fn assigns_to(target: &Expr<'_>, var: hir::VariableId) -> bool {
     }
 }
 
+/// Whether an expression may change the code installed at an account. Pure and view calls are
+/// stable (external ones execute through `STATICCALL`), while nonpayable/payable calls and
+/// contract creation can run `CREATE`/`CREATE2`. Calls to the delegated mint itself are excluded:
+/// the code-length proof is needed precisely until that call begins, though calls in its
+/// arguments are still inspected.
+fn expr_may_change_account_code<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    expr: &'hir Expr<'hir>,
+    delegations: &[FunctionId],
+    unstable_code_delegations: &[FunctionId],
+) -> bool {
+    let mut seen = Vec::new();
+    let mut finder = AccountCodeChangeFinder {
+        gcx,
+        hir,
+        delegations,
+        unstable_code_delegations,
+        seen: &mut seen,
+    };
+    finder.visit_expr(expr).is_break()
+}
+
+/// [`expr_may_change_account_code`] over a whole statement. Inline assembly is opaque and may
+/// deploy code even when it contains no HIR call expression.
+fn stmt_may_change_account_code<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    stmt: &'hir hir::Stmt<'hir>,
+    delegations: &[FunctionId],
+    unstable_code_delegations: &[FunctionId],
+) -> bool {
+    let mut seen = Vec::new();
+    let mut finder = AccountCodeChangeFinder {
+        gcx,
+        hir,
+        delegations,
+        unstable_code_delegations,
+        seen: &mut seen,
+    };
+    finder.visit_stmt(stmt).is_break()
+}
+
+struct AccountCodeChangeFinder<'a, 'hir> {
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    delegations: &'a [FunctionId],
+    unstable_code_delegations: &'a [FunctionId],
+    seen: &'a mut Vec<FunctionId>,
+}
+
+impl<'hir> Visit<'hir> for AccountCodeChangeFinder<'_, 'hir> {
+    type BreakValue = ();
+
+    fn hir(&self) -> &'hir Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        if matches!(stmt.kind, hir::StmtKind::AssemblyBlock(_)) {
+            return ControlFlow::Break(());
+        }
+        self.walk_stmt(stmt)
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let ExprKind::Call(callee, ..) = &expr.kind {
+            let is_delegation = resolved_callee(self.gcx, expr)
+                .is_some_and(|function_id| self.delegations.contains(&function_id));
+            let is_unstable_delegation = resolved_callee(self.gcx, expr)
+                .is_some_and(|function_id| self.unstable_code_delegations.contains(&function_id));
+            if !is_delegation || is_unstable_delegation {
+                if matches!(callee.peel_parens().kind, ExprKind::New(_)) {
+                    return ControlFlow::Break(());
+                }
+                if let Some(ty) = self.gcx.type_of_expr(callee.peel_parens().id)
+                    && let TyKind::Fn(function_ty) = ty.kind
+                    && matches!(
+                        function_ty.state_mutability,
+                        StateMutability::NonPayable | StateMutability::Payable
+                    )
+                {
+                    if let Some(function_id) = resolved_internal_callee(self.gcx, expr)
+                        && !self.hir.function(function_id).virtual_
+                    {
+                        if callable_may_change_account_code(
+                            self.gcx,
+                            self.hir,
+                            function_id,
+                            self.seen,
+                        ) {
+                            return ControlFlow::Break(());
+                        }
+                    } else {
+                        return ControlFlow::Break(());
+                    }
+                }
+            }
+        }
+        self.walk_expr(expr)
+    }
+}
+
+/// Whether a statically known same-frame callable can create code, directly, through an applied
+/// modifier, or through another internal call. Recursion cycles alone do not create code; any
+/// opaque, virtual, or external state-changing call reached by the body remains conservative.
+fn callable_may_change_account_code<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    function_id: FunctionId,
+    seen: &mut Vec<FunctionId>,
+) -> bool {
+    if seen.contains(&function_id) {
+        return false;
+    }
+    seen.push(function_id);
+    let function = hir.function(function_id);
+    let mut finder = AccountCodeChangeFinder {
+        gcx,
+        hir,
+        delegations: &[],
+        unstable_code_delegations: &[],
+        seen,
+    };
+    let in_modifier_args = function
+        .modifiers
+        .iter()
+        .any(|modifier| modifier.args.exprs().any(|arg| finder.visit_expr(arg).is_break()));
+    let in_modifiers = !in_modifier_args
+        && function.modifiers.iter().any(|modifier| {
+            matches!(modifier.id, hir::ItemId::Function(id)
+                if callable_may_change_account_code(gcx, hir, id, finder.seen))
+        });
+    let in_body = !in_modifier_args
+        && !in_modifiers
+        && function
+            .body
+            .as_ref()
+            .is_some_and(|body| body.stmts.iter().any(|stmt| finder.visit_stmt(stmt).is_break()));
+    finder.seen.pop();
+    in_modifier_args || in_modifiers || in_body
+}
+
 /// Whether a subtree holds a call dispatching to one of the delegated mints.
 fn contains_delegation<'hir>(
     gcx: Gcx<'hir>,
@@ -1384,9 +1718,9 @@ fn body_guards<'hir>(
     token: hir::VariableId,
     bypass: bool,
     seen: &mut Vec<FunctionId>,
-) -> bool {
+) -> GuardCoverage {
     if seen.contains(&function_id) {
-        return false;
+        return GuardCoverage::None;
     }
     seen.push(function_id);
     let function = hir.function(function_id);
@@ -1395,7 +1729,7 @@ fn body_guards<'hir>(
     // is likewise not credited until their expansion is modeled: one may skip the placeholder
     // and let the helper return without ever running its body.
     let guarded = if function.virtual_ || !function.modifiers.is_empty() {
-        false
+        GuardCoverage::None
     } else if let Some(body) = &function.body {
         // The caller relies on the values it passed in, not on a helper or modifier's local
         // parameter after reassignment. Conservatively reject any body that mutates either
@@ -1406,53 +1740,145 @@ fn body_guards<'hir>(
             .any(|stmt| mutates_var(hir, stmt, recipient) || mutates_var(hir, stmt, token));
         if parameters_unchanged {
             let mut walk = GuardWalk::default();
-            walk_guards(gcx, hir, body.stmts, recipient, token, &[], bypass, seen, &mut walk);
-            walk.covered && !walk.escaped
+            walk_guards(gcx, hir, body.stmts, recipient, token, &[], &[], bypass, seen, &mut walk);
+            if walk.escaped { GuardCoverage::None } else { walk.coverage }
         } else {
-            false
+            GuardCoverage::None
         }
     } else {
-        false
+        GuardCoverage::None
     };
     seen.pop();
     guarded
 }
 
-/// Whether one of the modifiers a function carries reverts on refusal for the recipient and the
-/// token it is handed. A base-constructor call in the same list carries no body to analyze. A
-/// wrapped body or inner modifier reaching assembly can leave the call frame without ever coming
-/// back to an outer modifier, so a guard after `_;` is only guaranteed when the expansion inside
-/// that placeholder cannot. Modifier order matters: an outer modifier runs after an inner tail
-/// guard has already completed and cannot bypass it retroactively.
-fn modifiers_revert_on_refusal<'hir>(
+/// Coverage in effect when a function body starts after expanding its modifiers in declaration
+/// order. Prefixes are walked in execution order so calls in an inner modifier can retire an
+/// outer code-length snapshot. A proven tail guard is represented as stable callback coverage
+/// while walking the body: it runs after the body and can revert every mint the body made, unless
+/// assembly in the body or an inner modifier can bypass it.
+fn modifier_coverage_at_body<'hir>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     function: &'hir hir::Function<'hir>,
     recipient: hir::VariableId,
     token: hir::VariableId,
-) -> bool {
+    mut coverage: GuardCoverage,
+) -> GuardCoverage {
     let body_bypass = function
         .body
         .as_ref()
         .is_some_and(|body| contains_frame_ending_assembly(gcx, hir, body.stmts, &mut Vec::new()));
-    function.modifiers.iter().enumerate().any(|(index, modifier)| {
+    let mut has_tail_guard = false;
+    for (index, modifier) in function.modifiers.iter().enumerate() {
+        if modifier
+            .args
+            .exprs()
+            .any(|arg| expr_mutates_var(hir, arg, recipient) || expr_mutates_var(hir, arg, token))
+        {
+            coverage = GuardCoverage::None;
+            has_tail_guard = false;
+        }
+        if coverage == GuardCoverage::CodeLess
+            && modifier
+                .args
+                .exprs()
+                .any(|arg| expr_may_change_account_code(gcx, hir, arg, &[], &[]))
+        {
+            coverage = GuardCoverage::None;
+        }
+        let hir::ItemId::Function(modifier_id) = modifier.id else { continue };
+        let modifier_function = hir.function(modifier_id);
+        let Some(body) = &modifier_function.body else { continue };
+        let Some((prefix, suffix)) = modifier_body_sides(body.stmts) else {
+            // Without a single top-level placeholder, the precise prefix is unknown. Still
+            // retire an inherited snapshot when any path through the modifier may change code;
+            // keeping it would let a nested/multiple-placeholder deployment reach the body.
+            if coverage == GuardCoverage::CodeLess
+                && body
+                    .stmts
+                    .iter()
+                    .any(|stmt| stmt_may_change_account_code(gcx, hir, stmt, &[], &[]))
+            {
+                coverage = GuardCoverage::None;
+            }
+            continue;
+        };
+        let Some((modifier_recipient, modifier_token)) =
+            bound_guard_parameters(hir, modifier_id, &modifier.args, recipient, token)
+        else {
+            if coverage == GuardCoverage::CodeLess
+                && prefix.iter().any(|stmt| stmt_may_change_account_code(gcx, hir, stmt, &[], &[]))
+            {
+                coverage = GuardCoverage::None;
+            }
+            continue;
+        };
+        let parameters_unchanged = !body.stmts.iter().any(|stmt| {
+            mutates_var(hir, stmt, modifier_recipient) || mutates_var(hir, stmt, modifier_token)
+        });
+        if parameters_unchanged {
+            let mut prefix_walk = GuardWalk { coverage, ..GuardWalk::default() };
+            walk_guards(
+                gcx,
+                hir,
+                prefix,
+                modifier_recipient,
+                modifier_token,
+                &[],
+                &[],
+                false,
+                &mut Vec::new(),
+                &mut prefix_walk,
+            );
+            coverage = prefix_walk.coverage;
+        } else if coverage == GuardCoverage::CodeLess
+            && prefix.iter().any(|stmt| stmt_may_change_account_code(gcx, hir, stmt, &[], &[]))
+        {
+            coverage = GuardCoverage::None;
+        }
+
         let inner_modifier_bypass = function.modifiers[index + 1..].iter().any(|inner| {
             matches!(inner.id, hir::ItemId::Function(id)
                 if callable_contains_frame_ending_assembly(gcx, hir, id, &mut Vec::new()))
         });
-        let bypass = body_bypass || inner_modifier_bypass;
-        matches!(modifier.id, hir::ItemId::Function(id)
-        if callee_guards_recipient(
-            gcx,
-            hir,
-            id,
-            &modifier.args,
-            recipient,
-            token,
-            bypass,
-            &mut Vec::new(),
-        ))
-    })
+        if parameters_unchanged && !body_bypass && !inner_modifier_bypass {
+            // The body has already minted when the suffix starts. Seed one pending delegation:
+            // a guard anywhere before a successful suffix exit clears it, while a call after
+            // that guard cannot make the earlier mint retroactively unsafe.
+            let mut suffix_walk = GuardWalk { pending: true, ..GuardWalk::default() };
+            walk_guards(
+                gcx,
+                hir,
+                suffix,
+                modifier_recipient,
+                modifier_token,
+                &[],
+                &[],
+                false,
+                &mut Vec::new(),
+                &mut suffix_walk,
+            );
+            has_tail_guard |= !suffix_walk.failed && !suffix_walk.pending;
+        }
+    }
+    if has_tail_guard { coverage.combine_guards(GuardCoverage::Callback) } else { coverage }
+}
+
+/// The statements before and after a modifier's single top-level placeholder. More complicated
+/// expansion shapes are left uncredited rather than guessing which paths execute the body.
+fn modifier_body_sides<'hir>(
+    stmts: &'hir [hir::Stmt<'hir>],
+) -> Option<(&'hir [hir::Stmt<'hir>], &'hir [hir::Stmt<'hir>])> {
+    let mut placeholders = stmts
+        .iter()
+        .enumerate()
+        .filter(|(_, stmt)| matches!(stmt.kind, hir::StmtKind::Placeholder));
+    let (index, _) = placeholders.next()?;
+    if placeholders.next().is_some() {
+        return None;
+    }
+    Some((&stmts[..index], &stmts[index + 1..]))
 }
 
 /// The OpenZeppelin contracts whose `_mint` skips the receiver check. `ERC721` and
