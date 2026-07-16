@@ -201,7 +201,7 @@ impl CreateArgs {
                 eyre::bail!(
                     "Dynamic linking not supported in `create` command - deploy the following library contracts first, then provide the address to link at compile time\n{}",
                     link_refs
-                )
+                );
             }
         };
 
@@ -437,7 +437,7 @@ impl CreateArgs {
 
         let bin = bin.into_bytes().unwrap_or_default();
         if bin.is_empty() {
-            eyre::bail!("no bytecode found in bin object for {}", self.contract.name)
+            eyre::bail!("no bytecode found in bin object for {}", self.contract.name);
         }
 
         let provider = Arc::new(provider);

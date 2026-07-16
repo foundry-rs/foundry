@@ -1405,7 +1405,7 @@ latest block number: {latest_block}"
                 }
                 eyre::bail!("{message}");
             }
-            eyre::bail!("failed to get block for block number: {fork_block_number}")
+            eyre::bail!("failed to get block for block number: {fork_block_number}");
         };
 
         let gas_limit = self.fork_gas_limit(&block);

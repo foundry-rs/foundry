@@ -212,7 +212,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         }
 
         if abort {
-            eyre::bail!("Simulated execution failed.")
+            eyre::bail!("Simulated execution failed.");
         }
 
         Ok(final_txs)

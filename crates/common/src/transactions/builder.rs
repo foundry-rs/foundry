@@ -308,7 +308,9 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         _key_address: Address,
         _key_authorization: Option<&SignedKeyAuthorization>,
     ) -> impl Future<Output = Result<Vec<u8>>> + Send {
-        async { eyre::bail!("access key signing is not supported for this network") }
+        async {
+            eyre::bail!("access key signing is not supported for this network");
+        }
     }
 }
 

@@ -143,7 +143,7 @@ where
         Err(err) if is_t5_create_logo_unknown_selector(&err) => {
             eyre::bail!(
                 "--logo-uri requires a T5-compatible TIP20Factory; the configured RPC rejected the 7-arg createToken selector 0x5323d222"
-            )
+            );
         }
         Err(_) => Ok(()),
     }
