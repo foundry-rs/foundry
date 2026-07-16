@@ -72,7 +72,7 @@ use alloy_rpc_types::{
     anvil::Forking,
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
-    simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
+    simulate::{SimBlock, SimCallResult, SimulateError, SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
     trace::{
         filter::TraceFilter,
@@ -95,7 +95,7 @@ use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
 };
-use anvil_rpc::error::RpcError;
+use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
@@ -185,7 +185,7 @@ use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
     io::{Read, Write},
-    ops::{Mul, Not},
+    ops::Mul,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -5065,13 +5065,19 @@ impl Backend<FoundryNetwork> {
             } = request;
             let mut cache_db = CacheDB::new(state);
             let mut block_res = Vec::with_capacity(block_state_calls.len());
+            let (is_amsterdam, tx_gas_limit_cap) = {
+                let cfg_env = &self.evm_env.read().cfg_env;
+                (cfg_env.spec >= SpecId::AMSTERDAM, cfg_env.tx_gas_limit_cap())
+            };
 
             // execute the blocks
             for block in block_state_calls {
                 let SimBlock { block_overrides, state_overrides, calls } = block;
                 let mut call_res = Vec::with_capacity(calls.len());
                 let mut log_index = 0;
-                let mut gas_used = 0;
+                let mut cumulative_gas_used = 0;
+                let mut block_regular_gas_used = 0;
+                let mut block_state_gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut logs= Vec::new();
 
@@ -5084,7 +5090,36 @@ impl Backend<FoundryNetwork> {
                 }
 
                 // execute all calls in that block
-                for (req_idx, request) in calls.into_iter().enumerate() {
+                for (req_idx, mut request) in calls.into_iter().enumerate() {
+                    let remaining_regular_gas =
+                        block_env.gas_limit.saturating_sub(block_regular_gas_used);
+                    let remaining_state_gas =
+                        block_env.gas_limit.saturating_sub(block_state_gas_used);
+                    let remaining_gas = if is_amsterdam {
+                        remaining_regular_gas.min(remaining_state_gas)
+                    } else {
+                        block_env.gas_limit.saturating_sub(cumulative_gas_used)
+                    };
+                    let requested_gas = request.gas.unwrap_or(remaining_gas);
+                    let exceeds_gas_limit = if is_amsterdam {
+                        let requested_regular_gas = requested_gas.min(tx_gas_limit_cap);
+                        requested_regular_gas > remaining_regular_gas
+                            || requested_gas > remaining_state_gas
+                    } else {
+                        requested_gas > remaining_gas
+                    };
+                    if exceeds_gas_limit {
+                        return Err(BlockchainError::RpcError(RpcError {
+                            code: ErrorCode::ServerError(-38015),
+                            message: format!(
+                                "block gas limit exceeded: remaining {remaining_gas}, requested {requested_gas}"
+                            )
+                            .into(),
+                            data: None,
+                        }));
+                    }
+                    request.gas = Some(requested_gas);
+
                     let fee_details = FeeDetails::new(
                         request.gas_price,
                         request.max_fee_per_gas,
@@ -5098,6 +5133,12 @@ impl Backend<FoundryNetwork> {
                         fee_details,
                         block_env.clone(),
                     );
+
+                    if is_amsterdam {
+                        // Ensure simulated Amsterdam calls use EIP-8037's split gas schedule.
+                        let spec = evm_env.cfg_env.spec;
+                        evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+                    }
 
                     // Always disable EIP-3607
                     evm_env.cfg_env.disable_eip3607 = true;
@@ -5130,15 +5171,26 @@ impl Backend<FoundryNetwork> {
 
                     // commit the transaction
                     cache_db.commit(state);
-                    gas_used += result.tx_gas_used();
+                    cumulative_gas_used =
+                        cumulative_gas_used.saturating_add(result.tx_gas_used());
+                    block_regular_gas_used = block_regular_gas_used
+                        .saturating_add(result.gas().block_regular_gas_used());
+                    block_state_gas_used = block_state_gas_used
+                        .saturating_add(result.gas().block_state_gas_used());
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
 
-                    let mut request = Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    let mut request =
+                        Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    if request.as_ref().to.is_none() {
+                        request.as_mut().to = Some(TxKind::Create);
+                    }
                     request.prep_for_submission();
 
-                    let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
+                    let typed_tx = request.build_unsigned().map_err(|e| {
+                        BlockchainError::InvalidTransactionRequest(e.to_string())
+                    })?;
 
                     let tx = build_impersonated(typed_tx);
                     let tx_hash = tx.hash();
@@ -5151,19 +5203,42 @@ impl Backend<FoundryNetwork> {
                     );
                     transactions.push(rpc_tx);
 
-                    let return_data = result.output().cloned().unwrap_or_default();
+                    let return_data = if result.is_success() {
+                        result.output().cloned().unwrap_or_default()
+                    } else {
+                        Bytes::new()
+                    };
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
                         max_used_gas: None,
                         status: result.is_success(),
-                        error: result.is_success().not().then(|| {
-                            alloy_rpc_types::simulate::SimulateError {
+                        error: match &result {
+                            ExecutionResult::Success { .. } => None,
+                            ExecutionResult::Revert { output, .. } => {
+                                let message = RevertDecoder::new()
+                                    .maybe_decode(output, None)
+                                    .map(|reason| format!("execution reverted: {reason}"))
+                                    .unwrap_or_else(|| "execution reverted".to_string());
+                                Some(SimulateError {
+                                    code: SimulateError::EXECUTION_REVERTED_CODE,
+                                    message,
+                                    data: Some(output.clone()),
+                                })
+                            }
+                            ExecutionResult::Halt {
+                                reason: HaltReason::OutOfGas(_), ..
+                            } => Some(SimulateError {
+                                code: SimulateError::VM_EXECUTION_ERROR_CODE,
+                                message: "out of gas".to_string(),
+                                data: None,
+                            }),
+                            _ => Some(SimulateError {
                                 code: -3200,
                                 message: "execution failed".to_string(),
                                 data: None,
-                            }
-                        }),
+                            }),
+                        },
                         logs: result.clone()
                             .into_logs()
                             .into_iter()
@@ -5185,6 +5260,12 @@ impl Backend<FoundryNetwork> {
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
                 }
+
+                let gas_used = if is_amsterdam {
+                    block_regular_gas_used.max(block_state_gas_used)
+                } else {
+                    cumulative_gas_used
+                };
 
                 let transactions_envelopes: Vec<AnyTxEnvelope> = transactions
                 .iter()

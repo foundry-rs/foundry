@@ -4939,7 +4939,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         let reverted = call_result.reverted;
 
                         // Merge tx result traces in unit test result.
-                        self.result.extend(call_result);
+                        self.result.extend_setup(call_result);
 
                         // To continue unit test execution the call should not revert.
                         if reverted {
