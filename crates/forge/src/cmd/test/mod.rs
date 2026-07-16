@@ -379,6 +379,9 @@ fn sources_to_compile_from_artifacts(
     artifacts: &ProjectCompileOutput,
     test_matcher: &TestFunctionMatcher<'_>,
 ) -> BTreeSet<PathBuf> {
+    let paths = config.project_paths::<MultiCompilerLanguage>();
+    let empty_filter = EmptyTestFilter::default();
+
     // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
     // identifiers it constructs are project-relative. Match that here for the filter check
     // (notably for the `--rerun` failure list, which is persisted relative) but return the
@@ -387,11 +390,15 @@ fn sources_to_compile_from_artifacts(
         .artifact_ids()
         .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
         .filter(|(id, abi)| {
-            if id.source.starts_with(&config.src) {
+            if id.source.starts_with(&paths.sources) {
                 return true;
             }
+            if paths.is_script(&id.source) && !paths.is_test(&id.source) {
+                return false;
+            }
             let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-            test_matcher.matches_contract(test_filter, &stripped, abi)
+            !test_matcher.matches_contract(&empty_filter, &stripped, abi)
+                || test_matcher.matches_contract(test_filter, &stripped, abi)
         })
         .map(|(id, _)| id.source)
         .collect()
@@ -1471,9 +1478,9 @@ impl TestArgs {
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
-    /// This means that it will return all sources that are not test contracts or that match the
-    /// filter. We want to compile all non-test sources always because tests might depend on them
-    /// dynamically through cheatcodes.
+    /// For filtered runs, this includes all configured source files, non-test artifacts outside
+    /// script-only paths, and runnable tests that match the filter. Non-test artifacts remain
+    /// available because tests may resolve them dynamically through cheatcodes.
     #[instrument(target = "forge::test", skip_all)]
     fn get_sources_to_compile(
         &self,
@@ -1493,27 +1500,16 @@ impl TestArgs {
             ));
         }
 
-        let filter_args = test_filter.args();
-        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
-            || filter_args.test_pattern_inverse.is_some()
-            || filter_args.contract_pattern.is_some()
-            || filter_args.contract_pattern_inverse.is_some();
-        if !has_contract_or_test_filter {
-            return Ok((
-                source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-                    .chain(
-                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
-                            .filter(|path| test_filter.matches_path(path)),
-                    )
-                    .collect(),
-                None,
-            ));
-        }
-
         let mut project = config.create_project(true, true)?;
+        let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+            .chain(source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS))
+            .collect::<BTreeSet<_>>();
         let output = compile_abi_project(
             &mut project,
-            ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true),
+            ProjectCompiler::new()
+                .files(sources)
+                .dynamic_test_linking(config.dynamic_test_linking)
+                .quiet(true),
         )?;
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
