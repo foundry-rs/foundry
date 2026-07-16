@@ -118,6 +118,7 @@ struct Analyzer<'hir> {
     hits: Vec<Span>,
     ignored_reads: HashSet<ValueId>,
     deferred_calls: HashSet<hir::ExprId>,
+    captured_recoveries: HashMap<hir::ExprId, PendingRecovery>,
     stored_results: HashSet<hir::ExprId>,
 }
 
@@ -132,6 +133,7 @@ impl<'hir> Analyzer<'hir> {
             hits: Vec::new(),
             ignored_reads: HashSet::new(),
             deferred_calls: HashSet::new(),
+            captured_recoveries: HashMap::new(),
             stored_results: HashSet::new(),
         }
     }
@@ -251,7 +253,7 @@ impl<'hir> Analyzer<'hir> {
             {
                 args.exprs().next().and_then(|arg| self.current_value(arg))
             }
-            ExprKind::Assign(_, None, rhs) => self.current_value(rhs),
+            ExprKind::Assign(lhs, None, _) => self.current_value(lhs),
             _ => None,
         }
     }
@@ -266,7 +268,60 @@ impl<'hir> Analyzer<'hir> {
         (is_ecrecover_builtin(self.gcx, callee) && args.len() == 4).then_some(expr.id)
     }
 
-    fn visit_stored_expr(&mut self, expr: &'hir hir::Expr<'hir>, store_locally: bool) {
+    fn collect_result_calls(&self, expr: &'hir hir::Expr<'hir>, calls: &mut HashSet<hir::ExprId>) {
+        let expr = expr.peel_parens();
+        if let Some(call) = self.ecrecover_call_id(expr) {
+            calls.insert(call);
+            return;
+        }
+        match &expr.kind {
+            ExprKind::Ternary(condition, then_expr, else_expr) => {
+                match self.const_bool(condition) {
+                    Some(true) => self.collect_result_calls(then_expr, calls),
+                    Some(false) => self.collect_result_calls(else_expr, calls),
+                    None => {
+                        self.collect_result_calls(then_expr, calls);
+                        self.collect_result_calls(else_expr, calls);
+                    }
+                }
+            }
+            ExprKind::Assign(_, None, rhs) => self.collect_result_calls(rhs, calls),
+            _ => {}
+        }
+    }
+
+    fn collect_recovery_targets(
+        &self,
+        lhs: &'hir hir::Expr<'hir>,
+        rhs: &'hir hir::Expr<'hir>,
+        targets: &mut HashMap<hir::ExprId, hir::VariableId>,
+        observable: &mut HashSet<hir::ExprId>,
+    ) {
+        if let ExprKind::Tuple(lhs_elems) = &lhs.peel_parens().kind
+            && let ExprKind::Tuple(rhs_elems) = &rhs.peel_parens().kind
+        {
+            for (lhs, rhs) in lhs_elems.iter().zip(rhs_elems.iter()) {
+                if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
+                    self.collect_recovery_targets(lhs, rhs, targets, observable);
+                }
+            }
+        } else {
+            let mut calls = HashSet::new();
+            self.collect_result_calls(rhs, &mut calls);
+            if let Some(var) = self.deferable_target(lhs) {
+                targets.extend(calls.into_iter().map(|call| (call, var)));
+            } else {
+                observable.extend(calls);
+            }
+        }
+    }
+
+    fn visit_stored_expr(
+        &mut self,
+        expr: &'hir hir::Expr<'hir>,
+        store_locally: bool,
+        targets: &HashMap<hir::ExprId, hir::VariableId>,
+    ) -> Vec<(hir::VariableId, PendingRecovery)> {
         let ignored_reads = self.ignored_reads.clone();
         let deferred_calls = self.deferred_calls.clone();
         let stored_results = self.stored_results.clone();
@@ -276,17 +331,22 @@ impl<'hir> Analyzer<'hir> {
             if let Some(value) = self.current_value(expr) {
                 self.ignored_reads.insert(value);
             }
-            if let Some(call) = self.ecrecover_call_id(expr) {
-                self.deferred_calls.insert(call);
-            }
+            self.deferred_calls.extend(targets.keys().copied());
             if matches!(expr.peel_parens().kind, ExprKind::Assign(..)) {
                 self.stored_results.insert(expr.peel_parens().id);
             }
         }
         let _ = self.visit_expr(expr);
+        let recoveries = targets
+            .iter()
+            .filter_map(|(call, var)| {
+                self.captured_recoveries.remove(call).map(|recovery| (*var, recovery))
+            })
+            .collect();
         self.ignored_reads = ignored_reads;
         self.deferred_calls = deferred_calls;
         self.stored_results = stored_results;
+        recoveries
     }
 
     fn visit_discarded_expr(&mut self, expr: &'hir hir::Expr<'hir>) {
@@ -343,10 +403,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     fn const_bool(&self, expr: &'hir hir::Expr<'hir>) -> Option<bool> {
-        match ConstantEvaluator::new(self.gcx).try_eval_value(expr).ok()? {
-            ConstValue::Bool(value) => Some(value),
-            _ => None,
-        }
+        constant_bool(self.gcx, expr)
     }
 
     fn stmt_always_exits(&self, stmt: &'hir hir::Stmt<'hir>) -> bool {
@@ -369,11 +426,16 @@ impl<'hir> Analyzer<'hir> {
     fn is_proven_low_s(&self, expr: &'hir hir::Expr<'hir>) -> bool {
         self.const_value(expr).is_some_and(|value| value <= SECP256K1_HALF_ORDER)
             || self.current_value(expr).is_some_and(|value| self.state.low_s.contains(&value))
-            || matches!(
-                &expr.peel_parens().kind,
-                ExprKind::Ternary(_, then_expr, else_expr)
-                    if self.is_proven_low_s(then_expr) && self.is_proven_low_s(else_expr)
-            )
+            || match &expr.peel_parens().kind {
+                ExprKind::Ternary(condition, then_expr, else_expr) => {
+                    match self.const_bool(condition) {
+                        Some(true) => self.is_proven_low_s(then_expr),
+                        Some(false) => self.is_proven_low_s(else_expr),
+                        None => self.is_proven_low_s(then_expr) && self.is_proven_low_s(else_expr),
+                    }
+                }
+                _ => false,
+            }
     }
 
     fn assigned_value(&self, rhs: Option<&'hir hir::Expr<'hir>>) -> AssignedValue {
@@ -663,9 +725,15 @@ impl<'hir> Analyzer<'hir> {
                     self.add_expr_effects(expr, effects);
                 }
             }
-            ExprKind::Binary(lhs, _, rhs) => {
+            ExprKind::Binary(lhs, op, rhs) => {
                 self.add_expr_effects(lhs, effects);
-                self.add_expr_effects(rhs, effects);
+                let short_circuits = matches!(op.kind, BinOpKind::And | BinOpKind::Or)
+                    && self
+                        .const_bool(lhs)
+                        .is_some_and(|value| matches!(op.kind, BinOpKind::And) != value);
+                if !short_circuits {
+                    self.add_expr_effects(rhs, effects);
+                }
             }
             ExprKind::Call(callee, args, options) => {
                 self.add_expr_effects(callee, effects);
@@ -699,8 +767,14 @@ impl<'hir> Analyzer<'hir> {
             }
             ExprKind::Ternary(condition, then_expr, else_expr) => {
                 self.add_expr_effects(condition, effects);
-                self.add_expr_effects(then_expr, effects);
-                self.add_expr_effects(else_expr, effects);
+                match self.const_bool(condition) {
+                    Some(true) => self.add_expr_effects(then_expr, effects),
+                    Some(false) => self.add_expr_effects(else_expr, effects),
+                    None => {
+                        self.add_expr_effects(then_expr, effects);
+                        self.add_expr_effects(else_expr, effects);
+                    }
+                }
             }
             ExprKind::Tuple(exprs) => {
                 for expr in exprs.iter().flatten() {
@@ -721,7 +795,28 @@ impl<'hir> Analyzer<'hir> {
             return;
         }
         match &predicate.peel_parens().kind {
+            ExprKind::Ternary(condition, then_expr, else_expr) => {
+                if let Some(value) = self.const_bool(condition) {
+                    self.add_facts(if value { then_expr } else { else_expr }, negate);
+                }
+            }
             ExprKind::Binary(lhs, op, rhs) => {
+                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) {
+                    if let Some(value) = self.const_bool(lhs) {
+                        let determines_result = matches!(op.kind, BinOpKind::And) != value;
+                        if !determines_result {
+                            self.add_facts(rhs, negate);
+                        }
+                        return;
+                    }
+                    if let Some(value) = self.const_bool(rhs) {
+                        let determines_result = matches!(op.kind, BinOpKind::And) != value;
+                        if !determines_result {
+                            self.add_facts(lhs, negate);
+                        }
+                        return;
+                    }
+                }
                 let conjunctive =
                     matches!((op.kind, negate), (BinOpKind::And, false) | (BinOpKind::Or, true));
                 let disjunctive =
@@ -976,16 +1071,32 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             StmtKind::DeclSingle(var) => {
                 let init = self.hir.variable(*var).initializer;
                 if let Some(init) = init {
-                    self.visit_stored_expr(init, true);
-                }
-                self.assign_var(*var, init);
-                if let Some(recovery) = init.and_then(|init| self.pending_recovery(init)) {
-                    self.record_pending(*var, recovery);
+                    let mut calls = HashSet::new();
+                    self.collect_result_calls(init, &mut calls);
+                    let targets: HashMap<_, _> =
+                        calls.into_iter().map(|call| (call, *var)).collect();
+                    let recoveries = self.visit_stored_expr(init, true, &targets);
+                    self.assign_var(*var, Some(init));
+                    for (var, recovery) in recoveries {
+                        self.record_pending(var, recovery);
+                    }
+                } else {
+                    self.assign_var(*var, None);
                 }
                 return ControlFlow::Continue(());
             }
             StmtKind::DeclMulti(vars, init) => {
-                let _ = self.visit_expr(init);
+                let mut targets = HashMap::new();
+                if let ExprKind::Tuple(exprs) = &init.peel_parens().kind {
+                    for (var, expr) in vars.iter().zip(exprs.iter()) {
+                        if let (Some(var), Some(expr)) = (var, expr) {
+                            let mut calls = HashSet::new();
+                            self.collect_result_calls(expr, &mut calls);
+                            targets.extend(calls.into_iter().map(|call| (call, *var)));
+                        }
+                    }
+                }
+                let recoveries = self.visit_stored_expr(init, !targets.is_empty(), &targets);
                 if let ExprKind::Tuple(exprs) = &init.peel_parens().kind {
                     for (var, expr) in vars.iter().zip(exprs.iter()) {
                         if let Some(var) = var {
@@ -996,6 +1107,9 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                     for var in vars.iter().flatten() {
                         self.assign_var(*var, None);
                     }
+                }
+                for (var, recovery) in recoveries {
+                    self.record_pending(var, recovery);
                 }
                 return ControlFlow::Continue(());
             }
@@ -1023,7 +1137,16 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         if let ExprKind::Binary(lhs, op, rhs) = &expr.kind
             && matches!(op.kind, BinOpKind::And | BinOpKind::Or)
         {
+            let constant = self.const_bool(lhs);
             let _ = self.visit_expr(lhs);
+            if let Some(value) = constant {
+                let short_circuits = matches!(op.kind, BinOpKind::And) != value;
+                if !short_circuits {
+                    self.assume(lhs, !value);
+                    let _ = self.visit_expr(rhs);
+                }
+                return ControlFlow::Continue(());
+            }
             let skipped_rhs = self.snapshot();
             self.assume(lhs, op.kind == BinOpKind::Or);
             let _ = self.visit_expr(rhs);
@@ -1033,7 +1156,13 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             return ControlFlow::Continue(());
         }
         if let ExprKind::Ternary(condition, then_expr, else_expr) = &expr.kind {
+            let constant = self.const_bool(condition);
             let _ = self.visit_expr(condition);
+            if let Some(value) = constant {
+                self.assume(condition, !value);
+                let _ = self.visit_expr(if value { then_expr } else { else_expr });
+                return ControlFlow::Continue(());
+            }
             let baseline = self.snapshot();
             self.assume(condition, false);
             let _ = self.visit_expr(then_expr);
@@ -1058,13 +1187,22 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             ExprKind::Assign(lhs, op, rhs) => {
                 if op.is_none() {
                     let target = self.deferable_target(lhs);
+                    let mut targets = HashMap::new();
+                    let mut observable = HashSet::new();
+                    self.collect_recovery_targets(lhs, rhs, &mut targets, &mut observable);
                     let result_is_stored = self.stored_results.contains(&expr.peel_parens().id);
                     self.visit_assignment_lhs(lhs);
-                    self.visit_stored_expr(rhs, target.is_some());
-                    let recovery = target.and_then(|_| self.pending_recovery(rhs));
+                    let deferred_calls = self.deferred_calls.clone();
+                    self.deferred_calls.retain(|call| !observable.contains(call));
+                    let recoveries = self.visit_stored_expr(
+                        rhs,
+                        !targets.is_empty() || target.is_some(),
+                        &targets,
+                    );
+                    self.deferred_calls = deferred_calls;
                     self.assign_lhs(lhs, Some(rhs));
-                    if let Some((target, recovery)) = target.zip(recovery) {
-                        self.record_pending(target, recovery);
+                    for (var, recovery) in recoveries {
+                        self.record_pending(var, recovery);
                     }
                     if let Some(target) = target
                         && !result_is_stored
@@ -1101,10 +1239,12 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         {
             self.invalidate_mutable_state();
         }
-        if let Some(recovery) = self.pending_recovery(expr)
-            && !self.deferred_calls.contains(&expr.peel_parens().id)
-        {
-            self.emit_hit(recovery.span);
+        if let Some(recovery) = self.pending_recovery(expr) {
+            if self.deferred_calls.contains(&expr.peel_parens().id) {
+                self.captured_recoveries.insert(expr.peel_parens().id, recovery);
+            } else {
+                self.emit_hit(recovery.span);
+            }
         }
         result
     }
@@ -1231,6 +1371,13 @@ fn call_may_mutate_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &hir::Expr<'_
     }
 }
 
+fn constant_bool(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<bool> {
+    match ConstantEvaluator::new(gcx).try_eval_value(expr).ok()? {
+        ConstValue::Bool(value) => Some(value),
+        _ => None,
+    }
+}
+
 fn expr_has_fact_side_effect(gcx: Gcx<'_>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Assign(..) | ExprKind::Delete(_) => true,
@@ -1243,8 +1390,14 @@ fn expr_has_fact_side_effect(gcx: Gcx<'_>, hir: &hir::Hir<'_>, expr: &hir::Expr<
         ExprKind::Array(exprs) => {
             exprs.iter().any(|expr| expr_has_fact_side_effect(gcx, hir, expr))
         }
-        ExprKind::Binary(lhs, _, rhs) => {
-            expr_has_fact_side_effect(gcx, hir, lhs) || expr_has_fact_side_effect(gcx, hir, rhs)
+        ExprKind::Binary(lhs, op, rhs) => {
+            if expr_has_fact_side_effect(gcx, hir, lhs) {
+                return true;
+            }
+            let short_circuits = matches!(op.kind, BinOpKind::And | BinOpKind::Or)
+                && constant_bool(gcx, lhs)
+                    .is_some_and(|value| matches!(op.kind, BinOpKind::And) != value);
+            !short_circuits && expr_has_fact_side_effect(gcx, hir, rhs)
         }
         ExprKind::Call(callee, args, options) => {
             call_may_mutate_state(gcx, hir, callee)
@@ -1267,9 +1420,17 @@ fn expr_has_fact_side_effect(gcx: Gcx<'_>, hir: &hir::Hir<'_>, expr: &hir::Expr<
             expr_has_fact_side_effect(gcx, hir, base)
         }
         ExprKind::Ternary(condition, then_expr, else_expr) => {
-            expr_has_fact_side_effect(gcx, hir, condition)
-                || expr_has_fact_side_effect(gcx, hir, then_expr)
-                || expr_has_fact_side_effect(gcx, hir, else_expr)
+            if expr_has_fact_side_effect(gcx, hir, condition) {
+                return true;
+            }
+            match constant_bool(gcx, condition) {
+                Some(true) => expr_has_fact_side_effect(gcx, hir, then_expr),
+                Some(false) => expr_has_fact_side_effect(gcx, hir, else_expr),
+                None => {
+                    expr_has_fact_side_effect(gcx, hir, then_expr)
+                        || expr_has_fact_side_effect(gcx, hir, else_expr)
+                }
+            }
         }
         ExprKind::Tuple(exprs) => {
             exprs.iter().flatten().any(|expr| expr_has_fact_side_effect(gcx, hir, expr))

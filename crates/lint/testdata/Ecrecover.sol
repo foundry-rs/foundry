@@ -58,6 +58,83 @@ contract Ecrecover {
         return address(0);
     }
 
+    function unreachableShortCircuitLoopEffect(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement,
+        bool run
+    ) external pure returns (address) {
+        require(uint256(s) <= HALF_ORDER);
+        while (run) {
+            false && (s = replacement) == replacement;
+            return ecrecover(hash, v, r, s);
+        }
+        return address(0);
+    }
+
+    function unreachableTernaryLoopEffect(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement,
+        bool run
+    ) external pure returns (address) {
+        require(uint256(s) <= HALF_ORDER);
+        while (run) {
+            false ? (s = replacement) : s;
+            return ecrecover(hash, v, r, s);
+        }
+        return address(0);
+    }
+
+    function unreachableShortCircuitAnd(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (bool) {
+        return false && ecrecover(hash, v, r, s) != address(0);
+    }
+
+    function reachableShortCircuitAnd(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (bool) {
+        return true && ecrecover(hash, v, r, s) != address(0); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function unreachableShortCircuitOr(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (bool) {
+        return true || ecrecover(hash, v, r, s) != address(0);
+    }
+
+    function unreachableConstantTernary(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (address) {
+        return false ? ecrecover(hash, v, r, s) : address(0);
+    }
+
+    function reachableConstantTernary(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (address) {
+        return true ? ecrecover(hash, v, r, s) : address(0); //~WARN: ecrecover should reject malleable signatures
+    }
+
     function vOnly(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         require(v == 27 || v == 28);
         return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
@@ -113,6 +190,81 @@ contract Ecrecover {
     function guardAfterAssignment(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         address signer;
         signer = ecrecover(hash, v, r, s);
+        require(uint256(s) <= HALF_ORDER);
+        return signer;
+    }
+
+    function guardAfterTupleAssignment(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        address signer;
+        (signer,) = (ecrecover(hash, v, r, s), 0);
+        require(uint256(s) <= HALF_ORDER);
+        return signer;
+    }
+
+    function tupleAssignmentUsedBeforeGuard(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (address) {
+        address signer;
+        (signer,) = (ecrecover(hash, v, r, s), 0); //~WARN: ecrecover should reject malleable signatures
+        observeSigner(signer);
+        require(uint256(s) <= HALF_ORDER);
+        return signer;
+    }
+
+    function guardAfterTernaryStorage(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bool useRecovery
+    ) external pure returns (address) {
+        address signer = useRecovery ? ecrecover(hash, v, r, s) : address(0);
+        require(uint256(s) <= HALF_ORDER);
+        return signer;
+    }
+
+    function unguardedTernaryStorage(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bool useRecovery
+    ) external pure returns (address) {
+        address signer = useRecovery ? ecrecover(hash, v, r, s) : address(0); //~WARN: ecrecover should reject malleable signatures
+        return signer;
+    }
+
+    function guardAfterNestedAssignment(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        address first;
+        address second;
+        first = second = ecrecover(hash, v, r, s);
+        require(uint256(s) <= HALF_ORDER);
+        return first;
+    }
+
+    function nestedAssignmentUsed(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external pure returns (address) {
+        address first;
+        address second;
+        first = second = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+        return first;
+    }
+
+    function nestedStateAssignmentBeforeGuard(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external returns (address) {
+        address signer;
+        signer = storedSigner = ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
         require(uint256(s) <= HALF_ORDER);
         return signer;
     }
@@ -211,6 +363,64 @@ contract Ecrecover {
         return ecrecover(hash, v, r, s);
     }
 
+    function constantDisjunctionGuard(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        require(uint256(s) <= HALF_ORDER || false);
+        return ecrecover(hash, v, r, s);
+    }
+
+    function constantConjunctionGuard(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        require(true && uint256(s) <= HALF_ORDER);
+        return ecrecover(hash, v, r, s);
+    }
+
+    function constantThenTernaryGuard(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        require(true ? uint256(s) <= HALF_ORDER : false);
+        return ecrecover(hash, v, r, s);
+    }
+
+    function constantElseTernaryGuard(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        require(false ? false : uint256(s) <= HALF_ORDER);
+        return ecrecover(hash, v, r, s);
+    }
+
+    function constantTernaryGuardControl(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        require(false ? uint256(s) <= HALF_ORDER : true);
+        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function unreachableElseGuardEffect(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement
+    ) external pure returns (address) {
+        require(true ? uint256(s) <= HALF_ORDER : (s = replacement) == replacement);
+        return ecrecover(hash, v, r, s);
+    }
+
+    function unreachableThenGuardEffect(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement
+    ) external pure returns (address) {
+        require(false ? (s = replacement) == replacement : uint256(s) <= HALF_ORDER);
+        return ecrecover(hash, v, r, s);
+    }
+
+    function selectedGuardEffect(
+        bytes32 hash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes32 replacement
+    ) external pure returns (address) {
+        require(true ? (s = replacement) == replacement : uint256(s) <= HALF_ORDER);
+        return ecrecover(hash, v, r, s); //~WARN: ecrecover should reject malleable signatures
+    }
+
     function assertReversed(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
         assert(HALF_ORDER >= uint256(s));
         return ecrecover(hash, v, r, s);
@@ -271,6 +481,14 @@ contract Ecrecover {
 
     function constantS(bytes32 hash, uint8 v, bytes32 r) external pure returns (address) {
         return ecrecover(hash, v, r, bytes32(0));
+    }
+
+    function constantTernaryS(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        return ecrecover(hash, v, r, true ? bytes32(0) : s);
+    }
+
+    function constantTernaryUnsafeS(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
+        return ecrecover(hash, v, r, false ? bytes32(0) : s); //~WARN: ecrecover should reject malleable signatures
     }
 
     function tupleSwapSafe(bytes32 hash, uint8 v, bytes32 r, bytes32 s) external pure returns (address) {
