@@ -492,6 +492,59 @@ forgetest!(can_install_multiple_submodules, |_prj, cmd| {
         .assert_success();
 });
 
+forgetest!(can_explicitly_install_uninitialized_submodule, |prj, cmd| {
+    cmd.git_init();
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();
+
+    let dependency = Path::new("lib/forge-std");
+    Git::new(prj.root()).submodule_deinit(true, dependency).unwrap();
+    assert!(fs::read_dir(prj.root().join(dependency)).unwrap().next().is_none());
+
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();
+    assert!(prj.root().join(dependency).join(".git").exists());
+});
+
+forgetest!(can_install_custom_named_submodule, |prj, cmd| {
+    cmd.git_init();
+    let status = Command::new("git")
+        .current_dir(prj.root())
+        .args([
+            "submodule",
+            "add",
+            "--name",
+            "forge-std",
+            "https://github.com/foundry-rs/forge-std",
+            "lib/forge-std",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();
+    assert!(prj.root().join("lib/forge-std/.git").exists());
+    assert!(Git::new(prj.root()).absolute_git_dir().unwrap().join("modules/forge-std").exists());
+});
+
+forgetest!(submodule_mapping_uses_first_values, |prj, cmd| {
+    cmd.git_init();
+    fs::write(
+        prj.root().join(".gitmodules"),
+        r#"[submodule "custom.name"]
+	path = lib/forge-std
+	path = lib/other
+	url = https://github.com/foundry-rs/forge-std
+	url = https://github.com/example/other
+"#,
+    )
+    .unwrap();
+
+    let (_, mapping) =
+        Git::new(prj.root()).submodule_mapping_for_path(Path::new("lib/forge-std")).unwrap();
+    let mapping = mapping.unwrap();
+    assert_eq!(mapping.name, "custom.name");
+    assert_eq!(mapping.url.as_deref(), Some("https://github.com/foundry-rs/forge-std"));
+});
+
 forgetest!(failed_reinstall_preserves_existing_submodule, |prj, cmd| {
     cmd.git_init();
     cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();

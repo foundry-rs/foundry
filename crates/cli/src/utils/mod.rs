@@ -811,34 +811,14 @@ ignore them in the `.gitignore` file."
             .map(|url| Some(url.trim().to_string()))
     }
 
-    /// Returns the URL registered for a submodule in `.gitmodules`.
-    pub fn submodule_file_url(self, path: &Path) -> Result<Option<String>> {
+    /// Returns whether the default section name conflicts and the mapping for an exact path.
+    pub fn submodule_mapping_for_path(
+        self,
+        path: &Path,
+    ) -> Result<(bool, Option<SubmoduleMapping>)> {
         let gitmodules = self.root.join(".gitmodules");
         if !gitmodules.exists() {
-            return Ok(None);
-        }
-
-        let output = self
-            .cmd()
-            .args(["config", "--file"])
-            .arg(gitmodules)
-            .args(["--get", &format!("submodule.{}.url", path.to_slash_lossy())])
-            .output()?;
-        match output.status.code() {
-            Some(0) => Ok(Some(String::from_utf8(output.stdout)?.trim().to_string())),
-            Some(1) => Ok(None),
-            _ => Err(eyre::eyre!(
-                "failed to inspect .gitmodules: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )),
-        }
-    }
-
-    /// Returns name conflicts, an exact default-name mapping, and any exact path mapping.
-    pub fn submodule_mapping(self, path: &Path) -> Result<(bool, bool, bool)> {
-        let gitmodules = self.root.join(".gitmodules");
-        if !gitmodules.exists() {
-            return Ok((false, false, false));
+            return Ok((false, None));
         }
 
         let output = self
@@ -850,33 +830,38 @@ ignore them in the `.gitignore` file."
         match output.status.code() {
             Some(0) => {
                 let expected_path = path.to_slash_lossy();
-                let expected_prefix = format!("submodule.{expected_path}.");
-                let mut exact_name = false;
-                let mut exact_name_path = false;
-                let mut name_path_mismatch = false;
-                let mut exact_path = false;
+                let mut sections = HashMap::<String, (Option<String>, Option<String>)>::default();
                 for entry in
                     output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty())
                 {
-                    let separator = entry.iter().position(|byte| *byte == b'\n');
-                    let key = separator.map_or(entry, |separator| &entry[..separator]);
-                    let value = separator.and_then(|separator| entry.get(separator + 1..));
-                    if key.starts_with(expected_prefix.as_bytes()) {
-                        exact_name = true;
-                        if key.ends_with(b".path") {
-                            let matches = value == Some(expected_path.as_bytes());
-                            exact_name_path |= matches;
-                            name_path_mismatch |= !matches;
-                        }
-                    }
-                    if key.ends_with(b".path") && value == Some(expected_path.as_bytes()) {
-                        exact_path = true;
+                    let Some(separator) = entry.iter().position(|byte| *byte == b'\n') else {
+                        return Err(eyre::eyre!("invalid submodule mapping entry"));
+                    };
+                    let key = std::str::from_utf8(&entry[..separator])?;
+                    let value = std::str::from_utf8(&entry[separator + 1..])?;
+                    let Some(key) = key.strip_prefix("submodule.") else { continue };
+                    let Some((name, field)) = key.rsplit_once('.') else { continue };
+                    let section = sections.entry(name.to_string()).or_default();
+                    match field {
+                        "path" if section.0.is_none() => section.0 = Some(value.to_string()),
+                        "url" if section.1.is_none() => section.1 = Some(value.to_string()),
+                        _ => {}
                     }
                 }
-                let exact_name_mapping = exact_name_path && !name_path_mismatch;
-                Ok((exact_name && !exact_name_mapping, exact_name_mapping, exact_path))
+
+                let default_name_exists = sections.contains_key(expected_path.as_ref());
+                let mut mappings = sections
+                    .into_iter()
+                    .filter(|(_, (mapped_path, _))| mapped_path.as_deref() == Some(&expected_path))
+                    .map(|(name, (_, url))| SubmoduleMapping { name, url });
+                let mapping = mappings.next();
+                let multiple_mappings = mappings.next().is_some();
+                let name_conflict = multiple_mappings
+                    || default_name_exists
+                        && mapping.as_ref().is_none_or(|mapping| mapping.name != expected_path);
+                Ok((name_conflict, (!multiple_mappings).then_some(mapping).flatten()))
             }
-            Some(1) => Ok((false, false, false)),
+            Some(1) => Ok((false, None)),
             _ => Err(eyre::eyre!(
                 "failed to inspect .gitmodules: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -1008,6 +993,15 @@ ignore them in the `.gitignore` file."
     fn stderr(self) -> Stdio {
         if self.quiet { Stdio::piped() } else { Stdio::inherit() }
     }
+}
+
+/// A submodule section in `.gitmodules` resolved by its worktree path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmoduleMapping {
+    /// Section name used for local config and the module Git directory.
+    pub name: String,
+    /// Registered submodule URL.
+    pub url: Option<String>,
 }
 
 /// Deserialized `git submodule status lib/dep` output.

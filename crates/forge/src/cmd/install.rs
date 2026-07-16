@@ -128,16 +128,6 @@ impl DependencyInstallOpts {
         if !no_git {
             lockfile = lockfile.with_git(&git);
 
-            for dep in &dependencies {
-                let path = libs.join(dep.name());
-                if path.is_symlink() || (path.exists() && !path.join(".git").exists()) {
-                    eyre::bail!(
-                        "cannot safely install dependency at {} because the target is not its registered submodule worktree",
-                        path.display()
-                    );
-                }
-            }
-
             // Initialize all existing submodules when no explicit dependencies were requested so
             // that foundry.lock synchronization can inspect their commits and tags.
             if dependencies.is_empty() && git.submodules_uninitialized()? {
@@ -424,28 +414,27 @@ impl Installer<'_> {
         let gitmodules = root.join(".gitmodules");
         let gitmodules_existed = gitmodules.exists();
         let gitmodules_contents = gitmodules_existed.then(|| fs::read(&gitmodules)).transpose()?;
-        let module_dir = git.absolute_git_dir()?.join("modules").join(relative_path);
-        let submodule_config = git.submodule_config(relative_path)?;
-        let (submodule_name_collision, has_default_mapping, has_submodule_path) =
-            git.submodule_mapping(relative_path)?;
+        let (submodule_name_collision, mapping) = git.submodule_mapping_for_path(relative_path)?;
+        let module_name =
+            mapping.as_ref().map_or(relative_path, |mapping| Path::new(&mapping.name));
+        let module_dir = git.absolute_git_dir()?.join("modules").join(module_name);
+        let submodule_config = git.submodule_config(module_name)?;
         if gitmodules_existed && !git.is_tracked(Path::new(".gitmodules"))? {
             eyre::bail!(
                 "cannot safely install dependency at {} because the target or .gitmodules has existing changes",
                 relative_path.display()
             );
         }
-        let registered_url =
-            if has_default_mapping { git.submodule_file_url(relative_path)? } else { None };
-        let existing_submodule =
-            registered_url.is_some() && has_submodule_path && git.is_gitlink(relative_path)?;
+        let existing_submodule = mapping.is_some() && git.is_gitlink(relative_path)?;
+        if submodule_name_collision || mapping.is_some() && !existing_submodule {
+            eyre::bail!(
+                "cannot safely install dependency at {} because .gitmodules already contains a matching submodule",
+                relative_path.display()
+            );
+        }
         if !existing_submodule {
-            if submodule_name_collision || has_default_mapping || has_submodule_path {
-                eyre::bail!(
-                    "cannot safely install dependency at {} because .gitmodules already contains a matching submodule",
-                    relative_path.display()
-                );
-            }
-            let can_rollback = !path.exists()
+            let can_rollback = !path.is_symlink()
+                && !path.exists()
                 && !module_dir.exists()
                 && git.is_path_clean(relative_path)?
                 && git.is_path_worktree_clean(Path::new(".gitmodules"))?;
@@ -455,22 +444,28 @@ impl Installer<'_> {
                     relative_path.display()
                 );
             }
-        } else if registered_url.as_deref() != Some(dep.require_url()?) {
+        } else if mapping.as_ref().and_then(|mapping| mapping.url.as_deref())
+            != Some(dep.require_url()?)
+        {
             eyre::bail!(
                 "cannot install dependency at {} because its registered URL does not match {}",
                 relative_path.display(),
                 dep.require_url()?
             );
         }
-        if existing_submodule && path.exists() {
+        let uninitialized_worktree = existing_submodule
+            && !path.is_symlink()
+            && path.is_dir()
+            && std::fs::read_dir(path)?.next().is_none();
+        if existing_submodule && (path.is_symlink() || path.exists()) && !uninitialized_worktree {
             self.ensure_submodule_worktree(path, &module_dir, relative_path)?;
         }
 
         let setup = if existing_submodule {
-            if path.exists() {
-                Ok(())
-            } else {
+            if !path.exists() || uninitialized_worktree {
                 git.submodule_update(false, false, false, false, Some(relative_path))
+            } else {
+                Ok(())
             }
         } else {
             self.git_submodule(dep, path)
