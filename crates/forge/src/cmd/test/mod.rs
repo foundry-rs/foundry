@@ -1212,9 +1212,9 @@ impl TestArgs {
             bail!(
                 "`forge coverage` cannot be combined with: {}. Use `--report lcov` for an \
                  interoperable coverage report or `--report attribution` for per-test JSON \
-                 attribution.",
+                attribution.",
                 conflicts.join(", ")
-            )
+            );
         }
 
         Ok(())
