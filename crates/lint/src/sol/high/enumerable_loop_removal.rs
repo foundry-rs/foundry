@@ -9,6 +9,7 @@ use solar::{
     interface::{Span, Symbol},
     sema::{
         Gcx,
+        builtins::Builtin,
         hir::{
             self, CallArgs, CallArgsKind, Expr, ExprKind, FunctionId, Hir, ItemId, LoopSource, Res,
             Stmt, StmtKind, VarKind, VariableId, Visit,
@@ -26,14 +27,12 @@ declare_forge_lint!(
 );
 
 // The detector reports only the shape it can judge without a flow analysis: a loop whose own
-// index steps upward unconditionally, reads the set with `at` at that index, and removes from
-// the same set in a straight-line body. Anything a control-flow construct could change, a
-// conditional cadence, a `break`/`continue`/`return`/`revert`, a nested loop, is left clean
-// rather than guessed at. This keeps the canonical corruption, an ascending walk that removes
-// as it goes, reported while never warning on the safe swap-and-pop and drain-and-exit forms
-// whose safety depends on where control flows. The known-missed cases (descending drains,
-// member cursors, composite index arithmetic, removals that shift a slot read before an exit)
-// are documented limits, not silent guesses.
+// index is written exclusively by simple unconditional increments, reads the set with `at` at
+// that bare index, and removes from the same set in a straight-line body. Control flow,
+// descending traversal, composite indices, and other shapes that need value or path reasoning
+// are deliberately unreported, even when they corrupt iteration. Set operands that cannot be
+// identified statically are conservatively treated as possible aliases, so false positives are
+// still possible on set identity.
 
 impl<'hir> LateLintPass<'hir> for EnumerableLoopRemoval {
     fn check_function(
@@ -237,7 +236,7 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
 /// `if (cond) continue else break` after the user statements. Peeling these makes the guard's
 /// `break`/`continue` and the next-step read for what they are, not as user control flow. A body
 /// that does not match the exact synthetic shape is returned unchanged.
-fn real_body<'hir>(source: LoopSource, body: &'hir [Stmt<'hir>]) -> &'hir [Stmt<'hir>] {
+const fn real_body<'hir>(source: LoopSource, body: &'hir [Stmt<'hir>]) -> &'hir [Stmt<'hir>] {
     match source {
         LoopSource::For | LoopSource::While => {
             if let [only] = body
@@ -275,14 +274,19 @@ fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
         | StmtKind::Loop(..)
         | StmtKind::Break
         | StmtKind::Continue
-        | StmtKind::Return(..) => false,
-        // `revert Foo();`, `revert(...)`, `require(...)`: a revert leaves the loop too. Detected
-        // as an expression statement of a revert or a call that never returns is beyond a plain
-        // structural check, so only the structural jumps above are handled; a body reverting
-        // unconditionally still corrupts nothing, but that is a rare shape and staying silent on
-        // it is safe.
+        | StmtKind::Return(..)
+        | StmtKind::Revert(..) => false,
+        StmtKind::Expr(expr) if is_builtin_revert(expr) => false,
         _ => true,
     })
+}
+
+/// Whether an expression statement is Solidity's builtin `revert()` or `revert(string)` call.
+/// Custom-error revert statements have their own `StmtKind::Revert` arm above.
+fn is_builtin_revert(expr: &Expr<'_>) -> bool {
+    let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Ident(resolutions) = &callee.peel_parens().kind else { return false };
+    resolutions.iter().any(|res| matches!(res, Res::Builtin(Builtin::Revert | Builtin::RevertMsg)))
 }
 
 /// The loop's own indices that step upward unconditionally: a bare identifier advanced by `i++`,
@@ -292,31 +296,43 @@ fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
 /// (`i = (i + 2) - 1`) does not qualify: the walk is only known to ascend for the simple forms.
 fn ascending_cadence<'hir>(hir: &'hir Hir<'hir>, body: &'hir [Stmt<'hir>]) -> Vec<VariableId> {
     let mut cadence = Vec::new();
-    collect_ascending_steps(hir, body, &mut cadence);
+    let mut other_writes = HashSet::new();
+    collect_cadence_writes(hir, body, &mut cadence, &mut other_writes);
+    cadence.retain(|variable_id| !other_writes.contains(variable_id));
     cadence
 }
 
-/// Walks the straight-line statements of a body, bare blocks included, and records each variable
-/// an ascending step names. Does not descend into branches or loops: only unconditional steps
-/// pace the loop.
-fn collect_ascending_steps<'hir>(
+/// Walks the straight-line statements of a body, bare blocks included, and records variables
+/// written by a supported ascending step separately from every other write. A cadence is valid
+/// only when all of its writes are supported ascending steps.
+fn collect_cadence_writes<'hir>(
     hir: &'hir Hir<'hir>,
     stmts: &'hir [Stmt<'hir>],
-    out: &mut Vec<VariableId>,
+    cadence: &mut Vec<VariableId>,
+    other_writes: &mut HashSet<VariableId>,
 ) {
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                collect_ascending_steps(hir, block.stmts, out);
+                collect_cadence_writes(hir, block.stmts, cadence, other_writes);
             }
-            StmtKind::Expr(expr) => {
-                if let Some(variable_id) = ascending_step(expr.peel_parens())
-                    && !out.contains(&variable_id)
-                {
-                    out.push(variable_id);
+            _ => {
+                let ascending = match &stmt.kind {
+                    StmtKind::Expr(expr) => ascending_step(expr.peel_parens()),
+                    _ => None,
+                };
+                let mut written = Vec::new();
+                collect_variables(hir, std::slice::from_ref(stmt), &mut written);
+                for variable_id in written {
+                    if ascending == Some(variable_id) {
+                        if !cadence.contains(&variable_id) {
+                            cadence.push(variable_id);
+                        }
+                    } else {
+                        other_writes.insert(variable_id);
+                    }
                 }
             }
-            _ => {}
         }
     }
 }
@@ -362,9 +378,8 @@ fn is_positive_literal(expr: &Expr<'_>) -> bool {
     matches!(&lit.kind, LitKind::Number(value) if !value.is_zero())
 }
 
-/// Collects the sets a loop iterates with `at` at its ascending cadence. An `at` whose index does
-/// not name that cadence reads a slot the loop does not advance over and is left out. An index
-/// that cannot be read may be anything, so it is assumed to walk the loop.
+/// Collects the sets a loop iterates with `at` at its ascending cadence. The index must be the
+/// bare cadence identifier; copies and composite expressions are deliberately left out.
 struct AtCollector<'a, 'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
@@ -384,7 +399,8 @@ impl<'hir> Visit<'hir> for AtCollector<'_, 'hir> {
         if let Some(call) = enumerable_set_call(self.gcx, self.hir, self.bindings, expr)
             && call.name == SetOp::At
             && nth_argument(self.hir, call.function_id, call.args, call.index_arg, INDEX_PARAMETER)
-                .is_none_or(|index| mentions_any(self.hir, index, self.cadence))
+                .and_then(bare_identifier)
+                .is_some_and(|index| self.cadence.contains(&index))
         {
             self.iterated.push(call.set);
         }
@@ -462,38 +478,6 @@ fn collect_variables<'hir>(
     for stmt in stmts {
         let _ = collector.visit_stmt(stmt);
     }
-}
-
-/// Whether `expr` names any of `variables`.
-fn mentions_any<'hir>(
-    hir: &'hir Hir<'hir>,
-    expr: &'hir Expr<'hir>,
-    variables: &[VariableId],
-) -> bool {
-    struct Finder<'a, 'hir> {
-        hir: &'hir Hir<'hir>,
-        variables: &'a [VariableId],
-        found: bool,
-    }
-    impl<'hir> Visit<'hir> for Finder<'_, 'hir> {
-        type BreakValue = Infallible;
-        fn hir(&self) -> &'hir Hir<'hir> {
-            self.hir
-        }
-        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-            if let ExprKind::Ident(resolutions) = &expr.kind
-                && resolutions.iter().any(|res| {
-                    matches!(res, Res::Item(ItemId::Variable(id)) if self.variables.contains(id))
-                })
-            {
-                self.found = true;
-            }
-            self.walk_expr(expr)
-        }
-    }
-    let mut finder = Finder { hir, variables, found: false };
-    let _ = finder.visit_expr(expr);
-    finder.found
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]

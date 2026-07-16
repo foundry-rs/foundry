@@ -14,11 +14,11 @@ import {EnumerableSet as ES} from "./auxiliary/EnumerableSetLib.sol";
 // type checker, so the method-call and library-qualified forms are both covered, and storage-
 // reference aliases are followed to the set they name where the loop runs.
 //
-// Anything a control-flow construct could change is left clean rather than guessed at: a
-// conditional cadence, a `break`/`continue`/`return`, a nested loop, a `try`. Some of those clean
-// cases are genuine corruptions the detector deliberately does not report; they are grouped under
-// "Documented limitations" below. Distinguishing them would take the flow analysis this detector
-// does not run.
+// Anything outside that shape is left clean rather than guessed at: a conditional or mixed
+// cadence, a composite index, a `break`/`continue`/`return`/`revert`, a nested loop, or a `try`.
+// Some of those clean cases are genuine corruptions the detector deliberately does not report;
+// they are grouped under "Documented limitations" below. Distinguishing them would take the flow
+// or value analysis this detector does not run.
 
 // Minimal mirror of OpenZeppelin's EnumerableSet: swap-and-pop removal, index access via `at`.
 library EnumerableSet {
@@ -124,6 +124,8 @@ contract EnumerableLoopRemoval {
     address internal pending;
     uint256 internal cursor;
     uint256 internal position;
+
+    error Stop();
 
     // ─────────────────────────────────────────────────────────────────────────────
     // Reported: unconditional ascending cadence, straight-line body, same set.
@@ -417,8 +419,9 @@ contract EnumerableLoopRemoval {
         }
     }
 
-    // A cadence stepped downward drains from the top: swap-and-pop moves the tail into the slot
-    // just read, which a descending walk never returns to. Only ascending cadences are reported.
+    // This exact reverse drain removes the current tail, so swap-and-pop does not move another
+    // value. Descending cadences are outside the reported shape regardless; an unsafe descending
+    // case is pinned under the documented limitations below.
     function removeAtDescendingIndex() public {
         for (uint256 i = holders.length(); i > 0; i--) {
             holders.remove(holders.at(i - 1));
@@ -469,6 +472,55 @@ contract EnumerableLoopRemoval {
         }
     }
 
+    // Every write to a cadence must be a supported ascending step. These both leave `i` at zero,
+    // so swap-and-pop refills the slot read on the next turn.
+    function removeWithIncrementThenDecrement() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            i--;
+        }
+    }
+
+    function removeWithIncrementThenReset() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            i = 0;
+        }
+    }
+
+    // Mentioning the cadence inside an expression does not make it the paced index. Modulo one
+    // always reads slot zero, which the swap refills while the set drains.
+    function removeAtModuloCadence() public {
+        uint256 i = 0;
+        while (holders.length() > 0) {
+            holders.remove(holders.at(i % 1));
+            i++;
+        }
+    }
+
+    // The mutation is rolled back and no next iteration is observable.
+    function removeThenRevert() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            revert();
+        }
+    }
+
+    function removeThenCustomErrorRevert() public {
+        uint256 i = 0;
+        while (holders.length() > i) {
+            holders.remove(holders.at(i));
+            i++;
+            revert Stop();
+        }
+    }
+
     // Same `at`/`remove` names on a non-EnumerableSet type: out of scope.
     function customSetIsNotEnumerableSet() public {
         for (uint256 i = 0; i < bag.length(); i++) {
@@ -485,9 +537,9 @@ contract EnumerableLoopRemoval {
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Documented limitations: real corruptions left unreported because judging them
-    // safely would take the flow analysis this detector does not run. It prefers
-    // silence to a guess whenever a control-flow construct is in play.
+    // Documented limitations: real corruptions left unreported because judging them safely would
+    // take flow or value analysis this detector does not run. It stays silent outside the narrow
+    // supported shape.
     // ─────────────────────────────────────────────────────────────────────────────
 
     // A conditional removal whose set the loop keeps iterating: safe only if the mutating path
@@ -533,6 +585,24 @@ contract EnumerableLoopRemoval {
         for (uint256 i = 0; i < holders.length(); i++) {
             uint256 idx = i;
             holders.remove(holders.at(idx));
+        }
+    }
+
+    // Composite indices are outside the deliberately narrow `at(i)` shape, even when their value
+    // equals the cadence and the loop has the same corruption.
+    function removeAtCompositeCadenceIndex() public {
+        for (uint256 i = 0; i < holders.length(); i++) {
+            holders.remove(holders.at(i + 0));
+        }
+    }
+
+    // Unlike the safe reverse drain above, removing another value can move the already-read tail
+    // into a slot this descending walk has not visited. All descending traversals are deliberately
+    // unreported because the detector does not prove the relationship between `at` and `remove`.
+    function removeAnotherValueWhileDescending(address target) public {
+        for (uint256 i = holders.length(); i > 0; i--) {
+            pending = holders.at(i - 1);
+            holders.remove(target);
         }
     }
 
