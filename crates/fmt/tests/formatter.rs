@@ -26,6 +26,41 @@ fn assert_eof(content: &str) {
     assert!(!content.ends_with("\n\n"), "extra trailing newline");
 }
 
+#[test]
+fn chained_named_call_layout_ignores_source_spacing() {
+    let path = Path::new("test.sol");
+
+    for (line_length, bracket_spacing, compact, spaced) in [
+        (
+            40,
+            false,
+            "factory().foo(a,b,c).baz({value: result});",
+            "factory().foo(a, b, c).baz({value: result});",
+        ),
+        (
+            32,
+            false,
+            "factory().foo(a+b).baz({value: result});",
+            "factory().foo(a + b).baz({value: result});",
+        ),
+        (
+            34,
+            false,
+            "factory().foo([a,b]).baz({value: result});",
+            "factory().foo([a, b]).baz({value: result});",
+        ),
+        (38, true, "factory().foo(a,b,c).baz({});", "factory().foo(a, b, c).baz({ });"),
+    ] {
+        let config =
+            Arc::new(FormatterConfig { line_length, bracket_spacing, ..Default::default() });
+        let source = |expr| format!("contract C {{ function f() external {{ {expr} }} }}");
+        assert_eq!(
+            format(&source(compact), path, config.clone()),
+            format(&source(spaced), path, config.clone()),
+        );
+    }
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }

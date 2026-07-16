@@ -1310,15 +1310,20 @@ impl<'ast> State<'_, 'ast> {
                     .is_some_and(|call| call.keep_inline && call.callee.contains(expr.span))
                     && !self.has_comments_between_elements(call_args.span, call_args.exprs());
                 self.call_with_opts_and_args = is_call_with_opts_and_args(&expr.kind);
+                let named_args_size = if call_args.is_empty() {
+                    4 + usize::from(self.config.bracket_spacing)
+                } else {
+                    2
+                };
                 self.chained_named_call = (matches!(call_args.kind, ast::CallArgsKind::Named(_))
                     && is_call_chain(&call_expr.kind, true))
                 .then(|| ChainedNamedCall {
                     callee: call_expr.span,
                     keep_inline: !call_chain_contains_options(call_expr)
                         && !self.has_comment_between(call_expr.span.lo(), call_expr.span.hi())
-                        && self.estimate_size(call_expr.span)
-                            + if call_args.is_empty() { 4 } else { 2 }
-                            <= self.space_left(),
+                        && self
+                            .estimate_call_chain_size(call_expr)
+                            .is_some_and(|size| size + named_args_size <= self.space_left()),
                 })
                 .or_else(|| {
                     chained_named_call_cache.filter(|call| call.callee.contains(expr.span))
@@ -2790,6 +2795,51 @@ impl<'ast> State<'_, 'ast> {
                 self.estimate_lhs_size(lhs, op)
             }
             _ => self.estimate_size(expr.span),
+        }
+    }
+
+    fn estimate_call_chain_size(&self, expr: &ast::Expr<'_>) -> Option<usize> {
+        match &expr.kind {
+            ast::ExprKind::Call(callee, args) => {
+                let ast::CallArgsKind::Unnamed(args) = &args.kind else { return None };
+                let mut size = self.estimate_call_chain_size(callee)? + 2;
+                for arg in args.iter() {
+                    size += self.estimate_call_chain_size(arg)?;
+                }
+                Some(size + args.len().saturating_sub(1) * 2)
+            }
+            ast::ExprKind::Ident(ident) => Some(ident.to_string().len()),
+            ast::ExprKind::Index(expr, kind) => {
+                let index_size = match kind {
+                    ast::IndexKind::Index(Some(index)) => self.estimate_call_chain_size(index)?,
+                    ast::IndexKind::Index(None) => 0,
+                    ast::IndexKind::Range(start, end) => {
+                        let start = match start {
+                            Some(start) => self.estimate_call_chain_size(start)?,
+                            None => 0,
+                        };
+                        let end = match end {
+                            Some(end) => self.estimate_call_chain_size(end)?,
+                            None => 0,
+                        };
+                        start + end + 1
+                    }
+                };
+                Some(self.estimate_call_chain_size(expr)? + index_size + 2)
+            }
+            // Zero is invariant under all number underscore configurations.
+            ast::ExprKind::Lit(lit, None)
+                if matches!(lit.kind, ast::LitKind::Number(_)) && lit.symbol.as_str() == "0" =>
+            {
+                Some(1)
+            }
+            ast::ExprKind::Member(expr, ident) => {
+                Some(self.estimate_call_chain_size(expr)? + ident.to_string().len() + 1)
+            }
+            ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(expr)] = exprs.as_ref() => {
+                Some(self.estimate_call_chain_size(expr)? + 2)
+            }
+            _ => None,
         }
     }
 
