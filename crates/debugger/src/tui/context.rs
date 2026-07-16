@@ -98,6 +98,7 @@ pub(crate) struct TUIContext<'a> {
     pub(crate) show_source: bool,
     pub(crate) show_variables: bool,
     pub(crate) show_stack: bool,
+    pub(crate) show_data: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
     pub(crate) active_buffer: BufferKind,
     active_storage: Option<StorageSpace>,
@@ -127,6 +128,7 @@ impl<'a> TUIContext<'a> {
             show_source: true,
             show_variables: true,
             show_stack: true,
+            show_data: true,
             active_buffer: BufferKind::Memory,
             active_storage: None,
         }
@@ -715,6 +717,8 @@ impl TUIContext<'_> {
             self.run_pane_command(command, PaneCommand::Variables, parts);
         } else if STACK_COMMANDS.contains(&command) {
             self.run_pane_command(command, PaneCommand::Stack, parts);
+        } else if DATA_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Data, parts);
         } else if HELP_COMMANDS.contains(&command) {
             self.set_info(command_help());
         } else {
@@ -866,6 +870,10 @@ impl TUIContext<'_> {
             PaneCommand::Stack => {
                 self.show_stack = !self.show_stack;
                 self.show_stack
+            }
+            PaneCommand::Data => {
+                self.show_data = !self.show_data;
+                self.show_data
             }
         };
         let state = if shown { "shown" } else { "hidden" };
@@ -1098,6 +1106,7 @@ const OPCODE_COMMANDS: &[&str] = &["opcodes", "opcode", "ops"];
 const SOURCE_COMMANDS: &[&str] = &["source", "src"];
 const VARIABLES_COMMANDS: &[&str] = &["variables", "vars"];
 const STACK_COMMANDS: &[&str] = &["stack"];
+const DATA_COMMANDS: &[&str] = &["data"];
 const HELP_COMMANDS: &[&str] = &["help", "h"];
 
 #[derive(Clone, Copy)]
@@ -1106,6 +1115,7 @@ enum PaneCommand {
     Source,
     Variables,
     Stack,
+    Data,
 }
 
 impl PaneCommand {
@@ -1115,6 +1125,7 @@ impl PaneCommand {
             Self::Source => "Source",
             Self::Variables => "Variables",
             Self::Stack => "Stack",
+            Self::Data => "Data",
         }
     }
 }
@@ -1125,7 +1136,7 @@ fn command_usage(command: &str, arg: &str) -> String {
 
 fn command_help() -> String {
     format!(
-        "Commands: {} <pc>, {} <pc>, {} [<offset>], {} [<offset>], {} [<offset>], {} [<slot>], {} [<slot>], {} <line>, {}, {}, {}, {}",
+        "Commands: {} <pc>, {} <pc>, {} [<offset>], {} [<offset>], {} [<offset>], {} [<slot>], {} [<slot>], {} <line>, {}, {}, {}, {}, {}",
         command_aliases(CONTINUE_COMMANDS),
         command_aliases(PC_COMMANDS),
         command_aliases(MEMORY_COMMANDS),
@@ -1137,7 +1148,8 @@ fn command_help() -> String {
         command_aliases(OPCODE_COMMANDS),
         command_aliases(SOURCE_COMMANDS),
         command_aliases(VARIABLES_COMMANDS),
-        command_aliases(STACK_COMMANDS)
+        command_aliases(STACK_COMMANDS),
+        command_aliases(DATA_COMMANDS)
     )
 }
 
@@ -2475,6 +2487,7 @@ mod tests {
             SOURCE_COMMANDS,
             VARIABLES_COMMANDS,
             STACK_COMMANDS,
+            DATA_COMMANDS,
         ] {
             assert!(help.contains(&command_aliases(commands)));
         }
@@ -2538,6 +2551,14 @@ mod tests {
         tui.run_command_from_input(":stack");
         assert!(tui.show_stack);
         assert_eq!(tui.status.as_ref().unwrap().text, "Stack pane: shown");
+
+        tui.run_command_from_input("data");
+        assert!(!tui.show_data);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Data pane: hidden");
+
+        tui.run_command_from_input(":data");
+        assert!(tui.show_data);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Data pane: shown");
 
         tui.run_command_from_input("stack extra");
         let status = tui.status.as_ref().unwrap();

@@ -112,9 +112,9 @@ impl TUIContext<'_> {
 
         let opcodes_weight = if self.show_opcodes { 1 } else { 0 };
         let source_weight = if self.show_source { 3 } else { 0 };
-        let memory_weight = if self.show_source { 1 } else { 2 };
+        let data_weight = if self.show_data { if self.show_source { 1 } else { 2 } } else { 0 };
         let total_weight = opcodes_weight
-            + memory_weight
+            + data_weight
             + source_weight
             + if self.show_variables { 1 } else { 0 }
             + if self.show_stack { 1 } else { 0 };
@@ -128,7 +128,9 @@ impl TUIContext<'_> {
         if self.show_stack {
             constraints.push(Constraint::Ratio(1, total_weight));
         }
-        constraints.push(Constraint::Ratio(memory_weight, total_weight));
+        if self.show_data {
+            constraints.push(Constraint::Ratio(data_weight, total_weight));
+        }
         if self.show_source {
             constraints.push(Constraint::Ratio(source_weight, total_weight));
         }
@@ -144,8 +146,9 @@ impl TUIContext<'_> {
         if self.show_stack {
             self.draw_stack(f, *panes.next().expect("stack pane is visible"));
         }
-        let data_pane = *panes.next().expect("data pane is always visible");
-        self.draw_data(f, data_pane);
+        if self.show_data {
+            self.draw_data(f, *panes.next().expect("data pane is visible"));
+        }
         if self.show_source {
             self.draw_src(f, *panes.next().expect("source pane is visible"));
         }
@@ -178,18 +181,21 @@ impl TUIContext<'_> {
         };
 
         let has_left_pane = self.show_opcodes || self.show_source;
-        let (app_left, app_right) = if has_left_pane {
-            // Split app in 2 horizontally.
-            let [app_left, app_right] = Layout::new(
-                Direction::Horizontal,
-                [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)],
-            )
-            .split(app)[..] else {
-                unreachable!()
-            };
-            (Some(app_left), app_right)
-        } else {
-            (None, app)
+        let has_right_pane = self.show_variables || self.show_stack || self.show_data;
+        let (app_left, app_right) = match (has_left_pane, has_right_pane) {
+            (true, true) => {
+                let [app_left, app_right] = Layout::new(
+                    Direction::Horizontal,
+                    [Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)],
+                )
+                .split(app)[..] else {
+                    unreachable!()
+                };
+                (Some(app_left), Some(app_right))
+            }
+            (true, false) => (Some(app), None),
+            (false, true) => (None, Some(app)),
+            (false, false) => (None, None),
         };
 
         if footer_height > 0 {
@@ -216,26 +222,33 @@ impl TUIContext<'_> {
             }
         }
 
-        let total_weight =
-            2 + if self.show_variables { 1 } else { 0 } + if self.show_stack { 1 } else { 0 };
-        let mut constraints = Vec::with_capacity(3);
-        if self.show_variables {
-            constraints.push(Constraint::Ratio(1, total_weight));
-        }
-        if self.show_stack {
-            constraints.push(Constraint::Ratio(1, total_weight));
-        }
-        constraints.push(Constraint::Ratio(2, total_weight));
+        if let Some(app_right) = app_right {
+            let total_weight = if self.show_variables { 1 } else { 0 }
+                + if self.show_stack { 1 } else { 0 }
+                + if self.show_data { 2 } else { 0 };
+            let mut constraints = Vec::with_capacity(3);
+            if self.show_variables {
+                constraints.push(Constraint::Ratio(1, total_weight));
+            }
+            if self.show_stack {
+                constraints.push(Constraint::Ratio(1, total_weight));
+            }
+            if self.show_data {
+                constraints.push(Constraint::Ratio(2, total_weight));
+            }
 
-        let panes = Layout::new(Direction::Vertical, constraints).split(app_right);
-        let mut panes = panes.iter();
-        if self.show_variables {
-            self.draw_variables(f, *panes.next().expect("variables pane is visible"));
+            let panes = Layout::new(Direction::Vertical, constraints).split(app_right);
+            let mut panes = panes.iter();
+            if self.show_variables {
+                self.draw_variables(f, *panes.next().expect("variables pane is visible"));
+            }
+            if self.show_stack {
+                self.draw_stack(f, *panes.next().expect("stack pane is visible"));
+            }
+            if self.show_data {
+                self.draw_data(f, *panes.next().expect("data pane is visible"));
+            }
         }
-        if self.show_stack {
-            self.draw_stack(f, *panes.next().expect("stack pane is visible"));
-        }
-        self.draw_data(f, *panes.next().expect("data pane is always visible"));
     }
 
     fn footer_height(&self) -> u16 {
@@ -1684,6 +1697,31 @@ mod tests {
         assert!(!screen.contains("Stack:"));
         assert!(screen.contains("Variables"));
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn hidden_data_pane_omits_data_panel() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        context.layout = DebuggerLayout::Horizontal;
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.show_variables = false;
+        tui.show_stack = false;
+        tui.show_data = false;
+        let backend = TestBackend::new(220, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_layout(f)).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!screen.contains("Memory (max expansion: 0 bytes)"));
+        assert!(screen.contains("Contract call"));
     }
 
     #[test]
