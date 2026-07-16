@@ -17,8 +17,8 @@ address owner;
 
 The lint follows modifiers, library calls, and resolved internal call paths from public, external,
 fallback, and receive entry points. If an entry point writes the variable directly or through a
-reachable helper, the required function or modifier must also be reachable from that entry point.
-This includes writes through storage references, returned storage locations, collection
+reachable helper, the required function or modifier must dominate every path to that write. This
+includes writes through storage references, returned storage locations, collection
 `push`/`pop` operations, and resolvable inline-assembly storage slots.
 
 Overloads are matched by their exact signature. Inherited variables, entry points, functions, and
@@ -27,9 +27,9 @@ such as `this.onlyOwner()` do not satisfy an internal write-protection requireme
 signature or malformed `write-protection` value is treated as unsatisfied so an invalid annotation
 cannot silently disable the lint.
 
-Like Slither's annotation semantics, this rule is reachability-based rather than order- or
-path-sensitive: the annotation identifies a required internal call, not a proof that the call
-dominates every write.
+Like Slither's annotation semantics, the annotation identifies a required internal function or
+modifier by its exact signature. The lint additionally checks control-flow order so a call after a
+write or on only one branch does not satisfy the requirement.
 
 ## Why is this bad?
 

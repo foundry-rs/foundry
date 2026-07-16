@@ -193,15 +193,55 @@ contract ReachabilitySemantics {
         require(msg.sender == owner);
     }
 
-    // Slither's annotation is reachability-based, so the call need not dominate the write.
-    function branchGuard(bool guard, address newOwner) external {
+    function branchGuard(bool guard, address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
         if (guard) checkOwner();
         owner = newOwner;
     }
 
-    function guardAfterWrite(address newOwner) external {
+    function guardAfterWrite(address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
         owner = newOwner;
         checkOwner();
+    }
+
+    function guardBeforeWrite(address newOwner) external {
+        checkOwner();
+        owner = newOwner;
+    }
+
+    function guardOnEveryBranch(bool branch, address newOwner) external {
+        if (branch) checkOwner();
+        else checkOwner();
+        owner = newOwner;
+    }
+
+    function guardOnOneReturnPath(bool skip, address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
+        maybeGuard(skip);
+        owner = newOwner;
+    }
+
+    function ternaryGuard(bool guard, address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
+        guard ? checkOwnerBool() : true;
+        owner = newOwner;
+    }
+
+    function shortCircuitGuard(bool guard, address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
+        guard && checkOwnerBool();
+        owner = newOwner;
+    }
+
+    function guardOnEveryTernaryArm(bool guard, address newOwner) external {
+        guard ? checkOwnerBool() : checkOwnerBool();
+        owner = newOwner;
+    }
+
+    function maybeGuard(bool skip) internal view {
+        if (skip) return;
+        checkOwner();
+    }
+
+    function checkOwnerBool() internal view returns (bool) {
+        checkOwner();
+        return true;
     }
 }
 
@@ -256,5 +296,126 @@ contract MalformedProtection {
 
     function setUnprotected(address newValue) external {
         unprotected = newValue;
+    }
+}
+
+contract ModifierContinuations {
+    /// @custom:security write-protection="checkOwner()"
+    address public owner;
+
+    modifier blocked() {
+        revert();
+        _;
+    }
+
+    modifier passthrough() {
+        _;
+    }
+
+    modifier checkAfter() {
+        _;
+        checkOwner();
+    }
+
+    modifier writeAfter(address newOwner) {
+        _;
+        owner = newOwner;
+    }
+
+    function checkOwner() internal view {
+        require(msg.sender == owner);
+    }
+
+    function unreachableWrite(address newOwner) external blocked {
+        owner = newOwner;
+    }
+
+    function reachableWrite(address newOwner) external passthrough { //~WARN: protected variable `owner` is written without `checkOwner()`
+        owner = newOwner;
+    }
+
+    function guardAfterBody(address newOwner) external checkAfter { //~WARN: protected variable `owner` is written without `checkOwner()`
+        owner = newOwner;
+    }
+
+    function unreachableOuterPost(address newOwner) external writeAfter(newOwner) blocked {}
+
+    function reachableOuterPost(address newOwner) external writeAfter(newOwner) passthrough {} //~WARN: protected variable `owner` is written without `checkOwner()`
+
+    function returnBeforeOuterPost(address newOwner) external writeAfter(newOwner) { //~WARN: protected variable `owner` is written without `checkOwner()`
+        return;
+    }
+
+    function conditionalReturnBeforeOuterPost(bool skip, address newOwner) //~WARN: protected variable `owner` is written without `checkOwner()`
+        external
+        writeAfter(newOwner)
+    {
+        if (skip) return;
+        checkOwner();
+    }
+}
+
+contract YulStoragePointerRetargeting {
+    /// @custom:security write-protection="onlyOwner()"
+    uint256[] internal protectedValues;
+
+    uint256[] internal ordinaryValues;
+
+    function retargetAwayFromProtected() external {
+        uint256[] storage pointer = protectedValues;
+        assembly {
+            pointer.slot := ordinaryValues.slot
+        }
+        pointer.push(1);
+    }
+
+    function retargetToProtected() external { //~WARN: protected variable `protectedValues` is written without `onlyOwner()`
+        uint256[] storage pointer = ordinaryValues;
+        assembly {
+            pointer.slot := protectedValues.slot
+        }
+        pointer.push(1);
+    }
+}
+
+contract TransientStorageWrites {
+    /// @custom:security write-protection="onlyOwner()"
+    uint256 internal protectedValue;
+
+    function writeTransientStorage() external {
+        assembly {
+            tstore(protectedValue.slot, 1)
+        }
+    }
+
+    function writePersistentStorage() external { //~WARN: protected variable `protectedValue` is written without `onlyOwner()`
+        assembly {
+            sstore(protectedValue.slot, 1)
+        }
+    }
+}
+
+contract YulCallReturnSummaries {
+    /// @custom:security write-protection="onlyOwner()"
+    uint256 internal protectedValue;
+
+    uint256 internal ordinaryValue;
+
+    function storeAtSecondArgument() external {
+        assembly {
+            function pickSecond(first, second) -> result {
+                result := second
+            }
+            sstore(pickSecond(protectedValue.slot, ordinaryValue.slot), 1)
+        }
+    }
+
+    function storeAtFirstArgument() external { //~WARN: protected variable `protectedValue` is written without `onlyOwner()`
+        assembly {
+            function pickFirst(first, second) -> result {
+                result := first
+            }
+            sstore(pickFirst(protectedValue.slot, ordinaryValue.slot), 1)
+        }
     }
 }
