@@ -2660,6 +2660,43 @@ forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
   sender nonce 1124703[..]"#]]);
 });
 
+forgetest_async!(should_override_sender_nonce_via_cli, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "MyScript.s.sol",
+        r#"
+        import {Script, console} from "forge-std/Script.sol";
+
+        contract MyScript is Script {
+            function run() public view {
+                console.log("sender nonce", vm.getNonce(msg.sender));
+            }
+        }
+        "#,
+    );
+
+    cmd.args([
+        "script",
+        "MyScript",
+        "--sender",
+        "0x1000000000000000000000000000000000000000",
+        "--sender-nonce",
+        "7",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+== Logs ==
+  sender nonce 7
+
+"#]]);
+});
+
 forgetest_async!(dryrun_without_broadcast, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
