@@ -178,6 +178,11 @@ contract TypeBasedTautology {
         return uint256(uint8(raw)) > 0 || raw == 0; // ok -- the inner cast can change the value
     }
 
+    function nestedCastedSamePathOr(uint256 raw) public pure returns (bool) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint256(uint8(raw)) > 0 || uint256(uint8(raw)) == 0; //~WARN: condition is always true or false based on the variable's type
+    }
+
     function uintNegativeZeroLowerBoundaryOr(uint256 x) public pure returns (bool) {
         return x > -0 || x == -0; //~WARN: condition is always true or false based on the variable's type
     }

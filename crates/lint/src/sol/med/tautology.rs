@@ -33,7 +33,7 @@ impl<'hir> LateLintPass<'hir> for TypeBasedTautology {
         // comparison is tautological on its own, e.g. `x > 0 || x == 0` for `uint`.
         if op.kind == BinOpKind::Or
             && let (Some(left), Some(right)) = (comparison_of(hir, left), comparison_of(hir, right))
-            && is_boundary_composition(left, right)
+            && is_boundary_composition(&left, &right)
         {
             ctx.emit(&TYPE_BASED_TAUTOLOGY, expr.span);
             return;
@@ -71,9 +71,10 @@ impl<'hir> LateLintPass<'hir> for TypeBasedTautology {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Comparison {
     variable: VariableId,
+    cast_path: Vec<ElementaryType>,
     range: IntegerRange,
     op: BinOpKind,
     val_neg: bool,
@@ -104,24 +105,34 @@ fn comparison_of<'hir>(
         return None;
     }
 
-    if let (Some((variable, range)), Some((val_neg, val_mag))) =
+    if let (Some((variable, cast_path, range)), Some((val_neg, val_mag))) =
         (comparison_operand_of(hir, left), lit_value_of(right))
     {
-        return Some(Comparison { variable, range, op: op.kind, val_neg, val_mag });
+        return Some(Comparison { variable, cast_path, range, op: op.kind, val_neg, val_mag });
     }
 
-    if let (Some((val_neg, val_mag)), Some((variable, range))) =
+    if let (Some((val_neg, val_mag)), Some((variable, cast_path, range))) =
         (lit_value_of(left), comparison_operand_of(hir, right))
     {
-        return Some(Comparison { variable, range, op: flip(op.kind), val_neg, val_mag });
+        return Some(Comparison {
+            variable,
+            cast_path,
+            range,
+            op: flip(op.kind),
+            val_neg,
+            val_mag,
+        });
     }
 
     None
 }
 
 /// Returns true for boundary comparisons whose union covers the complete integer type range.
-fn is_boundary_composition(left: Comparison, right: Comparison) -> bool {
-    if left.variable != right.variable || left.range != right.range {
+fn is_boundary_composition(left: &Comparison, right: &Comparison) -> bool {
+    if left.variable != right.variable
+        || left.cast_path != right.cast_path
+        || left.range != right.range
+    {
         return false;
     }
 
@@ -141,17 +152,17 @@ fn is_boundary_composition(left: Comparison, right: Comparison) -> bool {
             && matches_comparison(left, BinOpKind::Lt, upper))
 }
 
-fn matches_comparison(comparison: Comparison, op: BinOpKind, value: (bool, U256)) -> bool {
+fn matches_comparison(comparison: &Comparison, op: BinOpKind, value: (bool, U256)) -> bool {
     comparison.op == op && comparison.val_neg == value.0 && comparison.val_mag == value.1
 }
 
-fn is_lower_point(comparison: Comparison, lower: (bool, U256)) -> bool {
+fn is_lower_point(comparison: &Comparison, lower: (bool, U256)) -> bool {
     (comparison.op == BinOpKind::Eq || comparison.op == BinOpKind::Le)
         && comparison.val_neg == lower.0
         && comparison.val_mag == lower.1
 }
 
-fn is_upper_point(comparison: Comparison, upper: (bool, U256)) -> bool {
+fn is_upper_point(comparison: &Comparison, upper: (bool, U256)) -> bool {
     (comparison.op == BinOpKind::Eq || comparison.op == BinOpKind::Ge)
         && comparison.val_neg == upper.0
         && comparison.val_mag == upper.1
@@ -259,19 +270,19 @@ fn elem_type_of<'hir>(
 /// Extracts a stable variable identity and the reachable integer range of an operand.
 ///
 /// Explicit casts can change the range used for the comparison, but not necessarily the
-/// underlying value being compared. Keeping both pieces lets boundary compositions recognize
-/// expressions such as `uint8(x) > 0 || uint8(x) == 0` without treating two different variables as
+/// underlying value being compared. Keeping the cast path as part of the identity lets boundary
+/// compositions recognize identical nested casts without treating different conversions as
 /// identical.
 fn comparison_operand_of<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
-) -> Option<(VariableId, IntegerRange)> {
+) -> Option<(VariableId, Vec<ElementaryType>, IntegerRange)> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(resolutions) => {
             if let Some(Res::Item(ItemId::Variable(variable))) = resolutions.first()
                 && let TypeKind::Elementary(ty) = hir.variable(*variable).ty.kind
             {
-                return integer_bounds(ty).map(|range| (*variable, range));
+                return integer_bounds(ty).map(|range| (*variable, Vec::new(), range));
             }
         }
         ExprKind::Call(call_expr, args, _) => {
@@ -288,11 +299,11 @@ fn comparison_operand_of<'hir>(
             if exprs.next().is_some() {
                 return None;
             }
-            // Reject nested casts: an inner value-changing cast can make this expression
-            // differ from a comparison over the original variable.
-            let (variable, source_type) = plain_variable_type_of(hir, inner)?;
-            let range = effective_range_for_cast(source_type, *ty)?;
-            return Some((variable, range));
+            let (variable, mut cast_path, source_range) = comparison_operand_of(hir, inner)?;
+            let source_type = expression_type(hir, inner)?;
+            let range = effective_range_for_cast(source_type, source_range, *ty)?;
+            cast_path.push(*ty);
+            return Some((variable, cast_path, range));
         }
         _ => {}
     }
@@ -301,10 +312,11 @@ fn comparison_operand_of<'hir>(
 
 fn effective_range_for_cast(
     source_type: ElementaryType,
+    source_range: IntegerRange,
     target_type: ElementaryType,
 ) -> Option<IntegerRange> {
     if is_value_preserving_widening(source_type, target_type) {
-        integer_bounds(source_type)
+        Some(source_range)
     } else {
         integer_bounds(target_type)
     }
@@ -320,15 +332,26 @@ fn is_value_preserving_widening(source_type: ElementaryType, target_type: Elemen
     }
 }
 
-fn plain_variable_type_of<'hir>(
+fn expression_type<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
-) -> Option<(VariableId, ElementaryType)> {
-    if let ExprKind::Ident(resolutions) = &expr.peel_parens().kind
-        && let Some(Res::Item(ItemId::Variable(variable))) = resolutions.first()
-        && let TypeKind::Elementary(ty) = hir.variable(*variable).ty.kind
-    {
-        return Some((*variable, ty));
+) -> Option<ElementaryType> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(resolutions) => {
+            if let Some(Res::Item(ItemId::Variable(variable))) = resolutions.first()
+                && let TypeKind::Elementary(ty) = hir.variable(*variable).ty.kind
+            {
+                return Some(ty);
+            }
+        }
+        ExprKind::Call(call_expr, _, _) => {
+            if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) =
+                &call_expr.kind
+            {
+                return Some(*ty);
+            }
+        }
+        _ => {}
     }
     None
 }
