@@ -10,6 +10,7 @@ use alloy_rpc_types::{
 };
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_test_utils::rpc;
+use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_simulate_v1() {
@@ -181,4 +182,66 @@ async fn test_simulate_tracks_amsterdam_gas_dimensions_separately() {
     let cumulative_gas_used = block.calls.iter().map(|call| call.gas_used).sum::<u64>();
     assert!(cumulative_gas_used > gas_limit);
     assert!(block.inner.header.gas_used <= gas_limit);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_create_calls_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [
+                {},
+                {
+                    "calls": [
+                        {},
+                        {"from": "0xc000000000000000000000000000000000000000"},
+                        {"input": "0x602a5f526001601ff3"},
+                        {"input": "0x63deadbeef5f526004601cfd"}
+                    ]
+                }
+            ],
+            "returnFullTransactions": true
+        }, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"][0]["calls"], json!([]));
+    assert_eq!(response["result"][0]["transactions"], json!([]));
+
+    let block = &response["result"][1];
+    let calls = block["calls"].as_array().unwrap();
+    assert_eq!(calls.len(), 4);
+    assert_eq!(calls[0]["status"], "0x1");
+    assert_eq!(calls[0]["returnData"], "0x");
+    assert_eq!(calls[1]["status"], "0x1");
+    assert_eq!(calls[1]["returnData"], "0x");
+    assert_eq!(calls[2]["status"], "0x1");
+    assert_eq!(calls[2]["returnData"], "0x2a");
+    assert_eq!(calls[3]["status"], "0x0");
+    assert_eq!(calls[3]["returnData"], "0x");
+    assert_eq!(calls[3]["error"]["code"], 3);
+    assert_eq!(calls[3]["error"]["data"], "0xdeadbeef");
+
+    let transactions = block["transactions"].as_array().unwrap();
+    assert_eq!(transactions.len(), 4);
+    assert!(transactions.iter().all(|transaction| transaction["to"].is_null()));
+}
+
+async fn rpc_request(endpoint: &str, method: &str, params: Value) -> Value {
+    let response = reqwest::Client::new()
+        .post(endpoint)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    response.json().await.unwrap()
 }

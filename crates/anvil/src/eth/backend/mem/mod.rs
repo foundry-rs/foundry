@@ -5181,10 +5181,16 @@ impl Backend<FoundryNetwork> {
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
 
-                    let mut request = Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    let mut request =
+                        Into::<FoundryTransactionRequest>::into(WithOtherFields::new(request));
+                    if request.as_ref().to.is_none() {
+                        request.as_mut().to = Some(TxKind::Create);
+                    }
                     request.prep_for_submission();
 
-                    let typed_tx = request.build_unsigned().map_err(|e| BlockchainError::InvalidTransactionRequest(e.to_string()))?;
+                    let typed_tx = request.build_unsigned().map_err(|e| {
+                        BlockchainError::InvalidTransactionRequest(e.to_string())
+                    })?;
 
                     let tx = build_impersonated(typed_tx);
                     let tx_hash = tx.hash();
@@ -5197,7 +5203,11 @@ impl Backend<FoundryNetwork> {
                     );
                     transactions.push(rpc_tx);
 
-                    let return_data = result.output().cloned().unwrap_or_default();
+                    let return_data = if result.is_success() {
+                        result.output().cloned().unwrap_or_default()
+                    } else {
+                        Bytes::new()
+                    };
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.tx_gas_used(),
@@ -5205,6 +5215,17 @@ impl Backend<FoundryNetwork> {
                         status: result.is_success(),
                         error: match &result {
                             ExecutionResult::Success { .. } => None,
+                            ExecutionResult::Revert { output, .. } => {
+                                let message = RevertDecoder::new()
+                                    .maybe_decode(output, None)
+                                    .map(|reason| format!("execution reverted: {reason}"))
+                                    .unwrap_or_else(|| "execution reverted".to_string());
+                                Some(SimulateError {
+                                    code: SimulateError::EXECUTION_REVERTED_CODE,
+                                    message,
+                                    data: Some(output.clone()),
+                                })
+                            }
                             ExecutionResult::Halt {
                                 reason: HaltReason::OutOfGas(_), ..
                             } => Some(SimulateError {
