@@ -1,7 +1,7 @@
 use super::EnumerableLoopRemoval;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::primitives::branch_always_exits},
+    sol::{Severity, SolLint},
 };
 use alloy_primitives::U256;
 use solar::{
@@ -25,6 +25,16 @@ declare_forge_lint!(
     "`remove` on an EnumerableSet inside a loop that iterates it with `at` corrupts the iteration"
 );
 
+// The detector reports only the shape it can judge without a flow analysis: a loop whose own
+// index steps upward unconditionally, reads the set with `at` at that index, and removes from
+// the same set in a straight-line body. Anything a control-flow construct could change, a
+// conditional cadence, a `break`/`continue`/`return`/`revert`, a nested loop, is left clean
+// rather than guessed at. This keeps the canonical corruption, an ascending walk that removes
+// as it goes, reported while never warning on the safe swap-and-pop and drain-and-exit forms
+// whose safety depends on where control flows. The known-missed cases (descending drains,
+// member cursors, composite index arithmetic, removals that shift a slot read before an exit)
+// are documented limits, not silent guesses.
+
 impl<'hir> LateLintPass<'hir> for EnumerableLoopRemoval {
     fn check_function(
         &mut self,
@@ -33,10 +43,6 @@ impl<'hir> LateLintPass<'hir> for EnumerableLoopRemoval {
         hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        // EnumerableSet removal is swap-and-pop, so removing while iterating the same set at an
-        // index the loop advances skips elements or reads out-of-bounds indices. The safe
-        // patterns (collect during the loop and remove in a later loop, drain at an index the
-        // loop never moves, iterate a different set, remove and leave the loop) stay clean.
         if let Some(body) = &func.body {
             let mut finder =
                 LoopFinder { gcx, hir, ctx, bindings: Vec::new(), emitted: HashSet::new() };
@@ -78,7 +84,7 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
         {
             let init = &block.stmts[..block.stmts.len() - 1];
             self.walk_body(init);
-            self.enter_loop(init, body.stmts);
+            self.enter_loop(init, body.stmts, LoopSource::For);
             return;
         }
         match &stmt.kind {
@@ -87,7 +93,7 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
                 self.walk_body(block.stmts);
             }
             // A bare loop is a `while`, a `do-while`, or a `for` with no init.
-            StmtKind::Loop(body, _) => self.enter_loop(&[], body.stmts),
+            StmtKind::Loop(body, source) => self.enter_loop(&[], body.stmts, *source),
             StmtKind::If(_, then, else_) => {
                 // The condition and either branch may write a reference, and which of them ran
                 // is not read here: everything the statement writes stops naming one thing, and
@@ -118,11 +124,18 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
     /// loop may have run on an earlier turn by the time any statement of it runs again, so
     /// everything the loop writes, init included, stops naming one thing before the loop is
     /// judged, and stays so past it.
-    fn enter_loop(&mut self, init: &'hir [Stmt<'hir>], body: &'hir [Stmt<'hir>]) {
+    fn enter_loop(
+        &mut self,
+        init: &'hir [Stmt<'hir>],
+        body: &'hir [Stmt<'hir>],
+        source: LoopSource,
+    ) {
         self.poison_writes(init);
         self.poison_writes(body);
-        let cadence = cadence_carriers(self.hir, init, body, loop_own_index(self.hir, init, body));
-        self.analyze_loop(body, &cadence);
+        // Analyze the user-written body, peeled out of the synthetic condition guard the lowering
+        // wraps every loop in (`if (cond) { body } else break`), so the guard's `break` and the
+        // `for`'s next-step are read for what they are, not as user control flow.
+        self.analyze_loop(real_body(source, body));
         let mark = self.bindings.len();
         self.walk_body(body);
         self.bindings.truncate(mark);
@@ -166,24 +179,49 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
         }
     }
 
-    /// Flags the removals in `body` that corrupt this loop's iteration. `cadence` is the loop's
-    /// own moving cadence, see [`loop_own_index`].
-    fn analyze_loop(&mut self, body: &'hir [Stmt<'hir>], cadence: &[VariableId]) {
-        // Which sets this loop iterates, and which it removes from.
+    /// Flags the removals in `body` that corrupt this loop's iteration, under the shrunk rule:
+    /// an unconditional ascending cadence, a straight-line body, and a `remove` on a set the
+    /// loop reads with `at` at that cadence.
+    fn analyze_loop(&mut self, body: &'hir [Stmt<'hir>]) {
+        // A control-flow construct in the body would make the corruption depend on where
+        // control flows, which this detector does not track. Stay silent instead of guessing.
+        if !body_is_straight_line(body) {
+            return;
+        }
+        // The loop's own index must step upward on the straight line of the body, never under a
+        // branch. Without one, the iteration order is not the ascending walk the swap-and-pop
+        // corruption needs.
+        let cadence = ascending_cadence(self.hir, body);
+        if cadence.is_empty() {
+            return;
+        }
+        // Which sets this loop iterates with `at` at that cadence.
         let mut ats = AtCollector {
             gcx: self.gcx,
             hir: self.hir,
             bindings: &self.bindings,
-            cadence,
+            cadence: &cadence,
             iterated: Vec::new(),
         };
         for stmt in body {
             let _ = ats.visit_stmt(stmt);
         }
-        // Nested loops included: their removals mutate the set this loop is walking, unless
-        // control leaves first.
+        if ats.iterated.is_empty() {
+            return;
+        }
+        // Every removal in the body, conditional or not: a straight-line body has no exit that
+        // could make a conditional removal safe, so the mutation always shifts a slot the
+        // ascending walk still reads.
         let mut removes = Vec::new();
-        collect_removes(self.gcx, self.hir, &self.bindings, body, false, false, &mut removes);
+        let mut scan = RemoveScanner {
+            gcx: self.gcx,
+            hir: self.hir,
+            bindings: &self.bindings,
+            out: &mut removes,
+        };
+        for stmt in body {
+            let _ = scan.visit_stmt(stmt);
+        }
         for (removed, span) in removes {
             let corrupts = ats.iterated.iter().any(|iterated| paths_alias(&removed, iterated));
             if corrupts && self.emitted.insert(span) {
@@ -193,299 +231,140 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
     }
 }
 
-/// How a loop's own statement names a variable as its cadence: a progression stepping it
-/// downward, a progression stepping it any other way, or a mention in a termination guard,
-/// which says nothing about direction.
-#[derive(PartialEq, Eq, Clone, Copy)]
-enum CadenceHint {
-    Descends,
-    Advances,
-    Guards,
-}
-
-/// The variables that pace a loop's iteration forward, its moving cadence. A variable qualifies
-/// when the loop advances it anywhere in its body, nested loops included, and it also names the
-/// loop's own turn: progressed in the loop's body outside any nested loop (a `for`'s `i++`, a
-/// `while`'s counter), or tested in one of the loop's termination guards. A nested loop's own
-/// cursor, progressed and tested only inside it, names neither, so it stays the nested loop's
-/// even when declared outside the enclosing body, a function parameter or a hoisted local
-/// included.
-///
-/// A cadence only ever stepped downward is left out: swap-and-pop moves the tail element into
-/// the slot being emptied, and a walk going down never returns to a slot at or above the one it
-/// just read, so `for (uint256 i = set.length(); i > 0; i--) set.remove(set.at(i - 1))` drains
-/// without skipping anything. A cadence stepped upward, or moved in a shape this reading cannot
-/// direct, walks into the swapped-in tail and is kept.
-fn loop_own_index<'hir>(
-    hir: &'hir Hir<'hir>,
-    init: &'hir [Stmt<'hir>],
-    body: &'hir [Stmt<'hir>],
-) -> Vec<VariableId> {
-    let mut advanced = Vec::new();
-    collect_variables(hir, init, &mut advanced);
-    collect_variables(hir, body, &mut advanced);
-    let mut hints = Vec::new();
-    collect_cadence_hints(hir, init, &mut hints);
-    collect_cadence_hints(hir, body, &mut hints);
-    let mut moving = Vec::new();
-    // Keep every advanced variable a hint names, unless each progression seen steps it
-    // downward; a variable named only by a guard has no direction to read and is kept.
-    for (variable, _) in &hints {
-        if !advanced.contains(variable) || moving.contains(variable) {
-            continue;
-        }
-        let mut progressions = 0usize;
-        let mut downward = 0usize;
-        // Judged over every hint naming this variable: one upward step anywhere breaks the
-        // downward walk.
-        for (named, hint) in &hints {
-            if named != variable {
-                continue;
+/// The user-written body of a loop, peeled out of the synthetic condition guard the AST lowering
+/// wraps it in. A `for`/`while` lowers to a single `if (cond) { body } else break`, its `body`
+/// holding the user statements (and, for a `for`, the next-step); a `do-while` appends an
+/// `if (cond) continue else break` after the user statements. Peeling these makes the guard's
+/// `break`/`continue` and the next-step read for what they are, not as user control flow. A body
+/// that does not match the exact synthetic shape is returned unchanged.
+fn real_body<'hir>(source: LoopSource, body: &'hir [Stmt<'hir>]) -> &'hir [Stmt<'hir>] {
+    match source {
+        LoopSource::For | LoopSource::While => {
+            if let [only] = body
+                && let StmtKind::If(_, then, Some(else_)) = &only.kind
+                && matches!(else_.kind, StmtKind::Break)
+            {
+                return std::slice::from_ref(*then);
             }
-            match hint {
-                CadenceHint::Descends => {
-                    progressions += 1;
-                    downward += 1;
-                }
-                CadenceHint::Advances => progressions += 1,
-                CadenceHint::Guards => {}
-            }
+            body
         }
-        // No progression read here means the direction is unknown, so the variable is kept.
-        if progressions == 0 || downward < progressions {
-            moving.push(*variable);
+        LoopSource::DoWhile => {
+            if let Some((last, rest)) = body.split_last()
+                && let StmtKind::If(_, then, Some(else_)) = &last.kind
+                && matches!(then.kind, StmtKind::Continue)
+                && matches!(else_.kind, StmtKind::Break)
+            {
+                return rest;
+            }
+            body
         }
     }
-    moving
 }
 
-/// The moving cadence plus every variable the loop binds from it: `uint256 idx = i;` hands the
-/// cadence to `idx`, so `at(idx)` walks the loop exactly as `at(i)` does. Copies are read
-/// flow-insensitively over the whole body, a copy taken anywhere possibly holding the cadence
-/// when the read runs, so an index derived from the cadence reports even when its arithmetic
-/// happens to walk somewhere safe.
-fn cadence_carriers<'hir>(
-    hir: &'hir Hir<'hir>,
-    init: &'hir [Stmt<'hir>],
-    body: &'hir [Stmt<'hir>],
-    mut carriers: Vec<VariableId>,
-) -> Vec<VariableId> {
-    if carriers.is_empty() {
-        return carriers;
-    }
-    let mut copies = Vec::new();
-    collect_copies(hir, init, &mut copies);
-    collect_copies(hir, body, &mut copies);
-    let mut changed = true;
-    // A copy of a copy carries too: iterate to closure, each pass adding at least one carrier.
-    while changed {
-        changed = false;
-        for (target, value) in &copies {
-            if !carriers.contains(target) && mentions_any(hir, value, &carriers) {
-                carriers.push(*target);
-                changed = true;
-            }
+/// Whether every statement of a loop body runs on one straight line: no branch (`if`/`try`), no
+/// jump (`break`/`continue`/`return`/`revert`), and no nested loop. Bare blocks are transparent.
+/// Any of these would let control skip a removal, skip the cadence step, or leave the loop before
+/// a shifted slot is read, none of which this detector tracks, so their presence makes it silent.
+fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
+    stmts.iter().all(|stmt| match &stmt.kind {
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            body_is_straight_line(block.stmts)
         }
-    }
-    carriers
+        StmtKind::If(..)
+        | StmtKind::Try(..)
+        | StmtKind::Loop(..)
+        | StmtKind::Break
+        | StmtKind::Continue
+        | StmtKind::Return(..) => false,
+        // `revert Foo();`, `revert(...)`, `require(...)`: a revert leaves the loop too. Detected
+        // as an expression statement of a revert or a call that never returns is beyond a plain
+        // structural check, so only the structural jumps above are handled; a body reverting
+        // unconditionally still corrupts nothing, but that is a rare shape and staying silent on
+        // it is safe.
+        _ => true,
+    })
 }
 
-/// Every variable a statement list binds paired with what it binds it to: a declaration's
-/// initializer, or the right-hand side of an assignment to a bare variable, compound forms
-/// included.
-fn collect_copies<'hir>(
+/// The loop's own indices that step upward unconditionally: a bare identifier advanced by `i++`,
+/// `i += <positive literal>`, or `i = i + <positive literal>` as a straight-line statement of the
+/// body (a `for`'s desugared post-step lands here, a `while`'s in-body counter too). A step under
+/// a branch, a reset (`i = 0`), a no-op (`i += 0`), a decrement, or composite arithmetic
+/// (`i = (i + 2) - 1`) does not qualify: the walk is only known to ascend for the simple forms.
+fn ascending_cadence<'hir>(hir: &'hir Hir<'hir>, body: &'hir [Stmt<'hir>]) -> Vec<VariableId> {
+    let mut cadence = Vec::new();
+    collect_ascending_steps(hir, body, &mut cadence);
+    cadence
+}
+
+/// Walks the straight-line statements of a body, bare blocks included, and records each variable
+/// an ascending step names. Does not descend into branches or loops: only unconditional steps
+/// pace the loop.
+fn collect_ascending_steps<'hir>(
     hir: &'hir Hir<'hir>,
     stmts: &'hir [Stmt<'hir>],
-    out: &mut Vec<(VariableId, &'hir Expr<'hir>)>,
-) {
-    struct Copies<'a, 'hir> {
-        hir: &'hir Hir<'hir>,
-        out: &'a mut Vec<(VariableId, &'hir Expr<'hir>)>,
-    }
-    impl<'hir> Visit<'hir> for Copies<'_, 'hir> {
-        type BreakValue = Infallible;
-        fn hir(&self) -> &'hir Hir<'hir> {
-            self.hir
-        }
-        fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-            if let StmtKind::DeclSingle(variable_id) = &stmt.kind
-                && let Some(initializer) = self.hir.variable(*variable_id).initializer
-            {
-                self.out.push((*variable_id, initializer));
-            }
-            self.walk_stmt(stmt)
-        }
-        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-            if let ExprKind::Assign(target, _, value) = &expr.kind
-                && let ExprKind::Ident(resolutions) = &target.peel_parens().kind
-            {
-                for res in *resolutions {
-                    if let Res::Item(ItemId::Variable(variable_id)) = res {
-                        self.out.push((*variable_id, value));
-                    }
-                }
-            }
-            self.walk_expr(expr)
-        }
-    }
-    let mut copies = Copies { hir, out };
-    for stmt in stmts {
-        let _ = copies.visit_stmt(stmt);
-    }
-}
-
-/// The variables that could name a loop's cadence, read from its own body without descending
-/// into nested loops: the ones it progresses directly, each with its step's direction, and the
-/// ones any of its conditions test (its guard, lowered to the first/last `if`, and any
-/// `if (...) break`). A nested loop's cursor, advanced and tested inside that loop, appears in
-/// neither.
-fn collect_cadence_hints<'hir>(
-    hir: &'hir Hir<'hir>,
-    stmts: &'hir [Stmt<'hir>],
-    out: &mut Vec<(VariableId, CadenceHint)>,
-) {
-    struct Hints<'a, 'hir> {
-        hir: &'hir Hir<'hir>,
-        out: &'a mut Vec<(VariableId, CadenceHint)>,
-    }
-    impl<'hir> Visit<'hir> for Hints<'_, 'hir> {
-        type BreakValue = Infallible;
-        fn hir(&self) -> &'hir Hir<'hir> {
-            self.hir
-        }
-        fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-            // A nested loop paces its own cursor; its statements are not this loop's cadence.
-            if matches!(stmt.kind, StmtKind::Loop(..)) {
-                return ControlFlow::Continue(());
-            }
-            // Only a termination guard names the loop's cadence: the desugared
-            // `if (cond) { body } else break`, or a user `if (...) break/return`, whose branch
-            // leaves the loop. A plain `if` testing a variable, `if (j == len) { ... }`, guards
-            // nothing about the iteration and does not make its operands the cadence.
-            if let StmtKind::If(cond, then, else_) = &stmt.kind
-                && (exits_loop(then, false)
-                    || else_.is_some_and(|branch| exits_loop(branch, false)))
-            {
-                let mut named = Vec::new();
-                push_named_variables(self.hir, cond, &mut named);
-                for variable_id in named {
-                    self.out.push((variable_id, CadenceHint::Guards));
-                }
-            }
-            self.walk_stmt(stmt)
-        }
-        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-            // Only a reassignment that advances the variable from its old value paces the loop:
-            // `i++`, `i += n`, `i = i + 1` read the previous value and progress; `i = 0` resets
-            // it each turn and does not, so a cursor a nested loop reseeds is not this loop's
-            // cadence. Each progression carries whether it steps downward: a decrement, a `-=`,
-            // or an assignment subtracting from the variable itself.
-            let progressed = match &expr.kind {
-                ExprKind::Unary(op, operand)
-                    if matches!(
-                        op.kind,
-                        UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-                    ) =>
-                {
-                    Some((*operand, matches!(op.kind, UnOpKind::PreDec | UnOpKind::PostDec)))
-                }
-                // A compound assignment (`+=`, `-=`, ...) reads the old value.
-                ExprKind::Assign(lhs, Some(op), _) => Some((*lhs, op.kind == hir::BinOpKind::Sub)),
-                // A plain assignment progresses only when it reads the target itself.
-                ExprKind::Assign(lhs, None, rhs) if mentions_target(self.hir, lhs, rhs) => {
-                    Some((*lhs, subtracts_from_target(self.hir, lhs, rhs)))
-                }
-                _ => None,
-            };
-            if let Some((progressed, descends)) = progressed
-                && let ExprKind::Ident(resolutions) = &progressed.peel_parens().kind
-            {
-                let hint = if descends { CadenceHint::Descends } else { CadenceHint::Advances };
-                for res in *resolutions {
-                    if let Res::Item(ItemId::Variable(variable_id)) = res {
-                        self.out.push((*variable_id, hint));
-                    }
-                }
-            }
-            self.walk_expr(expr)
-        }
-    }
-    let mut hints = Hints { hir, out };
-    for stmt in stmts {
-        let _ = hints.visit_stmt(stmt);
-    }
-}
-
-/// Whether the right-hand side of an assignment reads a variable its target names, marking the
-/// assignment a progression (`i = i + 1`) rather than a reset (`i = 0`).
-fn mentions_target<'hir>(
-    hir: &'hir Hir<'hir>,
-    target: &'hir Expr<'hir>,
-    value: &'hir Expr<'hir>,
-) -> bool {
-    let mut targets = Vec::new();
-    if let ExprKind::Ident(resolutions) = &target.peel_parens().kind {
-        for res in *resolutions {
-            if let Res::Item(ItemId::Variable(variable_id)) = res {
-                targets.push(*variable_id);
-            }
-        }
-    }
-    if targets.is_empty() {
-        return false;
-    }
-    let mut read = Vec::new();
-    push_named_variables(hir, value, &mut read);
-    targets.iter().any(|variable| read.contains(variable))
-}
-
-/// Whether a plain assignment steps its target downward: the right-hand side subtracts from the
-/// target itself, `i = i - 1`. Anything else that reads the target, `i = i + 1` or `i = j - i`,
-/// is not a downward step.
-fn subtracts_from_target<'hir>(
-    hir: &'hir Hir<'hir>,
-    target: &'hir Expr<'hir>,
-    value: &'hir Expr<'hir>,
-) -> bool {
-    let ExprKind::Binary(minuend, op, _) = &value.peel_parens().kind else { return false };
-    op.kind == hir::BinOpKind::Sub && mentions_target(hir, target, minuend)
-}
-
-/// Every variable an expression names, wherever it sits in the expression tree.
-fn push_named_variables<'hir>(
-    hir: &'hir Hir<'hir>,
-    expr: &'hir Expr<'hir>,
     out: &mut Vec<VariableId>,
 ) {
-    struct Named<'a, 'hir> {
-        hir: &'hir Hir<'hir>,
-        out: &'a mut Vec<VariableId>,
-    }
-    impl<'hir> Visit<'hir> for Named<'_, 'hir> {
-        type BreakValue = Infallible;
-        fn hir(&self) -> &'hir Hir<'hir> {
-            self.hir
-        }
-        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-            if let ExprKind::Ident(resolutions) = &expr.kind {
-                for res in *resolutions {
-                    if let Res::Item(ItemId::Variable(variable_id)) = res {
-                        self.out.push(*variable_id);
-                    }
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                collect_ascending_steps(hir, block.stmts, out);
+            }
+            StmtKind::Expr(expr) => {
+                if let Some(variable_id) = ascending_step(expr.peel_parens())
+                    && !out.contains(&variable_id)
+                {
+                    out.push(variable_id);
                 }
             }
-            self.walk_expr(expr)
+            _ => {}
         }
     }
-    let mut named = Named { hir, out };
-    let _ = named.visit_expr(expr);
 }
 
-/// Collects the sets a loop iterates with `at` at an index its own moving cadence paces. An
-/// `at` whose index never names that cadence reads a slot the loop does not advance over,
-/// wherever the read sits: a stationary cursor drains the position swap-and-pop keeps
-/// refilling, a nested loop's cursor walks that loop, and a literal or a `constant` never moves
-/// at all. An index that cannot be read may be anything, so it is assumed to walk the loop.
+/// The bare identifier an expression steps upward, if it is one of the simple ascending forms.
+fn ascending_step<'hir>(expr: &'hir Expr<'hir>) -> Option<VariableId> {
+    match &expr.kind {
+        // `i++` / `++i`.
+        ExprKind::Unary(op, operand) if matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc) => {
+            bare_identifier(operand)
+        }
+        // `i += <positive literal>`.
+        ExprKind::Assign(lhs, Some(op), rhs)
+            if op.kind == hir::BinOpKind::Add && is_positive_literal(rhs) =>
+        {
+            bare_identifier(lhs)
+        }
+        // `i = i + <positive literal>`.
+        ExprKind::Assign(lhs, None, rhs) => {
+            let target = bare_identifier(lhs)?;
+            let ExprKind::Binary(left, op, right) = &rhs.peel_parens().kind else { return None };
+            (op.kind == hir::BinOpKind::Add
+                && bare_identifier(left) == Some(target)
+                && is_positive_literal(right))
+            .then_some(target)
+        }
+        _ => None,
+    }
+}
+
+/// The variable a bare identifier expression resolves to, or `None` for anything else.
+fn bare_identifier(expr: &Expr<'_>) -> Option<VariableId> {
+    let ExprKind::Ident(resolutions) = &expr.peel_parens().kind else { return None };
+    resolutions.iter().find_map(|res| match res {
+        Res::Item(ItemId::Variable(variable_id)) => Some(*variable_id),
+        _ => None,
+    })
+}
+
+/// Whether an expression is a positive integer literal: `1`, `2`, never `0`.
+fn is_positive_literal(expr: &Expr<'_>) -> bool {
+    let ExprKind::Lit(lit) = &expr.peel_parens().kind else { return false };
+    matches!(&lit.kind, LitKind::Number(value) if !value.is_zero())
+}
+
+/// Collects the sets a loop iterates with `at` at its ascending cadence. An `at` whose index does
+/// not name that cadence reads a slot the loop does not advance over and is left out. An index
+/// that cannot be read may be anything, so it is assumed to walk the loop.
 struct AtCollector<'a, 'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
@@ -508,6 +387,31 @@ impl<'hir> Visit<'hir> for AtCollector<'_, 'hir> {
                 .is_none_or(|index| mentions_any(self.hir, index, self.cadence))
         {
             self.iterated.push(call.set);
+        }
+        self.walk_expr(expr)
+    }
+}
+
+/// Scans a straight-line body for EnumerableSet `remove` calls, with the span to report.
+struct RemoveScanner<'a, 'hir> {
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    bindings: &'a Bindings,
+    out: &'a mut Vec<(Option<SetPath>, Span)>,
+}
+
+impl<'hir> Visit<'hir> for RemoveScanner<'_, 'hir> {
+    type BreakValue = Infallible;
+
+    fn hir(&self) -> &'hir Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let Some(call) = enumerable_set_call(self.gcx, self.hir, self.bindings, expr)
+            && call.name == SetOp::Remove
+        {
+            self.out.push((call.set, expr.span));
         }
         self.walk_expr(expr)
     }
@@ -590,155 +494,6 @@ fn mentions_any<'hir>(
     let mut finder = Finder { hir, variables, found: false };
     let _ = finder.visit_expr(expr);
     finder.found
-}
-
-/// Collects the sets a statement list removes from, with the span to report. `tail_exits` says
-/// whether control always leaves the loop once the list is done, in which case a removal in it is
-/// the last thing the loop does and corrupts nothing.
-fn collect_removes<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    bindings: &Bindings,
-    stmts: &'hir [Stmt<'hir>],
-    tail_exits: bool,
-    nested: bool,
-    out: &mut Vec<(Option<SetPath>, Span)>,
-) {
-    // Whether control leaves the loop after the statement at each position, either through a
-    // later statement of this list or because the list itself is followed by an exit.
-    let mut after = vec![tail_exits; stmts.len()];
-    for index in (0..stmts.len()).rev() {
-        after[index] = match stmts.get(index + 1) {
-            Some(next) => after[index + 1] || exits_loop(next, nested),
-            None => tail_exits,
-        };
-    }
-
-    for (index, stmt) in stmts.iter().enumerate() {
-        let leaves = after[index] || exits_loop(stmt, nested);
-        match &stmt.kind {
-            hir::StmtKind::Block(block) | hir::StmtKind::UncheckedBlock(block) => {
-                collect_removes(gcx, hir, bindings, block.stmts, leaves, nested, out);
-            }
-            hir::StmtKind::If(cond, then, else_) => {
-                // `remove` answers true exactly when it took the value out, so a removal that
-                // is itself the whole condition corrupts nothing when the mutating answer
-                // always leaves the loop: `if (set.remove(value)) break` shrinks the set only
-                // on the exiting path, and the continuing path left it untouched. Any other
-                // operand riding along (`remove(v) && flag`) can steer execution past the exit
-                // after the set shrank, so only the bare call is read this way.
-                let removal_implies_exit = exits_loop(then, nested)
-                    && enumerable_set_call(gcx, hir, bindings, cond.peel_parens())
-                        .is_some_and(|call| call.name == SetOp::Remove);
-                let mut conditional = Vec::new();
-                collect_removes_in_expr(gcx, hir, bindings, cond, leaves, &mut conditional);
-                if removal_implies_exit {
-                    let exempted = cond.peel_parens().span;
-                    conditional.retain(|(_, span)| *span != exempted);
-                }
-                out.append(&mut conditional);
-                collect_removes(
-                    gcx,
-                    hir,
-                    bindings,
-                    std::slice::from_ref(*then),
-                    leaves,
-                    nested,
-                    out,
-                );
-                if let Some(else_) = else_ {
-                    collect_removes(
-                        gcx,
-                        hir,
-                        bindings,
-                        std::slice::from_ref(*else_),
-                        leaves,
-                        nested,
-                        out,
-                    );
-                }
-            }
-            // Each clause runs on its own path: a removal in one is followed only by that
-            // clause's trailing statements, so a success clause may remove and return while a
-            // `catch` that falls through holds no removal at all. The tried call itself runs
-            // before any clause is dispatched.
-            hir::StmtKind::Try(try_) => {
-                collect_removes_in_expr(gcx, hir, bindings, &try_.expr, leaves, out);
-                for clause in try_.clauses {
-                    collect_removes(gcx, hir, bindings, clause.block.stmts, leaves, nested, out);
-                }
-            }
-            // Only leaving the function leaves the analyzed loop from inside a nested one.
-            hir::StmtKind::Loop(block, _) => {
-                collect_removes(gcx, hir, bindings, block.stmts, false, true, out)
-            }
-            _ => {
-                let mut scan = RemoveScanner { gcx, hir, bindings, leaves, out };
-                let _ = scan.visit_stmt(stmt);
-            }
-        }
-    }
-}
-
-fn collect_removes_in_expr<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    bindings: &Bindings,
-    expr: &'hir Expr<'hir>,
-    leaves: bool,
-    out: &mut Vec<(Option<SetPath>, Span)>,
-) {
-    let mut scan = RemoveScanner { gcx, hir, bindings, leaves, out };
-    let _ = scan.visit_expr(expr);
-}
-
-/// Records the `remove` calls of a statement that holds no further control flow of its own.
-struct RemoveScanner<'a, 'hir> {
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    bindings: &'a Bindings,
-    leaves: bool,
-    out: &'a mut Vec<(Option<SetPath>, Span)>,
-}
-
-impl<'hir> Visit<'hir> for RemoveScanner<'_, 'hir> {
-    type BreakValue = Infallible;
-
-    fn hir(&self) -> &'hir Hir<'hir> {
-        self.hir
-    }
-
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if !self.leaves
-            && let Some(call) = enumerable_set_call(self.gcx, self.hir, self.bindings, expr)
-            && call.name == SetOp::Remove
-        {
-            self.out.push((call.set, expr.span));
-        }
-        self.walk_expr(expr)
-    }
-}
-
-/// Whether executing `stmt` always leaves the loop being analyzed. `nested` says the statement
-/// sits under a loop of its own, where a `break` only ends that one and the analyzed loop comes
-/// round again; leaving the function still leaves both.
-fn exits_loop(stmt: &Stmt<'_>, nested: bool) -> bool {
-    match &stmt.kind {
-        StmtKind::Break => !nested,
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block.stmts.iter().any(|stmt| exits_loop(stmt, nested))
-        }
-        StmtKind::If(_, then, Some(else_)) => exits_loop(then, nested) && exits_loop(else_, nested),
-        // Every path out of a `try` leaves the loop only if the success clause and each `catch`
-        // do: the statement itself falls through otherwise.
-        StmtKind::Try(try_) => try_
-            .clauses
-            .iter()
-            .all(|clause| clause.block.stmts.iter().any(|stmt| exits_loop(stmt, nested))),
-        // `return`, `revert`, `revert(...)`, `require(false)`: they leave the function, hence
-        // every loop. A nested loop and a `continue` leave nothing.
-        _ => branch_always_exits(stmt),
-    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
