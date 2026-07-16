@@ -402,6 +402,64 @@ contract ForContinueProxy { //~WARN: proxy function `ForContinueProxy.tgeo()` co
     }
 }
 
+// A false for-loop condition bypasses its body and next expression.
+contract ForZeroIterationProxy { //~WARN: proxy function `ForZeroIterationProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback(bytes calldata input) external returns (bytes memory) {
+        for (; false; input = input[4:]) {}
+        (bool success, bytes memory returndata) = address(implementation).delegatecall(input);
+        if (!success) revert();
+        return returndata;
+    }
+}
+
+// Break in a for-loop body bypasses its next expression.
+contract ForBreakProxy { //~WARN: proxy function `ForBreakProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback(bytes calldata input) external returns (bytes memory) {
+        for (;; input = input[4:]) {
+            break;
+        }
+        (bool success, bytes memory returndata) = address(implementation).delegatecall(input);
+        if (!success) revert();
+        return returndata;
+    }
+}
+
+// Break in a do-while body bypasses its condition.
+contract DoWhileBreakProxy { //~WARN: proxy function `DoWhileBreakProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+    IImplementation internal immutable implementation;
+
+    constructor(IImplementation implementation_) {
+        implementation = implementation_;
+    }
+
+    function tgeo() external {}
+
+    fallback(bytes calldata input) external returns (bytes memory) {
+        do {
+            break;
+        } while ((input = input[4:]).length != 0);
+        (bool success, bytes memory returndata) = address(implementation).delegatecall(input);
+        if (!success) revert();
+        return returndata;
+    }
+}
+
 // A short-circuited operand does not mutate calldata on the skipped path.
 contract ShortCircuitMutationProxy { //~WARN: proxy function `ShortCircuitMutationProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
     IImplementation internal immutable implementation;
