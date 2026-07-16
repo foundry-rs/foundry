@@ -25,9 +25,9 @@ use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
     pub(crate) fn draw_layout(&mut self, f: &mut Frame<'_>) {
-        // We need 100 columns to display a 32 byte word in the memory and stack panes.
+        // We need 100 columns to display a 32 byte word in the data and stack panes.
         let area = f.area();
-        let min_width = 100;
+        let min_width = if self.show_data || self.show_stack { 100 } else { 1 };
         let min_height = 16;
         if area.width < min_width || area.height < min_height {
             self.size_too_small(f, min_width, min_height);
@@ -1705,10 +1705,11 @@ mod tests {
         context.layout = DebuggerLayout::Horizontal;
         let mut tui = TUIContext::new(&mut context);
         tui.init();
+        tui.show_opcodes = false;
         tui.show_variables = false;
         tui.show_stack = false;
         tui.show_data = false;
-        let backend = TestBackend::new(220, 30);
+        let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
         terminal.draw(|f| tui.draw_layout(f)).unwrap();
