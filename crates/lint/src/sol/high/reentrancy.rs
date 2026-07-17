@@ -177,13 +177,13 @@ fn unconstrained_boolean_outcomes(contains_target: bool) -> Vec<BooleanOutcome> 
         .collect()
 }
 
-const fn merge_send_evaluations(lhs: SendEvaluation, rhs: SendEvaluation) -> SendEvaluation {
+fn merge_send_evaluations(lhs: SendEvaluation, rhs: SendEvaluation) -> Option<SendEvaluation> {
     match (lhs, rhs) {
-        (SendEvaluation::NotEvaluated, other) | (other, SendEvaluation::NotEvaluated) => other,
-        (SendEvaluation::Succeeded, _) | (_, SendEvaluation::Succeeded) => {
-            SendEvaluation::Succeeded
+        (SendEvaluation::NotEvaluated, other) | (other, SendEvaluation::NotEvaluated) => {
+            Some(other)
         }
-        _ => SendEvaluation::Failed,
+        (lhs, rhs) if lhs == rhs => Some(lhs),
+        _ => None,
     }
 }
 
@@ -1217,15 +1217,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                         push_unique_boolean_outcome(&mut outcomes, lhs_outcome);
                     } else {
                         for rhs_outcome in &rhs_outcomes {
+                            let Some(send) =
+                                merge_send_evaluations(lhs_outcome.send, rhs_outcome.send)
+                            else {
+                                continue;
+                            };
                             push_unique_boolean_outcome(
                                 &mut outcomes,
-                                BooleanOutcome {
-                                    value: rhs_outcome.value,
-                                    send: merge_send_evaluations(
-                                        lhs_outcome.send,
-                                        rhs_outcome.send,
-                                    ),
-                                },
+                                BooleanOutcome { value: rhs_outcome.value, send },
                             );
                         }
                     }
@@ -1239,11 +1238,15 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for lhs_outcome in lhs_outcomes {
                     for rhs_outcome in &rhs_outcomes {
                         let equal = lhs_outcome.value == rhs_outcome.value;
+                        let Some(send) = merge_send_evaluations(lhs_outcome.send, rhs_outcome.send)
+                        else {
+                            continue;
+                        };
                         push_unique_boolean_outcome(
                             &mut outcomes,
                             BooleanOutcome {
                                 value: if op.kind == BinOpKind::Eq { equal } else { !equal },
-                                send: merge_send_evaluations(lhs_outcome.send, rhs_outcome.send),
+                                send,
                             },
                         );
                     }
@@ -1259,15 +1262,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     let branch_outcomes =
                         if condition_outcome.value { &true_outcomes } else { &false_outcomes };
                     for branch_outcome in branch_outcomes {
+                        let Some(send) =
+                            merge_send_evaluations(condition_outcome.send, branch_outcome.send)
+                        else {
+                            continue;
+                        };
                         push_unique_boolean_outcome(
                             &mut outcomes,
-                            BooleanOutcome {
-                                value: branch_outcome.value,
-                                send: merge_send_evaluations(
-                                    condition_outcome.send,
-                                    branch_outcome.send,
-                                ),
-                            },
+                            BooleanOutcome { value: branch_outcome.value, send },
                         );
                     }
                 }
@@ -1473,6 +1475,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     ..source
                 })
                 .collect(),
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+                self.path_sensitive_send_result_sources(expr, [lhs, rhs], state)
+            }
             ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) => {
                 let (source_expr, literal) = if let Some(literal) = bool_literal(rhs) {
                     (lhs, literal)
@@ -1490,8 +1495,48 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     })
                     .collect()
             }
+            ExprKind::Ternary(condition, true_expr, false_expr) => self
+                .path_sensitive_send_result_sources(
+                    expr,
+                    [condition, true_expr, false_expr],
+                    state,
+                ),
             _ => Vec::new(),
         }
+    }
+
+    fn path_sensitive_send_result_sources<const N: usize>(
+        &self,
+        expr: &'hir hir::Expr<'hir>,
+        children: [&'hir hir::Expr<'hir>; N],
+        state: &FlowState,
+    ) -> Vec<SendResultSource> {
+        let mut candidates = Vec::new();
+        for child in children {
+            for source in self.send_result_sources(child, state) {
+                if !candidates.contains(&source) {
+                    candidates.push(source);
+                }
+            }
+        }
+
+        candidates
+            .into_iter()
+            .filter_map(|source| {
+                let mut succeeds_when = None;
+                for outcome in self.boolean_outcomes_for_send(expr, source.call_span, state) {
+                    if outcome.send != SendEvaluation::Succeeded {
+                        continue;
+                    }
+                    if succeeds_when.is_some_and(|value| value != outcome.value) {
+                        return None;
+                    }
+                    succeeds_when = Some(outcome.value);
+                }
+                succeeds_when
+                    .map(|succeeds_when_true| SendResultSource { succeeds_when_true, ..source })
+            })
+            .collect()
     }
 
     fn expr_contains_send_target(

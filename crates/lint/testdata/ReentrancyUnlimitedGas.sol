@@ -103,6 +103,36 @@ contract ReentrancyUnlimitedGas is ReentrancyUnlimitedGasBase {
         }
     }
 
+    function ternaryStoredFailedSendDoesNotCallback(
+        address payable recipient,
+        bool attempt
+    ) external {
+        bool success = attempt ? recipient.send(1 wei) : false;
+        if (!success) counter = 1;
+    }
+
+    function andStoredFailedSendDoesNotCallback(address payable recipient, bool attempt) external {
+        bool success = attempt && recipient.send(1 wei);
+        if (!success) counter = 1;
+    }
+
+    function orStoredFailedSendDoesNotCallback(address payable recipient, bool skip) external {
+        bool success = skip || recipient.send(1 wei);
+        if (!success) counter = 1;
+    }
+
+    function repeatedAndStoredFailedSendDoesNotCallback(address payable recipient) external {
+        bool sent = recipient.send(1 wei);
+        bool success = sent && sent;
+        if (!success) counter = 1;
+    }
+
+    function repeatedTernaryStoredFailedSendDoesNotCallback(address payable recipient) external {
+        bool sent = recipient.send(1 wei);
+        bool success = sent ? sent : false;
+        if (!success) counter = 1;
+    }
+
     function storedSuccessfulSendBranch(address payable recipient) external {
         bool success = recipient.send(1 wei); //~NOTE: state change or event emission follows `transfer`/`send`; gas repricing could enable reentrancy
         if (success) {
