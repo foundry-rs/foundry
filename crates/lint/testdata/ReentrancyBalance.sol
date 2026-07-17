@@ -83,6 +83,46 @@ contract ReentrancyBalance {
         require(self.balance >= balanceBefore + amount, "insufficient payment");
     }
 
+    function helperReturnedSelfAddressAlias(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        address payable self = currentSelf();
+        uint256 balanceBefore = self.balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function helperReturnedSelfInlineBalance(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        uint256 balanceBefore = currentSelf().balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function helperReturnedSelfTupleAlias(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        address payable self;
+        (self,) = (currentSelf(), amount);
+        uint256 balanceBefore = self.balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function chainedHelperReturnedSelfAlias(
+        IReentrancyBalanceCallback callback,
+        uint256 amount
+    ) external {
+        address payable self = identity(currentSelf());
+        uint256 balanceBefore = self.balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(self.balance >= balanceBefore + amount, "insufficient payment");
+    }
+
     function reassignedSelfAddressAlias(
         IReentrancyBalanceCallback callback,
         uint256 amount
@@ -350,6 +390,67 @@ contract ReentrancyBalance {
         require(address(this).balance >= balanceBefore + amount, "insufficient payment");
     }
 
+    function shortCircuitAndComplementaryPaths(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore;
+        takeBaseline && (balanceBefore = address(this).balance) > 0;
+        if (!takeBaseline) callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function compoundShortCircuitAndComplementaryPaths(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline,
+        bool enabled
+    ) external {
+        uint256 balanceBefore;
+        takeBaseline && enabled && (balanceBefore = address(this).balance) > 0;
+        if (!takeBaseline) callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function shortCircuitOrComplementaryPaths(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore;
+        takeBaseline || (balanceBefore = address(this).balance) > 0;
+        if (takeBaseline) callback.pay();
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
+    }
+
+    function shortCircuitGuardComplementaryPaths(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        if (!takeBaseline) callback.pay();
+        require(
+            !takeBaseline || address(this).balance >= balanceBefore + amount,
+            "insufficient payment"
+        );
+    }
+
+    function compoundShortCircuitGuardComplementaryPaths(
+        IReentrancyBalanceCallback callback,
+        uint256 amount,
+        bool takeBaseline,
+        bool enabled
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        if (!takeBaseline) callback.pay();
+        require(
+            takeBaseline && enabled && address(this).balance >= balanceBefore + amount,
+            "insufficient payment"
+        );
+    }
+
     function sequentialSamePath(
         IReentrancyBalanceCallback callback,
         uint256 amount,
@@ -560,6 +661,14 @@ contract ReentrancyBalance {
 
     function currentBalance() internal view returns (uint256) {
         return address(this).balance;
+    }
+
+    function currentSelf() internal view returns (address payable) {
+        return payable(address(this));
+    }
+
+    function identity(address payable value) internal pure returns (address payable) {
+        return value;
     }
 
     function checkBalance(uint256 balanceBefore, uint256 amount) internal view {

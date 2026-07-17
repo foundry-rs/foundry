@@ -220,6 +220,7 @@ struct RecursiveFrontierKey {
 struct BalanceValue {
     balance_dependent: bool,
     balance_paths: PathAlternatives,
+    self_address_paths: PathAlternatives,
     stale_calls: HashSet<Span>,
     stale_comparisons: Vec<Span>,
 }
@@ -638,6 +639,40 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                         .extend(self.active_balance_guards.iter().copied());
                 }
             }
+            ExprKind::Binary(lhs, op, rhs)
+                if self.reentrancy_balance_enabled
+                    && matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
+            {
+                self.analyze_expr(lhs, state);
+
+                let rhs_outcome = op.kind == BinOpKind::And;
+                let mut short_state = state.clone();
+                let short_reachable =
+                    constrain_boolean_outcome(self.hir, lhs, !rhs_outcome, &mut short_state);
+                let mut rhs_state = state.clone();
+                let rhs_reachable =
+                    constrain_boolean_outcome(self.hir, lhs, rhs_outcome, &mut rhs_state);
+                if rhs_reachable {
+                    self.analyze_expr(rhs, &mut rhs_state);
+                }
+
+                state.clear();
+                if short_reachable {
+                    state.merge(&short_state);
+                }
+                if rhs_reachable {
+                    state.merge(&rhs_state);
+                }
+                state.path_predicates = match (short_reachable, rhs_reachable) {
+                    (true, true) => common_path_predicates(
+                        &short_state.path_predicates,
+                        &rhs_state.path_predicates,
+                    ),
+                    (true, false) => short_state.path_predicates,
+                    (false, true) => rhs_state.path_predicates,
+                    (false, false) => PathPredicates::new(),
+                };
+            }
             ExprKind::Binary(lhs, _, rhs) => {
                 self.analyze_expr(lhs, state);
                 self.analyze_expr(rhs, state);
@@ -820,6 +855,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         for (stored, value) in stored.iter_mut().zip(values) {
             stored.balance_dependent |= value.balance_dependent;
             stored.balance_paths.extend(value.balance_paths);
+            stored.self_address_paths.extend(value.self_address_paths);
             stored.stale_calls.extend(value.stale_calls);
             extend_unique(&mut stored.stale_comparisons, value.stale_comparisons);
         }
@@ -1113,6 +1149,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         state: &FlowState,
     ) -> bool {
         match &expr.peel_parens().kind {
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+                if self.guard_has_stale_balance_comparison(lhs, call, state) {
+                    return true;
+                }
+                let mut rhs_state = state.clone();
+                constrain_boolean_outcome(self.hir, lhs, op.kind == BinOpKind::And, &mut rhs_state)
+                    && self.guard_has_stale_balance_comparison(rhs, call, &rhs_state)
+            }
             ExprKind::Binary(lhs, op, rhs) => {
                 let is_comparison = matches!(
                     op.kind,
@@ -1202,7 +1246,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         var_id: VariableId,
         value: Option<&hir::Expr<'_>>,
     ) {
-        let paths = value.map(|value| self_address_paths(value, state)).unwrap_or_default();
+        let paths = value
+            .and_then(|value| self.self_address_dependencies(value, state).into_iter().next())
+            .unwrap_or_default();
         self.update_self_address_local_with_paths(state, var_id, paths);
     }
 
@@ -1262,10 +1308,49 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         match &expr.peel_parens().kind {
             ExprKind::Tuple(exprs) => exprs
                 .iter()
-                .map(|expr| expr.map(|expr| self_address_paths(expr, state)).unwrap_or_default())
+                .map(|expr| {
+                    expr.map(|expr| self.self_address_path(expr, state)).unwrap_or_default()
+                })
                 .collect(),
-            _ => vec![self_address_paths(expr, state)],
+            ExprKind::Call(_, _, _) => self
+                .call_balance_values
+                .get(&expr.span)
+                .map(|values| values.iter().map(|value| value.self_address_paths.clone()).collect())
+                .unwrap_or_else(|| vec![self.self_address_path(expr, state)]),
+            _ => vec![self.self_address_path(expr, state)],
         }
+    }
+
+    fn self_address_path(&self, expr: &hir::Expr<'_>, state: &FlowState) -> PathAlternatives {
+        let expr = expr.peel_parens();
+        if let ExprKind::Call(_, _, _) = expr.kind
+            && let Some(value) =
+                self.call_balance_values.get(&expr.span).and_then(|values| values.first())
+        {
+            return constrain_paths(&value.self_address_paths, &state.path_predicates);
+        }
+        match &expr.kind {
+            ExprKind::Payable(inner) => self.self_address_path(inner, state),
+            ExprKind::Call(callee, args, opts)
+                if opts.is_none() && is_address_type_expr(callee) && args.exprs().count() == 1 =>
+            {
+                args.exprs()
+                    .next()
+                    .map(|arg| self.self_address_path(arg, state))
+                    .unwrap_or_default()
+            }
+            _ => self_address_paths(expr, state),
+        }
+    }
+
+    fn self_balance_paths(&self, expr: &hir::Expr<'_>, state: &FlowState) -> PathAlternatives {
+        let ExprKind::Member(base, member) = &expr.peel_parens().kind else {
+            return PathAlternatives::new();
+        };
+        if member.as_str() != "balance" {
+            return PathAlternatives::new();
+        }
+        self.self_address_path(base, state)
     }
 
     fn update_balance_assignment(
@@ -1366,6 +1451,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn balance_dependency(&self, expr: &'hir hir::Expr<'hir>, state: &FlowState) -> BalanceValue {
         let balance_paths = self.expr_balance_paths(expr, state);
         let balance_dependent = !balance_paths.is_empty();
+        let self_address_paths = self.self_address_path(expr, state);
         let stale_calls = state
             .pending_balance_calls
             .iter()
@@ -1385,7 +1471,13 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             .filter(|call| self.guard_has_stale_balance_comparison(expr, call, state))
             .map(|call| call.span)
             .collect();
-        BalanceValue { balance_dependent, balance_paths, stale_calls, stale_comparisons }
+        BalanceValue {
+            balance_dependent,
+            balance_paths,
+            self_address_paths,
+            stale_calls,
+            stale_comparisons,
+        }
     }
 
     fn expr_balance_paths(
@@ -1394,7 +1486,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         state: &FlowState,
     ) -> PathAlternatives {
         let expr = expr.peel_parens();
-        let self_balance_paths = self_balance_paths(expr, state);
+        let self_balance_paths = self.self_balance_paths(expr, state);
         if !self_balance_paths.is_empty() {
             return self_balance_paths;
         }
@@ -1460,7 +1552,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         state: &FlowState,
     ) -> bool {
         let expr = expr.peel_parens();
-        let self_balance_paths = self_balance_paths(expr, state);
+        let self_balance_paths = self.self_balance_paths(expr, state);
         if !self_balance_paths.is_empty() {
             return match query {
                 BalanceQuery::Current(call) => state
@@ -1531,7 +1623,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 let value =
                     argument.map(|arg| self.balance_dependency(arg, state)).unwrap_or_default();
                 let self_address_paths =
-                    argument.map(|arg| self_address_paths(arg, state)).unwrap_or_default();
+                    argument.map(|arg| self.self_address_path(arg, state)).unwrap_or_default();
                 (param, value, self_address_paths)
             })
             .collect::<Vec<_>>();
@@ -1555,6 +1647,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     let balance_dependent = state.balance_locals.contains(var_id);
                     let balance_paths =
                         state.balance_local_paths.get(var_id).cloned().unwrap_or_default();
+                    let self_address_paths =
+                        state.self_address_local_paths.get(var_id).cloned().unwrap_or_default();
                     let stale_calls = state
                         .pending_balance_calls
                         .iter()
@@ -1566,6 +1660,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     BalanceValue {
                         balance_dependent,
                         balance_paths,
+                        self_address_paths,
                         stale_calls,
                         stale_comparisons,
                     }
@@ -1576,6 +1671,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         for (stored, value) in collector.values.iter_mut().zip(values) {
             stored.balance_dependent |= value.balance_dependent;
             stored.balance_paths.extend(value.balance_paths);
+            stored.self_address_paths.extend(value.self_address_paths);
             stored.stale_calls.extend(value.stale_calls);
             extend_unique(&mut stored.stale_comparisons, value.stale_comparisons);
         }
@@ -1750,6 +1846,26 @@ fn path_predicate(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<(VariableI
     }
 }
 
+fn constrain_boolean_outcome(
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+    outcome: bool,
+    state: &mut FlowState,
+) -> bool {
+    if let Some((var_id, value)) = path_predicate(hir, expr) {
+        return state.constrain_path((var_id, if outcome { value } else { !value }));
+    }
+    match &expr.peel_parens().kind {
+        ExprKind::Binary(lhs, op, rhs)
+            if (outcome && op.kind == BinOpKind::And) || (!outcome && op.kind == BinOpKind::Or) =>
+        {
+            constrain_boolean_outcome(hir, lhs, outcome, state)
+                && constrain_boolean_outcome(hir, rhs, outcome, state)
+        }
+        _ => true,
+    }
+}
+
 fn common_path_predicates(lhs: &PathPredicates, rhs: &PathPredicates) -> PathPredicates {
     lhs.iter()
         .filter(|(var_id, value)| rhs.get(var_id) == Some(*value))
@@ -1789,29 +1905,40 @@ fn remap_return_paths(
     values: &mut [BalanceValue],
 ) {
     for value in values {
-        value.balance_paths = value
-            .balance_paths
-            .iter()
-            .filter_map(|path| {
-                let mut path = path.clone();
-                for (&parameter, &argument) in parameters.iter().zip(parameter_predicates) {
-                    let Some(parameter_value) = path.remove(&parameter) else { continue };
-                    let Some((argument_var, argument_value)) = argument else { continue };
-                    let mapped_value =
-                        if parameter_value { argument_value } else { !argument_value };
-                    if path.get(&argument_var).is_some_and(|existing| *existing != mapped_value) {
-                        return None;
-                    }
-                    path.insert(argument_var, mapped_value);
-                }
-                path.retain(|var_id, _| {
-                    hir.variable(*var_id).parent != Some(ItemId::Function(func_id))
-                });
-                Some(path)
-            })
-            .collect();
+        value.balance_paths =
+            remap_paths(hir, func_id, parameters, parameter_predicates, &value.balance_paths);
+        value.self_address_paths =
+            remap_paths(hir, func_id, parameters, parameter_predicates, &value.self_address_paths);
         value.balance_dependent = !value.balance_paths.is_empty();
     }
+}
+
+fn remap_paths(
+    hir: &hir::Hir<'_>,
+    func_id: FunctionId,
+    parameters: &[VariableId],
+    parameter_predicates: &[Option<(VariableId, bool)>],
+    paths: &PathAlternatives,
+) -> PathAlternatives {
+    paths
+        .iter()
+        .filter_map(|path| {
+            let mut path = path.clone();
+            for (&parameter, &argument) in parameters.iter().zip(parameter_predicates) {
+                let Some(parameter_value) = path.remove(&parameter) else { continue };
+                let Some((argument_var, argument_value)) = argument else { continue };
+                let mapped_value = if parameter_value { argument_value } else { !argument_value };
+                if path.get(&argument_var).is_some_and(|existing| *existing != mapped_value) {
+                    return None;
+                }
+                path.insert(argument_var, mapped_value);
+            }
+            path.retain(|var_id, _| {
+                hir.variable(*var_id).parent != Some(ItemId::Function(func_id))
+            });
+            Some(path)
+        })
+        .collect()
 }
 
 fn merge_balance_local_paths(
@@ -2220,16 +2347,6 @@ fn call_uses_delegate_context(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
     gcx.type_of_expr(callee.peel_parens().id).is_some_and(
         |ty| matches!(ty.kind, TyKind::Fn(function) if function.kind == TyFnKind::DelegateCall),
     )
-}
-
-fn self_balance_paths(expr: &hir::Expr<'_>, state: &FlowState) -> PathAlternatives {
-    let ExprKind::Member(base, member) = &expr.peel_parens().kind else {
-        return PathAlternatives::new();
-    };
-    if member.as_str() != "balance" {
-        return PathAlternatives::new();
-    }
-    self_address_paths(base, state)
 }
 
 fn self_address_paths(expr: &hir::Expr<'_>, state: &FlowState) -> PathAlternatives {
