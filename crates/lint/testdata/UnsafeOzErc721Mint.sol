@@ -54,6 +54,7 @@ contract IndirectNft is BaseNft {
     function mint(address to, uint256 id) external {
         _mint(to, id); //~WARN: `ERC721._mint` does not check
     }
+
 }
 
 contract UpgradeableNft is ERC721Upgradeable {
@@ -146,6 +147,97 @@ contract DelegatingOverrideNft is ERC721 {
 
     function safeMint(address to, uint256 id) external {
         _safeMint(to, id);
+    }
+}
+
+// Delegation through an ordinary helper still makes the override unsafe. The diagnostic belongs
+// at the override's caller, where replacing `_mint` with `_safeMint` does not recurse.
+contract HelperDelegatingOverrideNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal override {
+        mintUnchecked(to, tokenId);
+    }
+
+    function mintUnchecked(address to, uint256 tokenId) private {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+
+    function mintDirect(address to, uint256 id) external {
+        mintUnchecked(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// A same-name overload can also be the ordinary helper that an override delegates through. Its
+// direct base call stays suppressed, while callers of both the override and overload report.
+contract OverloadDelegatingOverrideNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal override {
+        _mint(to, tokenId, "");
+    }
+
+    function _mint(address to, uint256 tokenId, bytes memory data) internal {
+        data;
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+
+    function mintWithData(address to, uint256 id, bytes memory data) external {
+        _mint(to, id, data); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+// Helpers unrelated to an override still report at their direct unsafe call, not again at every
+// caller.
+contract OrdinaryHelperNft is ERC721 {
+    function mintUnchecked(address to, uint256 tokenId) private {
+        super._mint(to, tokenId); //~WARN: `ERC721._mint` does not check
+    }
+
+    function mint(address to, uint256 id) external {
+        mintUnchecked(to, id);
+    }
+}
+
+// A user `_safeMint` is not assumed safe by name: this override delegates to a broken wrapper
+// that skips the receiver check.
+contract BrokenSafeDelegatingOverrideNft is ERC721 {
+    function _mint(address to, uint256 tokenId) internal override {
+        _safeMint(to, tokenId);
+    }
+
+    function _safeMint(address to, uint256 tokenId) internal override {
+        super._mint(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+}
+
+contract BaseInheritedHelperNft is ERC721 {
+    function mintUnchecked(address to, uint256 tokenId) internal {
+        super._mint(to, tokenId);
+    }
+}
+
+// Helper delegation can cross an inheritance boundary without moving the diagnostic back into the
+// shared base helper.
+contract InheritedHelperDelegatingOverrideNft is BaseInheritedHelperNft {
+    function _mint(address to, uint256 tokenId) internal override {
+        mintUnchecked(to, tokenId);
+    }
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id); //~WARN: `ERC721._mint` does not check
+    }
+
+    function mintDirect(address to, uint256 id) external {
+        mintUnchecked(to, id); //~WARN: `ERC721._mint` does not check
     }
 }
 

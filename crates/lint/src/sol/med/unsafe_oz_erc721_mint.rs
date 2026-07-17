@@ -50,7 +50,8 @@ impl<'hir> LateLintPass<'hir> for UnsafeOzErc721Mint {
         // contract that cannot handle ERC721 tokens locks the token; `_safeMint` performs the
         // check. Flag calls that resolve to a `_mint` declared in an ERC721 contract.
         if let Some(body) = &func.body {
-            let mut finder = MintCallFinder { gcx, hir, ctx };
+            let suppress_direct_mint = is_override_delegation_helper(gcx, hir, func);
+            let mut finder = MintCallFinder { gcx, hir, ctx, suppress_direct_mint };
             for stmt in body.stmts {
                 let _ = finder.visit_stmt(stmt);
             }
@@ -62,6 +63,7 @@ struct MintCallFinder<'ctx, 's, 'c, 'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     ctx: &'ctx LintContext<'s, 'c>,
+    suppress_direct_mint: bool,
 }
 
 impl<'hir> Visit<'hir> for MintCallFinder<'_, '_, '_, 'hir> {
@@ -78,6 +80,7 @@ impl<'hir> Visit<'hir> for MintCallFinder<'_, '_, '_, 'hir> {
         // hides) and `super._mint(...)` are all already accounted for.
         if let Some(function_id) = resolved_callee(self.gcx, expr)
             && self.is_erc721_mint(function_id)
+            && !self.suppress_direct_mint
         {
             self.ctx.emit(&UNSAFE_OZ_ERC721_MINT, expr.span);
         }
@@ -85,11 +88,70 @@ impl<'hir> Visit<'hir> for MintCallFinder<'_, '_, '_, 'hir> {
     }
 }
 
+fn is_override_delegation_helper<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    function: &'hir hir::Function<'hir>,
+) -> bool {
+    if !matches!(function.visibility, Visibility::Internal | Visibility::Private)
+        || (function.override_ && function.name.is_some_and(|name| name.as_str() == "_mint"))
+    {
+        return false;
+    }
+    let Some(contract_id) = function.contract else { return false };
+    let contract = hir.contract(contract_id);
+    let Some(function_id) = contract
+        .all_functions()
+        .find(|&function_id| std::ptr::eq(hir.function(function_id), function))
+    else {
+        return false;
+    };
+
+    hir.contract_ids().any(|candidate_contract_id| {
+        let candidate_contract = hir.contract(candidate_contract_id);
+        candidate_contract.linearized_bases.contains(&contract_id)
+            && candidate_contract.all_functions().any(|candidate| {
+                let candidate_function = hir.function(candidate);
+                candidate_function.override_
+                    && candidate_function.name.is_some_and(|name| name.as_str() == "_mint")
+                    && function_reaches(gcx, hir, candidate, function_id, &mut Vec::new())
+            })
+    })
+}
+
+fn function_reaches<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    function_id: FunctionId,
+    target: FunctionId,
+    seen: &mut Vec<FunctionId>,
+) -> bool {
+    if !seen.contains(&function_id) {
+        seen.push(function_id);
+    } else {
+        return false;
+    }
+    let Some(body) = hir.function(function_id).body else { return false };
+    let mut scan = CalleeCollector { gcx, hir, calls: Vec::new() };
+    for stmt in body.stmts {
+        let _ = scan.visit_stmt(stmt);
+    }
+    scan.calls.iter().any(|(callee, _)| {
+        *callee == target
+            || (matches!(
+                hir.function(*callee).visibility,
+                Visibility::Internal | Visibility::Private
+            ) && function_reaches(gcx, hir, *callee, target, seen))
+    })
+}
+
 impl MintCallFinder<'_, '_, '_, '_> {
     /// Whether `function_id` is a `_mint` whose execution skips the receiver check: the
     /// canonical OZ declaration, or a user override that transitively delegates to one.
     fn is_erc721_mint(&self, function_id: FunctionId) -> bool {
-        self.unsafe_mint_target(function_id, &mut Vec::new()).is_some()
+        let function = self.hir.function(function_id);
+        let helper = is_override_delegation_helper(self.gcx, self.hir, function);
+        self.unsafe_mint_target(function_id, helper, &mut Vec::new()).is_some()
     }
 
     /// The canonical case requires the exact OZ contract name AND an OpenZeppelin source
@@ -101,6 +163,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
     fn unsafe_mint_target(
         &self,
         function_id: FunctionId,
+        helper: bool,
         seen: &mut Vec<FunctionId>,
     ) -> Option<UnsafeMintTarget> {
         // A cycle of overrides never reaches the canonical declaration.
@@ -109,7 +172,12 @@ impl MintCallFinder<'_, '_, '_, '_> {
         }
         seen.push(function_id);
         let function = self.hir.function(function_id);
-        if function.name.is_none_or(|name| name.as_str() != "_mint") {
+        let is_mint = function.name.is_some_and(|name| name.as_str() == "_mint");
+        let is_safe_mint = function.name.is_some_and(|name| name.as_str() == "_safeMint");
+        if !is_mint
+            && (!helper
+                || !matches!(function.visibility, Visibility::Internal | Visibility::Private))
+        {
             return None;
         }
         let contract_id = function.contract?;
@@ -117,10 +185,17 @@ impl MintCallFinder<'_, '_, '_, '_> {
         if contract.kind.is_library() {
             return None;
         }
+        if is_safe_mint
+            && is_canonical_erc721(contract.name.as_str())
+            && is_openzeppelin_source(self.hir, function.source)
+        {
+            return None;
+        }
         // The canonical unchecked `_mint`: exact OZ name, OZ package provenance. Most
         // extensions (`ERC721Enumerable`, ...) inherit `_mint` rather than redeclare it, so
         // resolution still lands here.
-        if is_canonical_erc721(contract.name.as_str())
+        if is_mint
+            && is_canonical_erc721(contract.name.as_str())
             && is_openzeppelin_source(self.hir, function.source)
         {
             return Some(UnsafeMintTarget {
@@ -129,11 +204,11 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 preserves_code_length: true,
             });
         }
-        // A delegating override: any call in its body dispatching to an unsafe `_mint`. An
-        // override whose successful paths prove the recipient code-less or reject it after the
-        // delegation is a safe wrapper like canonical `_safeMint`, so it is not an unsafe target.
-        // See [`walk_guards`].
-        if function.override_
+        // A delegating override, or an internal/private helper reached from one: any call in
+        // its body dispatching to an unsafe `_mint`. An override whose successful paths prove
+        // the recipient code-less or reject it after the delegation is a safe wrapper like
+        // canonical `_safeMint`, so it is not an unsafe target. See [`walk_guards`].
+        if (function.override_ || helper)
             && let Some(body) = &function.body
         {
             // The minted recipient is the override's first address-typed parameter.
@@ -163,7 +238,7 @@ impl MintCallFinder<'_, '_, '_, '_> {
                 // Each callee gets its own `seen`: a cycle is a property of one path, and two
                 // siblings sharing a transitive target would otherwise silence the second.
                 let mut branch = seen.clone();
-                if let Some(target) = self.unsafe_mint_target(*callee, &mut branch) {
+                if let Some(target) = self.unsafe_mint_target(*callee, true, &mut branch) {
                     unsafe_targets.push(*callee);
                     if !target.preserves_code_length {
                         unstable_code_targets.push(*callee);
