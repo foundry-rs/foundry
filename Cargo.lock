@@ -1181,9 +1181,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle-svg"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db7ec5fa88fc0837393f6b110b0764aeb0a673952bc91300628641dd0fffbf85"
+checksum = "ab68e0b71ea68eb6b399ffe1957f26330aeed91f5e578d442a1c2f3df69f6ec1"
 dependencies = [
  "anstyle",
  "anstyle-lossy",
@@ -2718,9 +2718,9 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f3f6da4992df95bbcd9af42a6c7dcb994498fc9048230405f3b36ff7cd3f145"
+checksum = "a88b7ea17d208c4193f2c1e6de3c35fe71f98c96982d5ced308bdcc749ff6e1f"
 dependencies = [
  "borsh-derive",
  "bytes",
@@ -2729,9 +2729,9 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ae8fb4fb5740e4b2c4884ff95f5f32f5e8479db1e8fd8eb49ddbe09eb09bb7c"
+checksum = "d8f347189c62a579b8cd5f80714efa178f52e461dc2e6d701d264f5ff22e566c"
 dependencies = [
  "once_cell",
  "proc-macro-crate",
@@ -2988,9 +2988,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "chacha20"
@@ -12055,7 +12055,7 @@ dependencies = [
 [[package]]
 name = "tempo-alloy"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -12088,7 +12088,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12111,7 +12111,7 @@ dependencies = [
 [[package]]
 name = "tempo-contracts"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy-contract",
  "alloy-primitives",
@@ -12123,7 +12123,7 @@ dependencies = [
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -12135,7 +12135,7 @@ dependencies = [
 [[package]]
 name = "tempo-evm"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12166,7 +12166,7 @@ dependencies = [
 [[package]]
 name = "tempo-hardfork"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12178,7 +12178,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy",
  "alloy-evm",
@@ -12201,7 +12201,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles-macros"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -12212,7 +12212,7 @@ dependencies = [
 [[package]]
 name = "tempo-primitives"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -12244,7 +12244,7 @@ dependencies = [
 [[package]]
 name = "tempo-revm"
 version = "1.10.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=b4c6c29129933faf311932051359b233e90105d0#b4c6c29129933faf311932051359b233e90105d0"
+source = "git+https://github.com/tempoxyz/tempo?rev=58e3b0ad573b83674b508498aa9741bc456d416d#58e3b0ad573b83674b508498aa9741bc456d416d"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12457,9 +12457,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.52.3"
+version = "1.52.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
+checksum = "317fafbbe3f02fc663dad00ea6186197de963cd4190e86a26d8d0fae095539af"
 dependencies = [
  "bytes",
  "libc",
