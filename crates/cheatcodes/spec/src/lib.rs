@@ -4,10 +4,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt};
+use std::{borrow::Cow, collections::HashMap, fmt, sync::LazyLock};
 
 mod cheatcode;
-pub use cheatcode::{Cheatcode, CheatcodeDef, Group, Safety, Status};
+pub use cheatcode::{Cheatcode, CheatcodeDef, Group, Safety, Status, StatusAction};
 
 mod function;
 pub use function::{Function, Mutability, Visibility};
@@ -108,6 +108,19 @@ impl Cheatcodes<'static> {
             cheatcodes: Vm::CHEATCODES.iter().copied().cloned().collect(),
         }
     }
+}
+
+/// Returns the cheatcode metadata for `selector`.
+pub fn cheatcode_by_selector(selector: [u8; 4]) -> Option<&'static Cheatcode<'static>> {
+    static BY_SELECTOR: LazyLock<HashMap<[u8; 4], &'static Cheatcode<'static>>> =
+        LazyLock::new(|| {
+            Vm::CHEATCODES
+                .iter()
+                .copied()
+                .map(|cheatcode| (cheatcode.func.selector_bytes, cheatcode))
+                .collect()
+        });
+    BY_SELECTOR.get(&selector).copied()
 }
 
 #[cfg(test)]

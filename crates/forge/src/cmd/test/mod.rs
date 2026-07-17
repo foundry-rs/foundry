@@ -3732,6 +3732,10 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
                 let base_suite = e.get_mut();
                 base_suite.test_results.extend(other_suite.test_results);
                 base_suite.warnings.extend(other_suite.warnings);
+                // Suite-level warnings (deprecated or internal cheatcodes) are re-emitted by
+                // every pass; drop exact duplicates while preserving the original order.
+                let mut seen = std::collections::HashSet::new();
+                base_suite.warnings.retain(|warning| seen.insert(warning.clone()));
                 base_suite.duration = base_suite.duration.max(other_suite.duration);
             }
         }

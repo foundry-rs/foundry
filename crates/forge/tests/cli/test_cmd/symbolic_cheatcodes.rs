@@ -5,6 +5,39 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 use super::symbolic_helpers::z3_available;
 use crate::skip_unless_z3;
 
+forgetest_init!(symbolic_internal_cheatcode_records_warning, |prj, cmd| {
+    skip_unless_z3!("symbolic_internal_cheatcode_records_warning");
+
+    prj.add_test(
+        "SymbolicInternalStatus.t.sol",
+        r#"
+interface VmInternal {
+    function _expectCheatcodeRevert() external;
+}
+
+contract SymbolicInternalStatus {
+    VmInternal constant vm =
+        VmInternal(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function check_internal(uint256 input) public {
+        if (input == 0) {
+            vm._expectCheatcodeRevert();
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicInternalStatus"])
+        .assert_failure();
+    assert_eq!(
+        output.get_output().stderr_lossy(),
+        "Warning: the following cheatcode(s) are intended for internal use and may change or be \
+         removed:\n  _expectCheatcodeRevert()\n"
+    );
+});
+
 forgetest_init!(symbolic_cheatcodes_accept_symbolic_address_targets, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

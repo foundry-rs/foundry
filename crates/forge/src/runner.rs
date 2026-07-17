@@ -17,7 +17,7 @@ use crate::{
         SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
         SymbolicInvariantArtifactFailure, SymbolicInvariantFailureSite, SymbolicReplayMetadata,
         SymbolicReplayStatus, SymbolicResult, TestResult, TestSetup, TestStatus,
-        invariant_campaign_display_name,
+        internal_cheatcodes_warning, invariant_campaign_display_name,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -81,7 +81,7 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::signal;
 use tracing::Span;
@@ -691,6 +691,25 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         }
     }
 
+    fn suite_result(
+        &self,
+        duration: Duration,
+        test_results: BTreeMap<String, TestResult>,
+        mut warnings: Vec<String>,
+    ) -> SuiteResult {
+        if let Some(signatures) = self
+            .executor
+            .inspector()
+            .cheatcodes
+            .as_ref()
+            .map(|cheatcodes| cheatcodes.internal_cheatcodes())
+            && let Some(warning) = internal_cheatcodes_warning(&signatures)
+        {
+            warnings.push(warning);
+        }
+        SuiteResult::new(duration, test_results, warnings)
+    }
+
     /// Returns `true` if `func` should run in the current multi-network pass.
     ///
     /// In single-pass mode (no inline network overrides) every function passes.
@@ -923,7 +942,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             false
         };
         if skip_fuzz_only_suite {
-            return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
+            return self.suite_result(start.elapsed(), BTreeMap::new(), warnings);
         }
 
         // Check if `setUp` function with valid signature declared.
@@ -946,7 +965,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             // invariant campaigns) observe `should_stop()` and exit at their next run boundary
             // instead of running to their timeout.
             self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(
+            return self.suite_result(
                 start.elapsed(),
                 [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
                     .into(),
@@ -960,7 +979,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         if after_invariant_fns.len() > 1 {
             // Return a single test result failure if multiple functions declared.
             self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(
+            return self.suite_result(
                 start.elapsed(),
                 [(
                     "afterInvariant()".to_string(),
@@ -1019,7 +1038,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             .collect();
         if !invalid_invariants.is_empty() {
             self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(
+            return self.suite_result(
                 start.elapsed(),
                 invalid_invariants.into_iter().collect(),
                 warnings,
@@ -1057,7 +1076,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 "setUp()".to_string()
             };
             self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(
+            return self.suite_result(
                 start.elapsed(),
                 [(fail_msg, TestResult::setup_result(setup))].into(),
                 warnings,
@@ -1113,9 +1132,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
             if replay_functions.is_empty() {
                 if !self.mcr.tcfg.multi_network.all_override_networks.is_empty() {
-                    return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
+                    return self.suite_result(start.elapsed(), BTreeMap::new(), warnings);
                 }
-                return SuiteResult::new(
+                return self.suite_result(
                     start.elapsed(),
                     [(
                         artifact.test.test.clone(),
@@ -1129,7 +1148,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 );
             }
             if replay_functions.len() > 1 {
-                return SuiteResult::new(
+                return self.suite_result(
                     start.elapsed(),
                     [(
                         artifact.test.test.clone(),
@@ -1183,7 +1202,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 })
                 .collect::<BTreeMap<_, _>>();
 
-            return SuiteResult::new(start.elapsed(), test_results, warnings);
+            return self.suite_result(start.elapsed(), test_results, warnings);
         }
 
         let test_fail_functions =
@@ -1194,7 +1213,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             };
             let test_results = test_fail_functions.map(|func| (func.signature(), fail())).collect();
             self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(start.elapsed(), test_results, warnings);
+            return self.suite_result(start.elapsed(), test_results, warnings);
         }
 
         if functions.iter().any(|func| {
@@ -1309,7 +1328,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             .collect::<BTreeMap<_, _>>();
 
         let duration = start.elapsed();
-        SuiteResult::new(duration, test_results, warnings)
+        self.suite_result(duration, test_results, warnings)
     }
 }
 

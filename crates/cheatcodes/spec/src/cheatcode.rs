@@ -40,7 +40,7 @@ pub enum Status<'a> {
     /// The cheatcode is unstable, meaning it may contain bugs and may break its API on any
     /// release.
     ///
-    /// Use of experimental cheatcodes will result in a warning.
+    /// This status currently has no runtime effect.
     Experimental,
     /// The cheatcode has been deprecated, meaning it will be removed in a future release.
     ///
@@ -57,6 +57,31 @@ pub enum Status<'a> {
     ///
     /// Use of internal cheatcodes is discouraged and will result in a warning.
     Internal,
+}
+
+/// The runtime action associated with a cheatcode [`Status`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusAction {
+    /// Continue with normal cheatcode dispatch.
+    Continue,
+    /// Record use of an internal cheatcode before dispatching it.
+    RecordInternal,
+    /// Reject the cheatcode before dispatching it.
+    RejectRemoved,
+}
+
+impl Status<'_> {
+    /// Returns the runtime action for this status.
+    pub const fn action(&self) -> StatusAction {
+        match self {
+            // Experimental cheatcodes dispatch normally: the status is currently unused and its
+            // runtime behavior has not been decided. Deprecated cheatcodes are recorded
+            // separately, with their replacement.
+            Self::Stable | Self::Experimental | Self::Deprecated(_) => StatusAction::Continue,
+            Self::Internal => StatusAction::RecordInternal,
+            Self::Removed => StatusAction::RejectRemoved,
+        }
+    }
 }
 
 /// Cheatcode groups.

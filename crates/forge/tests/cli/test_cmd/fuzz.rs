@@ -109,6 +109,54 @@ fn regular_file_count(root: &Path) -> usize {
         .sum()
 }
 
+forgetest_init!(forge_fuzz_corpus_observes_internal_cheatcodes, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(100));
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+        config.fuzz.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "InternalCorpusObservation.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+interface VmInternal {
+    function _expectCheatcodeRevert() external;
+}
+
+contract InternalCorpusObservationTest is Test {
+    function test_internal(uint256 input) public {
+        if (input == 42) {
+            VmInternal(address(vm))._expectCheatcodeRevert();
+            vm.parseJsonUint("invalid json", ".value");
+            vm.assume(false);
+        }
+    }
+}
+"#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(
+        prj.root(),
+        "out/InternalCorpusObservation.t.sol/InternalCorpusObservationTest.json",
+    );
+    let calldata = calldata_for(&abi, "test_internal", 42);
+    let corpus = prj.root().join("fuzz_corpus/InternalCorpusObservationTest/test_internal");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &calldata);
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "InternalCorpusObservationTest"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: the following cheatcode(s) are intended for internal use and may change or be removed:
+  _expectCheatcodeRevert()
+
+"#]]);
+});
+
 fn showmap_edge_ids(root: &Path) -> BTreeSet<String> {
     fn visit(path: &Path, out: &mut BTreeSet<String>) {
         if path.is_dir() {
