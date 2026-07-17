@@ -2576,6 +2576,9 @@ interface Vm {
     /// Parses a string of JSON data at `key` and coerces it to `string[]`.
     #[cheatcode(group = Json)]
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
+    /// Returns the length of the JSON array at `key`.
+    #[cheatcode(group = Json)]
+    function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
     /// Parses a string of JSON data at `key` and coerces it to `bytes`.
     #[cheatcode(group = Json)]
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);

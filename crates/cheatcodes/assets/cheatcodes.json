@@ -7630,6 +7630,26 @@
     },
     {
       "func": {
+        "id": "parseJsonArrayLength",
+        "description": "Returns the length of the JSON array at `key`.",
+        "declaration": "function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonArrayLength(string,string)",
+        "selector": "0xcdb6e4ac",
+        "selectorBytes": [
+          205,
+          182,
+          228,
+          172
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "parseJsonBool",
         "description": "Parses a string of JSON data at `key` and coerces it to `bool`.",
         "declaration": "function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);",
