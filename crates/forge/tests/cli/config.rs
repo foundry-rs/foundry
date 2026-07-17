@@ -1097,6 +1097,61 @@ forgetest!(dependency_context_does_not_match_sibling_prefix, |prj, cmd| {
     cmd.arg("build").assert_success();
 });
 
+forgetest!(root_explicit_contexts_preserve_source_prefix, |prj, cmd| {
+    prj.update_config(|config| {
+        config.remappings = [
+            "src/A.sol:@x/=lib/x/".parse::<Remapping>().unwrap().into(),
+            "src/generated:@y/=lib/y/".parse::<Remapping>().unwrap().into(),
+        ]
+        .into();
+    });
+    for (lib, contract) in [("x", "X"), ("y", "Y")] {
+        let lib = prj.paths().libraries[0].join(lib);
+        pretty_err(&lib, fs::create_dir_all(&lib));
+        pretty_err(
+            &lib,
+            fs::write(lib.join(format!("{contract}.sol")), format!("contract {contract} {{}}\n")),
+        );
+    }
+    prj.add_source("A.sol", "import {X} from \"@x/X.sol\"; contract A is X {}\n");
+    prj.add_source("generatedA.sol", "import {Y} from \"@y/Y.sol\"; contract GeneratedA is Y {}\n");
+
+    cmd.arg("build").assert_success();
+});
+
+forgetest!(dependency_explicit_contexts_preserve_source_prefix, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+    pretty_err(&outer, fs::create_dir_all(outer.join("lib/x")));
+    pretty_err(&outer, fs::create_dir_all(outer.join("lib/y")));
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"src/A.sol:@x/=lib/x/\", \"src/generated:@y/=lib/y/\"]\n",
+        ),
+    );
+    pretty_err(&outer, fs::write(outer.join("lib/x/X.sol"), "contract X {}\n"));
+    pretty_err(&outer, fs::write(outer.join("lib/y/Y.sol"), "contract Y {}\n"));
+    pretty_err(
+        &outer,
+        fs::write(outer.join("src/A.sol"), "import {X} from \"@x/X.sol\"; contract A is X {}\n"),
+    );
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("src/generatedA.sol"),
+            "import {Y} from \"@y/Y.sol\"; contract GeneratedA is Y {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {A} from \"outer/A.sol\"; import {GeneratedA} from \"outer/generatedA.sol\"; contract UsesOuter is A, GeneratedA {}\n",
+    );
+
+    cmd.arg("build").assert_success();
+});
+
 forgetest!(root_single_file_remapping_overrides_dependency, |prj, cmd| {
     prj.update_config(|config| {
         config.remappings = vec![Remapping::from_str("Alias.sol=src/Root.sol").unwrap().into()];
@@ -1292,8 +1347,8 @@ forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
 
     cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
 @global/=lib/global/
-ctx-a/:@scoped/=lib/a/
-ctx-b/:@scoped/=lib/b/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
 
 "#]]);
 
@@ -1302,16 +1357,16 @@ ctx-b/:@scoped/=lib/b/
         .assert_success()
         .stdout_eq(str![[r#"
 @global/=lib/global/
-ctx-a/:@scoped/=lib/a/
-ctx-b/:@scoped/=lib/b/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
 
 "#]])
         .stderr_eq(str![[r#"
 Global:
 
-Context: ctx-a/
+Context: ctx-a
 
-Context: ctx-b/
+Context: ctx-b
 
 
 "#]]);
