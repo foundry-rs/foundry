@@ -1478,6 +1478,11 @@ async fn test_base_fork_gas_limit() {
     )
     .await;
 
+    // The public Base RPC occasionally returns block zero when it is unhealthy.
+    if api.block_number().unwrap().is_zero() {
+        return;
+    }
+
     let provider = handle.http_provider();
     let block =
         provider.get_block(BlockId::Number(BlockNumberOrTag::Latest)).await.unwrap().unwrap();
