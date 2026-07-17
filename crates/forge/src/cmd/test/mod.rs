@@ -2957,11 +2957,11 @@ impl TestArgs {
                             decoder.identify(arena, &mut identifier);
                         }
 
-                        // Trace verbosity:
-                        // - 0..3: nothing
-                        // - 3: only display traces for failed tests
-                        // - 4: also display the setup trace for failed tests
-                        // - 5..: display all traces for all tests, including storage changes
+                        // Trace verbosity.
+                        // - 0..3: nothing.
+                        // - 3: only display traces for failed tests.
+                        // - 4: also display the setup trace for failed tests.
+                        // - 5..: display all traces for all tests, including storage changes.
                         let should_include = should_include_trace(kind);
 
                         if renders_trace && should_include {

@@ -464,11 +464,17 @@ fn normalize_tracing_labels(dict: &mut Dict) {
 }
 
 fn merge_tracing_labels(legacy: &Dict, tracing: &mut Dict) {
-    let mut labels = legacy.clone();
-    if let Some(Value::Dict(_, configured)) = tracing.get("labels") {
-        labels.extend(configured.clone());
+    match tracing.get("labels") {
+        Some(Value::Dict(_, configured)) => {
+            let mut labels = legacy.clone();
+            labels.extend(configured.clone());
+            tracing.insert("labels".to_string(), labels.into());
+        }
+        Some(_) => {}
+        None => {
+            tracing.insert("labels".to_string(), legacy.clone().into());
+        }
     }
-    tracing.insert("labels".to_string(), labels.into());
 }
 
 /// A provider that sets the `src` and `output` path depending on their existence.

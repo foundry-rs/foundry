@@ -382,7 +382,7 @@ pub struct Config {
     pub coverage: CoverageConfig,
     /// Configuration for mutation testing
     pub mutation: MutationConfig,
-    /// Configuration for trace rendering
+    /// Configuration for trace rendering.
     pub tracing: TracingConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
@@ -961,7 +961,7 @@ impl Config {
         // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
 
         if providers.is_none() {
-            return Figment::from(self);
+            return Figment::from(TracingCompatProvider(self));
         }
 
         let root = self.root.as_path();
@@ -1055,7 +1055,7 @@ impl Config {
             figment = figment.merge(("invariant.workers_configured", true));
         }
 
-        Figment::from(self).merge(figment).select(profile)
+        Figment::from(TracingCompatProvider(self)).merge(figment).select(profile)
     }
 
     /// The config supports relative paths and tracks the root path separately see
@@ -5852,6 +5852,10 @@ mod tests {
         let provided = Config::from_provider(&config).unwrap();
         assert_eq!(provided.labels, labels);
         assert_eq!(provided.tracing.labels, labels);
+
+        let merged = config.merge_inline_provider(("ffi", true)).unwrap();
+        assert_eq!(merged.labels, labels);
+        assert_eq!(merged.tracing.labels, labels);
     }
 
     #[test]
@@ -5961,6 +5965,22 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(config.tracing.labels, labels("local"));
+    }
+
+    #[test]
+    fn test_malformed_tracing_labels_are_not_replaced() {
+        let provider = Toml::string(
+            r#"
+            [profile.default.labels]
+            0x0000000000000000000000000000000000000001 = "legacy"
+
+            [profile.default.tracing]
+            labels = "invalid"
+            "#,
+        )
+        .nested();
+
+        assert!(Config::from_provider(provider).is_err());
     }
 
     #[test]
