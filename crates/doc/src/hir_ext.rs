@@ -1002,7 +1002,7 @@ fn slug_anchor_segment(s: &str) -> String {
         if ch.is_ascii_alphanumeric() || ch == '_' {
             out.push(ch);
             last_was_dash = false;
-        } else if !last_was_dash && !out.is_empty() {
+        } else if ch != '$' && !last_was_dash && !out.is_empty() {
             out.push('-');
             last_was_dash = true;
         }

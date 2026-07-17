@@ -1565,6 +1565,7 @@ contract A {
         uint256 value;
     }
 
+    uint256 public balance$raw;
     uint256 private secret;
 
     error Failure();
@@ -1608,7 +1609,7 @@ import {A as BaseA} from "../base/A.sol";
 
 contract B is BaseA {
     /// @notice See {foo} or {A-foo}.
-    /// Also see {Payload}, {Failure}, {Fired}, and {State}.
+    /// Also see {Payload}, {Failure}, {Fired}, {State}, and {balance$raw}.
     /// The Yul function {helper} has no documentation heading.
     /// Private members {hidden} and {secret} are not inherited.
     /// The qualified Yul function {A-helper} has no documentation heading.
@@ -1626,7 +1627,7 @@ contract B is BaseA {
         str![[r#"
 ...
 See [foo](/src/base/contract.A#foo) or [A.foo](/src/base/contract.A#foo).
-Also see [Payload](/src/base/contract.A#payload), [Failure](/src/base/contract.A#failure), [Fired](/src/base/contract.A#fired), and [State](/src/base/contract.A#state).
+Also see [Payload](/src/base/contract.A#payload), [Failure](/src/base/contract.A#failure), [Fired](/src/base/contract.A#fired), [State](/src/base/contract.A#state), and [balance$raw](/src/base/contract.A#balanceraw).
 The Yul function `helper` has no documentation heading.
 Private members `hidden` and `secret` are not inherited.
 The qualified Yul function `A` has no documentation heading.
