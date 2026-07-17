@@ -9,7 +9,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, HashSet, btree_map::Entry},
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 /// Wrapper types over a `Vec<Remapping>` that only appends unique remappings.
@@ -71,6 +71,25 @@ impl Remappings {
             return;
         }
 
+        // Root remappings remain authoritative over dependency remappings, including single-file
+        // remappings which use different duplicate handling below.
+        if remapping.context.is_some()
+            && self.remappings.iter().any(|existing| {
+                if existing.context.is_some() {
+                    return false;
+                }
+                let mut existing_name_path = existing.name.clone();
+                if !existing_name_path.ends_with('/') {
+                    existing_name_path.push('/');
+                }
+                existing.name == remapping.name
+                    || remapping.name.starts_with(&existing_name_path)
+                    || existing.name.starts_with(&remapping.name)
+            })
+        {
+            return;
+        }
+
         if self.remappings.iter().any(|existing| {
             if remapping.name.ends_with(".sol") {
                 // For .sol files, only prevent duplicate source names in the same context
@@ -129,6 +148,8 @@ impl Remappings {
 pub struct RemappingsProvider<'a> {
     /// Whether to auto detect remappings from the `lib_paths`
     pub auto_detect_remappings: bool,
+    /// Whether to include remappings from the process environment.
+    pub include_env_remappings: bool,
     /// The lib/dependency directories to scan for remappings
     pub lib_paths: Cow<'a, Vec<PathBuf>>,
     /// the root path used to turn an absolute `Remapping`, as we're getting it from
@@ -183,8 +204,9 @@ impl RemappingsProvider<'_> {
         let mut user_remappings = Vec::new();
 
         // check env vars
-        if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
-            .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
+        if self.include_env_remappings
+            && let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
+                .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
         {
             user_remappings
                 .extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
@@ -206,24 +228,21 @@ impl RemappingsProvider<'_> {
         let mut all_remappings = Remappings::new_with_remappings(user_remappings);
 
         // scan all library dirs and autodetect remappings
-        // TODO: if a lib specifies contexts for remappings manually, we need to figure out how to
-        // resolve that
         if self.auto_detect_remappings {
-            let (nested_foundry_remappings, (configured_remappings, auto_detected_remappings)) =
-                rayon::join(
-                    || self.find_nested_foundry_remappings(),
-                    || {
-                        rayon::join(
-                            || self.find_nested_configured_remappings(),
-                            || self.auto_detect_remappings(),
-                        )
-                    },
-                );
+            let (nested_foundry_remappings, auto_detected_remappings) = rayon::join(
+                || self.find_nested_foundry_remappings(),
+                || self.auto_detect_remappings(),
+            );
+
+            // Root remappings remain first, followed by dependency-scoped remappings and global
+            // filesystem fallbacks. The compiler resolves the first applicable remapping, so a
+            // dependency's configuration applies within that dependency without affecting root or
+            // sibling imports.
+            let (dependency_remappings, package_remappings): (Vec<_>, Vec<_>) =
+                nested_foundry_remappings.partition(|remapping| remapping.context.is_some());
+            all_remappings.extend(dependency_remappings);
 
             let mut lib_remappings = BTreeMap::new();
-            for r in nested_foundry_remappings {
-                insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
-            }
             for r in auto_detected_remappings {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
@@ -233,31 +252,26 @@ impl RemappingsProvider<'_> {
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
 
-            // Remappings resolved from a dependency's config take precedence over filesystem
-            // autodetection, while the closest dependency wins between configured remappings.
-            let mut nested_lib_remappings = BTreeMap::new();
-            for r in configured_remappings {
-                insert_closest(&mut nested_lib_remappings, r.context, r.name, r.path.into());
-            }
-            for (context, remappings) in nested_lib_remappings {
-                let lib_remappings = lib_remappings.entry(context).or_default();
-                for (name, path) in remappings {
-                    match lib_remappings.entry(name) {
-                        // Only refine an autodetected package-root mapping. A configured remapping
-                        // from a nested dependency must not replace a closer root dependency.
-                        Entry::Occupied(mut entry) if path.starts_with(entry.get()) => {
-                            entry.insert(path);
-                        }
-                        Entry::Vacant(entry) => {
-                            entry.insert(path);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
             all_remappings.extend(
                 lib_remappings
+                    .into_iter()
+                    .flat_map(|(context, remappings)| {
+                        remappings.into_iter().map(move |(name, path)| Remapping {
+                            context: context.clone(),
+                            name,
+                            path: path.to_string_lossy().into(),
+                        })
+                    })
+                    .collect(),
+            );
+            // Configured source directories fill package aliases that filesystem detection could
+            // not infer, without narrowing an existing package-root mapping.
+            let mut package_lib_remappings = BTreeMap::new();
+            for r in package_remappings {
+                insert_closest(&mut package_lib_remappings, r.context, r.name, r.path.into());
+            }
+            all_remappings.extend(
+                package_lib_remappings
                     .into_iter()
                     .flat_map(|(context, remappings)| {
                         remappings.into_iter().map(move |(name, path)| Remapping {
@@ -275,92 +289,112 @@ impl RemappingsProvider<'_> {
 
     /// Returns all remappings declared in foundry.toml files of libraries
     fn find_nested_foundry_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
-        self.find_nested_remappings(true)
-    }
-
-    /// Returns remappings configured directly in foundry projects within libraries.
-    fn find_nested_configured_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
-        self.find_nested_remappings(false)
-    }
-
-    fn find_nested_remappings(
-        &self,
-        auto_detect_remappings: bool,
-    ) -> impl Iterator<Item = Remapping> + '_ {
-        self.lib_paths
-            .par_iter()
-            .filter_map(|p| {
+        let mut pending = self
+            .lib_paths
+            .iter()
+            .flat_map(|p| {
                 if p.is_absolute() {
-                    // Preserve the existing fallback scan without granting remappings from the
-                    // unrelated root lib directory configured precedence over the absolute lib.
-                    auto_detect_remappings.then(|| self.root.join("lib"))
+                    vec![p.clone(), self.root.join("lib")]
                 } else {
-                    Some(self.root.join(p))
+                    vec![self.root.join(p)]
                 }
             })
             .flat_map(foundry_toml_dirs)
-            .flat_map_iter(|lib| {
-                trace!(?lib, "find all remappings of nested foundry.toml");
-                self.nested_foundry_remappings(&lib, auto_detect_remappings)
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
+            .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        let mut remappings = Vec::new();
+
+        while let Some(lib) = pending.pop() {
+            let Ok(lib) = dunce::canonicalize(lib) else { continue };
+            if !seen.insert(lib.clone()) {
+                continue;
+            }
+
+            trace!(?lib, "find all remappings of nested foundry.toml");
+            if let Some((mut nested_remappings, nested_libs)) = self.nested_foundry_remappings(&lib)
+            {
+                remappings.append(&mut nested_remappings);
+                pending.extend(nested_libs.into_iter().flat_map(foundry_toml_dirs));
+            }
+        }
+
+        // Import resolution uses the first applicable remapping. Prefer deeper dependency contexts
+        // and longer import prefixes before their broader fallbacks.
+        remappings.sort_by(|a, b| {
+            let context_depth = |r: &Remapping| {
+                r.context.as_deref().map(Path::new).map_or(0, |p| p.components().count())
+            };
+            context_depth(b)
+                .cmp(&context_depth(a))
+                .then_with(|| b.name.len().cmp(&a.name.len()))
+                .then_with(|| a.context.cmp(&b.context))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        remappings.into_iter()
     }
 
-    fn nested_foundry_remappings(
-        &self,
-        lib: &Path,
-        auto_detect_remappings: bool,
-    ) -> Vec<Remapping> {
+    fn nested_foundry_remappings(&self, lib: &Path) -> Option<(Vec<Remapping>, Vec<PathBuf>)> {
         // load config of the nested lib if it exists, using fallback mode since libs may not
         // define all profiles the main project uses
-        let config = if auto_detect_remappings {
-            Config::load_with_root_and_fallback(lib)
-        } else {
-            Config::load_with_root_and_fallback_without_auto_detected_remappings(lib)
+        let Ok(config) = Config::load_with_root_and_fallback_without_auto_detected_remappings(lib)
+        else {
+            return None;
         };
-        let Ok(config) = config else { return vec![] };
         let config = config.sanitized();
+        let nested_libs = config.libs.clone();
 
-        // if the configured _src_ directory is set to something that
-        // `Remapping::find_many` doesn't classify as a src directory (src, contracts,
-        // lib), then we need to manually add a remapping here
-        let src_remapping = if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
-            .contains(&config.src.as_path())
-            && let Some(name) = lib.file_name().and_then(|s| s.to_str())
-        {
+        // Preserve a global package entry point for root and sibling imports. Dependency-declared
+        // aliases are scoped below, but this synthesized remapping describes the package itself.
+        let src_remapping = lib.file_name().and_then(|s| s.to_str()).map(|name| {
             let mut r = Remapping {
                 context: None,
                 name: format!("{name}/"),
-                path: format!("{}", lib.join(&config.src).display()),
+                path: config.src.display().to_string(),
             };
             if !r.path.ends_with('/') {
                 r.path.push('/')
             }
-            Some(r)
-        } else {
-            None
-        };
+            r
+        });
 
-        // Eventually, we could set context for remappings at this location,
-        // taking into account the OS platform. We'll need to be able to handle nested
-        // contexts depending on dependencies for this to work.
-        // For now, we just leave the default context (none).
         let mut remappings =
             config.remappings.into_iter().map(Remapping::from).collect::<Vec<Remapping>>();
 
+        remappings = remappings
+            .into_iter()
+            .filter_map(|remapping| Self::with_dependency_context(remapping, lib))
+            .collect();
         if let Some(r) = src_remapping {
             remappings.push(r);
         }
+        Some((remappings, nested_libs))
+    }
 
-        if !auto_detect_remappings && let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
-            // A dependency's self-remapping describes imports from within that dependency. Without
-            // a context, it must not override the package-root mapping used by the root project.
-            let self_remapping = format!("{name}/");
-            remappings.retain(|remapping| remapping.name != self_remapping);
+    fn with_dependency_context(mut remapping: Remapping, lib: &Path) -> Option<Remapping> {
+        let context = if let Some(context) = remapping.context.take() {
+            let context = Path::new(&context);
+            if context.is_absolute()
+                || context.components().any(|component| component == Component::ParentDir)
+            {
+                trace!(?context, ?lib, "skipping dependency remapping with escaping context");
+                return None;
+            }
+            lib.join(context)
+        } else {
+            lib.to_path_buf()
+        };
+        let Ok(context) = dunce::canonicalize(context) else { return None };
+        if !context.starts_with(lib) {
+            trace!(?context, ?lib, "skipping dependency remapping with escaping context");
+            return None;
         }
 
-        remappings
+        let mut context = context.to_string_lossy().into_owned();
+        if !context.ends_with('/') {
+            context.push('/');
+        }
+        remapping.context = Some(context);
+        Some(remapping)
     }
 
     /// Auto detect remappings from the lib paths
@@ -397,7 +431,15 @@ impl Provider for RemappingsProvider<'_> {
         // turn the absolute remapping into a relative one by stripping the `root`
         let remappings = remappings
             .into_iter()
-            .map(|r| RelativeRemapping::new(r, self.root).to_string())
+            .map(|r| {
+                let mut r = RelativeRemapping::new(r, self.root);
+                if let Some(context) = &mut r.context
+                    && !context.ends_with('/')
+                {
+                    context.push('/');
+                }
+                r.to_string()
+            })
             .collect::<Vec<_>>();
 
         Ok(Map::from([(
@@ -414,6 +456,9 @@ impl Provider for RemappingsProvider<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+    use tempfile::tempdir;
 
     #[test]
     fn test_sol_file_remappings() {
@@ -541,5 +586,77 @@ mod tests {
                 .iter()
                 .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol")
         );
+    }
+
+    #[test]
+    fn root_remapping_overrides_contextual_single_file_remapping() {
+        let mut remappings = Remappings::new_with_remappings(vec![Remapping {
+            context: None,
+            name: "Alias.sol".to_string(),
+            path: "src/Root.sol".to_string(),
+        }]);
+        remappings.extend(vec![Remapping {
+            context: Some("lib/dep".to_string()),
+            name: "Alias.sol".to_string(),
+            path: "lib/dep/src/Dependency.sol".to_string(),
+        }]);
+
+        assert_eq!(remappings.into_inner().len(), 1);
+    }
+
+    #[test]
+    fn dependency_remapping_context_cannot_escape() {
+        let temp = tempdir().unwrap();
+        let lib = temp.path().join("lib");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(lib.join("src")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let lib = dunce::canonicalize(lib).unwrap();
+        let outside = dunce::canonicalize(outside).unwrap();
+        let src = lib.join("src");
+
+        let remapping_with_context = |context: &Path| Remapping {
+            context: Some(context.to_string_lossy().into_owned()),
+            name: "dep/".to_string(),
+            path: "lib/dep/".to_string(),
+        };
+
+        let contextual = RemappingsProvider::with_dependency_context(
+            remapping_with_context(Path::new("src")),
+            &lib,
+        )
+        .unwrap();
+        let expected_context = format!("{}/", src.display());
+        assert_eq!(contextual.context.as_deref(), Some(expected_context.as_str()));
+        assert!(
+            RemappingsProvider::with_dependency_context(
+                remapping_with_context(Path::new("../outside")),
+                &lib,
+            )
+            .is_none()
+        );
+        assert!(
+            RemappingsProvider::with_dependency_context(remapping_with_context(&outside), &lib)
+                .is_none()
+        );
+
+        #[cfg(unix)]
+        {
+            symlink(&outside, lib.join("link")).unwrap();
+            assert!(
+                RemappingsProvider::with_dependency_context(
+                    remapping_with_context(Path::new("link")),
+                    &lib,
+                )
+                .is_none()
+            );
+            assert!(
+                RemappingsProvider::with_dependency_context(
+                    remapping_with_context(Path::new("link/missing")),
+                    &lib,
+                )
+                .is_none()
+            );
+        }
     }
 }

@@ -915,12 +915,12 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // default
-            "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            // remapping is local to the lib
-            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            // remapping configured by the dependency is scoped to it
+            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             // global
-            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            // package entry point remains global
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
         ]
     );
 
@@ -938,14 +938,15 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // local to the lib
-            "another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
-            // global
+            // dependency remappings are ordered from the deepest context
+            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
+                .parse()
+                .unwrap(),
+            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+            // package entry points remain global
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
-            // remappings local to the lib
-            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
-            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -956,33 +957,31 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // local to the lib
-            "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
-            // global
+            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
+                .parse()
+                .unwrap(),
+            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
-            // remappings local to the lib
-            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
-            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
-    // check if lib path is absolute, it should deteect nested lib
-    let mut config = cmd.config();
-    config.libs = vec![nested];
-
+    // Check that reloading with an absolute lib path detects its config and preserves the legacy
+    // root lib fallback.
+    prj.update_config(|config| config.libs = vec![nested]);
+    let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            // local to the lib
+            "lib/nested-lib/lib/another-lib/:nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/"
+                .parse()
+                .unwrap(),
+            "lib/nested-lib/:nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
-            // global
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
-            // remappings local to the lib
-            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
-            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 });
@@ -998,29 +997,135 @@ forgetest!(nested_config_remappings_override_auto_detected, |prj, cmd| {
         &outer,
         fs::write(
             outer.join("remappings.txt"),
-            "inner/=lib/inner/contracts/\nouter/=wrong/deeper/\n",
+            "@scope/outer/=src/\ninner/=lib/inner/contracts/\nouter/=src/\n",
         ),
     );
+    pretty_err(&outer, fs::write(outer.join("src/Helper.sol"), "contract Helper {}\n"));
     pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
     pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "interface I {}\n"));
     pretty_err(
         &outer,
         fs::write(
             outer.join("src/Outer.sol"),
-            "import {I} from \"inner/I.sol\"; contract Outer is I {}\n",
+            "import {Helper} from \"@scope/outer/Helper.sol\"; import {I} from \"inner/I.sol\"; contract Outer is Helper, I {}\n",
         ),
     );
     prj.add_source(
         "UsesOuter.sol",
         "import {Outer} from \"outer/Outer.sol\"; contract UsesOuter is Outer {}",
     );
+    prj.add_source(
+        "UsesInnerRoot.sol",
+        "import {Marker} from \"inner/Marker.sol\"; contract UsesInnerRoot is Marker {}",
+    );
 
     cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
-inner/=lib/outer/lib/inner/contracts/
+lib/outer/:@scope/outer/=lib/outer/src/
+lib/outer/:inner/=lib/outer/lib/inner/contracts/
+lib/outer/:outer/=lib/outer/src/
+inner/=lib/outer/lib/inner/
 outer/=lib/outer/src/
 
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
+});
+
+forgetest!(nested_config_remappings_are_dependency_scoped, |prj, cmd| {
+    for (parent, value) in [("left", "LeftValue"), ("right", "RightValue")] {
+        let parent = prj.paths().libraries[0].join(parent);
+        let child = parent.join("lib/shared/contracts");
+        pretty_err(&parent, fs::create_dir_all(parent.join("src")));
+        pretty_err(&child, fs::create_dir_all(&child));
+        pretty_err(&parent, fs::write(parent.join("foundry.toml"), "[profile.default]\n"));
+        pretty_err(
+            &parent,
+            fs::write(parent.join("remappings.txt"), "shared/=lib/shared/contracts/\n"),
+        );
+        pretty_err(
+            &parent,
+            fs::write(
+                parent.join("src/Parent.sol"),
+                format!(
+                    "import {{{value}}} from \"shared/Value.sol\"; contract Parent is {value} {{}}\n"
+                ),
+            ),
+        );
+        pretty_err(&child, fs::write(child.join("Value.sol"), format!("contract {value} {{}}\n")));
+    }
+
+    prj.add_source(
+        "UsesParents.sol",
+        "import {Parent as Left} from \"left/Parent.sol\"; import {Parent as Right} from \"right/Parent.sol\"; contract UsesParents is Left, Right {}",
+    );
+    cmd.arg("build").assert_success();
+});
+
+forgetest!(dependency_context_does_not_match_sibling_prefix, |prj, cmd| {
+    let shared = prj.paths().libraries[0].join("shared/src");
+    pretty_err(&shared, fs::create_dir_all(&shared));
+    pretty_err(&shared, fs::write(shared.join("Value.sol"), "contract GlobalValue {}\n"));
+
+    let dep = prj.paths().libraries[0].join("dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+    pretty_err(&dep, fs::create_dir_all(dep.join("lib/local/src")));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"shared/=lib/local/src/\"]\n",
+        ),
+    );
+    pretty_err(
+        &dep,
+        fs::write(dep.join("lib/local/src/Value.sol"), "contract DependencyValue {}\n"),
+    );
+
+    let sibling = prj.paths().libraries[0].join("dependency/src");
+    pretty_err(&sibling, fs::create_dir_all(&sibling));
+    pretty_err(
+        &sibling,
+        fs::write(
+            sibling.join("Sibling.sol"),
+            "import {GlobalValue} from \"shared/Value.sol\"; contract Sibling is GlobalValue {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesSibling.sol",
+        "import {Sibling} from \"dependency/Sibling.sol\"; contract UsesSibling is Sibling {}",
+    );
+
+    cmd.arg("build").assert_success();
+});
+
+forgetest!(root_single_file_remapping_overrides_dependency, |prj, cmd| {
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("Alias.sol=src/Root.sol").unwrap().into()];
+    });
+    prj.add_source("Root.sol", "contract Root {}\n");
+
+    let dep = prj.paths().libraries[0].join("dep");
+    pretty_err(&dep, fs::create_dir_all(dep.join("src")));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("foundry.toml"),
+            "[profile.default]\nremappings = [\"Alias.sol=src/Dependency.sol\"]\n",
+        ),
+    );
+    pretty_err(&dep, fs::write(dep.join("src/Dependency.sol"), "contract Dependency {}\n"));
+    pretty_err(
+        &dep,
+        fs::write(
+            dep.join("src/Parent.sol"),
+            "import {Root} from \"Alias.sol\"; contract Parent is Root {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesParent.sol",
+        "import {Parent} from \"dep/Parent.sol\"; contract UsesParent is Parent {}",
+    );
+
+    cmd.arg("build").assert_success();
 });
 
 forgetest!(closer_remapping_beats_nested_auto_detected, |prj, cmd| {
@@ -1046,6 +1151,28 @@ outer/=lib/outer/src/
 "#]]);
 });
 
+forgetest!(auto_detected_package_remapping_beats_synthesized, |prj, cmd| {
+    let direct_dep = prj.paths().libraries[0].join("dep");
+    let outer = prj.paths().libraries[0].join("outer");
+    let transitive_dep = outer.join("lib/dep");
+    for dep in [&direct_dep, &transitive_dep] {
+        pretty_err(dep, fs::create_dir_all(dep.join("custom-source")));
+        pretty_err(
+            dep,
+            fs::write(dep.join("foundry.toml"), "[profile.default]\nsrc = \"custom-source\"\n"),
+        );
+        pretty_err(dep, fs::write(dep.join("custom-source/D.sol"), "contract D {}\n"));
+    }
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+dep/=lib/dep/
+outer/=lib/outer/src/
+
+"#]]);
+});
+
 // test remappings with closer paths are prioritised
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
 forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
@@ -1056,7 +1183,7 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
     let mut config = config;
     config.remappings = vec![Remapping::from_str("forge-std/=lib/forge-std/src/").unwrap().into()];
     let nested = prj.paths().libraries[0].join("dep1");
-    pretty_err(&nested, fs::create_dir_all(&nested));
+    pretty_err(&nested, fs::create_dir_all(nested.join("src")));
     let toml_file = nested.join("foundry.toml");
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
@@ -1065,23 +1192,23 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
     similar_asserts::assert_eq!(
         remappings,
         vec![
-            "dep1/=lib/dep1/src/".parse().unwrap(),
-            "forge-std/=lib/forge-std/src/".parse().unwrap()
+            "lib/dep1/:forge-std/=lib/dep1/lib/forge-std/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "dep1/=lib/dep1/src/".parse().unwrap()
         ]
     );
 });
 
 // Test that remappings within root of the project have priority over remappings of sub-projects.
-// E.g. `@utils/libraries` mapping from library shouldn't be added if project already has `@utils`
-// remapping.
+// A dependency's conflicting remapping is excluded so the root mapping remains authoritative.
 // See <https://github.com/foundry-rs/foundry/issues/9146>
 // Test that
 // - single file remapping is properly added, see
 // <https://github.com/foundry-rs/foundry/issues/6706> and <https://github.com/foundry-rs/foundry/issues/8499>
 // - project defined `@openzeppelin/contracts` remapping is added
 // - library defined `@openzeppelin/contracts-upgradeable` remapping is added
-// - library defined `@openzeppelin/contracts/upgradeable` remapping is not added as it conflicts
-// with project defined `@openzeppelin/contracts` remapping
+// - library defined `@openzeppelin/contracts/upgradeable` remapping is excluded because it
+// conflicts with the project-defined `@openzeppelin/contracts` remapping
 // See <https://github.com/foundry-rs/foundry/issues/9271>
 forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     prj.initialize_default_contracts();
@@ -1096,9 +1223,8 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     pretty_err(&proj_toml_file, fs::write(&proj_toml_file, config.to_string_pretty().unwrap()));
 
     // Create a new lib in the `lib` folder with conflicting `@utils/libraries` remapping.
-    // This should be filtered out from final remappings as root project already has `@utils/`.
     let nested = prj.paths().libraries[0].join("dep1");
-    pretty_err(&nested, fs::create_dir_all(&nested));
+    pretty_err(&nested, fs::create_dir_all(nested.join("src")));
     let mut lib_config = Config::load_with_root(&nested).unwrap();
     lib_config.remappings = vec![
         Remapping::from_str("@utils/libraries/=src/").unwrap().into(),
@@ -1113,6 +1239,22 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     ];
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+    prj.add_source("Contract.sol", "contract RootContract {}\n");
+    pretty_err(
+        &nested,
+        fs::write(nested.join("src/Contract.sol"), "contract DependencyContract {}\n"),
+    );
+    pretty_err(
+        &nested,
+        fs::write(
+            nested.join("src/Parent.sol"),
+            "import {RootContract} from \"@utils/libraries/Contract.sol\"; contract Parent is RootContract {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesParent.sol",
+        "import {Parent} from \"dep1/Parent.sol\"; contract UsesParent is Parent {}",
+    );
 
     cmd.args(["remappings", "--pretty"])
         .assert_success()
@@ -1120,16 +1262,19 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
 @utils/libraries/Contract.sol=src/Contract.sol
 @utils/=src/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/
-@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 dep1/=lib/dep1/src/
 forge-std/=lib/forge-std/src/
+lib/dep1/:@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
 
 "#]])
         .stderr_eq(str![[r#"
 Global:
 
+Context: lib/dep1/
+
 
 "#]]);
+    cmd.forge_fuse().arg("build").assert_success();
 });
 
 // Verifies the contract invariant: `forge remappings` and `forge remappings --pretty` emit
@@ -1147,8 +1292,8 @@ forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
 
     cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
 @global/=lib/global/
-ctx-a:@scoped/=lib/a/
-ctx-b:@scoped/=lib/b/
+ctx-a/:@scoped/=lib/a/
+ctx-b/:@scoped/=lib/b/
 
 "#]]);
 
@@ -1157,16 +1302,16 @@ ctx-b:@scoped/=lib/b/
         .assert_success()
         .stdout_eq(str![[r#"
 @global/=lib/global/
-ctx-a:@scoped/=lib/a/
-ctx-b:@scoped/=lib/b/
+ctx-a/:@scoped/=lib/a/
+ctx-b/:@scoped/=lib/b/
 
 "#]])
         .stderr_eq(str![[r#"
 Global:
 
-Context: ctx-a
+Context: ctx-a/
 
-Context: ctx-b
+Context: ctx-b/
 
 
 "#]]);

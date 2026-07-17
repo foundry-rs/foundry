@@ -298,11 +298,45 @@ fn configure_pcx_from_solc_cli(
     pcx.file_resolver
         .set_current_dir(cli_settings.base_path.as_ref().unwrap_or(&project_paths.root));
     for remapping in &project_paths.remappings {
-        pcx.file_resolver.add_import_remapping(solar::sema::interface::config::ImportRemapping {
-            context: remapping.context.clone().unwrap_or_default(),
-            prefix: remapping.name.clone(),
-            path: remapping.path.clone(),
-        });
+        let contexts = remapping.context.as_ref().map_or_else(
+            || vec![String::new()],
+            |context| {
+                // Compile output can contain root-relative or canonical source names. Register
+                // both forms with a directory boundary so Solar applies the same contextual
+                // remapping in either case without matching sibling path prefixes.
+                let with_boundary = |mut context: String| {
+                    if !context.ends_with('/') {
+                        context.push('/');
+                    }
+                    context
+                };
+                let mut contexts = vec![
+                    with_boundary(context.clone()),
+                    with_boundary(project_paths.root.join(context).to_string_lossy().into_owned()),
+                ];
+                if std::path::MAIN_SEPARATOR != '/' {
+                    let separator = std::path::MAIN_SEPARATOR.to_string();
+                    contexts.extend(
+                        contexts
+                            .clone()
+                            .into_iter()
+                            .map(|context| context.replace('/', &separator)),
+                    );
+                }
+                let mut seen = HashSet::new();
+                contexts.retain(|context| seen.insert(context.clone()));
+                contexts
+            },
+        );
+        for context in contexts {
+            pcx.file_resolver.add_import_remapping(
+                solar::sema::interface::config::ImportRemapping {
+                    context,
+                    prefix: remapping.name.clone(),
+                    path: remapping.path.clone(),
+                },
+            );
+        }
     }
     pcx.file_resolver.add_include_paths(cli_settings.include_paths.iter().cloned());
 }
