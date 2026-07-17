@@ -2338,7 +2338,7 @@ casttest!(mktx_signature_requires_from, |_prj, cmd| {
 error: the following required arguments were not provided:
   --from <ADDRESS>
 
-Usage: cast mktx --from <ADDRESS> --signature <SIGNATURE> <TO> [SIG] [ARGS]...
+Usage: cast[..] mktx --from <ADDRESS> --signature <SIGNATURE> <TO> [SIG] [ARGS]...
 
 For more information, try '--help'.
 
