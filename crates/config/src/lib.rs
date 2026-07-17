@@ -812,6 +812,16 @@ impl Config {
         Self::from_figment_fallback(Figment::from(figment))
     }
 
+    /// Loads a nested config without recursively auto-detecting its remappings.
+    #[track_caller]
+    pub(crate) fn load_with_root_and_fallback_without_auto_detected_remappings(
+        root: impl AsRef<Path>,
+    ) -> Result<Self, ExtractConfigError> {
+        let figment =
+            Self::with_root(root.as_ref()).to_figment_inner(FigmentProviders::All, Some(false));
+        Self::from_figment_fallback(Figment::from(figment))
+    }
+
     /// Attempts to extract a `Config` from `provider`, returning the result.
     ///
     /// # Example
@@ -951,6 +961,14 @@ impl Config {
     /// This will merge various providers, such as env,toml,remappings into the figment if
     /// requested.
     pub fn to_figment(&self, providers: FigmentProviders) -> Figment {
+        self.to_figment_inner(providers, None)
+    }
+
+    fn to_figment_inner(
+        &self,
+        providers: FigmentProviders,
+        auto_detect_remappings: Option<bool>,
+    ) -> Figment {
         // Note that `Figment::from` here is a method on `Figment` rather than the `From` impl below
 
         if providers.is_none() {
@@ -1013,9 +1031,9 @@ impl Config {
             // redundant fs lookups to determine the default remappings that are eventually updated
             // by other providers, like the toml file
             let remappings = RemappingsProvider {
-                auto_detect_remappings: figment
-                    .extract_inner::<bool>("auto_detect_remappings")
-                    .unwrap_or(true),
+                auto_detect_remappings: auto_detect_remappings.unwrap_or_else(|| {
+                    figment.extract_inner::<bool>("auto_detect_remappings").unwrap_or(true)
+                }),
                 lib_paths: figment
                     .extract_inner::<Vec<PathBuf>>("libs")
                     .map(Cow::Owned)

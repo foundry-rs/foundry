@@ -987,6 +987,65 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
     );
 });
 
+forgetest!(nested_config_remappings_override_auto_detected, |prj, cmd| {
+    let outer = prj.paths().libraries[0].join("outer");
+    let inner = outer.join("lib/inner");
+    pretty_err(&inner, fs::create_dir_all(inner.join("contracts")));
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("remappings.txt"),
+            "inner/=lib/inner/contracts/\nouter/=wrong/deeper/\n",
+        ),
+    );
+    pretty_err(&inner, fs::write(inner.join("Marker.sol"), "contract Marker {}\n"));
+    pretty_err(&inner, fs::write(inner.join("contracts/I.sol"), "interface I {}\n"));
+    pretty_err(
+        &outer,
+        fs::write(
+            outer.join("src/Outer.sol"),
+            "import {I} from \"inner/I.sol\"; contract Outer is I {}\n",
+        ),
+    );
+    prj.add_source(
+        "UsesOuter.sol",
+        "import {Outer} from \"outer/Outer.sol\"; contract UsesOuter is Outer {}",
+    );
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+inner/=lib/outer/lib/inner/contracts/
+outer/=lib/outer/src/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+});
+
+forgetest!(closer_remapping_beats_nested_auto_detected, |prj, cmd| {
+    let direct_dep = prj.paths().libraries[0].join("dep/src");
+    let outer = prj.paths().libraries[0].join("outer");
+    let transitive_dep = outer.join("lib/dep/src");
+    pretty_err(&direct_dep, fs::create_dir_all(&direct_dep));
+    pretty_err(&transitive_dep, fs::create_dir_all(&transitive_dep));
+    pretty_err(&outer, fs::create_dir_all(outer.join("src")));
+
+    pretty_err(&direct_dep, fs::write(direct_dep.join("D.sol"), "contract Direct {}\n"));
+    pretty_err(
+        &transitive_dep,
+        fs::write(transitive_dep.join("D.sol"), "contract Transitive {}\n"),
+    );
+    pretty_err(&outer, fs::write(outer.join("src/Outer.sol"), "contract Outer {}\n"));
+    pretty_err(&outer, fs::write(outer.join("foundry.toml"), "[profile.default]\n"));
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+dep/=lib/dep/src/
+outer/=lib/outer/src/
+
+"#]]);
+});
+
 // test remappings with closer paths are prioritised
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
 forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
