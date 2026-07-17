@@ -150,6 +150,49 @@ Script ran successfully.
 "#]]);
 });
 
+forgetest!(verbosity_five_shows_script_storage_changes, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "StorageChanges",
+        r#"
+import "forge-std/Script.sol";
+
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) external {
+        number = newNumber;
+    }
+}
+
+contract StorageChanges is Script {
+    Counter public counter = new Counter();
+
+    function run() external {
+        counter.setNumber(1);
+    }
+}
+   "#,
+    );
+
+    let target = format!("{}:StorageChanges", script.display());
+    cmd.args(["script", &target, "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Traces:
+  [..] StorageChanges::run()
+    ├─ [..] Counter::setNumber(1)
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
+
 // Tests that the `run` command works correctly when path *and* script name is specified
 forgetest!(can_execute_script_command_fqn, |prj, cmd| {
     let script = prj.add_source(
@@ -684,6 +727,8 @@ Traces:
     │   └─ ← [Return]
     ├─ [..] → new HashChecker@[..]
     │   └─ ← [Return] 718 bytes of code
+    ├─  storage changes:
+    │   @ 12: 65537 → [..]
     └─ ← [Stop]
 
 
@@ -767,51 +812,69 @@ Traces:
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [..] [..]::update()
+    │   ├─  storage changes:
+    │   │   @ 0: [..]
     │   └─ ← [Stop]
     ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
+    ├─  storage changes:
+    │   @ 12: 65537 → [..]
     └─ ← [Stop]
 
 
@@ -3149,12 +3212,18 @@ Traces:
     ├─ [0] VM::signAndAttachDelegation(0x5FbDB2315678afecb367f032d93F642f64180aa3, "<pk>")
     │   └─ ← [Return] (0, 0xd4301eb9f82f747137a5f2c3dc3a5c2d253917cf99ecdc0d49f7bb85313c3159, 0x786d354f0bbd456f44116ddd3aa50475e989d72d8396005e5b3a12cede83fb68, 4, 0x5FbDB2315678afecb367f032d93F642f64180aa3)
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 1 → 2
     │   └─ ← [Stop]
     ├─ [0] VM::signAndAttachDelegation(0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512, "<pk>")
     │   └─ ← [Return] (0, 0xaba9128338f7ff036a0d2ecb96d4f4376389005cd565f87aba33b312570af962, 0x69acbe0831fb8ca95338bc4b908dcfebaf7b81b0f770a12c073ceb07b89fbdf3, 7, 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512)
     ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    │   ├─  storage changes:
+    │   │   @ 0: 2 → 0
     │   └─ ← [Stop]
     ├─ [0] VM::signAndAttachDelegation(0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0, "<pk>")
     │   └─ ← [Return] (1, 0x3a3427b66e589338ce7ea06135650708f9152e93e257b4a5ec6eb86a3e09a2ce, 0x444651c354c89fd3312aafb05948e12c0a16220827a5e467705253ab4d8aa8d3, 9, 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0)
@@ -3181,12 +3250,18 @@ Simulated On-chain Traces:
     └─ ← [Return] 481 bytes of code
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    ├─  storage changes:
+    │   @ 0: 0 → 1
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    ├─  storage changes:
+    │   @ 0: 1 → 2
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    ├─  storage changes:
+    │   @ 0: 2 → 0
     └─ ← [Stop]
 
   [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
