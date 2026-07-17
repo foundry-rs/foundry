@@ -168,6 +168,10 @@ contract TypeBasedTautology {
         return uint16(x) < 255 || uint16(x) == 255; //~WARN: condition is always true or false based on the variable's type
     }
 
+    function castedWideningMixedPathOr(uint8 amount) public pure returns (bool) {
+        return uint256(amount) > 0 || amount == 0; //~WARN: condition is always true or false based on the variable's type
+    }
+
     function castedAndUncastedDifferentRangeOr(uint256 raw) public pure returns (bool) {
         // forge-lint: disable-next-line(unsafe-typecast)
         return uint8(raw) > 0 || raw == 0; // ok -- the effective ranges differ

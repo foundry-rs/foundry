@@ -302,7 +302,11 @@ fn comparison_operand_of<'hir>(
             let (variable, mut cast_path, source_range) = comparison_operand_of(hir, inner)?;
             let source_type = expression_type(hir, inner)?;
             let range = effective_range_for_cast(source_type, source_range, *ty)?;
-            cast_path.push(*ty);
+            // A same-signed widening cast preserves the operand's value and does not
+            // need to distinguish this comparison from the uncast expression.
+            if !is_value_preserving_widening(source_type, *ty) {
+                cast_path.push(*ty);
+            }
             return Some((variable, cast_path, range));
         }
         _ => {}
