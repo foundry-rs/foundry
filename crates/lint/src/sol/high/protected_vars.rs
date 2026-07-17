@@ -366,12 +366,19 @@ struct CallContext {
 struct LoopFlow {
     breaks: Option<FlowState>,
     continues: Option<FlowState>,
+    completes: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct CallSummary {
     returns: Vec<StorageRoots>,
     guards: HashSet<FunctionId>,
+    completes: bool,
+}
+
+struct FunctionSummary {
+    returns: Vec<StorageRoots>,
+    completes: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -415,6 +422,7 @@ struct EntryAnalyzer<'hir> {
     call_returns: HashMap<ExprId, Vec<StorageRoots>>,
     call_summaries: HashMap<CallContext, CallSummary>,
     seen_calls: HashSet<CallContext>,
+    evaluated_calls: HashSet<CallContext>,
     stack: Vec<FunctionId>,
     return_stack: Vec<Vec<StorageRoots>>,
     return_flow: Vec<Option<FlowState>>,
@@ -435,6 +443,7 @@ impl<'hir> EntryAnalyzer<'hir> {
             call_returns: HashMap::new(),
             call_summaries: HashMap::new(),
             seen_calls: HashSet::new(),
+            evaluated_calls: HashSet::new(),
             stack: Vec::new(),
             return_stack: Vec::new(),
             return_flow: Vec::new(),
@@ -445,14 +454,40 @@ impl<'hir> EntryAnalyzer<'hir> {
     }
 
     fn analyze(&mut self, entry_id: FunctionId) -> HashMap<VariableId, HashSet<FunctionId>> {
-        let _ = self.analyze_function(entry_id);
-        std::mem::take(&mut self.writes)
+        let mut previous_writes = HashMap::new();
+        loop {
+            self.reset_analysis_pass();
+            let previous_summaries = self.call_summaries.clone();
+            let _ = self.analyze_function(entry_id);
+            if self.writes == previous_writes && self.call_summaries == previous_summaries {
+                return std::mem::take(&mut self.writes);
+            }
+            previous_writes = self.writes.clone();
+        }
     }
 
-    fn analyze_function(&mut self, function_id: FunctionId) -> Vec<StorageRoots> {
+    fn reset_analysis_pass(&mut self) {
+        self.writes.clear();
+        self.aliases = AliasState::default();
+        self.guards.clear();
+        self.call_returns.clear();
+        self.seen_calls.clear();
+        self.evaluated_calls.clear();
+        self.stack.clear();
+        self.return_stack.clear();
+        self.return_flow.clear();
+        self.loop_flow.clear();
+        self.modifier_continuations.clear();
+        self.assembly_depth = 0;
+    }
+
+    fn analyze_function(&mut self, function_id: FunctionId) -> FunctionSummary {
         let function = self.hir.function(function_id);
         let Some(body) = function.body else {
-            return function.returns.iter().map(|_| StorageRoots::new()).collect();
+            return FunctionSummary {
+                returns: function.returns.iter().map(|_| StorageRoots::new()).collect(),
+                completes: true,
+            };
         };
         self.stack.push(function_id);
         self.return_stack.push(function.returns.iter().map(|_| StorageRoots::new()).collect());
@@ -462,10 +497,11 @@ impl<'hir> EntryAnalyzer<'hir> {
         if falls_through {
             self.capture_named_returns();
         }
+        let completes = completes || self.return_flow.last().is_some_and(Option::is_some);
         let returns = self.return_stack.pop().expect("return frame must exist");
         self.return_flow.pop().expect("return flow frame must exist");
         self.stack.pop();
-        returns
+        FunctionSummary { returns, completes }
     }
 
     fn analyze_modifier_chain(
@@ -479,11 +515,12 @@ impl<'hir> EntryAnalyzer<'hir> {
             let falls_through = self.analyze_block(body);
             let body_returns = self.return_flow.last_mut().and_then(Option::take);
 
-            let mut all_returns = previous_returns;
-            if let Some(state) = &body_returns {
-                merge_flow_state_into(&mut all_returns, state);
-            }
-            *self.return_flow.last_mut().expect("return flow frame must exist") = all_returns;
+            // Returns from the function body resume in each enclosing modifier postlude. They
+            // therefore become ordinary placeholder completions here and must not also escape
+            // the whole modifier chain through `return_flow`: a reverting postlude can still
+            // prevent the call from completing. Keep only returns captured in modifier prefixes
+            // outside the body continuation.
+            *self.return_flow.last_mut().expect("return flow frame must exist") = previous_returns;
 
             let mut completions = body_returns;
             if falls_through {
@@ -496,7 +533,9 @@ impl<'hir> EntryAnalyzer<'hir> {
             return false;
         };
         for argument in modifier.args.exprs() {
-            self.analyze_expr(argument);
+            if !self.analyze_expr(argument) {
+                return false;
+            }
         }
 
         let Some(declared_id) = modifier.id.as_function() else { return false };
@@ -517,27 +556,40 @@ impl<'hir> EntryAnalyzer<'hir> {
         &mut self,
         function_id: FunctionId,
         arguments: &[&'hir hir::Expr<'hir>],
-    ) -> Vec<StorageRoots> {
+    ) -> CallSummary {
         let function = self.hir.function(function_id);
         let saved_aliases = std::mem::take(&mut self.aliases);
         self.bind_call_arguments(function_id, arguments, &saved_aliases);
 
         let context = CallContext::new(function_id, function, &self.aliases, &self.guards);
-        if let Some(summary) = self.call_summaries.get(&context).cloned() {
+        if self.seen_calls.contains(&context) {
+            let summary = self.call_summaries.get(&context).cloned().unwrap_or_else(|| {
+                CallSummary { returns: Vec::new(), guards: self.guards.clone(), completes: false }
+            });
             self.aliases = saved_aliases;
-            self.guards = summary.guards;
-            return summary.returns;
+            self.guards = summary.guards.clone();
+            return summary;
         }
-        if !self.seen_calls.insert(context.clone()) {
+        if self.evaluated_calls.contains(&context)
+            && let Some(summary) = self.call_summaries.get(&context).cloned()
+        {
             self.aliases = saved_aliases;
-            return Vec::new();
+            self.guards = summary.guards.clone();
+            return summary;
         }
 
-        let returns = self.analyze_function(function_id);
-        self.call_summaries
-            .insert(context, CallSummary { returns: returns.clone(), guards: self.guards.clone() });
+        self.seen_calls.insert(context.clone());
+        self.evaluated_calls.insert(context.clone());
+        let function_summary = self.analyze_function(function_id);
+        let summary = CallSummary {
+            returns: function_summary.returns,
+            guards: self.guards.clone(),
+            completes: function_summary.completes,
+        };
+        self.seen_calls.remove(&context);
+        self.call_summaries.insert(context, summary.clone());
         self.aliases = saved_aliases;
-        returns
+        summary
     }
 
     fn bind_call_arguments(
@@ -588,7 +640,9 @@ impl<'hir> EntryAnalyzer<'hir> {
             StmtKind::DeclSingle(variable_id) => {
                 let variable = self.hir.variable(variable_id);
                 if let Some(initializer) = variable.initializer {
-                    self.analyze_expr(initializer);
+                    if !self.analyze_expr(initializer) {
+                        return false;
+                    }
                     self.set_storage_alias(variable_id, initializer);
                     if self.assembly_depth > 0 {
                         self.set_slot_alias(variable_id, initializer);
@@ -597,22 +651,24 @@ impl<'hir> EntryAnalyzer<'hir> {
                 true
             }
             StmtKind::DeclMulti(variables, expression) => {
-                self.analyze_expr(expression);
+                if !self.analyze_expr(expression) {
+                    return false;
+                }
                 self.set_decl_aliases(variables, expression);
                 true
             }
             StmtKind::Emit(expression) | StmtKind::Expr(expression) => {
-                self.analyze_expr(expression);
-                !branch_always_exits(statement)
+                self.analyze_expr(expression) && !branch_always_exits(statement)
             }
             StmtKind::Revert(expression) => {
-                self.analyze_expr(expression);
+                let _ = self.analyze_expr(expression);
                 false
             }
             StmtKind::Return(Some(expression)) => {
-                self.analyze_expr(expression);
-                self.set_return_aliases(expression);
-                self.capture_return_flow();
+                if self.analyze_expr(expression) {
+                    self.set_return_aliases(expression);
+                    self.capture_return_flow();
+                }
                 false
             }
             StmtKind::Return(None) => {
@@ -628,33 +684,60 @@ impl<'hir> EntryAnalyzer<'hir> {
                 continues
             }
             StmtKind::Loop(block, source) => {
-                let before = self.flow_state();
-                let flow = self.analyze_loop_iteration(block);
-                let iteration = merge_optional_flow_state(&self.flow_state(), &flow.continues);
-                let exits = if source == hir::LoopSource::DoWhile {
-                    iteration
-                } else {
-                    merge_flow_states(&before, &iteration)
-                };
-                let mut input = merge_optional_flow_state(&exits, &flow.breaks);
+                let mut head = self.flow_state();
+                let mut exits = None;
                 loop {
-                    self.set_flow_state(input.clone());
+                    self.set_flow_state(head.clone());
                     let flow = self.analyze_loop_iteration(block);
-                    let iteration = merge_optional_flow_state(&self.flow_state(), &flow.continues);
-                    let next = merge_optional_flow_state(
-                        &merge_flow_states(&exits, &iteration),
-                        &flow.breaks,
-                    );
-                    if next == input {
-                        self.set_flow_state(next);
+                    let normal = flow.completes.then(|| self.flow_state());
+                    let continue_flow = if source == hir::LoopSource::DoWhile {
+                        flow.continues.as_ref().and_then(|continues| {
+                            self.analyze_do_while_continue(block, continues.clone())
+                        })
+                    } else {
+                        None
+                    };
+                    if let Some(breaks) = &flow.breaks {
+                        merge_flow_state_into(&mut exits, breaks);
+                    }
+                    if let Some((continue_flow, _)) = &continue_flow
+                        && let Some(breaks) = &continue_flow.breaks
+                    {
+                        merge_flow_state_into(&mut exits, breaks);
+                    }
+
+                    let mut backedges = None;
+                    if let Some(normal) = &normal {
+                        merge_flow_state_into(&mut backedges, normal);
+                    }
+                    if let Some((continue_flow, completion)) = &continue_flow {
+                        if let Some(completion) = completion {
+                            merge_flow_state_into(&mut backedges, completion);
+                        }
+                        if let Some(continues) = &continue_flow.continues {
+                            merge_flow_state_into(&mut backedges, continues);
+                        }
+                    } else if let Some(continues) = &flow.continues {
+                        merge_flow_state_into(&mut backedges, continues);
+                    }
+                    let Some(backedges) = backedges else { break };
+                    let next = merge_flow_states(&head, &backedges);
+                    if next == head {
                         break;
                     }
-                    input = next;
+                    head = next;
                 }
-                true
+                if let Some(exits) = exits {
+                    self.set_flow_state(exits);
+                    true
+                } else {
+                    false
+                }
             }
             StmtKind::If(condition, then_statement, else_statement) => {
-                self.analyze_expr(condition);
+                if !self.analyze_expr(condition) {
+                    return false;
+                }
                 let before = self.flow_state();
                 let then_continues = self.analyze_stmt(then_statement);
                 let then_state = self.flow_state();
@@ -674,7 +757,9 @@ impl<'hir> EntryAnalyzer<'hir> {
                 then_continues || else_continues
             }
             StmtKind::Try(try_statement) => {
-                self.analyze_expr(&try_statement.expr);
+                if !self.analyze_expr(&try_statement.expr) {
+                    return false;
+                }
                 let before = self.flow_state();
                 let mut merged = None;
                 for clause in try_statement.clauses {
@@ -691,7 +776,9 @@ impl<'hir> EntryAnalyzer<'hir> {
                 }
             }
             StmtKind::Switch(switch) => {
-                self.analyze_expr(switch.selector);
+                if !self.analyze_expr(switch.selector) {
+                    return false;
+                }
                 let before = self.flow_state();
                 let has_default = switch.cases.last().is_some_and(|case| case.constant.is_none());
                 let mut merged = (!has_default).then_some(before.clone());
@@ -739,8 +826,25 @@ impl<'hir> EntryAnalyzer<'hir> {
 
     fn analyze_loop_iteration(&mut self, block: hir::Block<'hir>) -> LoopFlow {
         self.loop_flow.push(LoopFlow::default());
-        let _ = self.analyze_block(block);
-        self.loop_flow.pop().expect("loop flow frame must exist")
+        let completes = self.analyze_block(block);
+        let mut flow = self.loop_flow.pop().expect("loop flow frame must exist");
+        flow.completes = completes;
+        flow
+    }
+
+    fn analyze_do_while_continue(
+        &mut self,
+        block: hir::Block<'hir>,
+        state: FlowState,
+    ) -> Option<(LoopFlow, Option<FlowState>)> {
+        let epilogue = block.stmts.last().filter(|stmt| is_loop_termination_if(stmt))?;
+        self.set_flow_state(state);
+        self.loop_flow.push(LoopFlow::default());
+        let completes = self.analyze_stmt(epilogue);
+        let completion = completes.then(|| self.flow_state());
+        let mut flow = self.loop_flow.pop().expect("loop flow frame must exist");
+        flow.completes = completes;
+        Some((flow, completion))
     }
 
     fn flow_state(&self) -> FlowState {
@@ -759,32 +863,49 @@ impl<'hir> EntryAnalyzer<'hir> {
         }
     }
 
-    fn analyze_expr(&mut self, expression: &'hir hir::Expr<'hir>) {
+    fn analyze_expr(&mut self, expression: &'hir hir::Expr<'hir>) -> bool {
         match &expression.peel_parens().kind {
             ExprKind::Assign(lhs, operator, rhs) => {
-                self.analyze_expr(rhs);
-                self.analyze_lhs(lhs);
+                if !self.analyze_expr(rhs) {
+                    return false;
+                }
+                if !self.analyze_lhs(lhs) {
+                    return false;
+                }
                 self.apply_assignment(lhs, rhs, operator.is_some());
+                true
             }
             ExprKind::Delete(inner) => {
-                self.analyze_lhs(inner);
+                if !self.analyze_lhs(inner) {
+                    return false;
+                }
                 self.record_write(inner);
+                true
             }
             ExprKind::Unary(operator, inner) => {
-                self.analyze_expr(inner);
+                if !self.analyze_expr(inner) {
+                    return false;
+                }
                 if operator.kind.has_side_effects() {
                     self.record_write(inner);
                 }
+                true
             }
             ExprKind::Call(callee, args, options) => {
-                self.analyze_expr(callee);
+                if !self.analyze_expr(callee) {
+                    return false;
+                }
                 if let Some(options) = options {
                     for option in options.args {
-                        self.analyze_expr(&option.value);
+                        if !self.analyze_expr(&option.value) {
+                            return false;
+                        }
                     }
                 }
                 for argument in args.exprs() {
-                    self.analyze_expr(argument);
+                    if !self.analyze_expr(argument) {
+                        return false;
+                    }
                 }
 
                 if let ExprKind::Member(base, member) = &callee.peel_parens().kind
@@ -816,91 +937,122 @@ impl<'hir> EntryAnalyzer<'hir> {
                 {
                     self.guards.insert(function_id);
                     let arguments = self.ordered_call_arguments(declared_id, *args, receiver);
-                    let returns = self.analyze_call(function_id, &arguments);
-                    self.store_call_returns(expression.id, returns);
+                    let summary = self.analyze_call(function_id, &arguments);
+                    self.store_call_returns(expression.id, summary.returns);
+                    return summary.completes;
                 }
+                true
             }
             ExprKind::Binary(lhs, operator, rhs) => {
-                self.analyze_expr(lhs);
+                if !self.analyze_expr(lhs) {
+                    return false;
+                }
                 if matches!(operator.kind, BinOpKind::And | BinOpKind::Or) {
                     let short_circuit = self.flow_state();
-                    self.analyze_expr(rhs);
-                    let evaluated = self.flow_state();
-                    self.set_flow_state(merge_flow_states(&short_circuit, &evaluated));
+                    if self.analyze_expr(rhs) {
+                        let evaluated = self.flow_state();
+                        self.set_flow_state(merge_flow_states(&short_circuit, &evaluated));
+                    } else {
+                        self.set_flow_state(short_circuit);
+                    }
+                    true
                 } else {
-                    self.analyze_expr(rhs);
+                    self.analyze_expr(rhs)
                 }
             }
             ExprKind::Index(base, index) => {
-                self.analyze_expr(base);
-                if let Some(index) = index {
-                    self.analyze_expr(index);
+                if !self.analyze_expr(base) {
+                    return false;
                 }
+                if let Some(index) = index { self.analyze_expr(index) } else { true }
             }
             ExprKind::Slice(base, start, end) => {
-                self.analyze_expr(base);
+                if !self.analyze_expr(base) {
+                    return false;
+                }
                 if let Some(start) = start {
-                    self.analyze_expr(start);
+                    if !self.analyze_expr(start) {
+                        return false;
+                    }
                 }
-                if let Some(end) = end {
-                    self.analyze_expr(end);
-                }
+                if let Some(end) = end { self.analyze_expr(end) } else { true }
             }
             ExprKind::Member(base, _) | ExprKind::YulMember(base, _) | ExprKind::Payable(base) => {
                 self.analyze_expr(base)
             }
             ExprKind::Ternary(condition, if_true, if_false) => {
-                self.analyze_expr(condition);
+                if !self.analyze_expr(condition) {
+                    return false;
+                }
                 let before = self.flow_state();
-                self.analyze_expr(if_true);
+                let true_completes = self.analyze_expr(if_true);
                 let true_state = self.flow_state();
                 self.set_flow_state(before);
-                self.analyze_expr(if_false);
+                let false_completes = self.analyze_expr(if_false);
                 let false_state = self.flow_state();
-                self.set_flow_state(merge_flow_states(&true_state, &false_state));
+                match (true_completes, false_completes) {
+                    (true, true) => {
+                        self.set_flow_state(merge_flow_states(&true_state, &false_state))
+                    }
+                    (true, false) => self.set_flow_state(true_state),
+                    (false, true) => self.set_flow_state(false_state),
+                    (false, false) => {}
+                }
+                true_completes || false_completes
             }
             ExprKind::Array(expressions) => {
                 for expression in *expressions {
-                    self.analyze_expr(expression);
+                    if !self.analyze_expr(expression) {
+                        return false;
+                    }
                 }
+                true
             }
             ExprKind::Tuple(expressions) => {
                 for expression in expressions.iter().copied().flatten() {
-                    self.analyze_expr(expression);
+                    if !self.analyze_expr(expression) {
+                        return false;
+                    }
                 }
+                true
             }
-            ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => true,
+            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => true,
         }
     }
 
-    fn analyze_lhs(&mut self, expression: &'hir hir::Expr<'hir>) {
+    fn analyze_lhs(&mut self, expression: &'hir hir::Expr<'hir>) -> bool {
         match &expression.peel_parens().kind {
             ExprKind::Index(base, index) => {
-                self.analyze_lhs(base);
-                if let Some(index) = index {
-                    self.analyze_expr(index);
+                if !self.analyze_lhs(base) {
+                    return false;
                 }
+                if let Some(index) = index { self.analyze_expr(index) } else { true }
             }
             ExprKind::Slice(base, start, end) => {
-                self.analyze_lhs(base);
+                if !self.analyze_lhs(base) {
+                    return false;
+                }
                 if let Some(start) = start {
-                    self.analyze_expr(start);
+                    if !self.analyze_expr(start) {
+                        return false;
+                    }
                 }
-                if let Some(end) = end {
-                    self.analyze_expr(end);
-                }
+                if let Some(end) = end { self.analyze_expr(end) } else { true }
             }
             ExprKind::Member(base, _) | ExprKind::YulMember(base, _) | ExprKind::Payable(base) => {
                 self.analyze_lhs(base)
             }
             ExprKind::Tuple(expressions) => {
                 for expression in expressions.iter().copied().flatten() {
-                    self.analyze_lhs(expression);
+                    if !self.analyze_lhs(expression) {
+                        return false;
+                    }
                 }
+                true
             }
             ExprKind::Call(..) => self.analyze_expr(expression),
-            _ => {}
+            _ => true,
         }
     }
 
@@ -1370,16 +1522,28 @@ fn merge_flow_states(lhs: &FlowState, rhs: &FlowState) -> FlowState {
     }
 }
 
-fn merge_optional_flow_state(state: &FlowState, other: &Option<FlowState>) -> FlowState {
-    other.as_ref().map_or_else(|| state.clone(), |other| merge_flow_states(state, other))
-}
-
 fn merge_flow_state_into(destination: &mut Option<FlowState>, state: &FlowState) {
     *destination = Some(
         destination
             .as_ref()
             .map_or_else(|| state.clone(), |current| merge_flow_states(current, state)),
     );
+}
+
+fn is_loop_termination_if(statement: &hir::Stmt<'_>) -> bool {
+    let StmtKind::If(_, then_statement, else_statement) = &statement.kind else { return false };
+    is_break_stmt(then_statement)
+        || else_statement.as_ref().is_some_and(|statement| is_break_stmt(statement))
+}
+
+fn is_break_stmt(statement: &hir::Stmt<'_>) -> bool {
+    match &statement.kind {
+        StmtKind::Break => true,
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block.stmts.len() == 1 && is_break_stmt(&block.stmts[0])
+        }
+        _ => false,
+    }
 }
 
 fn merge_root_maps(lhs: &RootMap, rhs: &RootMap) -> RootMap {

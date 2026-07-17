@@ -189,6 +189,9 @@ contract ReachabilitySemantics {
     /// @custom:security write-protection="checkOwner()"
     address public owner;
 
+    /// @custom:security write-protection="checkOwner()"
+    mapping(address => address) public owners;
+
     function checkOwner() internal view {
         require(msg.sender == owner);
     }
@@ -243,6 +246,49 @@ contract ReachabilitySemantics {
         owner = newOwner;
     }
 
+    function writeAfterRevertingHelper(address newOwner) external {
+        alwaysReverts();
+        owner = newOwner;
+    }
+
+    function writeAfterRecursiveHelper(address newOwner) external {
+        recursiveLoop();
+        owner = newOwner;
+    }
+
+    function deleteWithRevertingIndex() external {
+        delete owners[revertingAddress()];
+    }
+
+    function writeAfterRevertingDoWhile(bool repeat, address newOwner) external {
+        do {
+            alwaysReverts();
+        } while (repeat);
+        owner = newOwner;
+    }
+
+    function writeAfterRevertingWhileCondition(address newOwner) external {
+        while (revertingBool()) {}
+        owner = newOwner;
+    }
+
+    function writeAfterMutualRecursion(address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
+        recursiveB();
+        recursiveB();
+        owner = newOwner;
+    }
+
+    function writeAfterConditionalRecursion(bool stop, address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
+        recursiveMaybeWrite(stop, newOwner);
+    }
+
+    function writeAfterDoWhileContinue(bool repeat, address newOwner) external { //~WARN: protected variable `owner` is written without `checkOwner()`
+        do {
+            continue;
+        } while (repeat);
+        owner = newOwner;
+    }
+
     function maybeGuard(bool skip) internal view {
         if (skip) return;
         checkOwner();
@@ -251,6 +297,37 @@ contract ReachabilitySemantics {
     function checkOwnerBool() internal view returns (bool) {
         checkOwner();
         return true;
+    }
+
+    function alwaysReverts() internal pure {
+        revert();
+    }
+
+    function recursiveLoop() internal pure {
+        recursiveLoop();
+    }
+
+    function revertingAddress() internal pure returns (address) {
+        revert();
+    }
+
+    function revertingBool() internal pure returns (bool) {
+        revert();
+    }
+
+    function recursiveA(bool stop) internal pure {
+        if (stop) return;
+        recursiveB();
+    }
+
+    function recursiveB() internal pure {
+        recursiveA(true);
+    }
+
+    function recursiveMaybeWrite(bool stop, address newOwner) internal {
+        if (stop) return;
+        recursiveMaybeWrite(true, newOwner);
+        owner = newOwner;
     }
 
     function externalCall() external pure {}
@@ -333,6 +410,11 @@ contract ModifierContinuations {
         owner = newOwner;
     }
 
+    modifier revertAfter() {
+        _;
+        revert();
+    }
+
     function checkOwner() internal view {
         require(msg.sender == owner);
     }
@@ -363,6 +445,15 @@ contract ModifierContinuations {
     {
         if (skip) return;
         checkOwner();
+    }
+
+    function returningHelper() internal revertAfter {
+        return;
+    }
+
+    function unreachableAfterReturningHelper(address newOwner) external {
+        returningHelper();
+        owner = newOwner;
     }
 }
 

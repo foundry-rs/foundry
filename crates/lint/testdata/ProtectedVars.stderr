@@ -110,6 +110,30 @@ LL │     function shortCircuitGuard(bool guard, address newOwner) external {
    │
    ╰ help: https://getfoundry.sh/forge/linting/protected-vars
 
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function writeAfterMutualRecursion(address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function writeAfterConditionalRecursion(bool stop, address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
+warning[protected-vars]: protected variable `owner` is written without `checkOwner()`
+   ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
+   │
+LL │     function writeAfterDoWhileContinue(bool repeat, address newOwner) external {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/protected-vars
+
 warning[protected-vars]: protected variable `owner` is written without `onlyOwner()`
    ╭▸ ROOT/testdata/ProtectedVars.sol:LL:CC
    │
